@@ -21,10 +21,12 @@ pub fn document(report: &Report) -> Result<serde_json::Value, super::CountError>
                 "name": "njutest",
                 "version": report.tool.njutest,
                 "informationUri": "https://github.com/P4suta/njutest",
-                "rules": rules(&conclusion.findings),
+                "rules": rules(&conclusion),
             }},
             "automationDetails": { "id": report.run_id },
-            "results": conclusion.findings.iter().map(result).collect::<Vec<_>>(),
+            "results": conclusion.findings.iter().map(result)
+                .chain(conclusion.beside.iter().map(beside))
+                .collect::<Vec<_>>(),
             "properties": {
                 "verdict": format!("{:?}", conclusion.verdict),
                 "accounting": conclusion.accounting,
@@ -36,8 +38,11 @@ pub fn document(report: &Report) -> Result<serde_json::Value, super::CountError>
     }))
 }
 
-fn rules(findings: &[Finding]) -> Vec<serde_json::Value> {
-    let mut kinds: Vec<String> = findings.iter().map(Finding::kind_name).collect();
+fn rules(conclusion: &super::Conclusion) -> Vec<serde_json::Value> {
+    let mut kinds: Vec<String> = conclusion.findings.iter().map(Finding::kind_name).collect();
+    if !conclusion.beside.is_empty() {
+        kinds.push(crate::report::faults::OBSERVABLE_UNDER_FAULT.to_owned());
+    }
     kinds.sort();
     kinds.dedup();
     kinds
@@ -57,10 +62,10 @@ fn rules(findings: &[Finding]) -> Vec<serde_json::Value> {
 /// A mutant's identity is a function of the whole file, so keying on it closes every alert in a file and opens them again as new on any commit touching it, taking a reviewer's dismissals with them.
 /// Where the finding names a place, the place is the key; where it names nothing else, its own kind and subject are all there is.
 fn fingerprint(finding: &Finding) -> String {
-    finding.path.as_ref().map_or_else(
-        || format!("{}:{}", finding.kind_name(), finding.subject),
-        |path| format!("{}:{}", finding.kind_name(), path),
-    )
+    match &finding.path {
+        Some(path) => format!("{}:{}", finding.kind_name(), path),
+        None => format!("{}:{}", finding.kind_name(), finding.subject),
+    }
 }
 
 fn result(finding: &Finding) -> serde_json::Value {
@@ -95,6 +100,29 @@ fn result(finding: &Finding) -> serde_json::Value {
         );
     }
     serde_json::Value::Object(value)
+}
+
+/// One survivor a target told apart only with the call at its own site failing, as a note a code-scanning reader sees beside the findings: evidence, never a failure.
+fn beside(evidence: &super::faults::BesideRecord) -> serde_json::Value {
+    serde_json::json!({
+        "ruleId": super::faults::OBSERVABLE_UNDER_FAULT,
+        "level": "note",
+        "message": { "text": format!(
+            "survivor {mutant} is told apart from an equivalence only with the call at its own \
+             site failing ({fault}) on {target}, where the {failed} run failed",
+            mutant = evidence.mutant,
+            fault = evidence.fault,
+            target = evidence.target,
+            failed = evidence.failed.name(),
+        )},
+        "partialFingerprints": { "njutestFinding/v1": format!(
+            "{name}:{mutant}:{fault}:{target}",
+            name = super::faults::OBSERVABLE_UNDER_FAULT,
+            mutant = evidence.mutant,
+            fault = evidence.fault,
+            target = evidence.target,
+        )},
+    })
 }
 
 const fn level(kind: FindingKind) -> &'static str {

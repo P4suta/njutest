@@ -23,7 +23,7 @@ use super::rules::{
 };
 use super::shape::{
     block_tail, deletable_arm, expr_attrs, guard_of, implemented, item_attrs, parameters,
-    return_kind, return_kind_within, suppression_of,
+    return_kind, return_kind_within, suppression_of, type_name,
 };
 use super::{Claim, Decision, Form, Found, Include, Selection, SiteHint, SkipReason, beside};
 use crate::catalog::Candidate;
@@ -71,6 +71,8 @@ pub(super) enum TailRole {
 #[derive(Debug, Clone, Copy)]
 struct Frame {
     ret: ReturnKind,
+    /// Where in the walk's `const fn`s the one this body belongs to is, when it belongs to one.
+    const_fn: Option<usize>,
 }
 
 /// A guard site.
@@ -210,7 +212,10 @@ pub(super) enum WalkError {
     /// Its internal offsets or exact counters contradicted the bounded source established at discovery entry.
     Bounds,
     /// Text it had to read back could not be read at all.
-    Unread(crate::parsing::ReadingError),
+    Unread {
+        /// Why the reading failed.
+        source: crate::parsing::ReadingError,
+    },
 }
 
 /// The file being walked.
@@ -260,7 +265,10 @@ pub(super) struct Walker<'a> {
     skips: BTreeMap<SkipReason, u32>,
     decisions: Vec<Decision>,
     suppressed: Option<SkipReason>,
+    compiling: bool,
     frames: Vec<Frame>,
+    /// Every `const fn` the walk has entered, in the order it entered them.
+    const_fns: Vec<super::ConstFn>,
     scope: super::ModuleScope,
     /// What a proof would rest on for each `if` or `while` condition being walked, innermost last.
     gates: Vec<Option<branch::Prepared>>,
@@ -301,7 +309,9 @@ impl<'a> Walker<'a> {
             skips: BTreeMap::new(),
             decisions: Vec::new(),
             suppressed: None,
+            compiling: false,
             frames: Vec::new(),
+            const_fns: Vec::new(),
             scope: super::ModuleScope::root(),
             gates: Vec::new(),
             loops: Vec::new(),
@@ -324,7 +334,7 @@ impl<'a> Walker<'a> {
 
     pub(super) fn finish(mut self) -> Result<Walked, WalkError> {
         if let Some(unread) = self.unread.take() {
-            return Err(WalkError::Unread(unread));
+            return Err(WalkError::Unread { source: unread });
         }
         if self.bounds_failed.get() {
             return Err(WalkError::Bounds);
@@ -540,10 +550,13 @@ impl<'a> Walker<'a> {
         }
         let line = self.line_of(edit.span.start);
         if let Some(index) = self.marker_at(line) {
-            let reason = self
-                .markers
-                .get(index)
-                .map_or_else(String::new, |marker| marker.reason.clone());
+            let reason = match self.markers.get(index) {
+                Some(marker) => marker.reason.clone(),
+                None => {
+                    self.bounds_failed.set(true);
+                    return;
+                }
+            };
             if let Some(claimed) = self.matched.get_mut(index) {
                 *claimed = true;
             }
@@ -553,7 +566,10 @@ impl<'a> Walker<'a> {
             );
             return;
         }
-        let Some(site) = edit.site else {
+        let Some(site) = edit
+            .site
+            .filter(|site| !self.compiling || !matches!(site.form, Form::M | Form::S))
+        else {
             self.skip(SkipReason::UnsupportedSite);
             self.decide(
                 edit.span.start,
@@ -562,6 +578,7 @@ impl<'a> Walker<'a> {
             );
             return;
         };
+        let form = if self.compiling { Form::B } else { site.form };
         let original = self.text(edit.span).as_bytes().to_vec();
         if original == edit.replacement {
             self.declined(
@@ -579,21 +596,15 @@ impl<'a> Walker<'a> {
             source_digest: self.digest.to_owned(),
         };
         let item = self.item_path();
-        let super_depth = match self.scope.supers().map(u32::try_from) {
-            Some(Ok(supers)) => supers,
-            Some(Err(_)) | None => {
-                self.bounds_failed.set(true);
-                return;
-            }
-        };
-        let hint = SiteHint {
-            form: site.form,
-            site: site.span,
-            site_text: self.text(site.span).to_owned(),
-            super_depth,
+        let Some(hint) = self.hint_for(site, form) else {
+            return;
         };
         let position = self.position(edit.span.start);
-        let gate = self.gates.last().and_then(Option::as_ref);
+        let gate = if self.compiling {
+            None
+        } else {
+            self.gates.last().and_then(Option::as_ref)
+        };
         let branch = gate.and_then(|gate| gate.claim(rule_name, edit.span));
         let comparable = gate.and_then(|gate| gate.comparable(rule_name, edit.span));
         self.found.push(Found {
@@ -603,9 +614,40 @@ impl<'a> Walker<'a> {
             hint,
             branch,
             comparable,
-            probe: edit.probe,
+            probe: if self.compiling { None } else { edit.probe },
         });
-        self.decide(edit.span.start, rule_name, Outcome::Candidate(site.form));
+        self.decide(edit.span.start, rule_name, Outcome::Candidate(form));
+    }
+
+    /// The guard site, with a runtime function only where this edit executes at runtime.
+    fn hint_for(&self, site: Site, form: Form) -> Option<SiteHint> {
+        let super_depth = match self.scope.supers().map(u32::try_from) {
+            Some(Ok(supers)) => supers,
+            Some(Err(_)) | None => {
+                self.bounds_failed.set(true);
+                return None;
+            }
+        };
+        Some(SiteHint {
+            form,
+            site: site.span,
+            site_text: self.text(site.span).to_owned(),
+            super_depth,
+            const_fn: if self.compiling {
+                None
+            } else {
+                self.const_fn()
+            },
+        })
+    }
+
+    /// The `const fn` whose body is the innermost the walk is in, when it is one.
+    fn const_fn(&self) -> Option<super::ConstFn> {
+        self.frames
+            .last()
+            .and_then(|frame| frame.const_fn)
+            .and_then(|at| self.const_fns.get(at))
+            .cloned()
     }
 
     fn skip(&mut self, reason: SkipReason) {
@@ -755,17 +797,17 @@ impl<'a> Walker<'a> {
 
     /// Whether the loop a jump names is one whose breaks decide its value.
     fn breaks_decide_the_value(&self, label: Option<&syn::Lifetime>) -> bool {
-        label.map_or_else(
-            || self.loops.last().is_none_or(|(_, valued)| *valued),
-            |named| {
+        match label {
+            Some(named) => {
                 let wanted = named.ident.to_string();
                 self.loops
                     .iter()
                     .rev()
                     .find(|(label, _)| label.as_deref() == Some(wanted.as_str()))
                     .is_none_or(|(_, valued)| *valued)
-            },
-        )
+            }
+            None => self.loops.last().is_none_or(|(_, valued)| *valued),
+        }
     }
 
     fn walk_items(&mut self, items: &[Item]) {
@@ -785,19 +827,21 @@ impl<'a> Walker<'a> {
         match item {
             Item::Fn(f) => {
                 let name = f.sig.ident.to_string();
-                self.within_item(name, |walker| walker.walk_fn(&f.sig, &f.block));
+                self.within_item(name, |walker| walker.walk_fn(&f.sig, &f.block, None));
             }
             Item::Impl(i) => {
+                let owner = type_name(&i.self_ty);
                 self.within_item(implemented(i), |walker| {
                     for member in &i.items {
-                        walker.walk_impl_item(member);
+                        walker.walk_impl_item(member, &owner);
                     }
                 });
             }
             Item::Trait(t) => {
+                let owner = t.ident.to_string();
                 self.within_item(t.ident.to_string(), |walker| {
                     for member in &t.items {
-                        walker.walk_trait_item(member);
+                        walker.walk_trait_item(member, &owner);
                     }
                 });
             }
@@ -812,7 +856,7 @@ impl<'a> Walker<'a> {
             }
             Item::Const(c) => {
                 let name = c.ident.to_string();
-                self.within_item(name, |walker| walker.walk_const_expr(&c.expr));
+                self.within_item(name, |walker| walker.walk_const_item(&c.expr));
             }
             Item::Static(s) => {
                 let name = s.ident.to_string();
@@ -830,20 +874,20 @@ impl<'a> Walker<'a> {
         }
     }
 
-    fn walk_impl_item(&mut self, member: &ImplItem) {
+    fn walk_impl_item(&mut self, member: &ImplItem, owner: &str) {
         match member {
             ImplItem::Fn(f) => {
                 let name = f.sig.ident.to_string();
                 self.within_item(name, |walker| {
                     walker.maybe_suppressed(&f.attrs, |walker| {
-                        walker.walk_fn(&f.sig, &f.block);
+                        walker.walk_fn(&f.sig, &f.block, Some(owner));
                     });
                 });
             }
             ImplItem::Const(c) => {
                 let name = c.ident.to_string();
                 self.within_item(name, |walker| {
-                    walker.maybe_suppressed(&c.attrs, |walker| walker.walk_const_expr(&c.expr));
+                    walker.maybe_suppressed(&c.attrs, |walker| walker.walk_const_item(&c.expr));
                 });
             }
             ImplItem::Macro(m) => self.macro_site(&m.mac),
@@ -851,14 +895,14 @@ impl<'a> Walker<'a> {
         }
     }
 
-    fn walk_trait_item(&mut self, member: &TraitItem) {
+    fn walk_trait_item(&mut self, member: &TraitItem, owner: &str) {
         match member {
             TraitItem::Fn(f) => {
                 if let Some(block) = &f.default {
                     let name = f.sig.ident.to_string();
                     self.within_item(name, |walker| {
                         walker.maybe_suppressed(&f.attrs, |walker| {
-                            walker.walk_fn(&f.sig, block);
+                            walker.walk_fn(&f.sig, block, Some(owner));
                         });
                     });
                 }
@@ -867,7 +911,7 @@ impl<'a> Walker<'a> {
                 if let Some((_, expr)) = &c.default {
                     let name = c.ident.to_string();
                     self.within_item(name, |walker| {
-                        walker.maybe_suppressed(&c.attrs, |walker| walker.walk_const_expr(expr));
+                        walker.maybe_suppressed(&c.attrs, |walker| walker.walk_const_item(expr));
                     });
                 }
             }
@@ -876,18 +920,36 @@ impl<'a> Walker<'a> {
         }
     }
 
-    fn walk_fn(&mut self, sig: &Signature, block: &Block) {
+    /// Walks a function's body, which is a body of its own even where it sits in another function's, and remembers a `const fn` so every guard in it can name the `const` it needs taken away.
+    fn walk_fn(&mut self, sig: &Signature, block: &Block, owner: Option<&str>) {
+        let compiling = std::mem::replace(&mut self.compiling, false);
         let (generic, defaultable) = parameters(&sig.generics);
+        let const_fn = sig.constness.map(|keyword| {
+            let at = self.const_fns.len();
+            self.const_fns.push(super::ConstFn {
+                keyword: self.span(&keyword),
+                name: sig.ident.to_string(),
+                owner: owner.map(ToOwned::to_owned),
+            });
+            at
+        });
         let frame = Frame {
             ret: return_kind_within(&sig.output, &generic, &defaultable),
+            const_fn,
         };
-        if sig.constness.is_some() {
-            self.with_suppression(SkipReason::ConstFnBody, |walker| {
-                walker.with_frame(frame, |walker| walker.walk_block(block, true));
-            });
-        } else {
-            self.with_frame(frame, |walker| walker.walk_block(block, true));
+        self.with_frame(frame, |walker| walker.walk_block(block, true));
+        self.compiling = compiling;
+    }
+
+    /// Walks an opted-in const item as build selectors, preserving every surrounding suppression.
+    fn walk_const_item(&mut self, expr: &Expr) {
+        if !self.selection.compile_items {
+            self.walk_const_expr(expr);
+            return;
         }
+        let compiling = std::mem::replace(&mut self.compiling, true);
+        self.walk_expr(expr, Ctx::new(Kind::Value, None));
+        self.compiling = compiling;
     }
 
     fn walk_const_expr(&mut self, expr: &Expr) {
@@ -1095,12 +1157,14 @@ impl<'a> Walker<'a> {
             Expr::Async(a) => {
                 let frame = Frame {
                     ret: ReturnKind::Unknown,
+                    const_fn: None,
                 };
                 self.with_frame(frame, |walker| walker.walk_block(&a.block, false));
             }
             Expr::TryBlock(t) => {
                 let frame = Frame {
                     ret: ReturnKind::Unknown,
+                    const_fn: self.frames.last().and_then(|frame| frame.const_fn),
                 };
                 self.with_frame(frame, |walker| walker.walk_block(&t.block, false));
             }
@@ -1136,7 +1200,10 @@ impl<'a> Walker<'a> {
                     self.crash_after(expr, ctx);
                 }
                 self.walk_method_name(m, ctx);
-                let chain = ctx.wrap.unwrap_or_else(|| self.span(m));
+                let chain = match ctx.wrap {
+                    Some(outer) => outer,
+                    None => self.span(m),
+                };
                 self.walk_expr(&m.receiver, value.wrapping(chain));
                 for arg in &m.args {
                     self.walk_expr(arg, value);
@@ -1190,7 +1257,7 @@ impl<'a> Walker<'a> {
     /// The edit that swaps `binary`'s operator for `replacement`, written so the text reads back as exactly that swap: the same operands, grouped as they were.
     /// A swap that binds as tightly as the operator it replaces cannot regroup anything and is the token alone; any other is held to the file's tree, and nothing is proposed where no writing keeps it.
     fn swap(&self, binary: &syn::ExprBinary, replacement: &str) -> Option<(Span, String)> {
-        use super::regroup::{Binding, Side, regroups};
+        use super::regroup::{Side, binding, regroups};
         let op = self.span(&binary.op);
         let new = match self.parsing.read::<BinOp>(replacement) {
             Ok(new) => new,
@@ -1200,7 +1267,7 @@ impl<'a> Walker<'a> {
                 return None;
             }
         };
-        let (was, now) = (Binding::of(&binary.op)?, Binding::of(&new)?);
+        let (was, now) = (binding(binary.op)?, binding(new)?);
         let token = (op, replacement.to_owned());
         if was == now {
             return Some(token);
@@ -1457,10 +1524,10 @@ impl<'a> Walker<'a> {
                     self.walk_expr(value, ctx.value());
                     return;
                 }
-                let label = one
-                    .label
-                    .as_ref()
-                    .map_or_else(String::new, |label| format!(" {label}"));
+                let label = match one.label.as_ref() {
+                    Some(label) => format!(" {label}"),
+                    None => String::new(),
+                };
                 ("break-to-continue", format!("continue{label}"))
             }
             Expr::Continue(one) => {
@@ -1471,10 +1538,10 @@ impl<'a> Walker<'a> {
                     );
                     return;
                 }
-                let label = one
-                    .label
-                    .as_ref()
-                    .map_or_else(String::new, |label| format!(" {label}"));
+                let label = match one.label.as_ref() {
+                    Some(label) => format!(" {label}"),
+                    None => String::new(),
+                };
                 ("continue-to-break", format!("break{label}"))
             }
             _ => return,
@@ -1879,6 +1946,7 @@ impl<'a> Walker<'a> {
                 ReturnType::Default => ReturnKind::Unknown,
                 typed @ ReturnType::Type(..) => return_kind(typed),
             },
+            const_fn: None,
         };
         self.with_frame(frame, |walker| match &*c.body {
             Expr::Block(b) => walker.walk_block(&b.block, true),

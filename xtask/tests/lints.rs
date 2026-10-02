@@ -30,6 +30,112 @@ fn ordinary_code_is_not_a_finding() {
 }
 
 #[test]
+fn os_records_cannot_be_read_through_unbounded_pointers() {
+    for source in [
+        "fn read(raw: *const u8) { unsafe { raw.read_unaligned() }; }",
+        "fn read(raw: *const u8) { unsafe { raw.add(4).read() }; }",
+        "fn read(raw: *const u8) { unsafe { std::slice::from_raw_parts(raw, 4) }; }",
+        "fn read(raw: *const u8) { unsafe { *raw }; }",
+        "fn read(buffer: Vec<u8>) { buffer.as_ptr().cast::<Record>(); }",
+        "use std::ptr::read_unaligned as load;",
+        "macro_rules! load { ($raw:expr) => { unsafe { $raw.offset(1).read() } } }",
+        "use std::ptr::read as load;",
+        "fn read(raw: *const u8) { unsafe { std::ptr::read(raw) }; }",
+        "struct Reader; impl Reader { unsafe fn load(raw: *const u8) { raw.read(); } }",
+        "macro_rules! load { ($buffer:expr) => { $buffer.as_ptr().cast::<Record>() } }",
+        "macro_rules! load { ($raw:expr) => { unsafe { *$raw } } }",
+    ] {
+        let found = scan_source("crates/rust-mutants/src/capdir/windows.rs", source)
+            .expect("the source parses");
+        assert!(
+            found
+                .iter()
+                .any(|finding| finding.kind.label() == "raw-buffer-pointer"),
+            "an OS record must carry its owner's bounds: {source}: {found:?}"
+        );
+    }
+}
+
+#[test]
+fn pointer_operations_cannot_escape_through_safe_arithmetic_or_inference() {
+    for source in [
+        "fn input(raw: *const u8) { raw.wrapping_add(4); }",
+        "fn input(raw: *const u8) { raw.wrapping_byte_offset(4); }",
+        "fn input(buffer: Vec<u8>) { let raw: *const Record = buffer.as_ptr().cast(); }",
+        "fn input(raw: *const u8) { unsafe { raw.offset_from(raw) }; }",
+        "macro_rules! input { ($raw:expr) => { $raw.wrapping_add(4) } }",
+    ] {
+        let found = scan_source("crates/rust-mutants/src/capdir/windows.rs", source)
+            .expect("the source parses");
+        assert!(
+            found
+                .iter()
+                .any(|finding| finding.kind == Kind::RawBufferPointer),
+            "a raw pointer cannot acquire unproved bounds: {source}: {found:?}"
+        );
+    }
+    let source = "fn input(buffer: Vec<u8>) { unsafe { ForeignCall(buffer.as_ptr().cast()) }; }";
+    assert!(
+        scan_source("crates/rust-mutants/src/capdir/windows.rs", source)
+            .expect("the source parses")
+            .iter()
+            .all(|finding| finding.kind != Kind::RawBufferPointer),
+        "the opaque argument conversion itself reads no record"
+    );
+}
+
+#[test]
+fn sensitive_sources_include_constants_and_enum_constructors() {
+    for source in [
+        "const PASSWORD: &str = \"synthetic\";",
+        "static API_KEY: &str = \"synthetic\";",
+        "enum Input { Password(String) }",
+        "macro_rules! input { () => { const PASSWORD: &str = \"synthetic\"; } }",
+    ] {
+        assert!(
+            kinds(source).contains(&Kind::SensitiveName),
+            "every sensitive source needs a protected representation: {source}"
+        );
+    }
+    assert!(
+        !kinds("const PASSWORD: rust_mutants::sensitive::Sensitive<&str> = rust_mutants::sensitive::Sensitive::new(\"synthetic\");")
+            .contains(&Kind::SensitiveName)
+    );
+}
+
+#[test]
+fn sensitive_names_require_a_redacting_type_or_an_honest_domain_name() {
+    for source in [
+        "fn account() -> u32 { 2 }",
+        "fn accounts() -> u32 { 2 }",
+        "fn read() { let password = String::new(); println!(\"{password}\"); }",
+        "struct Settings { api_key: String }",
+        "macro_rules! read { () => { let secret = String::new(); } }",
+        "fn read(values: Vec<String>) { for password in values { println!(\"{password}\"); } }",
+        "fn read(value: Option<String>) { if let Some(api_key) = value { println!(\"{api_key}\"); } }",
+    ] {
+        assert!(
+            kinds(source)
+                .iter()
+                .any(|kind| kind.label() == "sensitive-name"),
+            "a sensitive-looking value must state its protected representation: {source}"
+        );
+    }
+    for source in [
+        "fn harness_report() -> u32 { 2 }",
+        "struct Settings { password: rust_mutants::sensitive::Sensitive<String> }",
+        "fn read(secret: rust_mutants::sensitive::Sensitive<String>) {}",
+        "fn read() { let secret: rust_mutants::sensitive::Sensitive<String> = rust_mutants::sensitive::Sensitive::new(String::new()); println!(\"{secret}\"); }",
+    ] {
+        assert_eq!(
+            kinds(source),
+            [],
+            "the representation states the protection: {source}"
+        );
+    }
+}
+
+#[test]
 fn lossy_text_conversions_cannot_turn_distinct_bytes_or_paths_into_one_string() {
     for source in [
         "//! A file.\nfn read(bytes: &[u8]) { drop(String::from_utf8_lossy(bytes)); }\n",
@@ -185,6 +291,64 @@ fn cfg_excluded_platform_code_cannot_hide_an_unchecked_cast() {
         .is_empty(),
         "a checked conversion preserves the failure branch"
     );
+}
+
+#[test]
+fn unsafe_code_lives_only_in_the_modules_the_rule_names() {
+    const MODULES: [&str; 4] = [
+        "crates/rust-mutants/src/capdir/windows.rs",
+        "crates/rust-mutants/src/runner/unix.rs",
+        "crates/rust-mutants/src/runner/windows.rs",
+        "crates/rust-mutants/src/tempowner/lock.rs",
+    ];
+    let outside = |file: &str, source: &str| {
+        scan_source(file, source)
+            .expect("the source parses")
+            .iter()
+            .any(|finding| finding.kind.label() == "unsafe-outside-ffi")
+    };
+    for source in [
+        "fn f() { unsafe { g() } }",
+        "unsafe fn f() {}",
+        "trait Boundary { unsafe fn f(); }",
+        "unsafe trait Marker {}",
+        "unsafe impl Send for Handle {}",
+        "unsafe extern \"system\" { fn CloseHandle(handle: isize) -> i32; }",
+        "#[expect(unsafe_code, reason = \"one boundary\")]\nfn f() {}",
+        "#[cfg_attr(windows, expect(unsafe_code, reason = \"one boundary\"))]\nfn f() {}",
+        "#[warn(unsafe_code)]\nfn f() {}",
+        "macro_rules! boundary { ($call:expr) => { unsafe { $call } } }",
+        "fn f() { boundary!(unsafe { g() }); }",
+    ] {
+        for elsewhere in [
+            "crates/rust-mutants/src/capdir/mod.rs",
+            "crates/app/src/runner/windows.rs",
+            "crates/njutest/tests/reports_store.rs",
+            "xtask/src/lib.rs",
+            "fuzz/fuzz_targets/parse.rs",
+        ] {
+            assert!(
+                outside(elsewhere, source),
+                "unsafe code outside the named modules is one more boundary nobody listed: \
+                 {elsewhere}: {source}"
+            );
+        }
+        for module in MODULES {
+            assert!(
+                !outside(module, source),
+                "a named module is where the foreign boundary is allowed to be: {module}: {source}"
+            );
+        }
+    }
+    for module in MODULES {
+        assert!(
+            scan_source(module, "fn size(value: usize) -> u32 { value as u32 }")
+                .expect("the source parses")
+                .iter()
+                .any(|finding| finding.kind == Kind::UncheckedCast),
+            "the list that permits unsafe code is the list held to checked conversions: {module}"
+        );
+    }
 }
 
 #[test]
@@ -692,6 +856,16 @@ fn vacuous_cfg_cannot_hide_code_or_pretend_to_condition_it() {
         "#[cfg(not(all()))] fn dormant() {}\n",
         "#[cfg(all())] fn unconditional() {}\n",
         "#[cfg(not(any()))] fn unconditional() {}\n",
+        "#[cfg(unix)] #[cfg(not(unix))] fn impossible() {}\n",
+        "#[cfg(feature = \"extra\")] #[cfg(not(feature = \"extra\"))] fn impossible() {}\n",
+        "#[cfg(all(unix, not(unix)))] fn impossible() {}\n",
+        "#[cfg(any(unix, windows))] #[cfg(not(any(unix, windows)))] fn impossible() {}\n",
+        "#[cfg(unix)] mod platform { #[cfg(not(unix))] fn impossible() {} }\n",
+        "#[cfg(unix)] #[cfg_attr(unix, cfg(not(unix)))] fn impossible() {}\n",
+        "#[cfg_attr(unix, cfg(not(unix)))] #[cfg(unix)] fn impossible() {}\n",
+        "#[cfg_attr(unix, cfg_attr(unix, cfg(not(unix))))] #[cfg(unix)] fn impossible() {}\n",
+        "#[cfg_attr(unix, cfg(not(unix)))] #[cfg_attr(not(unix), cfg(unix))] fn impossible() {}\n",
+        "#[cfg(unix)] mod platform { #[cfg_attr(unix, cfg(not(unix)))] fn impossible() {} }\n",
         "#[cfg_attr(test, cfg(any()))] fn nested() {}\n",
         "macro_rules! hidden { () => { #[cfg(any())] fn dormant() {} } }\n",
         "fn active() -> bool { cfg!(all()) }\n",
@@ -707,6 +881,11 @@ fn vacuous_cfg_cannot_hide_code_or_pretend_to_condition_it() {
     }
     for source in [
         "#[cfg(unix)] fn platform() {}\n",
+        "#[cfg(unix)] #[cfg(feature = \"extra\")] fn platform() {}\n",
+        "#[cfg(any(unix, windows))] #[cfg(not(unix))] fn windows_only() {}\n",
+        "#[cfg_attr(unix, cfg(not(unix)))] fn other_platform() {}\n",
+        "#[cfg(unix)] #[cfg_attr(not(unix), cfg(not(unix)))] fn unix_only() {}\n",
+        "#[cfg(not(unix))] #[cfg_attr(unix, cfg(unix))] fn other_platform() {}\n",
         "#[cfg_attr(test, derive(Debug))] struct Conditional;\n",
         "fn platform() -> bool { cfg!(windows) }\n",
     ] {
@@ -715,6 +894,30 @@ fn vacuous_cfg_cannot_hide_code_or_pretend_to_condition_it() {
             "a real cfg boundary was mistaken for a constant: {source}"
         );
     }
+}
+
+#[test]
+fn contradictory_child_cfg_is_reported_at_the_child_attribute() {
+    let source = "#[cfg(unix)]\nmod platform {\n    #[cfg(not(unix))]\n    fn impossible() {}\n}\n";
+    let lines: Vec<_> = scan_source("a.rs", source)
+        .expect("the source parses")
+        .into_iter()
+        .filter(|finding| finding.kind == Kind::VacuousCfg)
+        .map(|finding| finding.line)
+        .collect();
+    assert_eq!(lines, [3]);
+}
+
+#[test]
+fn contradictory_cfg_attr_is_reported_at_the_attribute_that_closes_the_contradiction() {
+    let source = "#[cfg(unix)]\n#[cfg_attr(unix, cfg(not(unix)))]\nfn impossible() {}\n";
+    let lines: Vec<_> = scan_source("a.rs", source)
+        .expect("the source parses")
+        .into_iter()
+        .filter(|finding| finding.kind == Kind::VacuousCfg)
+        .map(|finding| finding.line)
+        .collect();
+    assert_eq!(lines, [2]);
 }
 
 #[test]
@@ -803,18 +1006,36 @@ fn an_expect_is_the_waiver_this_repository_writes() {
 
 #[test]
 fn an_expectation_cannot_waive_future_dead_or_unsafe_code_for_a_module() {
+    let in_a_named_module = |source: &str| {
+        scan_source("crates/rust-mutants/src/runner/windows.rs", source)
+            .expect("the source parses")
+            .into_iter()
+            .map(|finding| finding.kind)
+            .collect::<Vec<_>>()
+    };
     for source in [
         "//! A file.\n#![expect(dead_code, reason = \"one current item\")]\nfn unused() {}\n",
         "//! A file.\n#[cfg_attr(test, expect(unsafe_code, reason = \"one current block\"))]\nmod ffi {}\n",
     ] {
-        assert_eq!(kinds(source), [Kind::BroadExpectation], "{source}");
+        assert_eq!(
+            in_a_named_module(source),
+            [Kind::BroadExpectation],
+            "{source}"
+        );
     }
     assert_eq!(
-        kinds(
+        in_a_named_module(
             "//! A file.\nfn ffi() { #[expect(unsafe_code, reason = \"one FFI call\")] unsafe { std::ptr::read_volatile(&0); } }\n"
         ),
+        [Kind::RawBufferPointer],
+        "an unsafe expectation cannot waive the bounded-reader rule"
+    );
+    assert_eq!(
+        in_a_named_module(
+            "//! A file.\nfn ffi() { #[expect(unsafe_code, reason = \"one FFI call\")] unsafe { ForeignCall(); } }\n"
+        ),
         [],
-        "the exact unsafe expression remains a compiler-checked exception"
+        "the exact foreign call remains a compiler-checked exception"
     );
 }
 
@@ -1508,6 +1729,8 @@ fn a_macro_cannot_make_a_checked_attribute_opaque_to_the_gate() {
         "//! A file.\nmacro_rules! input { ($policy:meta) => { #[serde($policy)] struct Input { value: String } } }\n",
         "//! A file.\nmacro_rules! input { ($condition:meta) => { #[cfg_attr($condition, derive(serde::Deserialize))] struct Input { value: String } } }\n",
         "//! A file.\n#[cfg_attr(test, derive($derive))]\nstruct Input { value: String }\n",
+        "#[cfg(all(,))] fn hidden() {}\n",
+        "macro_rules! hidden { ($condition:meta) => { #[cfg($condition)] fn hidden() {} } }\n",
     ] {
         assert!(
             kinds(source).contains(&Kind::OpaqueMacroSyntax),
@@ -1767,6 +1990,51 @@ fn the_engine_s_own_annotation_is_an_instruction_rather_than_an_account() {
         kinds("//! A file.\n\npub fn f() {\n    // rust-mutants: skip nothing to see\n}\n"),
         [],
         "a skip marker is read by the engine, and its syntax is what says so"
+    );
+}
+
+/// The lines `source`, laid at `file`, holds a value supplied where its input gave none on.
+fn defaulted_lines(file: &str, source: &str) -> Vec<usize> {
+    scan_source(file, source)
+        .expect("the source parses")
+        .into_iter()
+        .filter(|finding| finding.kind == Kind::DefaultedAbsence)
+        .map(|finding| finding.line)
+        .collect()
+}
+
+#[test]
+fn an_audit_reader_supplying_a_value_its_input_never_gave_is_refused_and_a_test_module_is_not() {
+    let source = "//! A reader.\n\
+                  fn read(v: Option<u8>) -> u8 { v.unwrap_or(0) }\n\
+                  fn mapped(v: Option<u8>) -> u8 { v.map_or(1, |x| x) }\n\
+                  fn all(v: Vec<Option<u8>>) -> Vec<u8> { v.into_iter().map(Option::unwrap_or_default).collect() }\n\
+                  #[cfg(test)] mod tests { fn t(v: Option<u8>) -> u8 { v.unwrap_or_default() } }\n";
+    assert_eq!(
+        defaulted_lines("xtask/src/proofaudit/knobs.rs", source),
+        [2, 3, 4],
+        "a value supplied where the input gave none is refused where the audit runs, and a test \
+         building its own specimen is not the audit"
+    );
+    assert_eq!(
+        defaulted_lines("crates/app/src/lib.rs", source),
+        Vec::<usize>::new(),
+        "outside the audit readers a default is somebody else's contract"
+    );
+}
+
+#[test]
+fn a_value_supplied_inside_a_macro_is_refused_like_one_outside() {
+    let source = "//! A reader.\n\
+                  fn say(v: Option<&str>) -> String { format!(\"{}\", v.unwrap_or(\"?\")) }\n\
+                  fn doc(v: Option<u8>) -> serde_json::Value { serde_json::json!({ \"n\": v.map_or(0, u8::from) }) }\n\
+                  fn check(v: Option<u8>) { assert!(v.map(Option::Some).unwrap_or_default().is_some()); }\n\
+                  fn named(unwrap_or: u8) -> String { format!(\"{unwrap_or}\") }\n";
+    assert_eq!(
+        defaulted_lines("xtask/src/route.rs", source),
+        [2, 3, 4],
+        "syn leaves a macro's arguments as tokens, so a value supplied inside format!, json! or \
+         assert! is read from the tokens; a name that is only a binding is not a call"
     );
 }
 
@@ -2413,6 +2681,18 @@ fn text_read_by_the_reader_or_for_a_test_or_as_no_rust_is_no_raw_lexing() {
         ),
         (
             "crates/app/src/lib.rs",
+            "fn count(text: &str) -> bool { str::parse::<u32>(text).is_ok() }",
+        ),
+        (
+            "crates/app/src/lib.rs",
+            "fn count(text: &str) -> String { format!(\"{}\", text.parse::<u32>().is_ok()) }",
+        ),
+        (
+            "crates/app/src/lib.rs",
+            "fn named() -> String { format!(\"{}\", stringify!(syn::parse::Parser)) }",
+        ),
+        (
+            "crates/app/src/lib.rs",
             "fn table(text: &str) -> bool { toml::from_str::<toml::Table>(text).is_ok() }",
         ),
         (
@@ -2460,6 +2740,7 @@ fn an_environment_held_as_raw_pairs_is_refused_wherever_it_is_named() {
     }
     for held in [
         "crates/rust-mutants/src/vars.rs",
+        "xtask/src/environment.rs",
         "crates/njutest-devkit/src/paths.rs",
     ] {
         let found = scan_source(
@@ -2472,16 +2753,34 @@ fn an_environment_held_as_raw_pairs_is_refused_wherever_it_is_named() {
              dependency of"
         );
     }
+    for reader in [
+        "xtask/src/lanes.rs",
+        "xtask/src/prepush.rs",
+        "xtask/tests/slot.rs",
+    ] {
+        let found = scan_source(
+            reader,
+            "fn given() -> Vec<(OsString, OsString)> { Vec::new() }",
+        );
+        assert!(
+            found.is_ok_and(|found| found.iter().any(|one| one.kind == Kind::RawEnvironment)),
+            "xtask reads its environment through `xtask::environment` alone, whose rule is the \
+             engine's, so pairs anywhere else in it are a reader comparing names by bytes: \
+             {reader}"
+        );
+    }
+}
+
+fn signals(file: &str, source: &str) -> bool {
+    scan_source(file, source)
+        .expect("the source parses")
+        .into_iter()
+        .any(|finding| finding.kind == Kind::RawGroupSignal)
 }
 
 #[test]
 fn only_the_runner_signals_a_process_group_in_shipped_code() {
-    let shipped = |file: &str, source: &str| {
-        scan_source(file, source)
-            .expect("the source parses")
-            .into_iter()
-            .any(|finding| finding.kind == Kind::RawGroupSignal)
-    };
+    let shipped = signals;
     let group_kill = "fn stop(pid: rustix::process::Pid) { let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL); }";
     assert!(
         shipped("crates/njutest/src/provider.rs", group_kill),
@@ -2505,4 +2804,147 @@ fn only_the_runner_signals_a_process_group_in_shipped_code() {
             "a child's own `kill`, a liveness probe, and a function merely named `kill` signal no group: {passing}"
         );
     }
+}
+
+#[test]
+fn only_one_module_of_the_phases_reads_how_a_process_ended() {
+    let asks = |file: &str, source: &str| {
+        scan_source(file, source)
+            .expect("the source parses")
+            .into_iter()
+            .any(|finding| finding.kind == Kind::RawProcessEnd)
+    };
+    let asked = "fn ended(ran: &rust_mutants::runner::RunResult) -> bool { ran.succeeded() }";
+    assert!(
+        asks("crates/njutest/src/assure/deep.rs", asked),
+        "a phase that asks one question about how its process ended leaves every other ending to \
+         whoever forgot it"
+    );
+    assert!(
+        !asks("crates/njutest/src/assure/ended.rs", asked),
+        "the module that sorts every ending at once is where the questions are asked"
+    );
+    assert!(
+        !asks("crates/njutest/src/targets.rs", asked),
+        "outside the phases a listing that did not succeed is refused whatever ended it, which \
+         concludes nothing about the suite"
+    );
+    assert!(
+        !asks(
+            "crates/njutest/src/assure/deep.rs",
+            "fn ended(status: std::process::ExitStatus) -> bool { status.success() }"
+        ),
+        "a standard exit status says `success`, which is not a supervised run's end"
+    );
+}
+
+#[test]
+fn a_signal_spelled_as_a_path_a_script_a_number_or_a_method_is_still_a_signal() {
+    for source in [
+        "fn s() { let _ = std::process::Command::new(\"/usr/bin/pkill\"); }",
+        "fn s() { let _ = std::process::Command::new(\"C:\\\\Windows\\\\System32\\\\TASKKILL.EXE\"); }",
+        "fn s() { let _ = std::process::Command::new(std::path::Path::new(\"/bin/kill\")); }",
+        "const PROGRAM: &str = \"pkill\";\nfn s() { let _ = std::process::Command::new(PROGRAM); }",
+        "fn s() { let program = \"killall\"; let _ = std::process::Command::new(program); }",
+        "fn s() -> [&'static str; 3] { [\"kill\", \"-9\", \"42\"] }",
+        "fn s() -> Vec<&'static str> { vec![\"/usr/bin/pkill\", \"-f\", \"runner\"] }",
+        "fn s() { let _ = std::process::Command::new(\"sh\").args([\"-c\", \"kill -9 -1\"]); }",
+        "fn s() { let _ = std::process::Command::new(\"bash\").arg(\"-c\").arg(\"sleep 1; pkill -f runner\"); }",
+        "fn s(pid: u32) { let _ = std::process::Command::new(\"sh\").arg(\"-c\").arg(format!(\"exec kill -TERM {pid}\")); }",
+        "fn s() { let mut shell = std::process::Command::new(\"sh\"); shell.arg(\"-c\"); shell.arg(\"killall runner\"); }",
+        "fn s() { let _ = std::process::Command::new(\"powershell\").args([\"-Command\", \"Stop-Process -Id 42\"]); }",
+        "fn s() { let _ = std::process::Command::new(\"cmd\").args([\"/C\", \"taskkill /PID 42 /F\"]); }",
+        "fn s() { let _ = std::process::Command::new(\"sudo\").args([\"-n\", \"kill\", \"42\"]); }",
+        "fn s() { let _ = std::process::Command::new(\"timeout\").args([\"5\", \"kill\", \"42\"]); }",
+        "fn s(p: i64) { unsafe { libc::syscall(62, p, 9); } }",
+        "fn s(number: i64, p: i64) { unsafe { libc::syscall(number, p, 9); } }",
+        "fn s() { unsafe { core::arch::asm!(\"syscall\"); } }",
+        "unsafe extern \"C\" { fn kill(pid: i32, sig: i32) -> i32; }",
+        "unsafe extern \"C\" { #[link_name = \"kill\"] fn end(pid: i32, sig: i32) -> i32; }",
+        "fn s(process: &sysinfo::Process) { process.kill(); }",
+        "fn s(group: &mut command_group::GroupChild) { let _ = group.kill(); }",
+        "fn s(process: &sysinfo::Process) { let same = process; same.kill(); }",
+        "fn s() { let _ = lookup(42).kill(); }",
+        "fn s(pid: Pid) { let _ = pid.killpg(); }",
+        "fn s(process: &sysinfo::Process) { sysinfo::Process::kill(process); }",
+        "fn s(pid: u32) { assert!(nix::sys::signal::kill(pid, None).is_ok()); }",
+    ] {
+        assert!(
+            signals("crates/njutest/src/provider.rs", source),
+            "a program named by its path, a script a shell is handed, a system call by its \
+             number, a foreign declaration, and a method of a type that is not a child this \
+             process owns each signal a process by its id: {source}"
+        );
+    }
+}
+
+#[test]
+fn a_name_that_only_looks_like_a_signal_is_none() {
+    for source in [
+        "struct Reaper;\nimpl Reaper { fn kill(&self) {} }\nfn f(r: &Reaper) { Reaper::kill(r); r.kill(); }",
+        "fn f() -> bool { let kill = true; kill }",
+        "struct S { kill: bool }\nfn f(kill: bool) -> S { S { kill } }",
+        "fn f(verb: &str) -> bool { verb == \"kill\" }",
+        "fn f(outcome: Result<(), String>) { outcome.expect(\"kill\"); }",
+        "fn f(word: &str) -> u8 { match word { \"kill\" => 1, _ => 0 } }",
+        "fn f() { assert_eq!(label(), \"kill\"); }",
+        "fn s(c: &mut std::process::Child) -> std::io::Result<()> { <std::process::Child>::kill(c) }",
+        "fn s(c: &mut std::process::Child) -> std::io::Result<()> { std::process::Child::kill(c) }",
+        "struct Owner { child: std::process::Child }\nimpl Owner { fn end(&mut self) -> std::io::Result<()> { self.child.kill() } }",
+        "struct Owner { child: Option<std::process::Child> }\nimpl Owner { fn end(&mut self) -> std::io::Result<()> { let Some(child) = self.child.as_mut() else { return Ok(()); }; child.kill() } }",
+        "fn s(command: &mut std::process::Command) -> std::io::Result<()> { command.spawn()?.kill() }",
+        "fn s() { let _ = std::process::Command::new(\"git\").args([\"log\", \"--grep\", \"kill\"]); }",
+        "fn s() { let _ = std::process::Command::new(\"git\").args([\"commit\", \"-m\", \"kill the flake\"]); }",
+        "fn s() { let _ = std::process::Command::new(\"sh\").args([\"-c\", \"echo kill\"]); }",
+        "fn s() { unsafe { libc::syscall(libc::SYS_getpid); } }",
+        "fn s() { println!(\"kill {}\", 1); }",
+    ] {
+        assert!(
+            !signals("crates/njutest/src/provider.rs", source),
+            "a method of a type this file writes, a child's own `kill`, a binding, a field and a \
+             word that is only text signal nothing: {source}"
+        );
+    }
+}
+
+#[test]
+fn every_place_code_runs_from_is_held_to_the_one_signaller() {
+    let signalling = "fn s() { unsafe { libc::kill(1, 9); } }";
+    for held in [
+        "crates/njutest/build.rs",
+        "compiler-surfaces/build.rs",
+        "compiler-surfaces/src/bin/xtask.rs",
+        "fuzz/fuzz_targets/cargo_metadata.rs",
+        "crates/rust-mutants/examples/fake_provider.rs",
+        "crates/rust-mutants/benches/pipeline.rs",
+        "crates/njutest/src/tests/helper.rs",
+        "xtask/src/lanes.rs",
+    ] {
+        assert!(
+            signals(held, signalling),
+            "a build script, a fuzz target, an example, a benchmark, a compiler surface and a \
+             module under src/tests all run somewhere, and a signal from there is one more place \
+             that decides what the kernel's answer means: {held}"
+        );
+    }
+    for exempt in [
+        "crates/njutest/tests/toolchain_interrupt.rs",
+        "xtask/tests/slot.rs",
+        "crates/rust-mutants/src/runner/unix.rs",
+        "crates/rust-mutants/src/runner/windows.rs",
+        "xtask/src/work.rs",
+    ] {
+        assert!(
+            !signals(exempt, signalling),
+            "a suite interrupts what it started the way a person would, and the one signaller of \
+             each platform is where the question is answered: {exempt}"
+        );
+    }
+    assert!(
+        !signals(
+            "crates/njutest/src/tests/helper.rs",
+            &format!("#![cfg(test)]\n{signalling}")
+        ),
+        "a module that says it is compiled only for tests is test code wherever it sits"
+    );
 }

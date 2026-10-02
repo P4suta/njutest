@@ -9,6 +9,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 Accepted, 2026-09-23.
 Bounds what `[mutation] timeout` means for an execution that counts its steps.
+Amended by [ADR 0046](0046-a-verdict-is-what-a-sealed-run-observed.md): a sealed run is bounded by fuel alone; the quiet window stays with native runs, which produce leads.
 
 ## Context
 

@@ -26,17 +26,15 @@ pub fn document(document: &RunDocument) -> String {
 }
 
 fn score(out: &mut String, document: &RunDocument) {
-    let said = document.score.as_ref().map_or_else(
-        || "The run decided nothing, which is not a score of zero.".to_owned(),
-        |score| {
-            format!(
-                "**{:.1}%** — {} detected of {} decided",
-                score.value * 100.0,
-                score.detected,
-                score.decided
-            )
-        },
-    );
+    let said = match document.score.as_ref() {
+        Some(score) => format!(
+            "**{:.1}%** — {} detected of {} decided",
+            score.value * 100.0,
+            score.detected,
+            score.decided
+        ),
+        None => "The run decided nothing, which is not a score of zero.".to_owned(),
+    };
     crate::text::line(out, format_args!("{said}\n"));
 }
 

@@ -20,10 +20,9 @@ Every mutant the compiler takes here is killed. That is the point of it: a
 shape the walker reads wrongly, or a test that does not cover what it looks
 like it covers, shows up as a survivor rather than as silence somewhere else.
 
-Nothing here is an `unsupported-site` and nothing here is refused: every place
-the rules target is a place a guard can be written, and the return types the
-syntax cannot say have a default — `T` with no bound, `F::Output` — are stated
-as `unstated-return-type` rather than offered for the compiler to refuse.
+Nothing here is an `unsupported-site`: every place the rules target is a place a guard can be written, and the return types the syntax cannot say have a default — `T` with no bound, `F::Output` — are stated as `unstated-return-type` rather than offered for the compiler to refuse.
+The derived attributes are opaque expansion outside the validation build, so `Counter::new` keeps its `const` and its two candidates are counted as `unvalidated-const-use` ([ADR 0047](../../docs/adr/0047-a-const-fn-is-mutated-where-nothing-evaluates-it-early.md)).
+No candidate is refused by the compiler.
 
 Both assertions about the counter are bounded with `take`. A mutation that
 stops the counter stopping has to fail rather than run for ever: an unbounded

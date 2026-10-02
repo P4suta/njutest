@@ -11,6 +11,7 @@
               test caused to be written is one it may index"
 )]
 
+use std::ffi::OsString;
 use std::path::Path;
 use std::process::Output;
 
@@ -27,8 +28,56 @@ fn run(fixture: &Fixture, env: &[(&str, String)]) -> Output {
     }
     command.arg("run");
     command.args(["--root", njutest_devkit::paths::utf8(fixture.root())]);
-    command.args(["--tier", "all", "--offline", "--locked"]);
+    command.args(["--tier", "all", "--offline", "--locked", "--no-seal"]);
     command.output().expect("rust-mutants runs")
+}
+
+fn run_clocked(fixture: &Fixture, env: &[(&str, String)]) -> Output {
+    let events = fixture.temp().join("clock-events");
+    std::fs::create_dir_all(&events).expect("clock events");
+    let mut vars: rust_mutants::vars::Variables =
+        njutest_devkit::paths::environment_for_a_toolchain_run(&[])
+            .into_iter()
+            .collect();
+    vars.set("NJUTEST_TEST_CLOCK", events.as_os_str());
+    for (name, value) in env {
+        vars.set(*name, value);
+    }
+    let environment = rust_mutants_cli::Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
+        vars,
+        temp_directory: fixture.temp().to_path_buf(),
+        program: Path::new(env!("CARGO_BIN_EXE_rust-mutants")).to_path_buf(),
+        cache_directory: fixture.cache().to_path_buf(),
+        working_directory: fixture.root().to_path_buf(),
+        no_color: true,
+        stdout_is_terminal: false,
+        paints: false,
+        ci: rust_mutants_cli::CiHost::None,
+        cargo: None,
+    };
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = rust_mutants_cli::run_from(
+        [
+            "rust-mutants",
+            "run",
+            "--tier",
+            "all",
+            "--offline",
+            "--locked",
+            "--no-seal",
+        ]
+        .into_iter()
+        .map(OsString::from),
+        &environment,
+        &rust_mutants::runner::Cancel::new()
+            .with_clock(rust_mutants::runner::Clock::events(events)),
+        rust_mutants_cli::Streams {
+            out: &mut out,
+            err: &mut err,
+        },
+    );
+    njutest_devkit::process::answered(code, out, err)
 }
 
 /// What to add to a failure when the row says the clock answered instead of the count, and nothing when it does not.
@@ -114,7 +163,7 @@ fn a_timeout_that_does_not_reproduce_is_inconclusive() {
     let fixture = Fixture::copy("fixture-hang");
     let markers = fixture.temp().join("markers");
     std::fs::create_dir_all(&markers).expect("the marker directory");
-    let output = run(
+    let output = run_clocked(
         &fixture,
         &[
             (
@@ -162,7 +211,7 @@ fn a_test_slower_than_the_bound_is_waited_for_while_it_keeps_moving() {
         "version = 1\n\n[mutation]\ntimeout = \"5s\"\nsteps = 1000000\n",
     )
     .expect("the five-second bound, under an allowance one reservation of which outlasts the test");
-    let output = run(&fixture, &[("FIXTURE_HANG_STRIDE_MS", "50".to_owned())]);
+    let output = run_clocked(&fixture, &[("FIXTURE_HANG_STRIDE_MS", "50".to_owned())]);
     assert!(
         output.status.code() == Some(2),
         "{}",
@@ -178,6 +227,12 @@ fn a_test_slower_than_the_bound_is_waited_for_while_it_keeps_moving() {
          allowance holds: {moving}"
     );
     assert_eq!(moving["retried"].as_bool(), Some(false), "{moving}");
+    assert!(
+        moving["duration_ms"]
+            .as_u64()
+            .is_some_and(|elapsed| elapsed >= 10_000),
+        "the virtual execution outlasted its unchanged five-second bound: {moving}"
+    );
 }
 
 #[test]
@@ -239,5 +294,77 @@ fn a_mutation_outside_a_loop_in_a_file_nothing_mutates_is_counted_at_the_boundar
             .iter()
             .all(|row| row["path"].as_str() != Some("src/walk.rs")),
         "the loop's own file is one the run does not mutate"
+    );
+}
+
+/// A stride only a test walks by, in a module of its own.
+const STRIDE: &str = "// SPDX-FileCopyrightText: 2026 njutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! A stride a test walks by in a loop of its own.
+
+/// How far one pace takes a walker.
+#[must_use]
+pub fn stride() -> u32 {
+    1
+}
+";
+
+/// A test whose own loop a stride of zero keeps from ending.
+const WALKER: &str = "// SPDX-FileCopyrightText: 2026 njutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! A loop in test code, which is where a mutation of the stride stops a run ending.
+
+#[test]
+fn walking_ten_by_the_library_s_stride_ends_at_ten() {
+    let stride = fixture_hang::spin::stride();
+    let mut at = 0;
+    while at < 10 {
+        at += stride;
+    }
+    assert_eq!(at, 10);
+}
+";
+
+#[test]
+fn a_loop_in_test_code_a_mutation_keeps_going_is_counted_like_any_other() {
+    let fixture = Fixture::copy("fixture-hang");
+    let library = fixture.root().join("src/lib.rs");
+    let text = std::fs::read_to_string(&library).expect("the library");
+    std::fs::write(&library, format!("{text}\npub mod spin;\n")).expect("declare the stride");
+    std::fs::write(fixture.root().join("src/spin.rs"), STRIDE).expect("write the stride");
+    std::fs::write(fixture.root().join("tests/spin.rs"), WALKER).expect("write the walker");
+    let mut command = njutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
+    command.env("NO_COLOR", "1");
+    command.envs(njutest_devkit::paths::temporary_directory(fixture.temp()));
+    command.env("XDG_CACHE_HOME", fixture.cache());
+    command.arg("run");
+    command.args(["--root", njutest_devkit::paths::utf8(fixture.root())]);
+    command.args(["--tier", "all", "--offline", "--locked", "--no-seal"]);
+    command.args(["--include", "src/spin.rs"]);
+    let output = command.output().expect("rust-mutants runs");
+    assert!(
+        output.status.code() == Some(2),
+        "{}",
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    let stopped = row(&fixture, "int-decrement", 9);
+    assert_eq!(
+        stopped["outcome"].as_str(),
+        Some("step_limit_reached"),
+        "a stride of zero leaves the walker's loop in tests/spin.rs spinning, test code the \
+         library never enters again once the stride is read, and a step counts every boundary \
+         of the workspace's instrumented source, test code included.{}: {stopped}",
+        outran_by_the_clock(&stopped)
+    );
+    assert_eq!(
+        (
+            &stopped["step_notice"]["limit"],
+            &stopped["step_notice"]["observed"]
+        ),
+        (&serde_json::json!(10), &serde_json::json!(11)),
+        "the count ends it at exactly one past the allowance, as it does in library code: \
+         {stopped}"
     );
 }

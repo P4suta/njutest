@@ -238,28 +238,54 @@ pub fn found(drift: &[Drift], records: &[MutantRecord]) -> Vec<Finding> {
         .collect()
 }
 
-/// How many of `records` a proof decided on `target`'s baseline: survivors whose route did not put them to it, and mutations no test reached, each of which says it reached nothing.
+/// How many of `records` a proof decided on `target`'s baseline: survivors, and mutations no test reached, whose route did not put them to it; a sealed verdict put again with `target` counted among those reaching it names it in its route and rests on it no longer (ADR 0036 decision 1).
 #[must_use]
 pub fn resting(records: &[MutantRecord], target: &str) -> (usize, usize) {
-    let discharged = records
-        .iter()
-        .filter(|record| record.outcome.outcome() == Outcome::Survived)
-        .filter(|record| rests_on(record.routing.as_ref(), target))
-        .count();
-    let unreached = records
-        .iter()
-        .filter(|record| record.outcome.outcome() == Outcome::Unreached)
-        .count();
-    (discharged, unreached)
+    let count = |outcome: Outcome| {
+        records
+            .iter()
+            .filter(|record| record.outcome.outcome() == outcome)
+            .filter(|record| rests_on(record.routing.as_ref(), target))
+            .count()
+    };
+    (count(Outcome::Survived), count(Outcome::Unreached))
 }
 
-/// The `reach-moved` limitation for every moved target nothing rests on any more, each with how many dispositions were decided again against it (ADR 0036).
-#[must_use]
+/// How many dispositions resting on one target whose reach moved a part ran again against it and replaced, with an answer or a hole (ADR 0036).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Repaired {
+    /// The target whose reach moved.
+    pub target: String,
+    /// How many dispositions the part ran again against it and replaced.
+    pub again: u32,
+}
+
+/// How many dispositions every part of `repaired` ran again against `target`, over each record naming it.
+///
+/// # Errors
+/// [`super::CountError`] where the sum does not fit the counter.
+fn ran_again(repaired: &[Repaired], target: &str) -> Result<u32, super::CountError> {
+    repaired
+        .iter()
+        .filter(|one| one.target == target)
+        .try_fold(0_u32, |sum, one| {
+            sum.checked_add(one.again)
+                .ok_or(super::CountError::Overflow {
+                    field: "repaired dispositions",
+                })
+        })
+}
+
+/// The `reach-moved` limitation for every moved target nothing rests on, counting what the `repaired` records ran again against it.
+///
+/// # Errors
+/// [`super::CountError`] where a target's count over the parts does not fit the counter.
 pub fn repaired(
     drift: &[Drift],
     records: &[MutantRecord],
-    counted: &BTreeMap<String, usize>,
-) -> Vec<Limitation> {
+    repaired: &[Repaired],
+) -> Result<Vec<Limitation>, super::CountError> {
     drift
         .iter()
         .filter_map(|one| match one {
@@ -268,14 +294,14 @@ pub fn repaired(
         })
         .filter(|target| resting(records, target) == (0, 0))
         .map(|target| {
-            let again = counted.get(target).copied().unwrap_or_default();
-            Limitation::new(
-                crate::limitation::REACH_MOVED,
+            let again = ran_again(repaired, target)?;
+            Ok(Limitation::new(
+                crate::limitation::Limitation::ReachMoved,
                 &format!(
                     "a target reached something on an original-code control that it did not \
                      reach on its baseline, so what it reaches is not a function of the target; \
-                     {again} {} that rested on its baseline {} decided again by running against \
-                     it, and nothing this run concludes stands on the moved record ({target})",
+                     {again} {} that rested on its baseline {} run again against it, and \
+                     nothing this run concludes stands on the moved record ({target})",
                     if again == 1 {
                         "disposition"
                     } else {
@@ -283,7 +309,7 @@ pub fn repaired(
                     },
                     if again == 1 { "was" } else { "were" }
                 ),
-            )
+            ))
         })
         .collect()
 }
@@ -331,7 +357,7 @@ pub fn unmeasured(drift: &[Drift]) -> Option<Limitation> {
         return None;
     }
     Some(Limitation::new(
-        crate::limitation::DRIFT_NOT_MEASURED,
+        crate::limitation::Limitation::DriftNotMeasured,
         &format!(
             "no original-code control over the tests its baseline passed recorded what {} \
              reached, so whether {} reach is a function of the target is not known and every \

@@ -123,10 +123,10 @@ pub fn list(
             continue;
         }
         let candidate_id = candidate.id()?;
-        let mutant = discovery.catalog.by_id(candidate_id.as_str()).map_or_else(
-            || candidate_id.to_string(),
-            |mutant| mutant.display_id.to_string(),
-        );
+        let mutant = match discovery.catalog.by_id(candidate_id.as_str()) {
+            Some(mutant) => mutant.display_id.to_string(),
+            None => candidate_id.to_string(),
+        };
         let position = match sources.get(&candidate.path) {
             Some(source) => position_in(source, candidate.span.start)?,
             None => located.found.position,
@@ -259,11 +259,10 @@ pub fn decisions(discovery: &Discovery, file: &str, line: Option<u32>) -> String
             (None, Some(reason)) => reason.name().to_owned(),
             (None, None) => String::from("-"),
         };
-        let note = decision
-            .note
-            .as_ref()
-            .map(|note| format!("  {note:?}"))
-            .unwrap_or_default();
+        let note = match decision.note.as_ref() {
+            Some(note) => format!("  {note:?}"),
+            None => String::new(),
+        };
         let written = writeln!(
             text,
             "{}:{}  {:<30}  {what}{note}",
@@ -278,21 +277,25 @@ pub fn decisions(discovery: &Discovery, file: &str, line: Option<u32>) -> String
     text
 }
 
-/// What the compiler refused, with its own words.
+/// What validation left out, with the compiler's own words, and why where it was not a refusal.
 #[must_use]
 pub fn rejections(session: &Session) -> String {
     let mut text = String::new();
     for rejection in session.rejections() {
         let written = writeln!(
             text,
-            "{} {}  {}\n          {}",
+            "{} {}  {}\n          {}{}",
             match rejection.id.get(..20) {
                 Some(short) => short,
                 None => &rejection.id,
             },
             rejection.rule,
             rejection.path,
-            rejection.diagnostic.lines().next().unwrap_or_default()
+            passed_over(rejection.reason),
+            match rejection.diagnostic.lines().next() {
+                Some(first) => first,
+                None => "",
+            }
         );
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
     }
@@ -300,6 +303,26 @@ pub fn rejections(session: &Session) -> String {
         text.push_str("the compiler refused nothing\n");
     }
     text
+}
+
+/// The heading the candidates validation left out for `reason` are listed under.
+const fn left_out(reason: rust_mutants::validate::Condemnation) -> &'static str {
+    match reason {
+        rust_mutants::validate::Condemnation::CompilerRefused => "refused by the compiler",
+        rust_mutants::validate::Condemnation::EvaluatedBeforeRun => {
+            "in a const fn evaluated before the program runs, which keeps its const"
+        }
+    }
+}
+
+/// What a line about a candidate validation left out starts with, which is nothing for a refusal and the reason for anything else.
+const fn passed_over(reason: rust_mutants::validate::Condemnation) -> &'static str {
+    match reason {
+        rust_mutants::validate::Condemnation::CompilerRefused => "",
+        rust_mutants::validate::Condemnation::EvaluatedBeforeRun => {
+            "evaluated before the program runs, so it keeps its const: "
+        }
+    }
 }
 
 /// What preparation established, for a person.
@@ -312,7 +335,7 @@ pub fn catalog(session: &Session) -> String {
         session.workspace_digest(),
         session.catalog().digest(),
         session.accepted().len(),
-        session.rejections().len(),
+        session.refused().count(),
         session
             .skips()
             .iter()
@@ -326,9 +349,18 @@ pub fn catalog(session: &Session) -> String {
             debug_assert!(written.is_ok(), "writing to a String cannot fail");
         }
     }
-    if !session.rejections().is_empty() {
-        text.push_str("\nrefused by the compiler:\n");
-        for rejection in session.rejections() {
+    for reason in rust_mutants::validate::Condemnation::ALL {
+        let left: Vec<&rust_mutants::validate::Rejection> = session
+            .rejections()
+            .iter()
+            .filter(|rejection| rejection.reason == reason)
+            .collect();
+        if left.is_empty() {
+            continue;
+        }
+        let written = writeln!(text, "\n{}:", left_out(reason));
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+        for rejection in left {
             let written = writeln!(
                 text,
                 "{}  {:<30}  {}  {}",
@@ -361,6 +393,51 @@ fn one_line(mutant: &Mutant) -> String {
 fn accepting(accept: &str, say: &mut impl FnMut(&str, &str)) {
     for (at, line) in accept.lines().enumerate() {
         say(if at == 0 { "ACCEPT" } else { "" }, line);
+    }
+}
+
+/// Which targets could have noticed one mutant, which ran, which tests each was asked, and what a proof removed.
+fn routed(route: &run::RouteDocument, say: &mut impl FnMut(&str, &str)) {
+    say(
+        "ROUTE",
+        &format!(
+            "{} reaching [{}] executed [{}]",
+            route.granularity,
+            route.reaching.join(", "),
+            route.executed.join(", ")
+        ),
+    );
+    for (target, tests) in &route.tests {
+        say("TESTS", &format!("{target}: {}", tests.join(", ")));
+    }
+    for one in &route.discharged {
+        say("PROVED", &format!("{}: {}", one.target, one.proof));
+    }
+}
+
+/// What an outcome rests on, under one label: each sealed execution, or every reason it is a lead.
+fn resting(evidence: &rust_mutants::sealed::record::Evidence, say: &mut impl FnMut(&str, &str)) {
+    match evidence {
+        rust_mutants::sealed::record::Evidence::Sealed { executions } => {
+            say("EVIDENCE", "sealed");
+            for execution in executions {
+                say(
+                    "",
+                    &format!(
+                        "{} in {}: {}",
+                        execution.test,
+                        execution.target,
+                        execution.came_to.name()
+                    ),
+                );
+            }
+        }
+        rust_mutants::sealed::record::Evidence::Unproven { reasons } => {
+            say("EVIDENCE", "unproven, so the outcome is a lead");
+            for reason in reasons {
+                say("", reason.said());
+            }
+        }
     }
 }
 
@@ -415,25 +492,14 @@ pub fn explained(document: &rust_mutants::report::explain::ExplainDocument) -> S
                     ),
                 );
             }
+            if let Some(evidence) = &document.evidence {
+                resting(evidence, &mut say);
+            }
         }
         (None, None) => say("OUTCOME", "no stored run answers for it"),
     }
     if let Some(route) = &document.route {
-        say(
-            "ROUTE",
-            &format!(
-                "{} reaching [{}] executed [{}]",
-                route.granularity,
-                route.reaching.join(", "),
-                route.executed.join(", ")
-            ),
-        );
-        for (target, tests) in &route.tests {
-            say("TESTS", &format!("{target}: {}", tests.join(", ")));
-        }
-        for one in &route.discharged {
-            say("PROVED", &format!("{}: {}", one.target, one.proof));
-        }
+        routed(route, &mut say);
     }
     say("REPRODUCE", &document.reproduce);
     accepting(&document.accept, &mut say);
@@ -477,18 +543,44 @@ pub fn outcome(result: &MutantResult, mutant: &Mutant) -> String {
     text
 }
 
-/// The exit code an outcome earns: zero when the tests noticed the mutant, one when they did not, and two when nothing was established.
+/// What sealed executions established about one mutant, a line per execution.
 #[must_use]
-pub const fn exit_code(outcome: rust_mutants::outcome::Outcome) -> u8 {
+pub fn sealed(judged: &rust_mutants::run::Judged, mutant: &Mutant) -> String {
+    let said = match judged.not_run_reason {
+        Some(unrun) => unrun.name(),
+        None => judged.outcome.name(),
+    };
+    let mut text = format!(
+        "{} {}  {}  {}\n",
+        mutant.display_id, mutant.candidate.rule, said, judged.target
+    );
+    if let rust_mutants::sealed::record::Evidence::Sealed { executions } = &judged.evidence {
+        for execution in executions {
+            let written = writeln!(
+                text,
+                "sealed {} in {}: {}",
+                execution.test,
+                execution.target,
+                execution.came_to.name()
+            );
+            debug_assert!(written.is_ok(), "writing to a String cannot fail");
+        }
+    }
+    text
+}
+
+/// The exit code a sealed verdict earns: zero when a sealed execution detected the mutant, one when none did.
+#[must_use]
+pub const fn sealed_exit_code(outcome: rust_mutants::outcome::Outcome) -> u8 {
     use rust_mutants::outcome::Outcome;
     match outcome {
-        Outcome::Killed => 0,
-        Outcome::Survived => 1,
-        Outcome::NotRun
+        Outcome::Killed => rust_mutants::run::EXIT_DETECTED,
+        Outcome::Survived
+        | Outcome::NotRun
         | Outcome::StepLimitReached
         | Outcome::Waited
         | Outcome::Inconclusive
-        | Outcome::Errored => crate::EXIT_USAGE,
+        | Outcome::Errored => rust_mutants::run::EXIT_FOUND,
     }
 }
 
@@ -527,13 +619,23 @@ fn work_line(document: &run::RunDocument) -> Result<String, rust_mutants::work::
         let written = write!(line, " ({})", removed.join(" "));
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
     }
-    if work.tests_whole > 0 {
+    let tests = match (work.tests_started, work.tests_whole, work.tests_saved()) {
+        (Some(started), Some(whole), Some(saved)) => Some((started, whole, saved)),
+        (None, _, _) | (_, None, _) | (_, _, None) => {
+            line.push_str(
+                "\n          tests are not counted: a target's baseline did not run, so how many \
+                 tests it holds is not known",
+            );
+            None
+        }
+    };
+    if let Some((started, whole, saved)) = tests
+        && whole > 0
+    {
         let written = write!(
             line,
-            "\n          tests={} of {}; {:.1}% removed",
-            work.tests_started,
-            work.tests_whole,
-            work.tests_saved() * 100.0
+            "\n          tests={started} of {whole}; {:.1}% removed",
+            saved * 100.0
         );
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
         if work.established_tests() > 0 {
@@ -576,12 +678,84 @@ pub fn lines(document: &run::RunDocument) -> Result<String, rust_mutants::work::
         }
     }
     text.push_str(&survivors(document));
+    text.push_str(&sealing(document));
     text.push('\n');
     text.push_str(&totals(document)?);
     if document.run.interrupted {
         text.push_str("\nINTERRUPTED  the run stopped before every mutant was executed\n");
     }
     Ok(text)
+}
+
+/// How many uncontrolled tests of one target the sealing section names before it counts the rest.
+const UNCONTROLLED_NAMED: usize = 3;
+
+/// Which targets have no sealed tests and why, and which tests the native baseline ran have no sealed control, which is where an unproven mutant's reasons come from; nothing where every target is sealed whole.
+fn sealing(document: &run::RunDocument) -> String {
+    let unsealed: Vec<&run::TargetDocument> = document
+        .targets
+        .iter()
+        .filter(|target| target.sealed.remedy.is_some())
+        .collect();
+    let uncontrolled: usize = document
+        .targets
+        .iter()
+        .map(|target| target.sealed.uncontrolled.len())
+        .sum();
+    if unsealed.is_empty() && uncontrolled == 0 {
+        return String::new();
+    }
+    let sealed = document
+        .targets
+        .iter()
+        .filter(|target| target.sealed.remedy.is_none())
+        .count();
+    let mut text = format!(
+        "\nSEALED    {sealed} of {} targets have sealed tests",
+        document.targets.len()
+    );
+    if uncontrolled > 0 {
+        let verb = if uncontrolled == 1 { "has" } else { "have" };
+        let written = write!(
+            text,
+            ", and {uncontrolled} of the tests they ran natively {verb} no sealed control"
+        );
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    }
+    text.push('\n');
+    let mut reasons: BTreeMap<(&str, &str), Vec<&str>> = BTreeMap::new();
+    for target in &unsealed {
+        if let Some(remedy) = &target.sealed.remedy {
+            reasons
+                .entry((target.sealed.state.as_str(), remedy.as_str()))
+                .or_default()
+                .push(target.id.as_str());
+        }
+    }
+    for ((state, remedy), ids) in &reasons {
+        let written = writeln!(text, "  {state}: {}\n    {remedy}", ids.join(", "));
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    }
+    for target in &document.targets {
+        let tests = &target.sealed.uncontrolled;
+        if tests.is_empty() {
+            continue;
+        }
+        let named: Vec<String> = tests
+            .iter()
+            .take(UNCONTROLLED_NAMED)
+            .map(|one| format!("{} ({})", one.test, one.reason))
+            .collect();
+        let rest = tests.iter().skip(UNCONTROLLED_NAMED).count();
+        let more = if rest > 0 {
+            format!(", and {rest} more")
+        } else {
+            String::new()
+        };
+        let written = writeln!(text, "  {}: {}{more}", target.id, named.join(", "));
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    }
+    text
 }
 
 /// How many separate gaps the survivors are, which is not how many survivors there are.

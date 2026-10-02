@@ -147,6 +147,29 @@ fn opening_refuses_metadata_that_is_not_its_document() {
 }
 
 #[test]
+fn the_copy_is_spelled_with_no_separator_after_its_root() {
+    let fixture = Fixture::copy("fixture-simple");
+    let script = toolchain_answers().answering(
+        Invocation::new("cargo", &["metadata"]).printing(&metadata_document(fixture.root())),
+    );
+    let (opened, installed_toolchain) = opened(&fixture, &script);
+    assert_eq!(
+        result_state(&opened),
+        Returned,
+        "the workspace opens: {opened:?}"
+    );
+    let Ok(workspace) = opened else { return };
+    drop(installed_toolchain);
+    let root = njutest_devkit::paths::utf8(workspace.snapshot_root());
+    let guest_path = format!("{root}/src/lib.rs");
+    assert!(
+        !guest_path.contains("//") && !guest_path.contains("\\/"),
+        "a sealed guest reaches a file of the copy by the root its build baked in and the path \
+         below it, joined by one separator: {guest_path}"
+    );
+}
+
+#[test]
 fn opening_copies_the_tree_and_asks_the_toolchain_in_the_copy() {
     let fixture = Fixture::copy("fixture-simple");
     let script = toolchain_answers().answering(
@@ -200,6 +223,44 @@ fn opening_copies_the_tree_and_asks_the_toolchain_in_the_copy() {
          which is what says whether the tests find the run's toolchain there, and the metadata \
          of the copy"
     );
+}
+
+#[test]
+fn metadata_disables_ambient_rustc_info_cache_without_changing_target_or_wrapper() {
+    let fixture = Fixture::copy("fixture-simple");
+    let ambient = fixture.temp().join("ambient-cargo-target");
+    let ambient_name = ambient.to_str().expect("the temporary path is UTF-8");
+    let mut document =
+        njutest_devkit::cargo_double::Document::of(fixture.root()).holding(demo(fixture.root()));
+    document.target_directory = ambient.clone();
+    let script = toolchain_answers().answering(
+        Invocation::new("cargo", &["metadata"])
+            .when("CARGO_CACHE_RUSTC_INFO", "0")
+            .when("CARGO_TARGET_DIR", ambient_name)
+            .when("RUSTC_WRAPPER", "callers-wrapper")
+            .printing(&document.json()),
+    );
+    let installed = install(&script);
+    let mut env: rust_mutants::vars::Variables = installed.env().into_iter().collect();
+    env.set("PATH", installed.bin());
+    env.set("CARGO_TARGET_DIR", ambient.as_os_str());
+    env.set("RUSTC_WRAPPER", "callers-wrapper");
+    let workspace = Workspace::open(
+        fixture.root(),
+        OpenOptions {
+            cargo: Some(installed.cargo()),
+            search_path: Some(OsString::from(installed.bin())),
+            temp_directory: fixture.temp().to_path_buf(),
+            env,
+            locked: true,
+            offline: true,
+            ..OpenOptions::default()
+        },
+        &Cancel::new(),
+    )
+    .expect("both metadata requests use the guarded environment");
+    assert_eq!(workspace.metadata().target_directory, ambient);
+    assert_eq!(installed.answered(), vec![0, 1, 2, 3, 0, 0, 3]);
 }
 
 #[cfg(unix)]
@@ -380,7 +441,7 @@ fn an_allowed_directory_outside_the_root_is_read_rather_than_refused() {
     );
     let Ok(workspace) = opened else { return };
     let as_written = between(fixture.root(), &allowed);
-    let in_the_copy = folded(&workspace.snapshot_root().join(&as_written));
+    let in_the_copy = workspace.snapshot_root().join(&as_written);
     let reached = std::fs::metadata(in_the_copy.join("Cargo.toml"));
     assert!(
         matches!(reached, Ok(entry) if entry.is_file()),
@@ -410,25 +471,6 @@ fn between(from: &Path, to: &Path) -> PathBuf {
         found.push(part);
     }
     found
-}
-
-/// `path` with every `..` folded, which is what cargo does with a declared path.
-fn folded(path: &Path) -> PathBuf {
-    let mut parts: Vec<OsString> = Vec::new();
-    for part in path.components() {
-        match part {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if let Some(last) = parts.len().checked_sub(1)
-                    && last > 0
-                {
-                    parts.truncate(last);
-                }
-            }
-            other => parts.push(other.as_os_str().to_owned()),
-        }
-    }
-    parts.iter().collect()
 }
 
 /// The one package every document below reports, at `root`.
@@ -484,7 +526,10 @@ fn preparing_refuses_a_tree_that_does_not_compile_before_anything_is_instrumente
         "the workspace opens: {opened:?}"
     );
     let Ok(workspace) = opened else { return };
-    let error = workspace.prepare(&PrepareOptions::default(), &Cancel::new());
+    let error = workspace.prepare(
+        &PrepareOptions::new(rust_mutants::rule::Tier::Balanced),
+        &Cancel::new(),
+    );
     assert_eq!(
         result_state(&error),
         Refused,
@@ -518,7 +563,10 @@ fn a_message_stream_line_that_is_not_a_message_is_refused_by_line_number() {
         "the workspace opens: {opened:?}"
     );
     let Ok(workspace) = opened else { return };
-    let error = workspace.prepare(&PrepareOptions::default(), &Cancel::new());
+    let error = workspace.prepare(
+        &PrepareOptions::new(rust_mutants::rule::Tier::Balanced),
+        &Cancel::new(),
+    );
     assert_eq!(
         result_state(&error),
         Refused,
@@ -555,7 +603,7 @@ fn a_check_that_takes_longer_than_the_build_timeout_says_it_timed_out() {
     let Ok(workspace) = opened else { return };
     let options = PrepareOptions {
         build_timeout: Some(std::time::Duration::from_millis(200)),
-        ..PrepareOptions::default()
+        ..PrepareOptions::new(rust_mutants::rule::Tier::Balanced)
     };
     let error = workspace.prepare(&options, &Cancel::new());
     assert_eq!(
@@ -609,7 +657,7 @@ fn a_compile_stopped_by_cancellation_is_an_error_not_a_failed_build() {
             kind: rust_mutants::cargo::CompileKind::Check,
             locked: true,
             offline: true,
-            ..rust_mutants::cargo::CompileOptions::default()
+            ..rust_mutants::cargo::CompileOptions::new(workspace.build_dir())
         },
     );
     assert_eq!(

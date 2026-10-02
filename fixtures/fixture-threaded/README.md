@@ -28,13 +28,13 @@ for every candidate the compiler refused. The run is `rust-mutants run
 refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 
 ```fates
-src/lib.rs:9:5 return-default killed
-src/lib.rs:9:8 condition-to-false survived
-src/lib.rs:9:8 condition-to-true killed
-src/lib.rs:9:8 negate-condition killed
-src/lib.rs:9:10 gt-to-ge not_run
+src/lib.rs:9:5 return-default unproven
+src/lib.rs:9:8 condition-to-false unproven
+src/lib.rs:9:8 condition-to-true unproven
+src/lib.rs:9:8 negate-condition unproven
+src/lib.rs:9:10 gt-to-ge unreached
 src/lib.rs:9:16 return-default unreached
-src/lib.rs:9:27 return-default killed
+src/lib.rs:9:27 return-default unproven
 src/lib.rs:15:5 return-default killed
 src/lib.rs:15:7 add-to-sub killed
 src/lib.rs:15:9 int-decrement killed

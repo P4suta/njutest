@@ -67,10 +67,10 @@ pub fn directory_of(path: &Path) -> &Path {
 /// The name the bytes are staged under: beside the destination, so the rename stays on the filesystem the store is on, and named after the writer, so no two writers stage at one path.
 #[must_use]
 pub fn staging(path: &Path) -> String {
-    let name = path
-        .file_name()
-        .and_then(std::ffi::OsStr::to_str)
-        .unwrap_or("entry");
+    let name = match path.file_name().and_then(std::ffi::OsStr::to_str) {
+        Some(named) => named,
+        None => "entry",
+    };
     let writer: String = format!("{:?}", std::thread::current().id())
         .chars()
         .filter(char::is_ascii_alphanumeric)

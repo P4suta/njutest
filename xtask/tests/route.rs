@@ -70,8 +70,11 @@ fn the_route_reader_accepts_both_producer_vocabularies() {
         let Some(found) = found else { continue };
         assert_eq!(found.reaching, vec!["pkg/lib/pkg".to_owned()], "{name}");
         let ran: Vec<&str> = routing
-            .execs_of("aaaaaaaaaaaaaaaaaaaa")
-            .map(|exec| exec.target.as_str())
+            .executions_of("aaaaaaaaaaaaaaaaaaaa")
+            .map(|execution| match execution {
+                route::Execution::Native(exec) => exec.target.as_str(),
+                route::Execution::Sealed(sealed) => sealed.target.as_str(),
+            })
             .collect();
         assert_eq!(ran, vec!["pkg/lib/pkg"], "{name} names what ran");
     }
@@ -124,9 +127,12 @@ fn each_producer_keeps_the_fields_only_it_records() {
         return;
     };
     assert_eq!(engine_route.index, Some(3));
-    assert_eq!(engine_route.executed, vec!["pkg/lib/pkg".to_owned()]);
+    assert_eq!(
+        engine_route.executed,
+        route::Recorded::Said(vec!["pkg/lib/pkg".to_owned()])
+    );
     assert!(engine_route.considered.is_empty());
-    let engine_exec = engine.execs.first();
+    let engine_exec = native(&engine).first().copied();
     assert_eq!(option_state(engine_exec), OptionState::Present);
     if let Some(engine_exec) = engine_exec {
         assert_eq!(engine_exec.tests_run, Some(2));
@@ -140,7 +146,11 @@ fn each_producer_keeps_the_fields_only_it_records() {
     };
     assert_eq!(runner_route.index, None);
     assert_eq!(runner_route.considered, vec!["pkg/test/wide".to_owned()]);
-    assert!(runner_route.executed.is_empty());
+    assert_eq!(
+        runner_route.executed,
+        route::Recorded::Unrecorded,
+        "the runner does not write which targets ran, which is not that none did"
+    );
     assert_eq!(
         runner_route.discharged,
         vec![Discharge {
@@ -149,7 +159,7 @@ fn each_producer_keeps_the_fields_only_it_records() {
         }]
     );
     assert!(runner_route.discharges("pkg/test/ui"));
-    let runner_exec = runner.execs.first();
+    let runner_exec = native(&runner).first().copied();
     assert_eq!(option_state(runner_exec), OptionState::Present);
     if let Some(runner_exec) = runner_exec {
         assert_eq!(runner_exec.alone, route::Isolation::Alone);
@@ -179,7 +189,43 @@ fn a_mutant_nothing_routed_has_no_route_and_no_executions() {
         option_state(routing.route("cccccccccccccccccccc")),
         OptionState::Absent
     );
-    assert_eq!(routing.execs_of("bbbbbbbbbbbbbbbbbbbb").count(), 0);
+    assert_eq!(routing.executions_of("bbbbbbbbbbbbbbbbbbbb").count(), 0);
+}
+
+#[test]
+fn a_sealed_execution_is_read_beside_the_native_ones_in_the_order_written() {
+    let recording = format!(
+        "{}{}\n",
+        RUNNER,
+        r#"{"seq":3,"timestamp":"2026-09-06T00:00:02Z","elapsed_ms":2,"payload":{"type":"sealed-exec","sealed":{"mutant":"aaaaaaaaaaaaaaaaaaaa","target":"pkg/lib/pkg","test":"tests::one","came_to":"panicked"}}}"#
+    );
+    let Some(runner) = routing(&recording, Producer::Runner) else {
+        return;
+    };
+    let kinds: Vec<(&str, &str)> = runner
+        .executions_of("aaaaaaaaaaaaaaaaaaaa")
+        .map(|execution| match execution {
+            route::Execution::Native(exec) => ("native", exec.outcome.as_str()),
+            route::Execution::Sealed(sealed) => ("sealed", sealed.came_to.as_str()),
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        [("native", "survived"), ("sealed", "panicked")],
+        "a reader of a mutant's executions is handed both kinds, in the order they ran"
+    );
+}
+
+/// The native executions `routing` holds, in the order written.
+fn native(routing: &Routing) -> Vec<&route::Exec> {
+    routing
+        .executions()
+        .iter()
+        .filter_map(|execution| match execution {
+            route::Execution::Native(exec) => Some(exec),
+            route::Execution::Sealed(_) => None,
+        })
+        .collect()
 }
 
 /// Every published schema, compiled.

@@ -12,12 +12,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::process::{Child, Command};
 use std::time::{Duration, Instant};
 
+use njutest_devkit::paths::SEALED_TARGET;
 use rust_mutants::instrument::{
     ACTIVE_ENV, Instrumenting, STEP_NONCE_ENV, STEP_NOTICE_ENV, STEP_PROTOCOL_EXIT, STEP_STATE_ENV,
     STEP_STATE_SCHEMA, STEPS_ENV, instrument_file,
 };
 use rust_mutants::instrument::{
-    CATALOG_ENV, MODULE_STEM, Rendering, TOUCH_ENV, WATCHED_ENV, render,
+    CATALOG_ENV, FAULT_FATE_ENV, FAULT_FATE_SCHEMA, MODULE_STEM, Rendering, TOUCH_ENV, WATCHED_ENV,
+    render,
 };
 use rust_mutants::rule::Tier;
 use rust_mutants::testkit::compile::ScriptedCompile;
@@ -192,6 +194,134 @@ fn ran(name: &str, body: &str, touching: bool) -> String {
         Some(text) => text,
         None => String::new(),
     }
+}
+
+/// Whether a program around the runtime whose `main` is `body` compiles, with what rustc said.
+fn compiles(name: &str, body: &str) -> (bool, String) {
+    let (module, _) = module();
+    let temporary = tempfile::tempdir().expect("a place to build");
+    let dir = temporary.path();
+    let source = dir.join(format!("{name}.rs"));
+    std::fs::write(&source, format!("{module}\nfn main() {{\n{body}\n}}\n")).expect("write");
+    let built = Command::new("rustc")
+        .args([
+            "--edition",
+            "2024",
+            "--crate-type",
+            "bin",
+            "--emit",
+            "metadata",
+        ])
+        .arg("--out-dir")
+        .arg(dir)
+        .arg(&source)
+        .output()
+        .expect("rustc runs");
+    (
+        built.status.success(),
+        exact_output(&built.stderr).to_owned(),
+    )
+}
+
+#[test]
+fn a_stop_after_a_call_whose_value_is_a_future_is_one_the_compiler_refuses() {
+    let (future, said) = compiles(
+        "stops_after_a_future",
+        &format!("let _written = {MODULE_STEM}::crashed_after(std::future::ready(()));"),
+    );
+    assert!(
+        !future,
+        "a call whose value is a future has written nothing when it returns, so a stop after \
+         it would stop before the write; the compiler refuses it and the crash is not put: {said}"
+    );
+    let (written, said) = compiles(
+        "stops_after_a_write",
+        &format!("let _written = {MODULE_STEM}::crashed_after(std::fs::write(\"x\", b\"y\"));"),
+    );
+    assert!(
+        written,
+        "a call that has written by the time it returns is one a stop can come after: {said}"
+    );
+}
+
+/// Builds a program around the runtime whose body makes the failures a fault makes, runs it asked to record what became of them, and returns each event it recorded.
+fn fated(name: &str, body: &str) -> Vec<String> {
+    let (module, _) = module();
+    let temporary = tempfile::tempdir().expect("a place to build");
+    let dir = temporary.path();
+    let source = dir.join(format!("{name}.rs"));
+    std::fs::write(&source, format!("{module}\nfn main() {{\n{body}\n}}\n")).expect("write");
+    let built = Command::new("rustc")
+        .args(["--edition", "2024", "--crate-type", "bin"])
+        .arg("--out-dir")
+        .arg(dir)
+        .arg(&source)
+        .output()
+        .expect("rustc runs");
+    assert!(built.status.success(), "{}", exact_output(&built.stderr));
+    let log = dir.join(format!("{name}.fate"));
+    let output = Command::new(dir.join(name))
+        .env(CATALOG_ENV, CATALOG)
+        .env(WATCHED_ENV, WATCHED)
+        .env(FAULT_FATE_ENV, &log)
+        .output()
+        .expect("the program runs");
+    assert!(output.status.success(), "{}", exact_output(&output.stderr));
+    let text = read_optional_text(&log)
+        .expect("read the record")
+        .unwrap_or_default();
+    let prefix = format!("{FAULT_FATE_SCHEMA}\t{CATALOG}\t");
+    text.lines()
+        .map(|line| {
+            line.strip_prefix(&prefix)
+                .expect("every record is one of this catalog")
+                .to_owned()
+        })
+        .collect()
+}
+
+#[test]
+#[expect(
+    clippy::literal_string_with_formatting_args,
+    reason = "the strings are the source of the programs the test builds, and formatting a failure is what they do"
+)]
+fn a_failure_a_fault_makes_says_whether_anything_read_it_before_it_was_dropped() {
+    assert_eq!(
+        fated(
+            "absorbed",
+            "let answer: std::io::Result<u8> = Err(__rm::injected());\n\
+             assert_eq!(answer.unwrap_or_default(), 0);"
+        ),
+        ["made", "dropped"],
+        "a failure a caller throws away unread went nowhere anyone could read it"
+    );
+    assert_eq!(
+        fated(
+            "shown",
+            "let error: std::io::Error = __rm::injected();\n\
+             assert!(!format!(\"{}\", error).is_empty());"
+        ),
+        ["made", "read", "dropped"],
+        "a failure put into a message was read"
+    );
+    assert_eq!(
+        fated(
+            "debugged",
+            "let error: std::io::Error = __rm::injected();\n\
+             assert!(!format!(\"{:?}\", error).is_empty());"
+        ),
+        ["made", "read", "dropped"],
+        "and so was one put into a debugging message"
+    );
+    assert_eq!(
+        fated(
+            "parsed",
+            "let error: std::num::ParseIntError = __rm::injected();\n\
+             assert!(!format!(\"{}\", error).is_empty());"
+        ),
+        Vec::<String>::new(),
+        "an error type that carries nothing of ours records nothing, rather than a guess"
+    );
 }
 
 #[test]
@@ -428,6 +558,7 @@ fn an_expression_closure_reentered_by_an_external_iterator_spends_the_global_all
         path: "src/main.rs",
         source: source.as_bytes(),
         placements: scripted.placements(),
+        carriers: &[],
         markers: &[],
         comparable: &comparable,
         probed: &probed,
@@ -854,6 +985,73 @@ fn recording_costs_a_crate_neither_its_prelude_nor_its_ban_on_unsafe_code() {
     }
 }
 
+/// Compiles `text` for a sealed host with `flags`, returning what rustc said and where the target's standard library is.
+fn built_sealed(
+    name: &str,
+    flags: &[&str],
+    text: &str,
+) -> (std::process::Output, std::path::PathBuf) {
+    let libdir = njutest_devkit::paths::target_libdir(std::path::Path::new("rustc"), SEALED_TARGET);
+    let temporary = tempfile::tempdir().expect("a place to build");
+    let dir = temporary.path();
+    let source = dir.join(format!("{name}.rs"));
+    std::fs::write(&source, text).expect("write");
+    let output = Command::new("rustc")
+        .args(["--edition", "2024", "--target", SEALED_TARGET])
+        .args(flags)
+        .arg("--out-dir")
+        .arg(dir)
+        .arg(&source)
+        .output()
+        .expect("rustc runs");
+    (output, libdir)
+}
+
+#[test]
+fn the_runtime_rendered_for_a_file_compiles_for_a_sealed_host() {
+    let (module, _) = module();
+    for (name, prefix) in [
+        ("sealed", ""),
+        ("sealed_freestanding", "#![no_std]\n"),
+        ("sealed_unsafeless", "#![forbid(unsafe_code)]\n"),
+    ] {
+        let (output, libdir) =
+            built_sealed(name, &["--crate-type", "lib"], &format!("{prefix}{module}"));
+        assert!(
+            output.status.success(),
+            "{prefix}the runtime compiles for {SEALED_TARGET} against {}: {}",
+            libdir.display(),
+            exact_output(&output.stderr)
+        );
+    }
+    let program = format!(
+        "{module}\nfn main() {{\n\
+         \x20   {MODULE_STEM}::item({FIRST_ITEM});\n\
+         \x20   {MODULE_STEM}::checkpoint();\n\
+         \x20   if {MODULE_STEM}::active(0) {{ {MODULE_STEM}::body(0); }}\n\
+         \x20   let differed = {MODULE_STEM}::differing(1, true, || false) && {MODULE_STEM}::untrue(1, true);\n\
+         \x20   let held = ({MODULE_STEM}::undefaulted(2, 1_i32), {MODULE_STEM}::unsomedefault(2, Some(1_i32)));\n\
+         \x20   let kept: Result<i32, std::io::Error> = {MODULE_STEM}::unokdefault(2, Ok(1));\n\
+         \x20   let injected: std::io::Error = {MODULE_STEM}::injected();\n\
+         \x20   let grouped = {MODULE_STEM}::value!(1 + 2);\n\
+         \x20   if !differed || held != (1, Some(1)) || kept.is_err() || injected.kind() != std::io::ErrorKind::Other || grouped != 3 {{\n\
+         \x20       {MODULE_STEM}::crashed_after(());\n\
+         \x20   }}\n\
+         }}\n"
+    );
+    let (output, libdir) = built_sealed(
+        "sealed_program",
+        &["--crate-type", "bin", "-D", "warnings"],
+        &program,
+    );
+    assert!(
+        output.status.success(),
+        "a program that takes every entry a guard calls links for {SEALED_TARGET} against {}: {}",
+        libdir.display(),
+        exact_output(&output.stderr)
+    );
+}
+
 #[test]
 fn an_entry_marker_records_the_thread_that_entered_the_item_by_its_index_in_the_whole_tree() {
     let (_, count) = module();
@@ -992,6 +1190,27 @@ fn a_process_that_lost_the_runs_environment_says_so_where_the_run_looks() {
             .all(|orphan| orphan.parent == std::process::id()),
         "the parent is the process that started it, which is what the run maps it back by: \
          {said:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_window_bound_past_what_a_clock_holds_leaves_that_side_open_rather_than_narrowed() {
+    let latest = std::time::UNIX_EPOCH
+        .checked_add(Duration::from_secs(u64::try_from(i64::MAX).expect("fits")))
+        .expect("a clock of signed seconds holds the largest of them");
+    let ended = latest
+        .checked_sub(Duration::from_secs(1))
+        .expect("a second before the latest time is a time");
+    let left = rust_mutants::orphan::Orphan {
+        pid: 4_000_000,
+        parent: 4_200_000,
+        at: Some(latest),
+    };
+    assert!(
+        left.during(ended, ended),
+        "an orphan left a second after an execution ended is within its slack, even where the \
+         slack's end is past what the clock holds"
     );
 }
 

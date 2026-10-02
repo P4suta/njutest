@@ -33,6 +33,7 @@ fn environment(
         vars.set("PATH", path);
     }
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: root.join("cache"),
         working_directory: root.to_path_buf(),
         temp_directory: root.join("temp"),

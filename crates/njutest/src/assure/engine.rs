@@ -3,11 +3,12 @@
 
 //! The one place njutest answers every switch the engine takes, so a switch the engine adds is a line somebody here has to write rather than a default that arrives with a release.
 
+use rust_mutants::sealed::Sealing;
 use rust_mutants::session::{Failing, PrepareOptions, Timeout};
 
-/// Every switch the engine takes, as njutest answers it before a phase says otherwise.
+/// Every switch the engine takes, as njutest answers it before a phase says otherwise, with the sealed build made or not as `sealing` says.
 #[must_use]
-pub const fn switches() -> PrepareOptions {
+pub const fn switches(sealing: Sealing) -> PrepareOptions {
     PrepareOptions {
         tier: rust_mutants::rule::Tier::Balanced,
         operators: Vec::new(),
@@ -18,6 +19,7 @@ pub const fn switches() -> PrepareOptions {
         packages: Vec::new(),
         skips: Vec::new(),
         measurements: None,
+        transcripts: None,
         harness_args: Vec::new(),
         verify: true,
         touch: true,
@@ -40,5 +42,6 @@ pub const fn switches() -> PrepareOptions {
         },
         skip_targets: Vec::new(),
         validation_filter: None,
+        sealing,
     }
 }

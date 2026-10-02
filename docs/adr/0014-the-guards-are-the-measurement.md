@@ -9,6 +9,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 Accepted, 2026-09-07.
 Implemented by the `touch` module of rust-mutants and the recording added to the runtime of [ADR 0011](0011-the-runtime-lives-at-the-end-of-each-instrumented-file.md) (E10).
+Amended by [ADR 0046](0046-a-verdict-is-what-a-sealed-run-observed.md): a sealed run attributes reach to the one test its instance ran, since a wasm test has no thread of its own.
 
 ## Context
 

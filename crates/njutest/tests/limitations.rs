@@ -8,7 +8,7 @@
     clippy::disallowed_methods,
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use njutest::assure::run::limitation_detail;
@@ -107,7 +107,7 @@ fn the_limitations_page_names_every_skip_a_run_can_report() {
 #[test]
 fn the_names_a_run_states_are_the_names_the_register_holds() {
     let root = njutest_devkit::paths::workspace_root().join("crates/njutest/src");
-    let held: std::collections::BTreeSet<&str> = njutest::limitation::ALL.into_iter().collect();
+    let held: BTreeSet<&str> = njutest::limitation::ALL.into_iter().collect();
     let mut loose = Vec::new();
     let mut stack = vec![root];
     while let Some(directory) = stack.pop() {
@@ -174,6 +174,18 @@ fn aliases(root: &Path) -> BTreeMap<String, Vec<String>> {
                 continue;
             }
             for line in std::fs::read_to_string(&path).unwrap_or_default().lines() {
+                if let Some((alias, held)) = line
+                    .trim()
+                    .strip_prefix("pub const ")
+                    .and_then(|line| line.split_once(": &str = "))
+                    && held.contains("limitation::")
+                    && let Some(name) = held.trim_end_matches(';').rsplit("::").next()
+                {
+                    found
+                        .entry(name.to_owned())
+                        .or_default()
+                        .push(alias.to_owned());
+                }
                 let Some(rest) = line.trim().strip_prefix("pub use ") else {
                     continue;
                 };
@@ -228,9 +240,20 @@ fn every_limitation_either_product_can_state_is_one_a_test_puts_to_something() {
         .filter(|name| {
             let held = shouted(name);
             let others = named.get(&held).map(Vec::as_slice).unwrap_or_default();
+            let variant = rust_mutants::limitation::Limitation::ALL
+                .into_iter()
+                .find(|limitation| limitation.name() == **name)
+                .map(|limitation| format!("Limitation::{limitation:?}"))
+                .or_else(|| {
+                    njutest::limitation::Limitation::ALL
+                        .into_iter()
+                        .find(|limitation| limitation.name() == **name)
+                        .map(|limitation| format!("Limitation::{limitation:?}"))
+                });
             !suites.contains(**name)
                 && !suites.contains(&held)
                 && !others.iter().any(|alias| suites.contains(alias))
+                && !variant.as_ref().is_some_and(|name| suites.contains(name))
         })
         .collect();
     assert!(
@@ -252,7 +275,7 @@ fn every_limitation_either_product_can_state_is_one_a_test_puts_to_something() {
 }
 
 /// Every name a run may state: both registers, and the family a skip reason derives.
-fn declared() -> std::collections::BTreeSet<String> {
+fn declared() -> BTreeSet<String> {
     njutest::limitation::ALL
         .into_iter()
         .chain(rust_mutants::limitation::ALL)
@@ -326,19 +349,29 @@ fn register_text(module: &str) -> String {
 
 /// Every limitation a register file declares, and every one its `ALL` names.
 fn declared_and_registered(module: &str) -> (Vec<String>, Vec<String>) {
-    registered(&register_text(module))
+    registered(module, &register_text(module))
 }
 
 /// Every limitation the register `text` declares, and every one its `ALL` names.
-fn registered(text: &str) -> (Vec<String>, Vec<String>) {
+fn registered(module: &str, text: &str) -> (Vec<String>, Vec<String>) {
+    let held: Vec<String> = if module == "crates/rust-mutants/src/limitation.rs" {
+        rust_mutants::limitation::Limitation::ALL
+            .into_iter()
+            .map(|limitation| shouted(limitation.name()))
+            .collect()
+    } else {
+        njutest::limitation::Limitation::ALL
+            .into_iter()
+            .map(|limitation| shouted(limitation.name()))
+            .collect()
+    };
     (
         njutest_devkit::rust_source::public_text_constants(text)
             .expect("the register is Rust")
             .into_iter()
             .filter(|name| name != "ALL")
             .collect(),
-        njutest_devkit::rust_source::names_listed(text, "ALL")
-            .expect("the register names each limitation it holds in ALL"),
+        held,
     )
 }
 
@@ -361,8 +394,8 @@ fn a_register_reads_the_same_in_the_tree_the_engine_instruments() {
         })
         .expect("the engine renders the runtime it appends to an instrumented file");
         assert_eq!(
-            registered(&format!("{text}{runtime}")),
-            registered(&text),
+            registered(module, &format!("{text}{runtime}")),
+            registered(module, &text),
             "{module}: when njutest measures itself this suite runs in the tree the engine \
              instrumented, where the file ends with the engine's runtime, and the register must \
              read the same there as here"
@@ -387,5 +420,49 @@ fn every_limitation_a_register_declares_is_one_its_register_holds() {
         );
         let stale: Vec<&String> = held.iter().filter(|one| !declared.contains(one)).collect();
         assert!(stale.is_empty(), "{module}: {stale:?}");
+    }
+}
+
+#[test]
+fn report_limitations_accept_only_names_this_release_can_state() {
+    use njutest::limitation::Name;
+    use njutest::report::Limitation;
+
+    let mut seen = BTreeSet::new();
+    for limitation in njutest::limitation::Limitation::ALL {
+        let name = Name::Runner(limitation).name();
+        assert!(seen.insert(name.clone()), "{name}");
+        let report = format!("{{\"name\":{name:?},\"detail\":\"measured\"}}");
+        let read: Limitation = njutest_devkit::strictjson::decode_str(&report)
+            .expect("a runner limitation has one wire spelling");
+        assert_eq!(read.name(), name);
+    }
+    for limitation in rust_mutants::limitation::Limitation::ALL {
+        let name = Name::Engine(limitation).name();
+        assert!(seen.insert(name.clone()), "{name}");
+        let report = format!("{{\"name\":{name:?},\"detail\":\"measured\"}}");
+        let read: Limitation = njutest_devkit::strictjson::decode_str(&report)
+            .expect("an engine limitation has one wire spelling");
+        assert_eq!(read.name(), name);
+    }
+    for reason in rust_mutants::syntax::SkipReason::ALL {
+        let name = Name::Skipped(reason).name();
+        assert!(seen.insert(name.clone()), "{name}");
+        let report = format!("{{\"name\":{name:?},\"detail\":\"measured\"}}");
+        let read: Limitation = njutest_devkit::strictjson::decode_str(&report)
+            .expect("a skipped reason has one wire spelling");
+        assert_eq!(read.name(), name);
+    }
+    for name in [
+        "doctests-not-routed",
+        "skipped-fictional",
+        "",
+        "custom-harness:pkg/test/one",
+    ] {
+        let report = format!("{{\"name\":{name:?},\"detail\":\"measured\"}}");
+        assert!(
+            njutest_devkit::strictjson::decode_str::<Limitation>(&report).is_err(),
+            "{name}"
+        );
     }
 }

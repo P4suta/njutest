@@ -249,7 +249,12 @@ fn signal_group(leader: Pid, signal: Signal) -> io::Result<super::Stopped> {
         Err(rustix::io::Errno::PERM) => (kill_process(leader, signal), others_than(leader)),
         Ok(()) | Err(_) => (Ok(()), super::Others::Unseen),
     };
-    match super::decide_stop(delivered(grouped), delivered(alone), others) {
+    match super::checked_decide_stop(
+        delivered(grouped),
+        delivered(alone),
+        others,
+        super::decide_stop,
+    )? {
         super::StopDecision::Reached(stopped) => Ok(stopped),
         super::StopDecision::Failed => Err(match (grouped, alone) {
             (Err(rustix::io::Errno::PERM), Err(errno)) | (Err(errno), _) => {
@@ -389,24 +394,13 @@ pub(super) fn stop_process(pid: u32) -> io::Result<()> {
     }
 }
 
-/// Stops the group a process started in a group of its own leads, as [`super::stop_group`] describes.
-pub(super) fn stop_group(leader: u32, how: super::GroupStop) -> io::Result<super::Stopped> {
-    let unled = || {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("{leader} is not a process id a group can be led by"),
-        )
-    };
-    let raw = match i32::try_from(leader) {
-        Ok(raw) => raw,
-        Err(_wider_than_a_pid) => return Err(unled()),
-    };
-    let pid = Pid::from_raw(raw).ok_or_else(unled)?;
+/// Stops the group `leader` leads, as [`super::stop_group`] describes.
+pub(super) fn stop_group(leader: Pid, how: super::GroupStop) -> io::Result<super::Stopped> {
     let signal = match how {
         super::GroupStop::Ask => Signal::TERM,
         super::GroupStop::Kill => Signal::KILL,
     };
-    signal_group(pid, signal)
+    signal_group(leader, signal)
 }
 
 /// Observes leader exit without reaping it, so its PID continues to pin the process-group id until the supervisor has forcefully signalled that group.
@@ -444,14 +438,11 @@ pub(super) fn raised_by_itself(signal: i32) -> bool {
 
 /// The child's status, mapping a signal death to the shell's 128 + N convention: 137 for a SIGKILL is both distinguishable from "no status at all" and what every other tool on the machine prints.
 pub(super) fn process_exit(status: ExitStatus) -> ProcessExit {
-    status.code().map_or_else(
-        || {
-            status
-                .signal()
-                .map_or(ProcessExit::Unknown, ProcessExit::Signal)
-        },
-        ProcessExit::Code,
-    )
+    match (status.code(), status.signal()) {
+        (Some(code), _) => ProcessExit::Code(code),
+        (None, Some(signal)) => ProcessExit::Signal(signal),
+        (None, None) => ProcessExit::Unknown,
+    }
 }
 
 #[cfg(test)]

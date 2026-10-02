@@ -1,0 +1,140 @@
+{
+  "schema": "njutest-mutation-receipt-v1",
+  "decision": "stall-watch",
+  "package": "rust-mutants-decision",
+  "module": "crates/rust-mutants-decision/src/stall.rs",
+  "source_sha256": "29424b279ea8b152e4e583982d45ae76c60083b11978a50aab2d0c74734cbb05",
+  "mutants": [
+    {
+      "display_id": "559fad2e688856010653",
+      "position": "21:5",
+      "rule": "return-default",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "stall::tests::a_beat_is_a_quarter_of_the_window_and_never_under_a_millisecond",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "d77d6d52ea058016c987",
+      "position": "21:11",
+      "rule": "max-to-min",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "stall::tests::a_beat_is_a_quarter_of_the_window_and_never_under_a_millisecond",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "3f66d3cbe8212878c225",
+      "position": "44:12",
+      "rule": "negate-condition",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "stall::tests::a_look_that_saw_a_change_moves_the_stall_and_one_that_saw_none_does_not",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "e710524b84ce509376d0",
+      "position": "44:12",
+      "rule": "condition-to-true",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "stall::tests::a_look_that_saw_a_change_moves_the_stall_and_one_that_saw_none_does_not",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "e1423b99e9efbcf3f944",
+      "position": "44:12",
+      "rule": "condition-to-false",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "stall::tests::a_look_that_saw_a_change_moves_the_stall_and_one_that_saw_none_does_not",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "7485b7eda7885d44ac93",
+      "position": "54:9",
+      "rule": "return-default",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "stall::tests::a_look_that_saw_a_change_moves_the_stall_and_one_that_saw_none_does_not",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "fa12b06d1558e5a36466",
+      "position": "54:9",
+      "rule": "return-some-default",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "stall::tests::a_look_that_saw_a_change_moves_the_stall_and_one_that_saw_none_does_not",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "0506d1f239570dac58f3",
+      "position": "60:9",
+      "rule": "return-true",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "stall::tests::a_process_that_beats_as_told_is_never_still_for_a_window",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "6670d95e4b4f434268e4",
+      "position": "60:40",
+      "rule": "ge-to-gt",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "stall::tests::a_process_that_beats_as_told_is_never_still_for_a_window",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "stall::tests::a_stall_is_the_whole_window_still_and_nothing_less",
+          "came_to": "panicked"
+        }
+      ]
+    }
+  ]
+}

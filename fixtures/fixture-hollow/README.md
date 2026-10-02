@@ -28,7 +28,7 @@ src/lib.rs:8:5 return-default killed
 src/lib.rs:8:8 condition-to-false killed
 src/lib.rs:8:8 condition-to-true killed
 src/lib.rs:8:8 negate-condition killed
-src/lib.rs:8:10 gt-to-ge not_run
+src/lib.rs:8:10 gt-to-ge survived
 src/lib.rs:8:12 int-increment killed
 src/lib.rs:9:9 return-default killed
 src/lib.rs:9:9 string-to-empty killed

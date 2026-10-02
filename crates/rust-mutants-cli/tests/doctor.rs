@@ -112,7 +112,11 @@ fn a_doctor_without_a_cargo_fails_and_says_where_to_get_one() {
     std::fs::create_dir_all(&empty).expect("an empty directory");
     let output = asked(&fixture, &empty, &[]);
     let text = njutest_devkit::process::strict_utf8(&output.stdout).into_owned();
-    assert_eq!(output.status.code(), Some(2), "{text}");
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(rust_mutants_cli::EXIT_USAGE)),
+        "{text}"
+    );
     assert!(text.contains("FAIL toolchain"), "{text}");
     assert!(
         text.contains("try: install a toolchain with rustup"),

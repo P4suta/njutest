@@ -34,6 +34,9 @@ pub const fn detail(fallback: Fallback) -> &'static str {
             "a target's guards recorded nothing this run can route by, so its silence \
              about the position is not evidence and every test of it was run"
         }
+        Fallback::CompileTime => {
+            "the value is evaluated at compile time, so every test is asked about its separately compiled mutation"
+        }
     }
 }
 

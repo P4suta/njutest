@@ -11,19 +11,13 @@ use crate::wire::derive::{Fault, derive};
 use crate::wire::settle::settle;
 
 /// The limitation a run states where it could not put a question it derived.
-pub const NOT_PUT: &str = "wire-fault-not-put";
+pub const NOT_PUT: &str = crate::limitation::WIRE_FAULT_NOT_PUT;
 
 /// What a finding is about when a question was put and the run could not read what the suite did with it.
 pub const NOT_MEASURED: &str = "wire-fault-not-measured";
 
 /// What a finding is about when the only targets that failed with a question in place were ones already failing without it.
 pub const ALREADY_FAILING: &str = "wire-fault-not-attributable";
-
-/// What a limitation is named when no target passed without a fault, so the suite can answer nothing about one.
-pub const SUITE_NOT_GREEN: &str = "wire-baseline-not-green";
-
-/// What a limitation is named when a caller reached a seam and the exchange did not complete with no fault in place.
-pub const TRANSPORT_FAILED: &str = "wire-transport-incomplete";
 
 /// What a finding is about when a target failed once with a question in place and did not fail again with the same one.
 pub const NOT_REPRODUCED: &str = "wire-fault-not-reproduced";
@@ -163,7 +157,7 @@ where
     if measuring.before.nothing_passed() {
         let mut done = Measured::default();
         done.limitations.push(Limitation::new(
-            SUITE_NOT_GREEN,
+            crate::limitation::Limitation::WireBaselineNotGreen,
             "no target passed with no fault in place, so nothing in the suite could have \
              noticed one: the questions this recording licensed are not put, because a row \
              saying nothing noticed them would be a reading of a suite that was already \
@@ -181,16 +175,16 @@ where
             break;
         }
         let mut asked = None;
-        let decision = crate::wire::prove::discharges(fault, measuring.observed).map_or_else(
-            || {
+        let decision = match crate::wire::prove::discharges(fault, measuring.observed) {
+            Some(proof) => SeamDecision::Proved {
+                proof: proof.to_owned(),
+            },
+            None => {
                 let (put, decision) = decided(fault, &mut run, measuring.before);
                 asked = Some(put);
                 decision
-            },
-            |proof| SeamDecision::Proved {
-                proof: proof.to_owned(),
-            },
-        );
+            }
+        };
         watch.trace.wire_exec(crate::trace::WireExecRecord {
             fault: fault.id.clone(),
             capability: fault.capability.clone(),
@@ -314,7 +308,10 @@ fn asked_about(
         .observed
         .iter()
         .find(|one| one.capability == fault.capability && one.seq == fault.seq);
-    let (asked, answered) = named.map_or_else(|| (String::new(), None), |one| one.spoken.asked());
+    let (asked, answered) = match named {
+        Some(one) => one.spoken.asked(),
+        None => (String::new(), None),
+    };
     done.seams.push(crate::report::SeamRecord {
         id: fault.id.clone(),
         capability: fault.capability.clone(),
@@ -330,17 +327,17 @@ fn asked_about(
 ///
 /// The exchange is named by what was asked over it rather than by its place in the order: a reader who has to count round trips to find out which one this was has been handed an ordinal instead of an answer.
 fn unnoticed(fault: &Fault, observed: &[Exchange]) -> Finding {
-    let spoke = observed
+    let spoken = observed
         .iter()
         .find(|one| one.capability == fault.capability && one.seq == fault.seq)
         .and_then(|one| match &one.spoken {
             crate::wire::Spoken::Http { method, path, .. } => Some(format!("{method} {path}")),
             crate::wire::Spoken::Raw { .. } => None,
-        })
-        .map_or_else(
-            || format!("exchange {} of the {} seam", fault.seq, fault.capability),
-            |what| format!("{what} on the {} seam", fault.capability),
-        );
+        });
+    let spoke = match spoken {
+        Some(what) => format!("{what} on the {} seam", fault.capability),
+        None => format!("exchange {} of the {} seam", fault.seq, fault.capability),
+    };
     let mut finding = Finding::new(
         FindingKind::WireUnnoticed,
         &fault.id,
@@ -363,9 +360,7 @@ fn unnoticed(fault: &Fault, observed: &[Exchange]) -> Finding {
 /// Every seam is drained before any fault is put, and only then are they measured one at a time.
 /// Draining a seam after another seam's fault runs would take the traffic those runs drove through it for the baseline, and derive a catalogue from a program that was already being perturbed.
 ///
-/// One seam at a time, so the seam a question is about is the one that derived it rather than one looked up by name afterwards.
-/// A lookup can fail, and a failed lookup returning no answers would report *the run could not put this question* about a run that had lost track of its own seam —
-/// two facts under one sentence, and the one a reader would act on is the wrong one.
+/// Every recorded row owns the name of the seam that produced it, and a mismatch is refused before any question is put.
 /// # Errors
 /// Returns the closed fault-identity error rather than returning a partial catalogue.
 pub fn asking<R>(
@@ -378,28 +373,38 @@ where
     R: FnMut() -> crate::wire::settle::Asked,
 {
     let mut done = Measured::default();
-    let asking_of: Vec<&str> = seams
+    let watching: std::collections::BTreeMap<&str, &crate::wire::dialled::Watching> = seams
         .watching
         .iter()
-        .map(|one| one.capability.as_str())
+        .map(|one| (one.capability.as_str(), one))
         .collect();
-    if asking_of
-        != baseline
-            .of
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<&str>>()
-    {
-        return Err(crate::wire::derive::DeriveError::NotOneBaseline {
-            seams: seams.watching.len(),
-            recordings: baseline.per_seam.len(),
-        });
+    let mismatch = || crate::wire::derive::DeriveError::NotOneBaseline {
+        seams: seams.watching.len(),
+        recordings: baseline.per_seam.len(),
+    };
+    if watching.len() != seams.watching.len() || baseline.per_seam.len() != seams.watching.len() {
+        return Err(mismatch());
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    let mut paired = Vec::with_capacity(baseline.per_seam.len());
+    for recorded in &baseline.per_seam {
+        let name = recorded.capability.as_str();
+        let Some(at) = watching.get(name).copied() else {
+            return Err(mismatch());
+        };
+        if !seen.insert(name) {
+            return Err(mismatch());
+        }
+        paired.push((at, &recorded.exchanges));
+    }
+    if seen.len() != watching.len() {
+        return Err(mismatch());
     }
     for one in &seams.watching {
         let dropped = one.interposer.did_not_complete();
         if dropped > 0 {
             done.limitations.push(Limitation::new(
-                TRANSPORT_FAILED,
+                crate::limitation::Limitation::WireTransportIncomplete,
                 &format!(
                     "{}: {dropped} caller(s) reached this seam and did not complete an exchange \
                      with no fault in place, so what a target did with those is about this \
@@ -410,7 +415,7 @@ where
             ));
         }
     }
-    for (at, observed) in seams.watching.iter().zip(&baseline.per_seam) {
+    for (at, observed) in paired {
         for exchange in observed {
             watch.trace.wire_exchange(recorded(exchange));
         }
@@ -493,7 +498,7 @@ pub fn licensing(
         return Ok(None);
     }
     Ok(Some(Limitation::new(
-        NOT_PUT,
+        crate::limitation::Limitation::WireFaultNotPut,
         &format!(
             "{} exchange(s) went past the seams this run watched, licensing {derived} \
              question(s) about them; this run records them and puts none of them back \
@@ -510,12 +515,16 @@ pub fn licensing(
 /// A catalogue is a set of questions about a program, and every one of those runs is a different program from the one a reader is being told about.
 #[derive(Debug)]
 pub struct Baseline {
-    /// One recording per seam, in the order the seams were started.
-    per_seam: Vec<Vec<Exchange>>,
-    /// The capability each recording came from, in the same order, so pairing them back is checked rather than assumed.
-    of: Vec<String>,
+    /// One named recording per seam.
+    per_seam: Vec<RecordedSeam>,
     /// What each target did with no fault in place, which is what makes a later failure attributable to one.
     before: crate::wire::settle::Before,
+}
+
+#[derive(Debug)]
+struct RecordedSeam {
+    capability: String,
+    exchanges: Vec<Exchange>,
 }
 
 impl Baseline {
@@ -523,7 +532,10 @@ impl Baseline {
     #[must_use]
     #[cfg(feature = "testkit")]
     pub fn all(&self) -> Vec<Exchange> {
-        self.per_seam.concat()
+        self.per_seam
+            .iter()
+            .flat_map(|one| one.exchanges.iter().cloned())
+            .collect()
     }
 }
 
@@ -570,14 +582,12 @@ impl Seams {
             per_seam: self
                 .watching
                 .iter()
-                .map(|one| one.interposer.seal())
+                .map(|one| RecordedSeam {
+                    capability: one.capability.clone(),
+                    exchanges: one.interposer.seal(),
+                })
                 .collect(),
             before: crate::wire::settle::Before::of(&answered),
-            of: self
-                .watching
-                .iter()
-                .map(|one| one.capability.clone())
-                .collect(),
         }
     }
 

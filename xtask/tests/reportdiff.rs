@@ -8,7 +8,7 @@
     reason = "a test reports a setup failure by panicking"
 )]
 
-use xtask::reportdiff::compare;
+use xtask::reportdiff::{DiffError, compare};
 
 fn report(body: &serde_json::Value) -> String {
     body.to_string()
@@ -20,6 +20,10 @@ fn diff(before: &str, after: &str) -> Vec<String> {
         .into_iter()
         .map(|change| change.to_string())
         .collect()
+}
+
+fn set(document: &mut serde_json::Value, path: &str, value: serde_json::Value) {
+    *document.pointer_mut(path).expect("golden report path") = value;
 }
 
 #[test]
@@ -196,4 +200,135 @@ fn a_count_and_a_score_that_moved_are_both_shown() {
         changes.iter().any(|change| change.contains("score")),
         "{changes:?}"
     );
+}
+
+#[test]
+fn a_canonical_assurance_report_that_changes_a_limitation_is_not_called_the_same() {
+    let before = include_str!("../../crates/njutest/tests/testdata/report.golden.json");
+    let mut after: serde_json::Value =
+        xtask::strictjson::decode_str(before).expect("golden report");
+    set(
+        &mut after,
+        "/report/builds/0/parts/0/limitations/0/detail",
+        serde_json::json!("the limitation now says something else"),
+    );
+    let changes = diff(before, &after.to_string());
+    assert_eq!(changes.len(), 1, "{changes:?}");
+    assert!(
+        changes.first().is_some_and(
+            |change| change.starts_with("report.builds[0].parts[0].limitations[0].detail\t")
+        ),
+        "{changes:?}"
+    );
+}
+
+#[test]
+fn two_report_kinds_are_never_called_the_same() {
+    let assurance = include_str!("../../crates/njutest/tests/testdata/report.golden.json");
+    let empty = serde_json::json!([]);
+    let run = run_report(&empty, &empty, 10);
+    assert_eq!(
+        diff(assurance, &run),
+        ["document_type\tcomplete\trust-mutants/run-report"]
+    );
+}
+
+#[test]
+fn an_unknown_report_kind_is_refused() {
+    let alien = r#"{"document_type":"unknown-report"}"#;
+    let error = compare(("alien.json", alien), ("same.json", alien)).expect_err("refused");
+    assert!(error.to_string().contains("alien.json"), "{error}");
+}
+
+#[test]
+fn canonical_run_identity_and_timing_are_not_claim_differences() {
+    let before = include_str!("../../crates/njutest/tests/testdata/report.golden.json");
+    let mut after: serde_json::Value =
+        xtask::strictjson::decode_str(before).expect("golden report");
+    set(
+        &mut after,
+        "/report/run_id",
+        serde_json::json!("another-run"),
+    );
+    set(
+        &mut after,
+        "/report/builds/0/parts/0/timing/duration_ms",
+        serde_json::json!(99_999),
+    );
+    set(
+        &mut after,
+        "/report/builds/0/parts/0/targets/0/duration_ms",
+        serde_json::json!(9_999),
+    );
+    assert!(diff(before, &after.to_string()).is_empty());
+}
+
+#[test]
+fn canonical_source_identities_are_provenance_differences() {
+    let before = include_str!("../../crates/njutest/tests/testdata/report.golden.json");
+    let mut after: serde_json::Value =
+        xtask::strictjson::decode_str(before).expect("golden report");
+    set(
+        &mut after,
+        "/report/builds/0/parts/0/run_id",
+        serde_json::json!("another-source-run"),
+    );
+    set(
+        &mut after,
+        "/report/provenance/cached",
+        serde_json::json!(true),
+    );
+    set(
+        &mut after,
+        "/report/provenance/source_run_id",
+        serde_json::json!("another-cached-run"),
+    );
+    set(
+        &mut after,
+        "/report/builds/0/parts/0/mutants/0/reuse/source_run_id",
+        serde_json::json!("another-reused-run"),
+    );
+    let changes = diff(before, &after.to_string());
+    assert!(
+        changes
+            .iter()
+            .any(|change| change.starts_with("report.builds[0].parts[0].run_id\t")),
+        "{changes:?}"
+    );
+    assert!(
+        changes
+            .iter()
+            .any(|change| change.starts_with("report.provenance.source_run_id\t")),
+        "{changes:?}"
+    );
+    assert!(
+        changes.iter().any(|change| change
+            .starts_with("report.builds[0].parts[0].mutants[0].reuse.source_run_id\t")),
+        "{changes:?}"
+    );
+}
+
+#[test]
+fn a_run_mutant_without_an_outcome_is_refused() {
+    let rows = serde_json::json!([{ "display_id": "aaaa" }]);
+    let empty = serde_json::json!([]);
+    let malformed = run_report(&rows, &empty, 10);
+    let error = compare(("malformed.json", &malformed), ("same.json", &malformed))
+        .expect_err("missing outcome refused");
+    assert!(matches!(error, DiffError::InvalidRunMutant { .. }));
+    assert!(error.to_string().contains("malformed.json"), "{error}");
+}
+
+#[test]
+fn duplicate_run_mutant_names_are_refused() {
+    let rows = serde_json::json!([
+        { "display_id": "aaaa", "outcome": "killed" },
+        { "display_id": "aaaa", "outcome": "survived" }
+    ]);
+    let empty = serde_json::json!([]);
+    let malformed = run_report(&rows, &empty, 10);
+    let error = compare(("malformed.json", &malformed), ("same.json", &malformed))
+        .expect_err("duplicate display ID refused");
+    assert!(matches!(error, DiffError::InvalidRunMutant { .. }));
+    assert!(error.to_string().contains("malformed.json"), "{error}");
 }

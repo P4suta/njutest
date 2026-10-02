@@ -103,15 +103,30 @@ impl Repo {
     }
 }
 
+/// What every git a test starts says first, so it reads the tree itself: no file-system monitor answers for it, no untracked cache stands in for reading it, and no monitor daemon outlives the test.
+pub const READ_THE_TREE: [&str; 4] = [
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "core.untrackedCache=false",
+];
+
+/// Git as a test starts it in `dir`, reading the tree itself.
+#[must_use]
+pub fn git(dir: &Path) -> Command {
+    let mut git = Command::new("git");
+    git.args(READ_THE_TREE).current_dir(dir);
+    git
+}
+
 /// Makes `root` a git repository with one commit holding everything in it.
 ///
 /// # Panics
 /// When git is not there or refuses, which a test asking for a repository cannot continue without.
 pub fn commit_tree(root: &Path) {
     let run = |args: &[&str]| -> String {
-        let output = Command::new("git")
+        let output = git(root)
             .args(args)
-            .current_dir(root)
             .env_clear()
             .envs(std::env::vars_os().filter(|(key, _)| {
                 crate::paths::same_name(key, std::ffi::OsStr::new("PATH"))

@@ -28,7 +28,7 @@ fn a_write_torn_by_a_stop_is_one_the_next_run_cannot_start_over() {
         &PrepareOptions {
             operators: vec!["crash-after-write".to_owned()],
             touch: true,
-            ..PrepareOptions::default()
+            ..PrepareOptions::new(rust_mutants::rule::Tier::Balanced)
         },
         &Cancel::new(),
     )
@@ -60,7 +60,10 @@ fn a_write_torn_by_a_stop_is_one_the_next_run_cannot_start_over() {
             kept.stop().noticed(),
             "the runtime said it stopped at this call, which is what makes the status a stop"
         );
-        let left = kept.left().expect("the scratch reads");
+        let left = match kept.left().expect("the scratch reads") {
+            rust_mutants::session::Left::Named(left) => left,
+            rust_mutants::session::Left::Unnamed(entry) => vec![entry],
+        };
         assert!(
             !left.is_empty() && left.iter().all(|one| one.starts_with("fixture-durable/")),
             "the crashed run left what its test wrote, under the directory it writes in, and \
@@ -109,7 +112,7 @@ fn a_test_that_ends_with_the_stop_status_itself_is_not_a_stop() {
         &PrepareOptions {
             operators: vec!["crash-after-write".to_owned()],
             touch: true,
-            ..PrepareOptions::default()
+            ..PrepareOptions::new(rust_mutants::rule::Tier::Balanced)
         },
         &Cancel::new(),
     )
@@ -155,7 +158,7 @@ fn what_a_crash_wrote_under_its_home_is_what_it_left() {
         &PrepareOptions {
             operators: vec!["crash-after-write".to_owned()],
             touch: true,
-            ..PrepareOptions::default()
+            ..PrepareOptions::new(rust_mutants::rule::Tier::Balanced)
         },
         &Cancel::new(),
     )
@@ -184,7 +187,10 @@ fn what_a_crash_wrote_under_its_home_is_what_it_left() {
             "the process stops just after a write of `remember`: {}",
             njutest_devkit::process::strict_utf8(&crashed.output)
         );
-        let left = kept.left().expect("the scratch reads");
+        let left = match kept.left().expect("the scratch reads") {
+            rust_mutants::session::Left::Named(left) => left,
+            rust_mutants::session::Left::Unnamed(entry) => vec![entry],
+        };
         assert!(
             !left.is_empty() && left.iter().all(|one| one.starts_with("~/.fixture-home/")),
             "what the crash wrote under the execution's home, which the next run is given again, \

@@ -42,10 +42,16 @@ fn against(fixture: &Fixture, args: &[&str]) -> Output {
 }
 
 fn environment(fixture: &Fixture) -> Environment {
+    let mut vars: rust_mutants::vars::Variables = njutest_devkit::paths::environment_for_a_run()
+        .into_iter()
+        .collect();
+    vars.set(
+        "NJUTEST_FIXTURE_BUILD_CACHE",
+        fixture.temp().join("shared-builds"),
+    );
     Environment {
-        vars: njutest_devkit::paths::environment_for_a_run()
-            .into_iter()
-            .collect(),
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
+        vars,
         temp_directory: fixture.temp().to_path_buf(),
         program: std::env::current_exe().expect(
             "this test's own executable stands in for the engine a remembered outcome is keyed on",
@@ -97,7 +103,11 @@ fn a_run_can_be_named_and_its_report_is_called_that() {
         &fixture,
         &["run", "--offline", "--locked", "--run-id", "../escape"],
     );
-    assert_eq!(refused.status.code(), Some(2), "{refused:?}");
+    assert_eq!(
+        refused.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_FAILED)),
+        "{refused:?}"
+    );
     assert!(
         njutest_devkit::process::strict_utf8(&refused.stderr).contains("--run-id"),
         "{refused:?}"
@@ -188,13 +198,15 @@ fn replaying_a_recorded_outcome_asks_the_question_the_run_asked() {
             "--tier",
             "all",
             "--no-coverage",
+            "--no-seal",
             "--ui",
             "quiet",
         ],
     );
-    assert!(
-        measured.status.code().is_some_and(|code| code < 2),
-        "the arranging run reached a mutation verdict: {measured:?}"
+    assert_eq!(
+        measured.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_UNESTABLISHED)),
+        "the arranging run discharged the mutation natively, which is a lead: {measured:?}"
     );
     let output = against(
         &fixture,
@@ -223,8 +235,6 @@ fn replaying_a_mutant_a_run_measured_says_whether_the_answer_is_still_the_same()
             "--locked",
             "--tier",
             "all",
-            "--no-coverage",
-            "--no-touch",
             "--ui",
             "quiet",
         ],
@@ -351,18 +361,41 @@ fn one_with(document: &serde_json::Value, outcome: &str) -> String {
         .to_owned()
 }
 
+/// The column a row is counted in, and the count inside that column it is in as well, as the accounting says it: a row nothing sealed decided, which a native run said something of, is a lead.
+fn columns_of(row: &serde_json::Value) -> (&'static str, Option<&'static str>) {
+    let outcome = row["outcome"].as_str().expect("an outcome");
+    let reason = row["not_run_reason"].as_str();
+    let unproven = row["evidence"]["kind"] == "unproven";
+    match (outcome, reason) {
+        (_, Some("discharged")) => ("unproven", Some("unproven_discharged")),
+        ("killed", _) if unproven => ("unproven", Some("unproven_killed")),
+        ("survived", _) if unproven => ("unproven", Some("unproven_survived")),
+        ("not_run", Some("unreached")) if unproven => ("unproven", Some("unproven_unreached")),
+        ("not_run", Some("unreached")) => ("not_run", Some("unreached")),
+        ("not_run", Some("declined")) => ("not_run", Some("declined")),
+        ("killed", _) => ("killed", None),
+        ("survived", _) => ("survived", None),
+        ("step_limit_reached", _) => ("step_limit_reached", None),
+        ("waited", _) => ("waited", None),
+        ("inconclusive", _) => ("inconclusive", None),
+        ("errored", _) => ("errored", None),
+        (_, _) => ("not_run", None),
+    }
+}
+
 /// The document with the accounting and score its rows imply, which is what a reader holds a stored answer to.
 fn refolded(mut document: serde_json::Value) -> serde_json::Value {
     let rows = document["mutants"].as_array().expect("the rows").clone();
     let mut counted: std::collections::BTreeMap<&str, u64> = std::collections::BTreeMap::new();
-    let (mut unreached, mut discharged, mut expected) = (0u64, 0u64, 0u64);
     for row in &rows {
-        *counted
-            .entry(row["outcome"].as_str().expect("an outcome"))
-            .or_insert(0) += 1;
-        unreached += u64::from(row["not_run_reason"].as_str() == Some("unreached"));
-        discharged += u64::from(row["not_run_reason"].as_str() == Some("discharged"));
-        expected += u64::from(row["expected"].as_bool().unwrap_or_default());
+        let (column, inside) = columns_of(row);
+        *counted.entry(column).or_insert(0) += 1;
+        if let Some(inside) = inside {
+            *counted.entry(inside).or_insert(0) += 1;
+        }
+        if row["expected"].as_bool().unwrap_or_default() {
+            *counted.entry("expected").or_insert(0) += 1;
+        }
     }
     let rejections = document["rejections"].as_array().map_or(0, Vec::len);
     {
@@ -372,20 +405,25 @@ fn refolded(mut document: serde_json::Value) -> serde_json::Value {
         for field in [
             "killed",
             "survived",
+            "unproven",
             "step_limit_reached",
             "waited",
             "inconclusive",
             "errored",
             "not_run",
+            "unreached",
+            "declined",
+            "expected",
+            "unproven_killed",
+            "unproven_survived",
+            "unproven_unreached",
+            "unproven_discharged",
         ] {
             accounting.insert(
                 field.into(),
                 serde_json::json!(counted.get(field).copied().unwrap_or_default()),
             );
         }
-        accounting.insert("unreached".into(), serde_json::json!(unreached));
-        accounting.insert("discharged".into(), serde_json::json!(discharged));
-        accounting.insert("expected".into(), serde_json::json!(expected));
         let cataloged = u64::try_from(rows.len() + rejections).expect("a count");
         accounting.insert("cataloged".into(), serde_json::json!(cataloged));
         accounting.insert(
@@ -446,6 +484,9 @@ fn a_replay_says_what_the_stored_answer_was_and_never_more_than_it_knows() {
     let mut disagreeing = document;
     let at = row_of(&disagreeing, &killed);
     disagreeing["mutants"][at]["outcome"] = serde_json::json!("survived");
+    disagreeing["mutants"][at]["killed_by"] = serde_json::json!([]);
+    disagreeing["mutants"][at]["evidence"]["executions"][0]["came_to"] =
+        serde_json::json!("passed");
     disagreeing["findings"]
         .as_array_mut()
         .expect("the findings")
@@ -469,14 +510,16 @@ fn a_replay_says_what_the_stored_answer_was_and_never_more_than_it_knows() {
     proven["mutants"][at]["outcome"] = serde_json::json!("not_run");
     proven["mutants"][at]["not_run_reason"] = serde_json::json!("discharged");
     proven["mutants"][at]["unreached"] = serde_json::json!(false);
+    proven["mutants"][at]["evidence"] =
+        serde_json::json!({ "kind": "unproven", "reasons": ["test-absent"] });
     let findings = proven["findings"].as_array_mut().expect("the findings");
     findings.retain(|finding| finding["mutant"].as_str() != Some(killed.as_str()));
     findings.push(serde_json::json!({
-        "kind": "discharged-mutant",
+        "kind": "unproven-mutant",
         "mutant": killed,
-        "detail": "a proof discharged it"
+        "detail": "a proof over a native run discharged it"
     }));
-    proven["run"]["exit_code"] = serde_json::json!(1);
+    proven["run"]["exit_code"] = serde_json::json!(2);
     rewritten(&path, &refolded(proven));
     let output = against(
         &fixture,
@@ -532,7 +575,7 @@ fn a_replay_told_to_read_a_run_that_is_not_there_says_so_rather_than_reading_not
     let message = njutest_devkit::process::strict_utf8(&output.stderr).into_owned();
     assert_eq!(
         output.status.code(),
-        Some(2),
+        Some(i32::from(rust_mutants::run::EXIT_FAILED)),
         "a run nobody stored is not a run that said nothing about this mutation: {}",
         said(&output)
     );
@@ -564,7 +607,7 @@ fn a_replay_told_to_read_a_run_that_is_not_there_says_so_rather_than_reading_not
     );
     assert_eq!(
         unreadable.status.code(),
-        Some(2),
+        Some(i32::from(rust_mutants::run::EXIT_FAILED)),
         "a stored run that cannot be read is not a stored run that answered nothing: {}",
         said(&unreadable)
     );
@@ -852,4 +895,186 @@ fn a_repeat_run_of_an_unchanged_tree_compiles_nothing_again() {
         "a run of a tree whose bytes are the ones the last run built compiles nothing: every \
          unit it wrote a fingerprint for is work the last run had already done: {compiled:#?}"
     );
+}
+
+/// The newest run's report, and the directory it was stored in.
+fn newest(fixture: &Fixture) -> (std::path::PathBuf, serde_json::Value) {
+    let directory = njutest_devkit::fixture::newest_run(
+        &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+    );
+    let text = std::fs::read_to_string(directory.join("run-report-v1.json")).expect("the report");
+    let document = njutest_devkit::strictjson::decode_str(&text).expect("the report is JSON");
+    (directory, document)
+}
+
+/// Every note a recording holds of `kind`, by what it says.
+fn notes(directory: &std::path::Path, kind: &str) -> Vec<String> {
+    let path = directory.join("trace.jsonl");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    text.lines()
+        .map(|line| {
+            njutest_devkit::strictjson::decode_str::<serde_json::Value>(line)
+                .expect("every line is an event")
+        })
+        .filter(|event| {
+            event.pointer("/payload/type") == Some(&serde_json::json!("note"))
+                && event.pointer("/payload/note/kind") == Some(&serde_json::json!(kind))
+        })
+        .map(|event| event["payload"]["note"]["detail"].to_string())
+        .collect()
+}
+
+#[test]
+fn a_stored_sealed_answer_is_believed_only_once_its_executions_come_out_the_same_again() {
+    use rust_mutants::sealed::record::{Came, Class, Evidence};
+    let fixture = Fixture::copy("fixture-simple");
+    measured(&fixture);
+    let store = rust_mutants::outcomes::Store::new(fixture.cache());
+    let mut record = store
+        .export()
+        .expect("the store the run left reads back whole")
+        .records
+        .into_iter()
+        .find(|record| {
+            record.outcome == rust_mutants::outcomes::CacheOutcome::Killed
+                && record.evidence.class() == Class::Sealed
+        })
+        .expect("the run kept a kill its sealed executions established");
+    let Evidence::Sealed { executions } = &mut record.evidence else {
+        panic!("a kill sealed executions established rests on them: {record:?}");
+    };
+    let killing = executions
+        .last_mut()
+        .expect("a sealed kill rests on the execution that detected it");
+    let came_to = killing.came_to;
+    killing.came_to = if came_to == Came::Failed {
+        Came::Panicked
+    } else {
+        Came::Failed
+    };
+    let (target, test, stored) = (
+        killing.target.clone(),
+        killing.test.clone(),
+        killing.came_to,
+    );
+    store
+        .put(&record)
+        .expect("the store files the record under the key its own inputs name");
+    assert!(
+        store
+            .get(&record.key(), &record.mutant)
+            .expect("the store reads the record back as the record it claims to be")
+            .is_some(),
+        "the record passes every check the store makes of what it reads"
+    );
+
+    let output = against(
+        &fixture,
+        &["run", "--offline", "--locked", "--ui", "quiet", "--trace"],
+    );
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let (run, document) = newest(&fixture);
+    let row = document["mutants"]
+        .as_array()
+        .expect("the rows")
+        .iter()
+        .find(|row| row["id"] == record.mutant.as_str())
+        .expect("the run has a row for the mutant the record answers for");
+    assert!(
+        row["source_run_id"].is_null(),
+        "a stored sealed answer one of whose executions comes to something else when it is put \
+         again is not believed, and the run establishes the mutant afresh: {row}"
+    );
+    assert_eq!(
+        row["evidence"]["executions"]
+            .as_array()
+            .and_then(|executions| executions.last())
+            .map(|execution| execution["came_to"].clone()),
+        Some(serde_json::json!(came_to.name())),
+        "what the run established is what the execution comes to: {row}"
+    );
+    let said = notes(&run.join("trace"), "unreproduced");
+    let display = row["display_id"].as_str().expect("a display identity");
+    let note = said
+        .iter()
+        .find(|note| note.contains(display))
+        .unwrap_or_else(|| panic!("the recording names the answer it did not believe: {said:?}"));
+    for named in [
+        target.as_str(),
+        test.as_str(),
+        stored.name(),
+        came_to.name(),
+    ] {
+        assert!(
+            note.contains(named),
+            "the note names the execution that differed, what the store said it came to, and \
+             what it came to now; {named} is missing: {note}"
+        );
+    }
+}
+
+#[test]
+fn a_stored_sealed_answer_is_not_believed_where_its_executions_establish_another_verdict() {
+    use rust_mutants::outcomes::CacheOutcome;
+    use rust_mutants::sealed::record::Class;
+    let fixture = Fixture::copy("fixture-simple");
+    measured(&fixture);
+    let store = rust_mutants::outcomes::Store::new(fixture.cache());
+    let mut record = store
+        .export()
+        .expect("the store the run left reads back whole")
+        .records
+        .into_iter()
+        .find(|record| {
+            record.outcome == CacheOutcome::Killed && record.evidence.class() == Class::Sealed
+        })
+        .expect("the run kept a kill its sealed executions established");
+    record.outcome = CacheOutcome::Survived;
+    store
+        .put(&record)
+        .expect("the store files the record under the key its own inputs name");
+    assert!(
+        store
+            .get(&record.key(), &record.mutant)
+            .expect("the store reads the record back as the record it claims to be")
+            .is_some(),
+        "the record passes every check the store makes of what it reads"
+    );
+
+    let output = against(
+        &fixture,
+        &["run", "--offline", "--locked", "--ui", "quiet", "--trace"],
+    );
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let (run, document) = newest(&fixture);
+    let row = document["mutants"]
+        .as_array()
+        .expect("the rows")
+        .iter()
+        .find(|row| row["id"] == record.mutant.as_str())
+        .expect("the run has a row for the mutant the record answers for");
+    assert_eq!(
+        row["outcome"], "killed",
+        "what the run reports is what the executions establish: {row}"
+    );
+    assert!(
+        row["source_run_id"].is_null(),
+        "a stored answer whose own sealed executions establish another verdict than it says is \
+         not believed, even where they come out the same, and the run establishes the mutant \
+         afresh: {row}"
+    );
+    let said = notes(&run.join("trace"), "unreproduced");
+    let display = row["display_id"].as_str().expect("a display identity");
+    let note = said
+        .iter()
+        .find(|note| note.contains(display))
+        .unwrap_or_else(|| panic!("the recording names the answer it did not believe: {said:?}"));
+    for named in ["survived", "killed"] {
+        assert!(
+            note.contains(named),
+            "the note names the verdict the store kept and the one its executions establish; \
+             {named} is missing: {note}"
+        );
+    }
 }

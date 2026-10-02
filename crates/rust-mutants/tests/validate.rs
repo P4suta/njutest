@@ -5,6 +5,7 @@
 
 #![expect(
     clippy::indexing_slicing,
+    clippy::expect_used,
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
@@ -23,8 +24,8 @@ use rust_mutants::testkit::compile::{
 };
 use rust_mutants::trace::Recorder;
 use rust_mutants::validate::{
-    Attempt, Compile, ValidateError, ValidateOptions, Validated, Validating, attribute, validate,
-    validate_selected,
+    Attempt, Compile, ConstFnAt, Constness, ValidateError, ValidateOptions, Validated, Validating,
+    attribute, validate, validate_selected,
 };
 
 fn options() -> ValidateOptions {
@@ -62,6 +63,7 @@ fn an_error_inside_a_branch_belongs_to_that_mutant_and_one_outside_belongs_to_no
         path: "src/lib.rs",
         source: scripted.source(),
         placements: scripted.placements(),
+        carriers: &[],
         markers: &[],
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
@@ -82,7 +84,7 @@ fn an_error_inside_a_branch_belongs_to_that_mutant_and_one_outside_belongs_to_no
         diagnostic_at("src/lib.rs", 0, 1, 999),
         diagnostic_at("src/other.rs", branch.span.start, branch.span.end, 7),
     ];
-    let attributed = attribute(&[file], &messages);
+    let attributed = attribute(&[file], &messages, &Constness::default());
     assert_eq!(attributed.condemned, BTreeSet::from([branch.index]));
     assert_eq!(
         attributed.unattributed.len(),
@@ -103,6 +105,7 @@ fn a_warning_is_not_a_rejection() {
         path: "src/lib.rs",
         source: scripted.source(),
         placements: scripted.placements(),
+        carriers: &[],
         markers: &[],
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
@@ -127,7 +130,11 @@ fn a_warning_is_not_a_rejection() {
         return;
     };
     message.message.level = "warning".to_owned();
-    let attributed = attribute(&[file], &[Message::CompilerMessage(message)]);
+    let attributed = attribute(
+        &[file],
+        &[Message::CompilerMessage(message)],
+        &Constness::default(),
+    );
     assert!(attributed.condemned.is_empty());
     assert!(attributed.unattributed.is_empty());
 }
@@ -283,14 +290,18 @@ fn an_unattributable_error_is_isolated_by_bisection() {
 fn a_pristine_tree_that_does_not_compile_is_not_the_mutants_fault() {
     struct Broken;
     impl Compile for Broken {
-        fn attempt(&mut self, _condemned: &BTreeSet<u32>) -> Result<Attempt, ValidateError> {
+        fn attempt(
+            &mut self,
+            _condemned: &BTreeSet<u32>,
+            _constness: &Constness,
+        ) -> Result<Attempt, ValidateError> {
             Ok(Attempt {
                 files: Vec::new(),
                 messages: vec![
                     diagnostic_at("src/lib.rs", 0, 1, 0),
-                    Message::BuildFinished { success: false },
+                    Message::BuildFinished(rust_mutants::cargo::Finished::new(false)),
                 ],
-                success: false,
+                completion: rust_mutants::cargo::Completion::Refused,
                 written: 0,
             })
         }
@@ -372,6 +383,7 @@ fn a_diagnostic_whose_primary_span_is_elsewhere_is_attributed_through_its_second
         path: "src/lib.rs",
         source: scripted.source(),
         placements: scripted.placements(),
+        carriers: &[],
         markers: &[],
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
@@ -390,6 +402,7 @@ fn a_diagnostic_whose_primary_span_is_elsewhere_is_attributed_through_its_second
             branch.span.end,
             branch.index,
         )],
+        &Constness::default(),
     );
     assert_eq!(
         attributed.condemned,
@@ -407,6 +420,7 @@ fn a_diagnostic_whose_edit_is_named_only_by_a_child_note_is_attributed_through_i
         path: "src/lib.rs",
         source: scripted.source(),
         placements: scripted.placements(),
+        carriers: &[],
         markers: &[],
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
@@ -425,6 +439,7 @@ fn a_diagnostic_whose_edit_is_named_only_by_a_child_note_is_attributed_through_i
             branch.span.end,
             branch.index,
         )],
+        &Constness::default(),
     );
     assert_eq!(attributed.condemned, BTreeSet::from([branch.index]));
     assert!(attributed.unattributed.is_empty());
@@ -437,6 +452,7 @@ fn a_diagnostic_that_names_no_branch_anywhere_still_belongs_to_nobody() {
         path: "src/lib.rs",
         source: scripted.source(),
         placements: scripted.placements(),
+        carriers: &[],
         markers: &[],
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
@@ -446,7 +462,11 @@ fn a_diagnostic_that_names_no_branch_anywhere_still_belongs_to_nobody() {
     });
     assert_eq!(result_state(&file), Returned, "instrument: {file:?}");
     let Ok(file) = file else { return };
-    let attributed = attribute(&[file], &[diagnostic_beside("src/lib.rs", 0, 1, 999)]);
+    let attributed = attribute(
+        &[file],
+        &[diagnostic_beside("src/lib.rs", 0, 1, 999)],
+        &Constness::default(),
+    );
     assert!(
         attributed.condemned.is_empty(),
         "reading more spans widens what can be attributed, never what is guessed"
@@ -529,6 +549,7 @@ fn a_message_before_an_error_does_not_stop_the_reading_of_the_rest() {
         path: "src/lib.rs",
         source: scripted.source(),
         placements: scripted.placements(),
+        carriers: &[],
         markers: &[],
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
@@ -550,7 +571,11 @@ fn a_message_before_an_error_does_not_stop_the_reading_of_the_rest() {
     };
     warning.message.level = "warning".to_owned();
 
-    let alone = attribute(std::slice::from_ref(&file), &[at(branch.index)]);
+    let alone = attribute(
+        std::slice::from_ref(&file),
+        &[at(branch.index)],
+        &Constness::default(),
+    );
     assert_eq!(
         alone.condemned.len(),
         1,
@@ -560,15 +585,333 @@ fn a_message_before_an_error_does_not_stop_the_reading_of_the_rest() {
     let after = attribute(
         &[file],
         &[
-            Message::BuildFinished { success: false },
+            Message::BuildFinished(rust_mutants::cargo::Finished::new(false)),
             Message::CompilerMessage(warning),
             at(branch.index),
         ],
+        &Constness::default(),
     );
     assert_eq!(
         after.condemned, alone.condemned,
         "and a message that is not the compiler's, and a warning, are each passed over rather \
          than ending the reading: a build that stopped at the first of them would accept every \
          mutant the compiler refused after it"
+    );
+}
+
+/// Two `const fn`s of one name in two `impl`s, both holding guards, and a third that calls one and keeps its `const`.
+const TWINS: &str = "pub struct A;\nimpl A {\n    pub const fn make(n: u8) -> u8 {\n        n + 1\n    }\n}\npub struct B;\nimpl B {\n    pub const fn make(n: u8) -> u8 {\n        n - 1\n    }\n}\npub const fn keeps(n: u8) -> u8 {\n    A::make(n)\n}\n";
+
+/// [`TWINS`] and a `const fn` whose body holds a `const` of its own that calls `A::make`.
+const NESTED: &str = "pub struct A;\nimpl A {\n    pub const fn make(n: u8) -> u8 {\n        n + 1\n    }\n}\npub struct B;\nimpl B {\n    pub const fn make(n: u8) -> u8 {\n        n - 1\n    }\n}\npub const fn keeps(n: u8) -> u8 {\n    A::make(n)\n}\npub const fn nests(n: u8) -> u8 {\n    const INNER: u8 = A::make(1);\n    n + INNER\n}\n";
+
+/// [`TWINS`] instrumented with every guard but those of `keeps`, which the tests treat as refused.
+fn twins() -> (
+    rust_mutants::instrument::FileOutput,
+    BTreeSet<u32>,
+    BTreeSet<u32>,
+) {
+    twins_in(TWINS)
+}
+
+/// `source` instrumented with every guard of the twin `make`s and none other.
+fn twins_in(
+    source: &str,
+) -> (
+    rust_mutants::instrument::FileOutput,
+    BTreeSet<u32>,
+    BTreeSet<u32>,
+) {
+    let scripted = ScriptedCompile::from_source("src/lib.rs", source, Tier::All);
+    let owned = |owner: &str| -> BTreeSet<u32> {
+        scripted
+            .placements()
+            .iter()
+            .filter(|placement| {
+                placement.hint.const_fn.as_ref().is_some_and(|function| {
+                    function.name == "make" && function.owner.as_deref() == Some(owner)
+                })
+            })
+            .map(|placement| placement.index)
+            .collect()
+    };
+    let (a, b) = (owned("A"), owned("B"));
+    let kept: Vec<rust_mutants::instrument::Placement> = scripted
+        .placements()
+        .iter()
+        .filter(|placement| a.contains(&placement.index) || b.contains(&placement.index))
+        .cloned()
+        .collect();
+    let file = instrument_file(&Instrumenting {
+        path: "src/lib.rs",
+        source: scripted.source(),
+        placements: &kept,
+        carriers: &[],
+        markers: &[],
+        comparable: &BTreeSet::default(),
+        probed: &BTreeMap::default(),
+        catalog_digest: scripted.catalog().digest(),
+        first_item: 0,
+        watched: "/watched",
+    })
+    .expect("instrument the twins");
+    (file, a, b)
+}
+
+/// A refusal of a call the compiler would have to make before the program runs, as the pinned toolchain writes one: `said` is its message, `at` the call, and `defined` the definition its note points at, which it has for a free function and not for an associated one.
+fn evaluation(said: &str, at: (u32, u32), defined: Option<(u32, u32)>) -> Message {
+    let note = match defined {
+        Some((start, end)) => format!(
+            r#"{{"message":"function is not const","code":null,"level":"note","spans":[{{"file_name":"src/lib.rs","byte_start":{start},"byte_end":{end},"line_start":1,"line_end":1,"column_start":1,"column_end":2,"is_primary":true,"text":[],"label":null}}],"children":[],"rendered":null}}"#
+        ),
+        None => r#"{"message":"calls in constants are limited to constant functions, tuple structs and tuple variants","code":null,"level":"note","spans":[],"children":[],"rendered":null}"#.to_owned(),
+    };
+    let (start, end) = at;
+    let json = format!(
+        r#"{{"reason":"compiler-message","package_id":"p","manifest_path":"/w/Cargo.toml","target":{{"kind":["lib"],"crate_types":["lib"],"name":"demo","src_path":"/w/src/lib.rs","edition":"2024"}},"message":{{"message":"{said}","code":{{"code":"E0015","explanation":""}},"level":"error","spans":[{{"file_name":"src/lib.rs","byte_start":{start},"byte_end":{end},"line_start":1,"line_end":1,"column_start":1,"column_end":2,"is_primary":true,"text":[],"label":null}}],"children":[{note}],"rendered":"error[E0015]: {said}\n"}}}}"#
+    );
+    rust_mutants::cargo::parse_messages(json.as_bytes())
+        .expect("the composed refusal parses")
+        .into_iter()
+        .next()
+        .expect("one message")
+}
+
+/// Where the twin `make` of `owner` is.
+fn make_of(file: &rust_mutants::instrument::FileOutput, owner: &str) -> ConstFnAt {
+    let function = file
+        .deconst
+        .iter()
+        .find(|function| function.owner.as_deref() == Some(owner))
+        .expect("the twin is written without its const");
+    ConstFnAt {
+        path: "src/lib.rs".to_owned(),
+        keyword: function.origin,
+    }
+}
+
+#[test]
+fn a_refused_evaluation_is_about_the_function_its_note_defines_wherever_it_points() {
+    let (file, a, b) = twins();
+    assert!(
+        !a.is_empty() && !b.is_empty() && a.is_disjoint(&b),
+        "each twin holds guards of its own"
+    );
+    let keyword = make_of(&file, "A");
+    let defined = file
+        .deconst
+        .iter()
+        .find(|function| function.owner.as_deref() == Some("A"))
+        .expect("A's make")
+        .keyword;
+    let attributed = attribute(
+        std::slice::from_ref(&file),
+        &[evaluation(
+            "cannot call non-const function `make` in constants",
+            (0, 1),
+            Some((defined.start, defined.end)),
+        )],
+        &Constness::default(),
+    );
+    assert_eq!(
+        attributed.condemned, a,
+        "the name alone is either twin, and the note's span is one of them: every mutant of that \
+         one is condemned, and none of the other"
+    );
+    assert_eq!(
+        attributed.evaluated, a,
+        "for being evaluated before the program runs"
+    );
+    assert_eq!(
+        attributed.pinned,
+        BTreeSet::from([keyword]),
+        "and the function keeps its const from now on"
+    );
+    assert!(attributed.unattributed.is_empty() && attributed.carried.is_empty());
+}
+
+#[test]
+fn a_refused_evaluation_with_no_note_is_about_every_function_its_message_could_name() {
+    let (file, a, b) = twins();
+    let named = |said: &str| {
+        attribute(
+            std::slice::from_ref(&file),
+            &[evaluation(said, (0, 1), None)],
+            &Constness::default(),
+        )
+        .condemned
+    };
+    assert_eq!(
+        named("cannot call non-const associated function `B::<u8>::make` in constants"),
+        b,
+        "an associated function is named by its type, generic arguments and all, and the type \
+         tells the twins apart"
+    );
+    assert_eq!(
+        named("cannot call non-const associated function `C::make` in constants"),
+        a.union(&b).copied().collect::<BTreeSet<u32>>(),
+        "a type the message names and no twin belongs to leaves the name, which could be either: \
+         both are condemned, since a round that condemns too little is refused again and one that \
+         guesses is a build nobody can trust"
+    );
+    assert!(
+        named("cannot call non-const function `elsewhere` in constants").is_empty(),
+        "a function the tree does not write without its const is none of this rule's business"
+    );
+}
+
+#[test]
+fn a_refused_call_inside_a_const_fn_that_keeps_its_const_for_want_of_a_guard_makes_it_a_carrier() {
+    let (file, a, b) = twins();
+    assert!(
+        a.is_disjoint(&b),
+        "the call names A's make, and B's guards are no part of it"
+    );
+    let caller = file
+        .constant
+        .iter()
+        .find(|function| function.name == "keeps")
+        .expect("keeps is written with its const");
+    let inside = (caller.body.start + 2, caller.body.start + 3);
+    let keeps = ConstFnAt {
+        path: "src/lib.rs".to_owned(),
+        keyword: caller.origin,
+    };
+    let said = "cannot call non-const associated function `A::make` in constant functions";
+    let carried = attribute(
+        std::slice::from_ref(&file),
+        &[evaluation(said, inside, None)],
+        &Constness::default(),
+    );
+    assert!(
+        carried.condemned.is_empty() && carried.pinned.is_empty(),
+        "nothing says keeps is evaluated before the program runs, so nothing is condemned: {carried:?}"
+    );
+    assert_eq!(
+        carried.calls,
+        BTreeSet::from([(keeps.clone(), make_of(&file, "A"))]),
+        "keeps goes without its const next round, wherever A's make does"
+    );
+    assert_eq!(
+        carried.carried.len(),
+        1,
+        "and the round says which error that answers"
+    );
+    let pinned = attribute(
+        std::slice::from_ref(&file),
+        &[evaluation(said, inside, None)],
+        &Constness {
+            pinned: BTreeSet::from([keeps]),
+            calls: BTreeSet::new(),
+        },
+    );
+    assert_eq!(
+        pinned.condemned, a,
+        "where the caller keeps its const because the compiler evaluates it, so is the callee, \
+         and every mutant it holds is condemned"
+    );
+    assert!(pinned.calls.is_empty());
+}
+
+#[test]
+fn where_a_refused_call_stands_decides_whether_its_const_fn_carries_the_guard_whatever_the_words() {
+    let (file, a, b) = twins_in(NESTED);
+    assert!(
+        !a.is_empty() && a.is_disjoint(&b),
+        "the call names A's make, whose guards are its own"
+    );
+    let at_call = |after: u32| -> (u32, u32) {
+        let start = file
+            .text
+            .match_indices("A::make(")
+            .map(|(found, _)| u32::try_from(found).expect("the fixture is small"))
+            .find(|found| *found >= after)
+            .expect("the call is written");
+        (start, start + 10)
+    };
+    let body_of = |name: &str| {
+        file.constant
+            .iter()
+            .find(|function| function.name == name)
+            .unwrap_or_else(|| panic!("{name} is written with its const"))
+    };
+    let keeps = body_of("keeps");
+    let nests = body_of("nests");
+    let in_keeps = at_call(keeps.body.start);
+    let in_nests = at_call(nests.body.start);
+    let keeps_at = ConstFnAt {
+        path: "src/lib.rs".to_owned(),
+        keyword: keeps.origin,
+    };
+    for said in [
+        "cannot call non-const associated function `A::make` in constant functions",
+        "cannot call non-const associated function `A::make` in const fns",
+        "cannot call non-const associated function `A::make` in constants",
+    ] {
+        let carried = attribute(
+            std::slice::from_ref(&file),
+            &[evaluation(said, in_keeps, None)],
+            &Constness::default(),
+        );
+        assert_eq!(
+            (carried.calls, carried.condemned),
+            (
+                BTreeSet::from([(keeps_at.clone(), make_of(&file, "A"))]),
+                BTreeSet::new()
+            ),
+            "the call is in the body of keeps, which nothing says the compiler evaluates, so keeps \
+             carries the guard however the compiler words it: {said}"
+        );
+        let pinned = attribute(
+            std::slice::from_ref(&file),
+            &[evaluation(said, in_nests, None)],
+            &Constness::default(),
+        );
+        assert_eq!(
+            (pinned.calls, pinned.condemned),
+            (BTreeSet::new(), a.clone()),
+            "the call is in a const nests holds, which the compiler evaluates as a constant of its \
+             own, so A's make keeps its const however the compiler words it: {said}"
+        );
+    }
+}
+
+#[test]
+fn a_carrier_is_every_caller_of_a_function_holding_a_guard_until_one_the_compiler_evaluates() {
+    let at = |start: u32| ConstFnAt {
+        path: "src/lib.rs".to_owned(),
+        keyword: rust_mutants::span::Span {
+            start,
+            end: start + 5,
+        },
+    };
+    let mut constness = Constness {
+        pinned: BTreeSet::new(),
+        calls: BTreeSet::from([(at(10), at(0)), (at(20), at(10)), (at(30), at(40))]),
+    };
+    let spans = |carriers: BTreeMap<String, Vec<rust_mutants::span::Span>>| -> Vec<u32> {
+        let mut starts = Vec::new();
+        for file in carriers.into_values() {
+            starts.extend(file.iter().map(|span| span.start));
+        }
+        starts
+    };
+    let holding = BTreeSet::from([at(0)]);
+    assert_eq!(
+        spans(constness.carriers(&holding)),
+        [10, 20],
+        "a caller carries the guard, and so does its caller, and a call from a function holding \
+         nothing to one holding nothing carries nothing"
+    );
+    assert!(
+        constness.carriers(&BTreeSet::new()).is_empty(),
+        "with no guard held, no function goes without its const: the tree the bisection starts \
+         from is the pristine one"
+    );
+    constness.pinned.insert(at(20));
+    assert_eq!(
+        spans(constness.carriers(&holding)),
+        [10],
+        "a caller the compiler evaluates before the program runs keeps its const"
     );
 }

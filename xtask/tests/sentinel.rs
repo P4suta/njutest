@@ -11,13 +11,14 @@
 use xtask::devgates::SeamKind;
 use xtask::engineaudit::Layer;
 use xtask::engineaudit::sentinel::{Perturbation, clean};
+use xtask::gates::tree::{Depth, Graphs, Processes, Skeleton, Tree};
 use xtask::gates::{
-    GateError, engine_audit_sentinels, engine_audit_sighted, lint_sentinels, lint_sighted,
-    proofaudit_sentinels, proofaudit_sighted, seam_sentinels, seam_sighted,
+    GateError, engine_audit_sentinels, engine_audit_sighted, lint_sentinels, lint_sentinels_with,
+    lint_sighted, proofaudit_sentinels, proofaudit_sighted, seam_sentinels, seam_sighted,
 };
 use xtask::lints::Kind;
 use xtask::proofaudit;
-use xtask::sentinel::{PlantedError, Shape, shapes};
+use xtask::sentinel::{PlantedError, Shape, lay, shapes};
 
 const INERT: &str = "=== inert source crates/app/src/lib.rs\n//! A file.\npub fn f() {}\n";
 
@@ -31,10 +32,70 @@ fn every_lint_kind_is_found_in_every_shape_planted_for_it() {
     );
 }
 
+include!("support/asked.rs");
+
+#[test]
+fn the_lint_sentinel_asks_git_nothing_and_cargo_only_where_a_shape_changes_what_it_reads() {
+    let asked = Asked::new();
+    let found = lint_sentinels_with(&asked).unwrap_or_else(|GateError(said)| panic!("{said}"));
+    assert!(
+        found >= Kind::ALL.len(),
+        "{found} shapes cannot cover {} kinds",
+        Kind::ALL.len()
+    );
+    let questions = asked.questions();
+    let counted =
+        |wanted: fn(&Question) -> bool| questions.iter().filter(|one| wanted(one)).count();
+    assert_eq!(
+        (
+            counted(|question| matches!(question, Question::Listed(_))),
+            counted(|question| matches!(question, Question::Read(_, Depth::Resolved))),
+            counted(|question| matches!(question, Question::Read(_, Depth::Members))),
+        ),
+        (0, 4, 0),
+        "(listings, resolved readings, members-only readings): a planted tree is the files it \
+         plants, so nothing is listed; cargo resolves the skeleton's two graphs once, and again \
+         only for the one shape whose files change what cargo reads, a test target. Each \
+         question is one process, so this pins the sentinel at four: {questions:#?}"
+    );
+}
+
+#[test]
+fn every_planted_tree_holds_what_cargo_reads_of_it_whether_or_not_cargo_is_asked_again() {
+    let skeleton = Skeleton::unread();
+    let mut compared = Vec::new();
+    for kind in Kind::ALL {
+        for shape in shapes(kind.planted()).expect("every planted text parses") {
+            let Shape::Tree { name, files } = shape else {
+                continue;
+            };
+            let root = tempfile::tempdir().expect("a directory to plant the shape in");
+            let laid = lay(root.path(), &files).expect("the shape is laid");
+            let planted = Tree::planted(&laid, &skeleton, &Processes)
+                .unwrap_or_else(|GateError(said)| panic!("`{name}`: {said}"));
+            let read = Graphs::read(&laid.root, &laid.files, &Processes)
+                .unwrap_or_else(|GateError(said)| panic!("`{name}`: {said}"));
+            assert_eq!(
+                planted.graphs(),
+                &read,
+                "planted tree `{name}` of {} carries a reading of cargo's that cargo does not give \
+                 of it, so the sentinel proves the scan against facts no real tree has",
+                kind.label()
+            );
+            compared.push(name);
+        }
+    }
+    assert!(
+        !compared.is_empty(),
+        "no tree shape is planted, so nothing was compared"
+    );
+}
+
 #[test]
 fn a_kind_whose_planted_shape_is_not_found_makes_the_gate_refuse_rather_than_pass() {
     for kind in Kind::ALL {
-        let Err(GateError(said)) = lint_sighted(*kind, INERT) else {
+        let Err(GateError(said)) = lint_sighted(*kind, INERT, &Skeleton::unread(), &Processes)
+        else {
             panic!(
                 "{} passed over a shape that carries none of it",
                 kind.label()
@@ -51,7 +112,12 @@ fn a_kind_whose_planted_shape_is_not_found_makes_the_gate_refuse_rather_than_pas
 #[test]
 fn a_shape_that_is_not_found_is_named_even_when_an_earlier_one_was() {
     let planted = format!("=== seen source crates/app/src/lib.rs\n#![allow(dead_code)]\n{INERT}");
-    let Err(GateError(said)) = lint_sighted(Kind::AllowAttribute, &planted) else {
+    let Err(GateError(said)) = lint_sighted(
+        Kind::AllowAttribute,
+        &planted,
+        &Skeleton::unread(),
+        &Processes,
+    ) else {
         panic!("one shape found does not stand for another");
     };
     assert!(said.contains("`inert`"), "{said}");
@@ -314,7 +380,7 @@ fn every_outcome_a_report_can_claim_is_refused_when_its_executions_say_otherwise
         let laid = lie
             .lay()
             .unwrap_or_else(|error| panic!("{}: {error}", lie.name));
-        let audit = xtask::gates::proofaudit(&checkers(), laid.run(), laid.trace())
+        let audit = xtask::gates::proofaudit(&checkers(), laid.run(), laid.trace(), laid.root())
             .unwrap_or_else(|error| panic!("{}: {error}", lie.name));
         if audit.violations() == 0 {
             believed.push(format!("{outcome}: `{}` drew no violation", lie.name));
@@ -326,6 +392,48 @@ fn every_outcome_a_report_can_claim_is_refused_when_its_executions_say_otherwise
          everywhere else, is the lie an audit that only counts cannot see. Every outcome the \
          schema allows has one planted (`proofaudit::sentinel::lie`), and some layer has to \
          refuse it: {believed:#?}"
+    );
+}
+
+#[test]
+fn every_way_a_sealed_execution_ends_and_every_reason_it_decides_nothing_is_one_the_audit_reads() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("schema/njutest-assurance-report-v1.json");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let schema = xtask::strictjson::from_str(&text)
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let published = |pointer: &str| -> std::collections::BTreeSet<String> {
+        schema
+            .pointer(pointer)
+            .and_then(serde_json::Value::as_array)
+            .unwrap_or_else(|| panic!("the schema no longer lists {pointer}"))
+            .iter()
+            .filter_map(|value| value.as_str().map(str::to_owned))
+            .collect()
+    };
+    let read = |words: &[&[&str]]| -> std::collections::BTreeSet<String> {
+        words
+            .iter()
+            .flat_map(|words| words.iter())
+            .map(|word| (*word).to_owned())
+            .collect()
+    };
+    assert_eq!(
+        published("/$defs/evidence/oneOf/0/properties/executions/items/properties/came_to/enum"),
+        read(&[
+            &["passed", proofaudit::SET_ASIDE],
+            &proofaudit::DETECTIONS,
+            &proofaudit::DOUBTS
+        ]),
+        "the evidence layer decides a sealed verdict again from what each execution came to, \
+         so a way of ending the schema adds is one it reads the day it arrives"
+    );
+    assert_eq!(
+        published("/$defs/evidence/oneOf/1/properties/reasons/items/enum"),
+        read(&[&proofaudit::REASONS]),
+        "and a lead names reasons the audit knows as a sealed run's"
     );
 }
 

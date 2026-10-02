@@ -165,9 +165,11 @@ fn a_target_the_measurement_could_not_read_is_kept_in_every_route() {
             ("demo/doc/demo", &[]),
         ],
     );
-    reached
-        .limitations
-        .push(format!("{UNMEASURED}:demo/test/parity"));
+    reached.limitations.push(
+        format!("{UNMEASURED}:demo/test/parity")
+            .parse::<rust_mutants::limitation::Limited>()
+            .expect("known limitation"),
+    );
     let route = Route::decide(
         &reached,
         Path::new("src/lib.rs"),
@@ -228,9 +230,11 @@ fn what_an_execution_narrows_to_is_what_the_route_says_and_nothing_else() {
             ("demo/doc/demo", &[]),
         ],
     );
-    reached
-        .limitations
-        .push(format!("{UNMEASURED}:demo/test/parity"));
+    reached.limitations.push(
+        format!("{UNMEASURED}:demo/test/parity")
+            .parse::<rust_mutants::limitation::Limited>()
+            .expect("known limitation"),
+    );
     let route = Route::decide(
         &reached,
         Path::new("src/lib.rs"),
@@ -342,9 +346,11 @@ fn a_measurement_that_could_not_read_a_target_is_not_one_to_remember() {
     );
     assert!(whole.measured(), "and it measured something");
     let mut partial = whole;
-    partial
-        .limitations
-        .push(format!("{UNMEASURED}:demo/test/parity"));
+    partial.limitations.push(
+        format!("{UNMEASURED}:demo/test/parity")
+            .parse::<rust_mutants::limitation::Limited>()
+            .expect("known limitation"),
+    );
     assert!(
         !partial.whole(),
         "a measurement of some of the targets is sound to route by, because what it could not \
@@ -467,4 +473,62 @@ fn a_configuration_that_is_both_unreadable_and_target_specific_is_said_to_be_unr
          about it is that nothing in it is known: a reader told the flags were \
          target-specific would go looking for a table that may not be the reason"
     );
+}
+
+#[test]
+fn every_engine_limitation_has_one_name_and_one_legacy_wire_spelling() {
+    use rust_mutants::limitation::{ALL, Limitation, Limited, TargetId};
+
+    let names: Vec<&str> = Limitation::ALL.into_iter().map(Limitation::name).collect();
+    assert_eq!(names, ALL);
+    assert_eq!(
+        names.len(),
+        names
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+    );
+    let target: TargetId = "demo/test/parity"
+        .parse::<TargetId>()
+        .expect("built target identity");
+    for kind in Limitation::ALL {
+        assert_eq!(kind.name().parse::<Limitation>(), Ok(kind));
+        for limited in [
+            Limited::whole(kind),
+            Limited::for_target(kind, target.clone()),
+        ] {
+            let name = limited.to_string();
+            assert_eq!(name.parse::<Limited>(), Ok(limited.clone()));
+            assert_eq!(
+                serde_json::to_string(&limited).expect("limitation wire"),
+                format!("{name:?}")
+            );
+            assert_eq!(
+                njutest_devkit::strictjson::decode_str::<Limited>(&format!("{name:?}"))
+                    .expect("limitation wire"),
+                limited
+            );
+        }
+    }
+}
+
+#[test]
+fn a_persisted_limitation_cannot_smuggle_an_unknown_reason_or_target() {
+    use rust_mutants::limitation::Limited;
+
+    for name in [
+        "doctests-not-routed",
+        "baseline-not-passing:",
+        "baseline-not-passing:demo/test",
+        "baseline-not-passing:demo/unknown/parity",
+        "baseline-not-passing:demo/test/parity/extra",
+        "baseline-not-passing:demo/test/parity:other",
+    ] {
+        assert!(name.parse::<Limited>().is_err(), "{name}");
+        assert!(
+            njutest_devkit::strictjson::decode_str::<Limited>(&format!("{name:?}")).is_err(),
+            "{name}"
+        );
+    }
 }

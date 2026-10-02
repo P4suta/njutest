@@ -3,7 +3,6 @@
 
 //! Rewriting a file so that every compilable mutant of it lives in the file at once, dormant behind a guard.
 
-mod guards;
 mod observable;
 mod runtime;
 mod steps;
@@ -21,21 +20,24 @@ pub fn module_named_for(text: &str, stem: &str) -> Result<String, ModuleNameErro
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+use rust_mutants_adapt::guard as guards;
+
 use crate::catalog::Catalog;
 use crate::error::{self, ErrorCode};
 use crate::interval::{self, Item, Node};
 use crate::span::Span;
 use crate::splice::{Splice, apply, count_lines};
 use crate::syntax::branch::Marker;
-use crate::syntax::{Form, Found, SiteHint};
+use crate::syntax::{ConstFn, Form, Found, SiteHint};
 
 pub use runtime::{
-    ACTIVE_ENV, CATALOG_ENV, COMPILED_CATALOG_ENV, CRASH_EXIT, CRASH_NONCE_ENV, CRASH_NOTICE_ENV,
-    CRASH_NOTICE_SCHEMA, CRASHED_CALL, DELAY_ENV, FAULT_ENV, INJECTED, INJECTED_CALL, MODULE_STEM,
-    ModuleNameError, ORPHAN_PREFIX, RUNTIME_MARKER, Rendering, RuntimeRenderError,
-    STALE_CATALOG_EXIT, STEP_BEAT_ENV, STEP_NONCE_ENV, STEP_NOTICE_ENV, STEP_NOTICE_SCHEMA,
-    STEP_PROTOCOL_EXIT, STEP_STATE_ENV, STEP_STATE_SCHEMA, STEPS_ENV, STOP_SCHEMA, TOUCH_ENV,
-    TOUCH_ITEMS_ENV, TOUCH_UNAVAILABLE_EXIT, WATCHED_ENV, module_name, render,
+    ACTIVE_ENV, CATALOG_ENV, COMPILED_ACTIVE_ENV, COMPILED_CATALOG_ENV, CRASH_EXIT,
+    CRASH_NONCE_ENV, CRASH_NOTICE_ENV, CRASH_NOTICE_SCHEMA, CRASHED_CALL, DELAY_ENV, FAULT_ENV,
+    FAULT_FATE_ENV, FAULT_FATE_SCHEMA, INJECTED, INJECTED_CALL, MODULE_STEM, ModuleNameError,
+    ORPHAN_PREFIX, RUNTIME_MARKER, Rendering, RuntimeRenderError, STALE_CATALOG_EXIT,
+    STEP_BEAT_ENV, STEP_NONCE_ENV, STEP_NOTICE_ENV, STEP_NOTICE_SCHEMA, STEP_PROTOCOL_EXIT,
+    STEP_STATE_ENV, STEP_STATE_SCHEMA, STEPS_ENV, STOP_SCHEMA, TOUCH_ENV, TOUCH_ITEMS_ENV,
+    TOUCH_UNAVAILABLE_EXIT, WATCHED_ENV, module_name, render,
 };
 
 /// The first words the runtime prints before it exits [`runtime::STALE_CATALOG_EXIT`].
@@ -89,18 +91,13 @@ pub fn items(path: &str, source: &[u8], first_item: u32) -> Result<Vec<ItemBody>
             format!("the source is not valid UTF-8: {error}"),
         )
     })?;
+    let doing = "the items cannot be numbered";
     crate::parsing::apart(|parsing| steps::plant(parsing, text, MODULE_STEM, first_item))
         .map_err(|unread| {
-            InstrumentError::unread(InstrumentErrorKind::SourceMismatch, path, &unread)
+            InstrumentError::unread((InstrumentErrorKind::SourceMismatch, path), doing, &unread)
         })?
         .map(|planted| planted.items)
-        .map_err(|error| {
-            InstrumentError::new(
-                InstrumentErrorKind::SourceMismatch,
-                path,
-                format!("the items cannot be numbered: {error}"),
-            )
-        })
+        .map_err(|failed| InstrumentError::planted(path, doing, failed))
 }
 
 /// One file whose items are to be numbered: where it is, who compiles it, and its pristine bytes.
@@ -226,14 +223,63 @@ pub struct Branch {
     pub span: Span,
 }
 
-/// What one file is rewritten with: the mutants, the shape they nest in, and the markers its branch proofs put in it.
+/// What one file is rewritten with: the mutants, the shape they nest in, the markers its branch proofs put in it, and the `const fn`s its guards need written without their `const`.
 #[derive(Debug, Clone, Copy)]
 struct Planted<'a> {
     /// Which of them nest inside which, so an outer guard renders the inner ones in its own original branch.
     forest: &'a interval::Forest<Placement>,
     /// The markers that can be written where they are.
     markers: &'a [Marker],
+    /// Every `const fn` of the file, by where its `const` is in the text being rewritten, with where it is in the pristine file and the mutants whose guards it holds when it is to be written without its `const`.
+    const_fns: &'a BTreeMap<Span, ConstKeyword>,
 }
+
+/// One `const fn` of a file being rewritten: where it is in the pristine file, and whether and why it loses its `const`.
+#[derive(Debug, Clone)]
+struct ConstKeyword {
+    /// The function, in the coordinates of the text being rewritten.
+    site: steps::ConstSite,
+    /// Where its `const` is in the pristine file, which names it from one round to the next.
+    origin: Span,
+    /// The mutants whose guards it holds, ascending.
+    mutants: Vec<u32>,
+    /// Whether the text writes it without its `const`: it holds a guard, or it calls a function that does.
+    blank: bool,
+}
+
+/// A `const fn` an instrumented text writes without its `const`, because it holds a guard or calls a function that does (ADR 0047).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Deconst {
+    /// Its own name.
+    pub name: String,
+    /// The last path segment of the type whose `impl` or `trait` holds it, or `None` for a function neither holds.
+    pub owner: Option<String>,
+    /// The bytes its `const` covers in the pristine file, which name it from one round to the next.
+    pub origin: Span,
+    /// The bytes its `const` covered in the instrumented text, which are blank there and lie inside the span a diagnostic gives its definition.
+    pub keyword: Span,
+    /// Every mutant whose guard it holds, ascending, which is none where it only calls a function that holds one.
+    pub mutants: Vec<u32>,
+}
+
+/// A `const fn` an instrumented text writes with its `const`, whose body is where the compiler refuses a call to a function written without one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Constant {
+    /// Its own name.
+    pub name: String,
+    /// The bytes its `const` covers in the pristine file, which name it from one round to the next.
+    pub origin: Span,
+    /// The bytes its body covers in the instrumented text, braces included.
+    pub body: Span,
+    /// Every constant its body holds, in the instrumented text: an initializer, a `const` block, an array length, a discriminant or a const argument, which the compiler evaluates on its own rather than as this function's body.
+    pub evaluated: Vec<Span>,
+}
+
+/// The spaces a `const` is written as while its function holds a guard, as long as the keyword so that nothing after it moves.
+const UNCONST: &[u8; 5] = b"     ";
+
+/// The keyword a `const fn` is found by.
+const CONST: &[u8; 5] = b"const";
 
 /// One site an alternative is written for: where it is, its pristine text, and the guards carried into every alternative of it.
 #[derive(Clone, Copy)]
@@ -269,6 +315,8 @@ struct Rewritten {
     branches: Vec<Branch>,
     compared: BTreeSet<u32>,
     beside: BTreeSet<(u32, u32)>,
+    deconst: Vec<Deconst>,
+    constant: Vec<Constant>,
 }
 
 /// A rendered site: its text, where each alternative sits in it, and which of them the guard evaluates beside what it replaces.
@@ -286,6 +334,8 @@ pub struct FileOutput {
     pub path: String,
     /// The rewritten text, runtime included.
     pub text: String,
+    /// The byte offset in `text` where the appended runtime starts, which is the end of the rewritten body.
+    pub runtime_at: usize,
     /// Every guard placed, in catalog order.
     pub guards: Vec<Guard>,
     /// Every alternative branch, in file order: where each mutant's own text landed.
@@ -296,10 +346,14 @@ pub struct FileOutput {
     pub marked: Vec<u32>,
     /// Every mutation whose branch in this text carries a fault's guard, with that fault, ascending: the only pairs a fault can be active beside.
     pub beside: Vec<(u32, u32)>,
+    /// Every `const fn` this text writes without its `const`, in file order.
+    pub deconst: Vec<Deconst>,
+    /// Every `const fn` this text writes with its `const`, in file order.
+    pub constant: Vec<Constant>,
     /// The name the runtime module took.
     pub module: String,
     /// Whether anything was rewritten.
-    /// Every mutable file receives control-flow checkpoints, including one with no mutant of its own, so a mutation in another file cannot escape its process-wide step allowance here.
+    /// Every file of a member a test program compiles receives control-flow checkpoints, test code and a file with no mutant of its own included, so a mutation in another file cannot escape its process-wide step allowance here.
     pub instrumented: bool,
 }
 
@@ -326,6 +380,8 @@ pub enum InstrumentErrorKind {
     ReadingExhausted,
     /// The thread the file is read on could not be started or did not finish.
     ReadingThread,
+    /// The file runs deeper than its reading thread's stack holds.
+    ReadingTooDeep,
 }
 
 impl InstrumentErrorKind {
@@ -343,6 +399,7 @@ impl InstrumentErrorKind {
             Self::Unparsable => error::INSTRUMENT_UNPARSABLE,
             Self::ReadingExhausted => error::READING_EXHAUSTED,
             Self::ReadingThread => error::READING_THREAD,
+            Self::ReadingTooDeep => error::READING_TOO_DEEP,
         }
     }
 }
@@ -356,10 +413,10 @@ pub struct InstrumentError {
 }
 
 impl InstrumentError {
-    /// Why text read while instrumenting `path` failed: a syntax error as `syntax`, and a reading that could not happen at all as what stopped it.
+    /// Why text read while instrumenting `path` failed, `doing` what: a syntax error as `syntax`, and a reading that could not happen at all as what stopped it.
     fn unread(
-        syntax: InstrumentErrorKind,
-        path: &str,
+        (syntax, path): (InstrumentErrorKind, &str),
+        doing: &str,
         unread: &crate::parsing::ReadingError,
     ) -> Self {
         let kind = match unread {
@@ -368,8 +425,61 @@ impl InstrumentError {
             crate::parsing::ReadingError::ThreadUnavailable { .. } => {
                 InstrumentErrorKind::ReadingThread
             }
+            crate::parsing::ReadingError::TooDeep { .. } => InstrumentErrorKind::ReadingTooDeep,
         };
-        Self::new(kind, path, unread.to_string())
+        Self::new(kind, path, format!("{doing}: {unread}"))
+    }
+
+    /// Why planting the checkpoints and entry markers of `path` failed, `doing` what: the reading's own failure where it could not read the file, and a source that is not the one discovered otherwise.
+    fn planted(path: &str, doing: &str, failed: steps::StepError) -> Self {
+        match failed {
+            steps::StepError::Unread { source } => {
+                Self::unread((InstrumentErrorKind::SourceMismatch, path), doing, &source)
+            }
+            other @ (steps::StepError::Prefix { .. }
+            | steps::StepError::OutOfRange
+            | steps::StepError::ConflictingPath { .. }) => Self::new(
+                InstrumentErrorKind::SourceMismatch,
+                path,
+                format!("{doing}: {other}"),
+            ),
+        }
+    }
+
+    /// Why the runtime module of `path` could not be named: the reading's own failure where it could not read the file, and a source that is not the one discovered otherwise.
+    pub(crate) fn named(path: &str, failed: ModuleNameError) -> Self {
+        let doing = "the runtime module cannot be named";
+        match failed {
+            ModuleNameError::Tokens { source } => {
+                Self::unread((InstrumentErrorKind::SourceMismatch, path), doing, &source)
+            }
+            other @ ModuleNameError::SuffixesExhausted => Self::new(
+                InstrumentErrorKind::SourceMismatch,
+                path,
+                format!("{doing}: {other}"),
+            ),
+        }
+    }
+
+    /// Why the alternative of `placement` written for `path` could not be folded onto one line: the reading's own failure where it could not read the fragment, and a fold that failed otherwise.
+    fn flattened(path: &str, placement: &Placement, failed: crate::flatten::FlattenError) -> Self {
+        let doing = format!(
+            "the {} alternative of mutant {} cannot be folded onto one line",
+            placement.hint.form, placement.index
+        );
+        match failed {
+            crate::flatten::FlattenError::Unread { source } => {
+                Self::unread((InstrumentErrorKind::FlattenFailed, path), &doing, &source)
+            }
+            other @ (crate::flatten::FlattenError::Untokenizable { .. }
+            | crate::flatten::FlattenError::Literal { .. }
+            | crate::flatten::FlattenError::NotFlat { .. }
+            | crate::flatten::FlattenError::NotIdentical { .. }) => Self::new(
+                InstrumentErrorKind::FlattenFailed,
+                path,
+                format!("{doing}: {other}"),
+            ),
+        }
     }
 
     fn new(kind: InstrumentErrorKind, path: impl Into<String>, message: impl Into<String>) -> Self {
@@ -471,6 +581,8 @@ pub struct Instrumenting<'a> {
     pub source: &'a [u8],
     /// The mutants placed in it, each behind a guard.
     pub placements: &'a [Placement],
+    /// Where the `const` is of every `const fn` holding no guard to be written without it all the same, because it calls a function that holds one (ADR 0047).
+    pub carriers: &'a [Span],
     /// The markers the branch proofs put at the first statement of the bodies they name.
     pub markers: &'a [Marker],
     /// Every mutant whose guard may compare its two branches, so a run records whether they ever differed.
@@ -492,6 +604,8 @@ struct Checkpointed {
     placements: Vec<Placement>,
     markers: Vec<Marker>,
     items: u32,
+    /// Every `const fn` of the file, by where its `const` is in the checkpointed text, and whether the rewrite takes it away.
+    const_fns: BTreeMap<Span, ConstKeyword>,
 }
 
 fn guards_of(placements: &[Placement]) -> Vec<Guard> {
@@ -518,6 +632,7 @@ fn checkpointed(
         path,
         source,
         placements,
+        carriers,
         markers,
         comparable: _comparable,
         probed: _probed,
@@ -525,12 +640,8 @@ fn checkpointed(
         first_item,
         watched: _watched,
     } = *file;
-    let planted = steps::plant(parsing, text, &module, first_item).map_err(|error| {
-        InstrumentError::new(
-            InstrumentErrorKind::SourceMismatch,
-            path,
-            format!("the step checkpoints cannot be placed: {error}"),
-        )
+    let planted = steps::plant(parsing, text, &module, first_item).map_err(|failed| {
+        InstrumentError::planted(path, "the step checkpoints cannot be placed", failed)
     })?;
     let items = u32::try_from(planted.items.len()).map_err(|_overflow| {
         InstrumentError::new(
@@ -575,13 +686,58 @@ fn checkpointed(
             }
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let const_fns = unconsted(
+        path,
+        (
+            &mapped_const_fns(planted.const_fns, &offsets, path)?,
+            &placements,
+        ),
+        carriers,
+    )?;
     Ok(Checkpointed {
         source,
         module,
         placements,
         markers,
         items,
+        const_fns,
     })
+}
+
+/// Every `const fn` of a file in the coordinates of its checkpointed text, beside where its `const` is in the pristine file.
+fn mapped_const_fns(
+    sites: Vec<steps::ConstSite>,
+    offsets: &crate::splice::OffsetMap,
+    path: &str,
+) -> Result<Vec<(Span, steps::ConstSite)>, InstrumentError> {
+    sites
+        .into_iter()
+        .map(|site| {
+            let map = |span: Span| {
+                offsets.map_span(span).map_err(|error| {
+                    InstrumentError::new(
+                        InstrumentErrorKind::SiteConflict,
+                        path,
+                        format!(
+                            "a checkpoint cannot preserve the const fn {} at {span}: {error}",
+                            site.name
+                        ),
+                    )
+                })
+            };
+            let mapped = steps::ConstSite {
+                keyword: map(site.keyword)?,
+                body: map(site.body)?,
+                evaluated: site
+                    .evaluated
+                    .iter()
+                    .map(|constant| map(*constant))
+                    .collect::<Result<Vec<Span>, InstrumentError>>()?,
+                ..site.clone()
+            };
+            Ok((site.keyword, mapped))
+        })
+        .collect()
 }
 
 /// Rewrites one file so that every placed mutant lives in it behind a guard.
@@ -601,7 +757,11 @@ fn text_of<'a>(
 /// See [`InstrumentErrorKind`].
 pub fn instrument_file(file: &Instrumenting<'_>) -> Result<FileOutput, InstrumentError> {
     crate::parsing::apart(|parsing| instrument_with(parsing, file)).map_err(|unread| {
-        InstrumentError::unread(InstrumentErrorKind::SourceMismatch, file.path, &unread)
+        InstrumentError::unread(
+            (InstrumentErrorKind::SourceMismatch, file.path),
+            "the file cannot be instrumented",
+            &unread,
+        )
     })?
 }
 
@@ -614,6 +774,7 @@ fn instrument_with(
         path,
         source,
         placements,
+        carriers: _carriers,
         markers: _original_markers,
         comparable,
         probed,
@@ -647,23 +808,22 @@ fn instrument_with(
     let markers = File::markable(&checkpointed.markers, &forest);
 
     let Rewritten {
-        mut text,
+        text,
         branches,
         compared,
         beside,
+        deconst,
+        constant,
     } = worker.rewrite(
         &checkpointed.source,
         &Planted {
             forest: &forest,
             markers: &markers,
+            const_fns: &checkpointed.const_fns,
         },
     )?;
-    if !text.is_empty() && !text.ends_with('\n') {
-        text.push('\n');
-    }
-    worker.reparsed(&text)?;
-    worker.append_runtime(
-        &mut text,
+    let (text, runtime_at) = worker.finished(
+        text,
         &Rendering {
             module: &worker.module,
             catalog_digest,
@@ -678,14 +838,86 @@ fn instrument_with(
     Ok(FileOutput {
         path: path.to_owned(),
         text,
+        runtime_at,
         guards: guards_of(placements),
         branches,
         compared: compared.into_iter().collect(),
         marked: markers.iter().map(|marker| marker.index).collect(),
         beside: beside.into_iter().collect(),
+        deconst,
+        constant,
         module: worker.module,
         instrumented: true,
     })
+}
+
+/// The splice that writes each `const` the rewrite takes away as blanks.
+fn blanked(const_fns: &BTreeMap<Span, ConstKeyword>) -> impl Iterator<Item = Splice> + '_ {
+    const_fns
+        .iter()
+        .filter(|(_, held)| held.blank)
+        .map(|(keyword, _)| Splice {
+            span: *keyword,
+            original: CONST.to_vec(),
+            replacement: UNCONST.to_vec(),
+        })
+}
+
+/// Every `const fn` of the file, by where its `const` is in the checkpointed text, each to be written without it where a placement's guard sits in it or where it carries one that does, and with it otherwise.
+///
+/// # Errors
+/// [`InstrumentErrorKind::SourceMismatch`] for a guard said to sit in, or a carrier said to be, a `const fn` the file does not hold, which means the two were read from different trees.
+fn unconsted(
+    path: &str,
+    (sites, placements): (&[(Span, steps::ConstSite)], &[Placement]),
+    carriers: &[Span],
+) -> Result<BTreeMap<Span, ConstKeyword>, InstrumentError> {
+    let mut const_fns: BTreeMap<Span, ConstKeyword> = sites
+        .iter()
+        .map(|(origin, site)| {
+            (
+                site.keyword,
+                ConstKeyword {
+                    site: site.clone(),
+                    origin: *origin,
+                    mutants: Vec::new(),
+                    blank: false,
+                },
+            )
+        })
+        .collect();
+    let missing = |what: &str, at: Span| {
+        InstrumentError::new(
+            InstrumentErrorKind::SourceMismatch,
+            path,
+            format!("{what} a const fn at {at}, which the file does not hold"),
+        )
+    };
+    for placement in placements {
+        let Some(function) = &placement.hint.const_fn else {
+            continue;
+        };
+        let held = const_fns.get_mut(&function.keyword).ok_or_else(|| {
+            missing(
+                &format!("mutant {} is said to sit in", placement.index),
+                function.keyword,
+            )
+        })?;
+        held.mutants.push(placement.index);
+        held.blank = true;
+    }
+    for carrier in carriers {
+        let held = const_fns
+            .values_mut()
+            .find(|held| held.origin == *carrier)
+            .ok_or_else(|| missing("a carrier is said to be", *carrier))?;
+        held.blank = true;
+    }
+    for held in const_fns.values_mut() {
+        held.mutants.sort_unstable();
+        held.mutants.dedup();
+    }
+    Ok(const_fns)
 }
 
 /// The runtime module name `text` can take, or why its tokens could not be read.
@@ -694,13 +926,8 @@ fn named(
     path: &str,
     text: &str,
 ) -> Result<String, InstrumentError> {
-    runtime::module_name_in(parsing, path, text).map_err(|error| {
-        InstrumentError::new(
-            InstrumentErrorKind::SourceMismatch,
-            path,
-            format!("the source token stream is invalid: {error}"),
-        )
-    })
+    runtime::module_name_in(parsing, path, text)
+        .map_err(|failed| InstrumentError::named(path, failed))
 }
 
 fn check_pristine(
@@ -741,6 +968,13 @@ fn mapped_placement(
         .as_bytes()
         .to_vec();
     let site_text = mapped_source(source, site, "site", path)?;
+    let const_fn = match &placement.hint.const_fn {
+        Some(function) => Some(ConstFn {
+            keyword: map(function.keyword)?,
+            ..function.clone()
+        }),
+        None => None,
+    };
     Ok(Placement {
         index: placement.index,
         id: placement.id.clone(),
@@ -752,6 +986,7 @@ fn mapped_placement(
             site,
             site_text: site_text.to_owned(),
             super_depth: placement.hint.super_depth,
+            const_fn,
         },
         carried: placement.carried,
     })
@@ -837,7 +1072,10 @@ fn unwrapped(text: &str, module: &str) -> String {
         {
             path_start = path_start.saturating_sub(OUTER.len());
         }
-        kept.push_str(before.get(..path_start).unwrap_or_default());
+        kept.push_str(match before.get(..path_start) {
+            Some(ahead_of_the_path) => ahead_of_the_path,
+            None => "",
+        });
         let blanked = before
             .len()
             .saturating_sub(path_start)
@@ -845,7 +1083,10 @@ fn unwrapped(text: &str, module: &str) -> String {
         kept.extend(std::iter::repeat_n(' ', blanked));
         from = text.len().saturating_sub(rest.len());
     }
-    kept.push_str(text.get(from..).unwrap_or_default());
+    kept.push_str(match text.get(from..) {
+        Some(after_the_last_call) => after_the_last_call,
+        None => "",
+    });
     kept
 }
 
@@ -861,6 +1102,21 @@ impl File<'_> {
 
     fn error(&self, kind: InstrumentErrorKind, message: impl Into<String>) -> InstrumentError {
         InstrumentError::new(kind, self.path, message)
+    }
+
+    /// The rewritten text ended by a line break, read back through every identity macro, and followed by its runtime, with the offset the runtime starts at.
+    fn finished(
+        &self,
+        mut text: String,
+        rendering: &Rendering<'_>,
+    ) -> Result<(String, usize), InstrumentError> {
+        if !text.is_empty() && !text.ends_with('\n') {
+            text.push('\n');
+        }
+        self.reparsed(&text)?;
+        let runtime_at = text.len();
+        self.append_runtime(&mut text, rendering)?;
+        Ok((text, runtime_at))
     }
 
     /// Appends the generated runtime after every source rewrite has kept its line boundary intact.
@@ -897,9 +1153,12 @@ impl File<'_> {
                 ),
             ),
             crate::parsing::ReadingError::Exhausted { .. }
-            | crate::parsing::ReadingError::ThreadUnavailable { .. } => {
-                InstrumentError::unread(InstrumentErrorKind::Unparsable, self.path, error)
-            }
+            | crate::parsing::ReadingError::ThreadUnavailable { .. }
+            | crate::parsing::ReadingError::TooDeep { .. } => InstrumentError::unread(
+                (InstrumentErrorKind::Unparsable, self.path),
+                "the rewritten file cannot be read back",
+                error,
+            ),
         }
     }
 
@@ -1086,7 +1345,11 @@ impl File<'_> {
     }
 
     fn rewrite(&self, source: &[u8], planted: &Planted<'_>) -> Result<Rewritten, InstrumentError> {
-        let Planted { forest, markers } = *planted;
+        let Planted {
+            forest,
+            markers,
+            const_fns,
+        } = *planted;
         let mut splices = Vec::new();
         let mut roots = Vec::new();
         let mut compared = BTreeSet::new();
@@ -1099,6 +1362,7 @@ impl File<'_> {
             roots.push((root.span, rendered));
         }
         splices.extend(markers.iter().map(|marker| self.marker(marker)));
+        splices.extend(blanked(const_fns));
         splices.sort_by_key(|splice| splice.span.start);
         let (rewritten, offsets) = apply(source, &splices).map_err(|error| {
             self.error(
@@ -1106,6 +1370,7 @@ impl File<'_> {
                 format!("the guards could not be applied: {error}"),
             )
         })?;
+        let (deconst, constant) = self.constness(const_fns, &offsets)?;
         let text = String::from_utf8(rewritten).map_err(|error| {
             self.error(
                 InstrumentErrorKind::SpliceFailed,
@@ -1149,7 +1414,54 @@ impl File<'_> {
             branches,
             compared,
             beside,
+            deconst,
+            constant,
         })
+    }
+
+    /// Every `const fn` of the file as the rewrite left it: those written without their `const`, with where the keyword landed, and those written with it, with where the body landed.
+    fn constness(
+        &self,
+        const_fns: &BTreeMap<Span, ConstKeyword>,
+        offsets: &crate::splice::OffsetMap,
+    ) -> Result<(Vec<Deconst>, Vec<Constant>), InstrumentError> {
+        let mut deconst = Vec::new();
+        let mut constant = Vec::new();
+        for (keyword, held) in const_fns {
+            let landed = |span: Span| {
+                offsets.map_span(span).map_err(|error| {
+                    self.error(
+                        InstrumentErrorKind::SpliceFailed,
+                        format!(
+                            "the const fn {} at byte {} has no exact rewritten place: {error}",
+                            held.site.name, keyword.start
+                        ),
+                    )
+                })
+            };
+            if held.blank {
+                deconst.push(Deconst {
+                    name: held.site.name.clone(),
+                    owner: held.site.owner.clone(),
+                    origin: held.origin,
+                    keyword: landed(*keyword)?,
+                    mutants: held.mutants.clone(),
+                });
+            } else {
+                constant.push(Constant {
+                    name: held.site.name.clone(),
+                    origin: held.origin,
+                    body: landed(held.site.body)?,
+                    evaluated: held
+                        .site
+                        .evaluated
+                        .iter()
+                        .map(|constant| landed(*constant))
+                        .collect::<Result<Vec<Span>, InstrumentError>>()?,
+                });
+            }
+        }
+        Ok((deconst, constant))
     }
 
     /// Renders one site: its alternatives, then its original branch with the sites nested inside it already rendered.
@@ -1183,17 +1495,20 @@ impl File<'_> {
                 index: placement.index,
                 text: written.text,
                 comparable: self.comparable.contains(&placement.index),
-                probe: self.probed.get(&placement.index).copied(),
+                probe: self
+                    .probed
+                    .get(&placement.index)
+                    .map(|question| question.runtime()),
             });
         }
-        let form = node
-            .alternatives
-            .first()
-            .map_or(Form::E, |placement| placement.hint.form);
-        let depth = node
-            .alternatives
-            .first()
-            .map_or(0, |placement| placement.hint.super_depth);
+        let form = match node.alternatives.first() {
+            Some(placement) => placement.hint.form,
+            None => Form::E,
+        };
+        let depth = match node.alternatives.first() {
+            Some(placement) => placement.hint.super_depth,
+            None => 0,
+        };
         let composed = guards::compose(
             form,
             &guards::Paths {
@@ -1202,16 +1517,7 @@ impl File<'_> {
             },
             &alternatives,
             &original,
-        )
-        .map_err(|error| {
-            self.error(
-                InstrumentErrorKind::SpliceFailed,
-                format!(
-                    "the guard at {} cannot represent its offsets: {error}",
-                    node.span
-                ),
-            )
-        })?;
+        );
         if count_lines(composed.text.as_bytes()) != count_lines(site.as_bytes()) {
             return Err(self.error(
                 InstrumentErrorKind::LinesMoved,
@@ -1292,7 +1598,10 @@ impl File<'_> {
                 ),
             )
         })?;
-        let in_replacement: Vec<u32> = kept.map(|one| one.faults.clone()).unwrap_or_default();
+        let in_replacement: Vec<u32> = match kept {
+            Some(one) => one.faults.clone(),
+            None => Vec::new(),
+        };
         let replacement = match kept {
             Some(one) => {
                 let (_, rest) = replacement.split_at(self.slice(one.span)?.len());
@@ -1336,40 +1645,43 @@ impl File<'_> {
                 carries: Vec::new(),
             });
         }
-        let text = crate::flatten::flatten_with(self.parsing, &text).map_err(|error| {
-            self.error(
-                InstrumentErrorKind::FlattenFailed,
-                format!(
-                    "the {} alternative of mutant {} cannot be folded onto one line: {error}",
-                    placement.hint.form, placement.index
-                ),
-            )
-        })?;
+        let text = crate::flatten::flatten_with(self.parsing, &text)
+            .map_err(|failed| InstrumentError::flattened(self.path, placement, failed))?;
         Ok(Written {
             text,
             carries: in_head.into_iter().chain(in_replacement).collect(),
         })
     }
 
-    /// Every child of `node` whose every alternative is a fault, rendered, which is what every alternative of `node` that keeps its bytes carries.
+    /// Every descendant of `node` whose every alternative is a fault, rendered, which is what every alternative of `node` that keeps its bytes carries.
+    /// The walk is transitive on purpose: a fault nested under an intermediate node whose own alternatives ask about the call it fails is still carried past that node, because an alternative of `node` replaces the intermediate node's guard wholesale, and the fault's own branch is what must survive the replacement.
     fn carried(&self, node: &Node<Placement>) -> Result<Vec<Carried>, InstrumentError> {
         let mut carried = Vec::new();
-        for child in node
-            .children
-            .iter()
-            .filter(|child| child.alternatives.iter().all(|placement| placement.carried))
-        {
-            carried.push(Carried {
-                span: child.span,
-                text: self.render(child)?.text,
-                faults: child
-                    .alternatives
-                    .iter()
-                    .map(|placement| placement.index)
-                    .collect(),
-            });
-        }
+        self.gather_faults(&node.children, &mut carried)?;
         Ok(carried)
+    }
+
+    /// Collects every all-fault descendant of `nodes`, in walk order, rendering each.
+    fn gather_faults(
+        &self,
+        nodes: &[Node<Placement>],
+        carried: &mut Vec<Carried>,
+    ) -> Result<(), InstrumentError> {
+        for node in nodes {
+            if node.alternatives.iter().all(|placement| placement.carried) {
+                carried.push(Carried {
+                    span: node.span,
+                    text: self.render(node)?.text,
+                    faults: node
+                        .alternatives
+                        .iter()
+                        .map(|placement| placement.index)
+                        .collect(),
+                });
+            }
+            self.gather_faults(&node.children, carried)?;
+        }
+        Ok(())
     }
 
     /// The pristine bytes of a site before the edit, with every carried guard wholly inside them rendered in place, and the carried guard the edit's replacement begins with.

@@ -11,16 +11,18 @@
 use rust_mutants::cargo::{LocateOptions, Toolchain};
 use rust_mutants::probe::Question;
 use rust_mutants::runner::Cancel;
+use rust_mutants::runner::Watched;
 use rust_mutants::sentinel::{Expectation, Expected, Infection, KeptFor, Planted, Planting};
 use rust_mutants::session::{PrepareOptions, Proof};
 use rust_mutants::testkit::opening::opening;
+use rust_mutants::trace::Recorder;
 use rust_mutants::workspace::Workspace;
 
 /// The options a caller that measures by the guards alone prepares its own tree with.
 fn touching() -> PrepareOptions {
     PrepareOptions {
         coverage: false,
-        ..PrepareOptions::default()
+        ..PrepareOptions::new(rust_mutants::rule::Tier::Balanced)
     }
 }
 
@@ -33,7 +35,7 @@ fn located(cargo: &std::path::Path, env: &rust_mutants::vars::Variables) -> Tool
             env: Some(env.clone()),
         },
         &njutest_devkit::paths::workspace_root(),
-        &Cancel::new(),
+        &Watched::new(&Cancel::new(), &Recorder::disabled()),
     )
     .expect("the toolchain this suite runs under is located")
 }
@@ -231,7 +233,7 @@ fn a_run_that_routes_by_coverage_or_asks_equivalence_has_each_sighted_too() {
         rust_mutants::sentinel::Run {
             toolchain: &run,
             open,
-            options: &PrepareOptions::default(),
+            options: &PrepareOptions::new(rust_mutants::rule::Tier::Balanced),
             equivalence: true,
         },
         &root,

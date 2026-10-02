@@ -43,7 +43,7 @@ fn report(targets: u32) -> Report {
         .collect();
     source.count_targets().expect("one exact target accounting");
     source.limitations = vec![Limitation::new(
-        rust_mutants::limitation::DOCTESTS_ROUTED_BY_FILE,
+        rust_mutants::limitation::Limitation::DoctestsRoutedByFile,
         "doctests run once",
     )];
     source.verdict = source.concluded();

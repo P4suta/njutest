@@ -25,6 +25,7 @@
               "unshared": 0
             },
             "faults": {
+              "absorbed": 0,
               "not_put": 0,
               "noticed": 0,
               "sites": 0,
@@ -50,6 +51,7 @@
                 "tests": 10,
                 "types": 0,
                 "unnoticed": 3,
+                "unproven": 0,
                 "unreached": 1,
                 "waited": 0
               },
@@ -140,7 +142,7 @@
           "faults": [],
           "findings": [
             {
-              "detail": "no test could have noticed gt-to-ge at src/lib.rs:8: every one of the 1 targets that reach it was removed without being run, by never-infected",
+              "detail": "no test noticed gt-to-ge at src/lib.rs:8; 1 sealed execution of 1 target ran it and none noticed",
               "kind": "surviving-mutant",
               "origin": {
                 "build": "default",
@@ -159,7 +161,7 @@
               "subject": "7590b327de928142a7d4"
             },
             {
-              "detail": "no test noticed condition-to-true at src/lib.rs:10; 1 target ran it and none of them noticed",
+              "detail": "no test noticed condition-to-true at src/lib.rs:10; 1 sealed execution of 1 target ran it and none noticed",
               "kind": "surviving-mutant",
               "origin": {
                 "build": "default",
@@ -178,7 +180,7 @@
               "subject": "411d46d889aef733e693"
             },
             {
-              "detail": "no test could have noticed lt-to-le at src/lib.rs:10: every one of the 1 targets that reach it was removed without being run, by never-infected",
+              "detail": "no test noticed lt-to-le at src/lib.rs:10; 1 sealed execution of 1 target ran it and none noticed",
               "kind": "surviving-mutant",
               "origin": {
                 "build": "default",
@@ -197,7 +199,7 @@
               "subject": "57a197f6d1d0e560e888"
             },
             {
-              "detail": "no measured target reaches return-default at src/lib.rs: each of them was measured, was asked, and answered that nothing of it executes the position",
+              "detail": "no sealed test reaches return-default at src/lib.rs: the mutation lives in code the tests never execute",
               "kind": "surviving-mutant",
               "origin": {
                 "build": "default",
@@ -246,6 +248,16 @@
                 "step_boundary": null
               },
               "display_id": "00c6fea6140456f15a4f",
+              "evidence": {
+                "executions": [
+                  {
+                    "came_to": "panicked",
+                    "target": "<volatile>",
+                    "test": "tests::sign_names_both_sides_of_zero"
+                  }
+                ],
+                "kind": "sealed"
+              },
               "id": "00c6fea6140456f15a4f31ce2f86f79482bf9f4766d0b2bf7c13e0e5d9015003",
               "item": "sign",
               "original": "if n > 0 {\n        \"positive\"\n    } else if n < 0 {\n        \"negative\"\n    } else {\n        \"zero\"\n    }",
@@ -286,6 +298,16 @@
                 "step_boundary": null
               },
               "display_id": "0e40ade9c35f30532907",
+              "evidence": {
+                "executions": [
+                  {
+                    "came_to": "panicked",
+                    "target": "<volatile>",
+                    "test": "tests::sign_names_both_sides_of_zero"
+                  }
+                ],
+                "kind": "sealed"
+              },
               "id": "0e40ade9c35f305329070539a0fe711e321debd055c7cc986616594877bdeec9",
               "item": "sign",
               "original": "\"negative\"",
@@ -326,6 +348,16 @@
                 "step_boundary": null
               },
               "display_id": "13d60fff74f48ec22ca0",
+              "evidence": {
+                "executions": [
+                  {
+                    "came_to": "panicked",
+                    "target": "<volatile>",
+                    "test": "tests::sign_names_both_sides_of_zero"
+                  }
+                ],
+                "kind": "sealed"
+              },
               "id": "13d60fff74f48ec22ca0586df4deea6de7232a5c7c97f13a7ae6d3cfc111e26d",
               "item": "sign",
               "original": "n < 0",
@@ -366,6 +398,16 @@
                 "step_boundary": null
               },
               "display_id": "2b790ae1807763839712",
+              "evidence": {
+                "executions": [
+                  {
+                    "came_to": "panicked",
+                    "target": "<volatile>",
+                    "test": "tests::sign_names_both_sides_of_zero"
+                  }
+                ],
+                "kind": "sealed"
+              },
               "id": "2b790ae18077638397123282456b96c9c86738a836da2c56a44dc2c1b36952a4",
               "item": "sign",
               "original": "n > 0",
@@ -406,6 +448,16 @@
                 "step_boundary": null
               },
               "display_id": "2f0c4aff9635ecc97852",
+              "evidence": {
+                "executions": [
+                  {
+                    "came_to": "panicked",
+                    "target": "<volatile>",
+                    "test": "tests::sign_names_both_sides_of_zero"
+                  }
+                ],
+                "kind": "sealed"
+              },
               "id": "2f0c4aff9635ecc97852a2b8cfb545e3b8080597920de0906af1c4048a363639",
               "item": "sign",
               "original": "n > 0",
@@ -446,6 +498,16 @@
                 "step_boundary": null
               },
               "display_id": "411d46d889aef733e693",
+              "evidence": {
+                "executions": [
+                  {
+                    "came_to": "passed",
+                    "target": "<volatile>",
+                    "test": "tests::sign_names_both_sides_of_zero"
+                  }
+                ],
+                "kind": "sealed"
+              },
               "id": "411d46d889aef733e693cf673e90b067bfa5667c3caf264c85ab4e67e2fc4c58",
               "item": "sign",
               "original": "n < 0",
@@ -486,6 +548,16 @@
                 "step_boundary": null
               },
               "display_id": "43043104a9c81f823b18",
+              "evidence": {
+                "executions": [
+                  {
+                    "came_to": "panicked",
+                    "target": "<volatile>",
+                    "test": "doubling_is_addition_twice"
+                  }
+                ],
+                "kind": "sealed"
+              },
               "id": "43043104a9c81f823b187962a0f7a09211269f74aaad22161f24e8ee9a8c2959",
               "item": "double",
               "original": "*",
@@ -526,6 +598,16 @@
                 "step_boundary": null
               },
               "display_id": "57a197f6d1d0e560e888",
+              "evidence": {
+                "executions": [
+                  {
+                    "came_to": "passed",
+                    "target": "<volatile>",
+                    "test": "tests::sign_names_both_sides_of_zero"
+                  }
+                ],
+                "kind": "sealed"
+              },
               "id": "57a197f6d1d0e560e888f4ccfabf8bf5afdc5104803c10ad734dc1e82f724c30",
               "item": "sign",
               "original": "<",
@@ -541,7 +623,12 @@
                 "source_run_id": null
               },
               "routing": {
-                "answered": [],
+                "answered": [
+                  {
+                    "outcome": "survived",
+                    "target": "<volatile>"
+                  }
+                ],
                 "discharged": [
                   {
                     "proof": "never-infected",
@@ -564,6 +651,16 @@
                 "step_boundary": null
               },
               "display_id": "7590b327de928142a7d4",
+              "evidence": {
+                "executions": [
+                  {
+                    "came_to": "passed",
+                    "target": "<volatile>",
+                    "test": "tests::sign_names_both_sides_of_zero"
+                  }
+                ],
+                "kind": "sealed"
+              },
               "id": "7590b327de928142a7d4e8cc4ae668248ee9ee2b4172df2e50f0b0f751fca283",
               "item": "sign",
               "original": ">",
@@ -579,7 +676,12 @@
                 "source_run_id": null
               },
               "routing": {
-                "answered": [],
+                "answered": [
+                  {
+                    "outcome": "survived",
+                    "target": "<volatile>"
+                  }
+                ],
                 "discharged": [
                   {
                     "proof": "never-infected",
@@ -602,6 +704,16 @@
                 "step_boundary": null
               },
               "display_id": "7c995250658c8c7eed50",
+              "evidence": {
+                "executions": [
+                  {
+                    "came_to": "panicked",
+                    "target": "<volatile>",
+                    "test": "doubling_is_addition_twice"
+                  }
+                ],
+                "kind": "sealed"
+              },
               "id": "7c995250658c8c7eed50b6bf7f149ca970a29efb30fd21f0ab0018549ee2621c",
               "item": "double",
               "original": "n * 2",
@@ -642,6 +754,16 @@
                 "step_boundary": null
               },
               "display_id": "916ac16c73c7c959f7e0",
+              "evidence": {
+                "executions": [
+                  {
+                    "came_to": "panicked",
+                    "target": "<volatile>",
+                    "test": "tests::sign_names_both_sides_of_zero"
+                  }
+                ],
+                "kind": "sealed"
+              },
               "id": "916ac16c73c7c959f7e011fee78ff8913b4c111a32eada8a695c46cf8afe8431",
               "item": "sign",
               "original": "\"positive\"",
@@ -682,6 +804,16 @@
                 "step_boundary": null
               },
               "display_id": "9f9db85e50c14a6e3fcc",
+              "evidence": {
+                "executions": [
+                  {
+                    "came_to": "panicked",
+                    "target": "<volatile>",
+                    "test": "tests::sign_names_both_sides_of_zero"
+                  }
+                ],
+                "kind": "sealed"
+              },
               "id": "9f9db85e50c14a6e3fcc17e6af4f6f090b119e886870d248fa3002f4ff568167",
               "item": "sign",
               "original": "n < 0",
@@ -722,6 +854,16 @@
                 "step_boundary": null
               },
               "display_id": "aec569b677a2d793ec60",
+              "evidence": {
+                "executions": [
+                  {
+                    "came_to": "panicked",
+                    "target": "<volatile>",
+                    "test": "tests::sign_names_both_sides_of_zero"
+                  }
+                ],
+                "kind": "sealed"
+              },
               "id": "aec569b677a2d793ec6034642dc4be3ef136f69a0adac8fd87d975fb7910f392",
               "item": "sign",
               "original": "n > 0",
@@ -762,6 +904,10 @@
                 "step_boundary": null
               },
               "display_id": "b6d893a120ece7625630",
+              "evidence": {
+                "executions": [],
+                "kind": "sealed"
+              },
               "id": "b6d893a120ece7625630185b13789a952ae273852a039ef38db32a18b382a50e",
               "item": "sign",
               "original": "\"zero\"",
@@ -789,6 +935,7 @@
           "part": {
             "kind": "whole"
           },
+          "repaired": [],
           "resources": [],
           "run_id": "<volatile>",
           "seams": [],
@@ -864,7 +1011,7 @@
   "run_id": "<volatile>",
   "run_kind": "full",
   "schema": "njutest-assurance-report-v1",
-  "schema_version": 2,
+  "schema_version": 3,
   "scope": {
     "configuration": ".njutest.toml",
     "configured_builds": [

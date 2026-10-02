@@ -132,15 +132,15 @@ fn listed(change: &Change, telling: Telling) -> String {
         apart.push('\n');
         apart
     };
-    for account in accounts(change) {
-        listed.push_str(&set_in(&account, HELD, telling));
+    for build_verdict in build_verdicts(change) {
+        listed.push_str(&set_in(&build_verdict, HELD, telling));
     }
     listed
 }
 
 /// What the builds established about `change`: one account when they all say the same, and one per build, named, when they do not.
 #[must_use]
-pub fn accounts(change: &Change) -> Vec<String> {
+pub fn build_verdicts(change: &Change) -> Vec<String> {
     let said: Vec<(&str, String)> = change
         .answers()
         .map(|answer| (answer.build(), established(answer)))
@@ -342,6 +342,10 @@ fn every_removed(removed: &[Discharged]) -> String {
 /// Why a build established nothing about a change.
 fn unknown(unsettled: &Unsettled) -> String {
     match unsettled {
+        Unsettled::Unproven { lead, reasons } => format!(
+            "no sealed execution decided it ({}), so the native run's {lead} is a lead",
+            reasons.join("; ")
+        ),
         Unsettled::StepLimit { on, observed } => {
             format!("{on} crossed its step allowance at {observed} without a verdict")
         }

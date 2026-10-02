@@ -27,7 +27,7 @@ fn prepared(fixture: &Fixture) -> Session {
         .prepare(
             &PrepareOptions {
                 tier: Tier::All,
-                ..PrepareOptions::default()
+                ..PrepareOptions::new(Tier::Balanced)
             },
             &Cancel::new(),
         )
@@ -47,6 +47,16 @@ fn every_construct_in_the_modern_fixture_is_discovered_and_measured() {
     assert_eq!(
         unsupported, 0,
         "every place these rules target is a place a guard can be written"
+    );
+    let unvalidated: u32 = session
+        .skips()
+        .iter()
+        .filter(|skip| skip.reason == SkipReason::UnvalidatedConstUse)
+        .map(|skip| skip.count)
+        .sum();
+    assert_eq!(
+        unvalidated, 2,
+        "opaque derived attributes keep both candidates of Counter::new out of runtime guards"
     );
 
     let refused: Vec<&str> = session

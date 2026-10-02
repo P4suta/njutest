@@ -35,7 +35,7 @@ fn prepared(fixture: &Fixture) -> Session {
     .prepare(
         &PrepareOptions {
             failing: Failing::Exclude,
-            ..PrepareOptions::default()
+            ..PrepareOptions::new(rust_mutants::rule::Tier::Balanced)
         },
         &Cancel::new(),
     )
@@ -139,7 +139,7 @@ fn a_target_whose_own_tests_fail_is_a_row_and_a_finding_rather_than_a_refusal() 
         baseline
             .limitations
             .iter()
-            .any(|name| name.starts_with(rust_mutants::limitation::BASELINE_NOT_PASSING)),
+            .any(|limited| matches!(limited, njutest::assure::baseline::BaselineLimitation::Engine(engine) if engine.limitation == rust_mutants::limitation::Limitation::BaselineNotPassing)),
         "and the run states why those targets answer nothing: {:?}",
         baseline.limitations
     );

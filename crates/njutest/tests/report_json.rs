@@ -148,6 +148,9 @@ fn populated_draft(vary: &dyn Fn(&mut BuildReport)) -> BuildReport {
         item: "demo".to_owned(),
         original: ">".to_owned(),
         replacement: String::new(),
+        evidence: njutest::testkit::reports::sealed_as(&njutest::report::Decided::Killed {
+            by: "0123456789abcdef".to_owned(),
+        }),
         outcome: njutest::report::Decided::Killed {
             by: "0123456789abcdef".to_owned(),
         },
@@ -173,7 +176,7 @@ fn populated_draft(vary: &dyn Fn(&mut BuildReport)) -> BuildReport {
     }];
     source.findings = Vec::new();
     source.limitations = vec![Limitation::new(
-        rust_mutants::limitation::DOCTESTS_ROUTED_BY_FILE,
+        rust_mutants::limitation::Limitation::DoctestsRoutedByFile,
         "doctests run once and are routed to mutants by the file they are in",
     )];
     source.count_targets().expect("one exact target accounting");
@@ -682,6 +685,7 @@ fn every_nullable_report_field_must_be_present_even_when_null() {
         "/report/builds/0/parts/0/targets/0/message",
         "/report/builds/0/parts/0/mutants/0/decision/killed_by",
         "/report/builds/0/parts/0/mutants/0/decision/step_boundary",
+        "/report/builds/0/parts/0/mutants/0/evidence",
         "/report/builds/0/parts/0/mutants/0/routing",
         "/report/builds/0/parts/0/mutants/0/routing/fallback",
         "/report/builds/0/parts/0/mutants/0/reuse/source_run_id",
@@ -901,9 +905,9 @@ fn every_survivor_and_affirmative_model_outcome_has_exactly_one_model_record() {
     ] {
         let refused = populated_varying(&|source| {
             source.contract = njutest::config::Contract::VerifiedV1;
-            source.mutants[0].outcome = outcome.clone();
             source.mutants[0].reuse = njutest::report::Reuse(njutest::report::Established::Here);
             answered_as_a_survivor(&mut source.mutants[0]);
+            njutest::testkit::reports::decide(&mut source.mutants[0], outcome.clone());
             source.accounting.mutants =
                 model_accounting(&outcome).expect("the model phase refuses any other row");
             if outcome == njutest::report::Decided::Survived {
@@ -964,6 +968,30 @@ fn the_document_matches_the_recorded_one() {
     let text = json::document(&populated()).expect("a sound report is written");
     let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/report.golden.json");
     njutest_devkit::golden::golden(&golden, text.as_bytes()).expect("the recorded document");
+}
+
+#[test]
+fn the_fuzz_seeds_of_the_answer_store_are_the_recorded_document_as_it_keeps_them() {
+    let seeds = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fuzz/seeds");
+    let report = populated();
+    let line = json::line(&report).expect("a sound report is one line");
+    njutest_devkit::golden::golden(
+        &seeds.join("carried_answers/one-answer.jsonl"),
+        format!("{line}\n").as_bytes(),
+    )
+    .expect("the answer store's seed is the recorded document as the store keeps it");
+    let run = report.run_id().to_owned();
+    assert_eq!(
+        line.matches(run.as_str()).count(),
+        1,
+        "the answer names its run once, so another run's answer differs from it only there"
+    );
+    let another = line.replace(run.as_str(), "20260906t091500z-fedcba");
+    njutest_devkit::golden::golden(
+        &seeds.join("carried_answers/two-answers.jsonl"),
+        format!("{line}\n{another}\n").as_bytes(),
+    )
+    .expect("the answer store's seed of two runs is the recorded document under both");
 }
 
 #[test]

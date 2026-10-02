@@ -18,6 +18,9 @@ instead of reporting the later results as though nothing had happened.
 tested against a tree that really is written to, rather than against a tree
 nobody wrote to and an assertion that the list is empty.
 
+A sealed execution writes the note by the relative path the test names, from the package's directory as cargo runs the test, into an overlay of its own.
+Every instance starts from the snapshot as it was, so no mutation is measured against a note another wrote, and each mutant of `next` the test fails is killed.
+
 ## Fates
 
 What one run of this fixture establishes for every mutation of it, and

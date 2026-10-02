@@ -714,11 +714,10 @@ pub(crate) fn parse(raw: &[u8], expected: Expectation<'_>) -> Parsed {
             cbmc: document.tools.cbmc.clone(),
             goto_cc: document.tools.goto_cc.clone(),
             goto_instrument: document.tools.goto_instrument.clone(),
-            solver: document
-                .tools
-                .solvers
-                .first()
-                .map_or_else(String::new, |solver| solver.name.clone()),
+            solver: match document.tools.solvers.first() {
+                Some(solver) => solver.name.clone(),
+                None => String::new(),
+            },
         },
     });
     let (summary, result) = match validated(&document, expected) {

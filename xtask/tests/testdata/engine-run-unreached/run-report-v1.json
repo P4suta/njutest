@@ -1,12 +1,12 @@
 {
   "document_type": "rust-mutants/run-report",
-  "schema_version": 3,
+  "schema_version": 5,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20260926t132049311z",
-    "started_at": "2026-09-26T13:20:49.311878Z",
-    "finished_at": "2026-09-26T13:20:53.112528Z",
-    "duration_ms": 167,
+    "id": "20261001t091757846z",
+    "started_at": "2026-10-01T09:17:57.84624Z",
+    "finished_at": "2026-10-01T09:17:59.886638Z",
+    "duration_ms": 161,
     "interrupted": false,
     "exit_code": 1,
     "shard": null,
@@ -17,8 +17,8 @@
   },
   "workspace": {
     "root_name": "fixture-unreached",
-    "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
-    "workspace_digest": "c2a59821d02fadfd8e662e83943a2f4f71bd2a649015a40c2a84ea7d1e83df2b",
+    "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+    "workspace_digest": "02dbc061d1c8a9f917babe93aae52fd804de155f846c94a674ea3ab533418346",
     "catalog_digest": "03c20af27c9024062341116ff85836fcf3a0955215778abecd0001f5c374dd22",
     "platform": {
       "os": "darwin",
@@ -42,15 +42,19 @@
     "executed": 4,
     "killed": 4,
     "survived": 0,
+    "unproven": 0,
     "step_limit_reached": 0,
     "waited": 0,
     "inconclusive": 0,
     "errored": 0,
     "not_run": 4,
     "unreached": 4,
-    "discharged": 0,
     "declined": 0,
-    "expected": 0
+    "expected": 0,
+    "unproven_killed": 0,
+    "unproven_survived": 0,
+    "unproven_unreached": 0,
+    "unproven_discharged": 0
   },
   "score": {
     "detected": 4,
@@ -63,17 +67,27 @@
       "kind": "lib",
       "harness": true,
       "tests": 1,
-      "limitations": []
+      "limitations": [],
+      "sealed": {
+        "state": "sealed",
+        "remedy": null,
+        "uncontrolled": []
+      }
     },
     {
       "id": "fixture-unreached/doc/fixture_unreached",
       "kind": "doc",
       "harness": true,
-      "tests": 1,
+      "tests": 0,
       "limitations": [
         "doctests-routed-by-file",
         "doctests-none"
-      ]
+      ],
+      "sealed": {
+        "state": "sealed",
+        "remedy": null,
+        "uncontrolled": []
+      }
     }
   ],
   "established_tests": 0,
@@ -99,7 +113,7 @@
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
       "exit_code": -1,
-      "duration_ms": 28,
+      "duration_ms": 17,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
@@ -116,15 +130,24 @@
           "fixture-unreached/lib/fixture_unreached"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-unreached/lib/fixture_unreached"
-        ],
+        "executed": [],
         "tests": {}
       },
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-unreached/lib/fixture_unreached",
+            "test": "tests::doubling_two_is_four",
+            "came_to": "panicked"
+          }
+        ]
+      }
     },
     {
       "index": 1,
@@ -147,7 +170,7 @@
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
       "exit_code": -1,
-      "duration_ms": 26,
+      "duration_ms": 49,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
@@ -164,15 +187,24 @@
           "fixture-unreached/lib/fixture_unreached"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-unreached/lib/fixture_unreached"
-        ],
+        "executed": [],
         "tests": {}
       },
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-unreached/lib/fixture_unreached",
+            "test": "tests::doubling_two_is_four",
+            "came_to": "panicked"
+          }
+        ]
+      }
     },
     {
       "index": 2,
@@ -195,7 +227,7 @@
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
       "exit_code": -1,
-      "duration_ms": 30,
+      "duration_ms": 15,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
@@ -212,15 +244,24 @@
           "fixture-unreached/lib/fixture_unreached"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-unreached/lib/fixture_unreached"
-        ],
+        "executed": [],
         "tests": {}
       },
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-unreached/lib/fixture_unreached",
+            "test": "tests::doubling_two_is_four",
+            "came_to": "panicked"
+          }
+        ]
+      }
     },
     {
       "index": 3,
@@ -243,7 +284,7 @@
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
       "exit_code": -1,
-      "duration_ms": 27,
+      "duration_ms": 22,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
@@ -260,15 +301,24 @@
           "fixture-unreached/lib/fixture_unreached"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-unreached/lib/fixture_unreached"
-        ],
+        "executed": [],
         "tests": {}
       },
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-unreached/lib/fixture_unreached",
+            "test": "tests::doubling_two_is_four",
+            "came_to": "panicked"
+          }
+        ]
+      }
     },
     {
       "index": 4,
@@ -291,8 +341,8 @@
       "step_notice": null,
       "target": "",
       "exit_code": -1,
-      "duration_ms": 0,
-      "tests_run": null,
+      "duration_ms": 23,
+      "tests_run": 0,
       "killed_by": [],
       "signal": null,
       "retried": false,
@@ -310,7 +360,12 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": []
+      }
     },
     {
       "index": 5,
@@ -333,8 +388,8 @@
       "step_notice": null,
       "target": "",
       "exit_code": -1,
-      "duration_ms": 0,
-      "tests_run": null,
+      "duration_ms": 27,
+      "tests_run": 0,
       "killed_by": [],
       "signal": null,
       "retried": false,
@@ -352,7 +407,12 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": []
+      }
     },
     {
       "index": 6,
@@ -375,8 +435,8 @@
       "step_notice": null,
       "target": "",
       "exit_code": -1,
-      "duration_ms": 0,
-      "tests_run": null,
+      "duration_ms": 24,
+      "tests_run": 0,
       "killed_by": [],
       "signal": null,
       "retried": false,
@@ -394,7 +454,12 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": []
+      }
     },
     {
       "index": 7,
@@ -417,8 +482,8 @@
       "step_notice": null,
       "target": "",
       "exit_code": -1,
-      "duration_ms": 0,
-      "tests_run": null,
+      "duration_ms": 2,
+      "tests_run": 0,
       "killed_by": [],
       "signal": null,
       "retried": false,
@@ -436,7 +501,12 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": true,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": []
+      }
     }
   ],
   "rejections": [],
@@ -453,22 +523,22 @@
     {
       "kind": "unreached-mutant",
       "mutant": "7bc1a89b2f20e4b99d3971a14415f14ef10c825157cf0c337b168559b3705b0e",
-      "detail": "no measured test reaches 7bc1a89b2f20e4b99d39: the mutation lives in code the tests never execute"
+      "detail": "no sealed test reaches 7bc1a89b2f20e4b99d39: the mutation lives in code the tests never execute"
     },
     {
       "kind": "unreached-mutant",
       "mutant": "ed276f8cacfdd04c9d9914dcb517955bbb30e9a85bfd420120aa5f3df3aba01e",
-      "detail": "no measured test reaches ed276f8cacfdd04c9d99: the mutation lives in code the tests never execute"
+      "detail": "no sealed test reaches ed276f8cacfdd04c9d99: the mutation lives in code the tests never execute"
     },
     {
       "kind": "unreached-mutant",
       "mutant": "8de1ee99dfb47cc2b8ac63451f53fce4ba7a4d4a1dd31b77c5d26b3c720a2846",
-      "detail": "no measured test reaches 8de1ee99dfb47cc2b8ac: the mutation lives in code the tests never execute"
+      "detail": "no sealed test reaches 8de1ee99dfb47cc2b8ac: the mutation lives in code the tests never execute"
     },
     {
       "kind": "unreached-mutant",
       "mutant": "be2e35f687f8d3ec20385c73f5297133b006b4d4729e93dc5f6dd35f15463c98",
-      "detail": "no measured test reaches be2e35f687f8d3ec2038: the mutation lives in code the tests never execute"
+      "detail": "no sealed test reaches be2e35f687f8d3ec2038: the mutation lives in code the tests never execute"
     }
   ],
   "facts": [

@@ -26,6 +26,7 @@ env:
   RUSTFLAGS: "-D warnings"
   # The suites drive a real cargo against the fixture projects; nothing may reach a registry from inside a test.
   CARGO_NET_OFFLINE: "true"
+  CARGO_BUILD_JOBS: "3"
 
 defaults:
   run:
@@ -33,7 +34,7 @@ defaults:
 
 jobs:
   test:
-    name: test (${{ matrix.os }}, ${{ matrix.part }})
+    name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     # The backstop for a runner that stops answering; a test that stalls is nextest's slow-timeout to name, well inside this.
     # On a hosted macOS runner the toolchain suite alone took 36.5 of the 45 minutes, and the job was cancelled in clippy with every test passed.
@@ -49,18 +50,10 @@ jobs:
       # So the newest row is the closest CI can stand to where the code is written, and the gap is a reason to keep reading a macOS failure rather than a reason to assume the local gate saw it.
       # `macos-15` is the oldest still supported, and it is not ballast: it is where `proc_listpgrppids` reports an empty process group after a timeout, which the supervisor read as a failure and turned into `abort()`.
       # The newer kernel still listed the waitable leader, so the machine that wrote the code could never have seen it.
-      # What that row answers for is the kernel, so on a pull request it runs the part of the suite that meets the kernel (`kernel` below), and the whole suite weekly.
-      #
       # Linux runs the whole suite in `coverage`, which has to run all of it to measure it, so a second uninstrumented Linux run would ask the same questions again.
       fail-fast: false
       matrix:
-        include:
-          - os: macos-26
-            part: whole
-          - os: macos-15
-            part: kernel
-          - os: windows-2025
-            part: whole
+        os: [macos-26, macos-15, windows-2025]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -69,6 +62,7 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           components: llvm-tools, clippy
+          targets: wasm32-wasip1
           tools: cargo-nextest@0.9.140
       - name: Fetch the locked dependency graph
         env:
@@ -77,41 +71,22 @@ jobs:
         run: |
           cargo fetch --locked
           cargo fetch --locked --manifest-path fuzz/Cargo.toml
-      # `cargo test --all-targets` builds an example as a test harness, not as the program it is, and part of this suite drives a scripted `cargo` that is one.
-      # Building it plainly is what makes those tests able to run.
-      - name: Build the scripted toolchain the suite drives
-        shell: bash
-        run: cargo build --locked --examples --workspace --all-features --profile test
-      # `shell: bash` rather than the default, which is PowerShell on Windows:
-      # a native command that fails there does not stop the script, so the suite below ran on after the first half had already failed and the step's status became the second half's.
-      # A failing test took the job's forty-five minute timeout to be reported, and would have been reported as a pass had the second half succeeded.
       - name: Test every target
-        shell: bash
+        timeout-minutes: 60
         env:
-          PART: ${{ matrix.part }}
-          EVENT: ${{ github.event_name }}
-        run: |
-          in_process='not binary(/^toolchain_/)'
-          toolchain='binary(/^toolchain_/)'
-          case "$PART" in
-            whole) ;;
-            kernel)
-              # The in-process suite runs whole everywhere: it is two minutes, and it holds the supervisor's, the runner's and the temporary directories' own laws.
-              # Of the suites that drive a real cargo, these are the ones whose answer is a process group, a signal, a crash, a durable write or a schedule.
-              if [ "$EVENT" = pull_request ]; then
-                toolchain='binary(/^toolchain_(hang|interrupt|panics|crashes|durable|wire_fixture|concurrency|pool|work|knobs)$/)'
-              fi
-              ;;
-            *)
-              echo "::error::a test row names the part '$PART', which is neither whole nor kernel"
-              exit 1
-              ;;
-          esac
-          cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail -E "$in_process"
-          # Each test in these binaries drives its own Cargo. Two outer tests
-          # keep hosted runners busy without multiplying their build jobs into
-          # resource exhaustion; the ordinary suite above remains fully parallel.
-          cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail --test-threads 2 -E "$toolchain"
+          NJUTEST_TEST_COST_DIR: ${{ github.workspace }}/target/suite-cost/ci
+          NJUTEST_FIXTURE_BUILD_CACHE: ${{ runner.temp }}/fixture-builds
+        shell: bash
+        run: mise run test:ci
+      - name: Upload test progress and build costs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: test-evidence-${{ matrix.os }}
+          path: |
+            target/nextest/ci/junit.xml
+            target/suite-cost/ci
+          if-no-files-found: warn
       - name: Doctests
         shell: bash
         run: cargo test --locked --workspace --all-features --doc
@@ -201,7 +176,8 @@ jobs:
             sleep $((attempt * 15))
           done
           exit 1
-      - run: cargo deny --locked --all-features check --disable-fetch
+      - name: Check dependency policy
+        run: cargo deny --locked --all-features check --disable-fetch
 
   audit:
     name: audit
@@ -224,7 +200,8 @@ jobs:
             sleep $((attempt * 15))
           done
           exit 1
-      - run: cargo audit --no-fetch --deny warnings
+      - name: Audit dependency advisories
+        run: cargo audit --no-fetch --deny warnings
         env:
           CARGO_NET_OFFLINE: "false"
 
@@ -240,6 +217,7 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           components: llvm-tools
+          targets: wasm32-wasip1
           tools: cargo-llvm-cov@0.9.0, cargo-nextest@0.9.140
       - name: Fetch the locked dependency graph
         env:
@@ -250,6 +228,10 @@ jobs:
       # `nextest` builds the test targets and nothing else, and part of this suite drives a scripted `cargo` that lives in an example.
       # Building it takes the same environment the instrumented run uses, which is what `show-env` is for.
       - name: Collect coverage (run the suite once)
+        timeout-minutes: 35
+        env:
+          NJUTEST_TEST_COST_DIR: ${{ github.workspace }}/target/suite-cost/ci
+          NJUTEST_FIXTURE_BUILD_CACHE: ${{ runner.temp }}/fixture-builds
         run: |
           set -euo pipefail
           # The instrumented build lands in the ordinary `target/`, which the
@@ -274,37 +256,23 @@ jobs:
           # profiles sitting in `target` all along. The steps are told where.
           echo "CARGO_LLVM_COV_TARGET_DIR=$CARGO_LLVM_COV_TARGET_DIR" >> "$GITHUB_ENV"
           cargo build --locked --examples --workspace --all-features --profile test
-          cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast -E 'not binary(/^toolchain_/)'
-          # Coverage makes every nested build heavier. Bound only the suites
-          # that start those builds, preserving full parallelism everywhere else.
-          cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --test-threads 2 -E 'binary(/^toolchain_/)'
+          cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --test-threads 3 --status-level pass --profile ci
+      - name: Upload test progress and build costs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: coverage-test-evidence
+          path: |
+            target/nextest/ci/junit.xml
+            target/suite-cost/ci
+          if-no-files-found: warn
       - name: Report (lcov + HTML + summary)
         run: |
           cargo llvm-cov report --lcov --output-path lcov.info
           cargo llvm-cov report --html
           cargo llvm-cov report --summary-only
-      # Never lower; raise one when its suite earns it.
-      # The floors are a little under what the suite reaches today, so an ordinary change has room and a change that drops a whole area does not.
-      - name: Ratchet the workspace
-        run: >-
-          cargo llvm-cov report --summary-only --fail-under-regions 80
-          --ignore-filename-regex 'compiler-surfaces/'
-      - name: Ratchet rust-mutants
-        run: >-
-          cargo llvm-cov report --summary-only --fail-under-regions 87
-          --ignore-filename-regex 'crates/(rust-mutants-cli|njutest|njutest-macros|njutest-devkit)/|xtask/|fuzz/|compiler-surfaces/'
-      - name: Ratchet rust-mutants-cli
-        run: >-
-          cargo llvm-cov report --summary-only --fail-under-regions 83
-          --ignore-filename-regex 'crates/(rust-mutants|njutest|njutest-macros|njutest-devkit)/|xtask/|fuzz/|compiler-surfaces/'
-      - name: Ratchet njutest
-        run: >-
-          cargo llvm-cov report --summary-only --fail-under-regions 81
-          --ignore-filename-regex 'crates/(rust-mutants|rust-mutants-cli|njutest-macros|njutest-devkit)/|xtask/|fuzz/|compiler-surfaces/'
-      - name: Ratchet xtask
-        run: >-
-          cargo llvm-cov report --summary-only --fail-under-regions 80
-          --ignore-filename-regex 'crates/|fuzz/|compiler-surfaces/'
+      - name: Ratchet region coverage
+        run: cargo xtask coverage-ratchet
       - name: Upload coverage report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -319,9 +287,25 @@ jobs:
         run: cargo test --locked --workspace --all-features --doc
 
   package-install:
-    name: package-install
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    name: package-install (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # Each row compiles both products once in release, which no other job does, and a hosted Windows runner is the slowest of the three at it.
+    timeout-minutes: 60
+    strategy:
+      # Each platform answers for itself, as in `test`.
+      fail-fast: false
+      # The platforms and targets `release.yml` builds an archive for, held equal by `cargo test -p xtask --test suite workflows::`.
+      # A release is then never the first time an archive of a platform is built, unpacked, or run.
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - os: macos-26
+            target: aarch64-apple-darwin
+          - os: windows-2025
+            target: x86_64-pc-windows-msvc
+    env:
+      NJUTEST_BUNDLE_TARGET: ${{ matrix.target }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -333,21 +317,8 @@ jobs:
         run: |
           cargo fetch --locked
           cargo fetch --locked --manifest-path fuzz/Cargo.toml
-      - name: Every publishable member packages
-        run: cargo package --locked --workspace --no-verify --allow-dirty --exclude-lockfile
-      - name: The binaries install from this tree
-        run: |
-          cargo install --locked --path crates/njutest --root "${RUNNER_TEMP}/install"
-          cargo install --locked --path crates/rust-mutants-cli --root "${RUNNER_TEMP}/install"
-          "${RUNNER_TEMP}/install/bin/njutest" --version
-          "${RUNNER_TEMP}/install/bin/rust-mutants" --version
-      - name: And cargo finds them by the name it looks for
-        run: |
-          export PATH="${RUNNER_TEMP}/install/bin:${PATH}"
-          cargo njutest --version
-          cargo rust-mutants --version
-      - name: What a release would say it is made of
-        run: cargo xtask sbom --output "${RUNNER_TEMP}/njutest.cdx.json"
+      - name: Package both CLIs, install them, and run them from the archive a release would publish
+        run: mise run package
 
   book:
     name: book
@@ -373,18 +344,20 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-rust
       - name: Install the interpreter the deep-v1 contract promises
-        run: rustup toolchain install nightly --component miri,rust-src --profile minimal
+        run: rustup toolchain install "${NJUTEST_NIGHTLY}" --component miri,rust-src --profile minimal
       # The run is offline, and Miri builds its own sysroot the first time it is asked; build it now, while the network is allowed, or the verify below interprets nothing.
       - name: Build the interpreter's sysroot
         env:
           CARGO_NET_OFFLINE: "false"
-        run: cargo +nightly miri setup
+        run: cargo +"${NJUTEST_NIGHTLY}" miri setup
       - name: Fetch the locked dependency graph
         env:
           CARGO_NET_OFFLINE: "false"
         run: |
           cargo fetch --locked
           cargo fetch --locked --manifest-path fuzz/Cargo.toml
+      - name: Interpret the platform-independent OS record regressions
+        run: 'cargo +"${NJUTEST_NIGHTLY}" miri test --locked -p rust-mutants --lib capdir::records::tests::'
       - name: Build the njutest this commit would ship
         run: mise run build:release
       # Every other job runs on a machine with no Miri, where the whole of deep-v1 is the refusal NJ7001.
@@ -435,6 +408,26 @@ jobs:
         run: mise run kani:laws
       - name: Exercise generated harnesses and the retained-result protocol with real Kani
         run: mise run kani:verified
+
+  # The sealed host held to the official WASI preview1 conformance suite, at the commit `crates/rust-mutants/tests/wasi-testsuite.toml` pins.
+  # The suite is fetched with git from GitHub, which the job's `CARGO_NET_OFFLINE` leaves alone: it keeps only cargo off the network.
+  wasi-testsuite:
+    name: wasi-testsuite
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - name: Fetch the locked dependency graph
+        env:
+          CARGO_NET_OFFLINE: "false"
+        run: |
+          cargo fetch --locked
+          cargo fetch --locked --manifest-path fuzz/Cargo.toml
+      - name: Run every preview1 test of WebAssembly/wasi-testsuite on the sealed host
+        run: mise run wasi-testsuite
 
   action-smoke:
     name: action-smoke
@@ -551,6 +544,7 @@ jobs:
         book,
         soundness,
         kani-verified,
+        wasi-testsuite,
         action-smoke,
         action-smoke-rust-mutants,
       ]

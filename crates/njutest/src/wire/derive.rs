@@ -26,7 +26,7 @@ pub enum DeriveError {
     },
     /// The recording was taken from a different set of seams than the one being asked.
     #[error(
-        "{seams} seam(s) are being asked and the recording holds {recordings}: a          recording is taken seam by seam, and pairing them by position would measure a          prefix and report the rest as questions nothing put"
+        "{seams} seam(s) are being asked, but the baseline's {recordings} named recording(s) do not name each of them exactly once"
     )]
     NotOneBaseline {
         /// How many seams are being asked.

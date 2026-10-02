@@ -4,7 +4,7 @@
 //! What a generation provider may offer, and what a run will take from it.
 
 use std::collections::BTreeSet;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -125,13 +125,71 @@ impl Kind {
     }
 }
 
+/// A path inside the tree that every platform reads the same way, made only by [`TreePath::parse`]: names joined by `/`, none empty, `.` or `..`, and none holding a character Windows reads as structure.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TreePath(String);
+
+impl TreePath {
+    /// The path `text` spells, when it is one.
+    ///
+    /// # Errors
+    /// [`RepairErrorKind::PathRefused`] for an empty path, an absolute one, one with an empty, `.` or `..` name in it, and one holding a backslash, a colon, or a control character.
+    pub fn parse(text: &str) -> Result<Self, RepairError> {
+        let refuse = |why: &str| {
+            RepairError::new(
+                RepairErrorKind::PathRefused,
+                format!("{text:?} {why}, so it is not a path inside the tree"),
+            )
+        };
+        if text.is_empty() {
+            return Err(refuse("names no file"));
+        }
+        if text.starts_with('/') {
+            return Err(refuse("is absolute"));
+        }
+        for name in text.split('/') {
+            match name {
+                "" | "." => return Err(refuse("leaves a name out")),
+                ".." => return Err(refuse("climbs")),
+                _ if name.contains('\\') => {
+                    return Err(refuse(
+                        "holds a backslash, which Windows reads as a separator",
+                    ));
+                }
+                _ if name.contains(':') => {
+                    return Err(refuse(
+                        "holds a colon, which Windows reads as a drive or a stream",
+                    ));
+                }
+                _ if name.chars().any(char::is_control) => {
+                    return Err(refuse("holds a control character"));
+                }
+                _ => {}
+            }
+        }
+        Ok(Self(text.to_owned()))
+    }
+
+    /// The path, workspace-relative with forward slashes.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for TreePath {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
 /// One candidate a run has checked the shape of: the path is admissible, the content decoded, and the preimage is what it claims.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Proposal {
     /// What it would do.
     pub kind: Kind,
-    /// Where it would be written, workspace-relative with forward slashes.
-    pub path: String,
+    /// Where it would be written.
+    pub path: TreePath,
     /// The SHA-256 of the file the provider saw, absent when it would create one.
     pub preimage: Option<String>,
     /// The whole new content.
@@ -233,13 +291,13 @@ pub fn take(said: &str, root: &Path, allowed: &[String]) -> Result<Vec<Proposal>
     }
     let patterns = compiled(allowed);
     let mut taken = Vec::with_capacity(offered.candidates.len());
-    let mut seen: BTreeSet<String> = BTreeSet::new();
+    let mut seen: BTreeSet<TreePath> = BTreeSet::new();
     for candidate in &offered.candidates {
         let proposal = proposed(candidate, root, &patterns)?;
         if !seen.insert(proposal.path.clone()) {
             return Err(RepairError::new(
                 RepairErrorKind::Protocol,
-                format!("the provider offered {:?} twice", proposal.path),
+                format!("the provider offered {:?} twice", proposal.path.as_str()),
             ));
         }
         taken.push(proposal);
@@ -276,13 +334,16 @@ fn proposed(
     let content = decode(&candidate.content_base64).map_err(|why| {
         RepairError::new(
             RepairErrorKind::Protocol,
-            format!("the content of {path:?} is not base64: {why}"),
+            format!("the content of {:?} is not base64: {why}", path.as_str()),
         )
     })?;
     if content.len() > OUTPUT_LIMIT {
         return Err(RepairError::new(
             RepairErrorKind::Protocol,
-            format!("the content of {path:?} is more than {OUTPUT_LIMIT} bytes"),
+            format!(
+                "the content of {:?} is more than {OUTPUT_LIMIT} bytes",
+                path.as_str()
+            ),
         ));
     }
     match_preimage(root, &path, candidate.preimage_sha256.as_deref())?;
@@ -295,54 +356,34 @@ fn proposed(
     })
 }
 
-/// The path a candidate names, as a workspace-relative path a run may write.
+/// The path a candidate names, as a path inside the tree a run may write.
 ///
 /// # Errors
-/// [`RepairErrorKind::PathRefused`] for anything absolute, anything that climbs out of the tree, and anything the allowed patterns do not match.
+/// [`RepairErrorKind::PathRefused`] for anything [`TreePath::parse`] refuses, and anything the allowed patterns do not match.
 pub fn admissible(
     path: &str,
     allowed: &[rust_mutants::glob::Pattern],
-) -> Result<String, RepairError> {
-    let refuse = |why: &str| {
-        RepairError::new(
+) -> Result<TreePath, RepairError> {
+    let inside = TreePath::parse(path)?;
+    if !allowed
+        .iter()
+        .any(|pattern| pattern.matches(inside.as_str()))
+    {
+        return Err(RepairError::new(
             RepairErrorKind::PathRefused,
-            format!("the provider would write {path:?}, which {why}"),
-        )
-    };
-    if path.is_empty() {
-        return Err(refuse("names no file"));
+            format!("the provider would write {path:?}, which is not one of the allowed paths"),
+        ));
     }
-    let candidate = PathBuf::from(path);
-    if candidate.is_absolute() {
-        return Err(refuse("is absolute"));
-    }
-    for component in candidate.components() {
-        match component {
-            Component::Normal(_) => {}
-            _ => return Err(refuse("climbs out of the tree or names a root")),
-        }
-    }
-    let mut parts = Vec::new();
-    for component in candidate.components() {
-        let Component::Normal(part) = component else {
-            return Err(refuse("climbs out of the tree or names a root"));
-        };
-        let text = part.to_str().ok_or_else(|| refuse("is not valid UTF-8"))?;
-        parts.push(text);
-    }
-    let relative = parts.join("/");
-    if !allowed.iter().any(|pattern| pattern.matches(&relative)) {
-        return Err(refuse("is not one of the allowed paths"));
-    }
-    Ok(relative)
+    Ok(inside)
 }
 
 /// Whether the file a candidate patches is still the file the provider saw.
-fn match_preimage(root: &Path, path: &str, claimed: Option<&str>) -> Result<(), RepairError> {
+fn match_preimage(root: &Path, path: &TreePath, claimed: Option<&str>) -> Result<(), RepairError> {
     let found = preimage_of(root, path);
     if found.as_deref() == claimed {
         return Ok(());
     }
+    let path = path.as_str();
     Err(RepairError::new(
         RepairErrorKind::PreimageMoved,
         match (claimed, found) {
@@ -355,8 +396,8 @@ fn match_preimage(root: &Path, path: &str, claimed: Option<&str>) -> Result<(), 
 
 /// The SHA-256 of a file of the tree, or nothing when it is not there.
 #[must_use]
-pub fn preimage_of(root: &Path, path: &str) -> Option<String> {
-    let bytes = match std::fs::read(root.join(path)) {
+pub fn preimage_of(root: &Path, path: &TreePath) -> Option<String> {
+    let bytes = match std::fs::read(root.join(path.as_str())) {
         Ok(bytes) => bytes,
         Err(_) => return None,
     };

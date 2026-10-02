@@ -10,6 +10,8 @@ use std::time::Duration;
 
 use rust_mutants::runner::{Spec, run};
 
+use super::ended::ProcessEnd;
+
 use crate::error::RunnerError;
 use crate::report::{Finding, FindingKind, Limitation};
 use crate::trace::ExecRecord;
@@ -112,7 +114,7 @@ pub fn targets_of(root: &Path) -> io::Result<Vec<String>> {
 #[must_use]
 pub fn found(targets: &[String]) -> Limitation {
     Limitation::new(
-        crate::limitation::FUZZ_NOT_EXECUTED,
+        crate::limitation::Limitation::FuzzNotExecuted,
         &format!(
             "{} fuzz targets are here and were not driven, so nothing is claimed about what \
              they would find; `[fuzz] run = true` drives them: {}",
@@ -143,7 +145,7 @@ pub fn fuzz(fuzzing: &Fuzzing<'_>, watch: Watch<'_>) -> Result<Fuzzed, RunnerErr
     };
     for target in &selected {
         if watch.cancel.is_cancelled() {
-            break;
+            return Err(RunnerError::Interrupted);
         }
         one(&mut done, fuzzing, target, watch)?;
     }
@@ -170,6 +172,10 @@ fn one(
 
     let ran = run(&spec, watch.cancel);
     watch.trace.exec_result(ExecRecord::of(&spec, &ran));
+    let ended = ProcessEnd::of(&ran.termination);
+    if ended == ProcessEnd::Interrupted {
+        return Err(RunnerError::Interrupted);
+    }
     let said = std::str::from_utf8(&ran.output).map_err(|source| RunnerError::PhaseOutput {
         phase: "cargo-fuzz",
         source,
@@ -185,12 +191,15 @@ fn one(
         .into_iter()
         .filter(|artifact| !before.contains(artifact))
         .collect();
-    let undriven = ran.error().is_some()
-        || ABSENT.iter().any(|marker| said.contains(marker))
-        || (!ran.timed_out() && ran.conventional_exit_code() != 0 && left.is_empty());
+    let undriven = ABSENT.iter().any(|marker| said.contains(marker))
+        || match ended {
+            ProcessEnd::Unlaunched { .. } => true,
+            ProcessEnd::Failed | ProcessEnd::Unanswered { .. } => left.is_empty(),
+            ProcessEnd::Passed | ProcessEnd::TimedOut | ProcessEnd::Interrupted => false,
+        };
     if undriven {
         done.limitations.push(Limitation::new(
-            crate::limitation::CARGO_FUZZ_UNAVAILABLE,
+            crate::limitation::Limitation::CargoFuzzUnavailable,
             &format!("{target} was to be driven and cargo-fuzz could not be run"),
         ));
         done.findings.push(Finding {
@@ -204,9 +213,9 @@ fn one(
         return Ok(());
     }
     done.ran.push(target.to_owned());
-    if ran.timed_out() {
+    if ended == ProcessEnd::TimedOut {
         done.limitations.push(Limitation::new(
-            crate::limitation::CARGO_FUZZ_UNAVAILABLE,
+            crate::limitation::Limitation::CargoFuzzUnavailable,
             &format!("{target} ran out of time before it was driven for as long as it was asked"),
         ));
     }
@@ -235,12 +244,30 @@ fn fuzz_spec(fuzzing: &Fuzzing<'_>, target: &str) -> Spec {
     )
 }
 
+/// The most of one crashing input a run reads and offers to the corpus.
+pub const CRASH_INPUT_LIMIT: u64 = 1 << 20;
+
 fn record_crashes(done: &mut Fuzzed, target: &str, left: Vec<Artifact>) {
     for artifact in left {
-        let content = match std::fs::read(&artifact.on_disk) {
-            Ok(content) => content,
-            Err(error) => {
-                unavailable(done, target, &error);
+        let read = match crate::observe::bytes_within(&artifact.on_disk, CRASH_INPUT_LIMIT) {
+            Ok(read) => read,
+            Err(exhausted) => {
+                unavailable(done, target, &io::Error::other(exhausted.to_string()));
+                continue;
+            }
+        };
+        let content = match read {
+            crate::observe::Bounded::Present(content) => Some(content),
+            crate::observe::Bounded::Oversized => None,
+            crate::observe::Bounded::Absent | crate::observe::Bounded::Unreadable => {
+                unavailable(
+                    done,
+                    target,
+                    &io::Error::other(format!(
+                        "{} is no regular file the run could read",
+                        artifact.reported
+                    )),
+                );
                 continue;
             }
         };
@@ -248,26 +275,37 @@ fn record_crashes(done: &mut Fuzzed, target: &str, left: Vec<Artifact>) {
             Some(name) if !name.is_empty() => name.to_owned(),
             _ => artifact.reported.clone(),
         };
+        let detail = match &content {
+            Some(_) => format!("{target} crashed on the input {} kept", artifact.reported),
+            None => format!(
+                "{target} crashed on the input {} kept, which is larger than the \
+                 {CRASH_INPUT_LIMIT} bytes a run offers to the corpus, so it was read no \
+                 further and offered to nothing",
+                artifact.reported
+            ),
+        };
         done.findings.push(Finding {
             kind: FindingKind::FailingTest,
             subject: format!("fuzz:{target}"),
-            detail: format!("{target} crashed on the input {} kept", artifact.reported),
+            detail,
             origin: crate::report::FindingOrigin::Global,
             path: None,
             position: None,
         });
-        done.crashes.push(Crash {
-            target: target.to_owned(),
-            artifact: artifact.reported,
-            corpus: format!("{CORPUS}/{target}/{name}"),
-            content,
-        });
+        if let Some(content) = content {
+            done.crashes.push(Crash {
+                target: target.to_owned(),
+                artifact: artifact.reported,
+                corpus: format!("{CORPUS}/{target}/{name}"),
+                content,
+            });
+        }
     }
 }
 
 fn unavailable(done: &mut Fuzzed, subject: &str, error: &io::Error) {
     done.limitations.push(Limitation::new(
-        crate::limitation::CARGO_FUZZ_UNAVAILABLE,
+        crate::limitation::Limitation::CargoFuzzUnavailable,
         &format!("fuzz:{subject} could not be read completely: {error}"),
     ));
     done.findings.push(Finding {

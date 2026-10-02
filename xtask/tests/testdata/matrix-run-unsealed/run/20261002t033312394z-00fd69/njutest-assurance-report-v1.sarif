@@ -1,0 +1,379 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "runs": [
+    {
+      "automationDetails": {
+        "id": "20261002t033312394z-00fd69"
+      },
+      "properties": {
+        "accounting": {
+          "faults": {
+            "absorbed": 0,
+            "not_put": 0,
+            "noticed": 0,
+            "sites": 0,
+            "undecided": 0,
+            "unnoticed": 0,
+            "unreached": 0,
+            "waited": 0
+          },
+          "mutants": {
+            "accepted": 0,
+            "cataloged": 10,
+            "equivalent": 0,
+            "executed": 10,
+            "killed": 9,
+            "model_noticed": 0,
+            "model_proved": 0,
+            "observers": {
+              "errored": 0,
+              "model_noticed": 0,
+              "model_proved": 0,
+              "proved": 0,
+              "step_limit_reached": 0,
+              "tests": 0,
+              "types": 0,
+              "unnoticed": 0,
+              "unproven": 10,
+              "unreached": 0,
+              "waited": 0
+            },
+            "rejected": 0,
+            "reused_killed": 0,
+            "reused_survived": 0,
+            "step_limit_reached": 0,
+            "survived": 1,
+            "unreached": 0,
+            "waited": 0
+          },
+          "soundness_by_build": [
+            {
+              "accounting": {
+                "executed": true,
+                "packages_with_unsafe": 0,
+                "unsafe_items": 0
+              },
+              "build": "default"
+            }
+          ],
+          "targets": {
+            "failed": 0,
+            "missing": 0,
+            "passed": 2,
+            "selected": 2,
+            "skipped": 0
+          }
+        },
+        "limitations": [
+          {
+            "detail": "git could not be asked, so the run cannot name the commit it verified",
+            "name": "git-metadata-unavailable"
+          },
+          {
+            "detail": "the target's guards recorded nothing this run can route by, so every test of it reaches every mutation in it and none of them is narrowed (fixture-simple/doc/fixture_simple)",
+            "name": "touch-not-recorded"
+          },
+          {
+            "detail": "2 places were not mutated: test-only-file",
+            "name": "skipped-test-only-file"
+          },
+          {
+            "detail": "1 place was not mutated: let-condition",
+            "name": "skipped-let-condition"
+          },
+          {
+            "detail": "1 test binary is not proven to run one thread and no schedule of it was explored, so what it does when its threads interleave otherwise is not known (fixture-simple/doc/fixture_simple)",
+            "name": "schedule-not-explored"
+          },
+          {
+            "detail": "2 test binaries are passed every schedule a delayed guard made, which is a sample of the schedules and not all of them, so a race none of those delays exposed is not ruled out (fixture-simple/lib/fixture_simple, fixture-simple/test/parity)",
+            "name": "schedule-sampled"
+          },
+          {
+            "detail": "no measured file has a `?`, so there was no call a fault could fail",
+            "name": "fault-no-site"
+          },
+          {
+            "detail": "no measured file calls anything that writes, so there was nothing to stop after",
+            "name": "crash-no-site"
+          }
+        ],
+        "verdict": "Insufficient"
+      },
+      "results": [
+        {
+          "level": "warning",
+          "message": {
+            "text": "10 thing(s) the mutation dimension put were not decided, so it is not established along it: 4f09b8f6515d886cf638: a native lead of killed no sealed execution established; 36f3786c607b20288246: a native lead of killed no sealed execution established; 97dcf2a134137b47d185: a native lead of killed no sealed execution established; 355723c8d204e44dac60: a native lead of killed no sealed execution established; f0d20edfda2959667ff1: a native lead of survived no sealed execution established; 29fa56091a8bb5622f20: a native lead of killed no sealed execution established; 7dade0daa6fdfca0540a: a native lead of killed no sealed execution established; c7df40a2d69eae0d983d: a native lead of killed no sealed execution established; 00e556aa9db45bd9d1d5: a native lead of killed no sealed execution established; 4cd205f7d6faa29392ae: a native lead of killed no sealed execution established"
+          },
+          "partialFingerprints": {
+            "njutestFinding/v1": "dimension-not-measured:mutation"
+          },
+          "ruleId": "dimension-not-measured"
+        },
+        {
+          "level": "warning",
+          "message": {
+            "text": "3 thing(s) the schedule dimension put were not decided, so it is not established along it: fixture-simple/doc/fixture_simple: its baseline did not pass, so no schedule of it could be held; fixture-simple/lib/fixture_simple: every delayed schedule passed, which is a sample of its schedules and never all of them; fixture-simple/test/parity: every delayed schedule passed, which is a sample of its schedules and never all of them"
+          },
+          "partialFingerprints": {
+            "njutestFinding/v1": "dimension-not-measured:schedule"
+          },
+          "ruleId": "dimension-not-measured"
+        },
+        {
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/lib.rs"
+                },
+                "region": {
+                  "startColumn": 5,
+                  "startLine": 11
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "no sealed execution established a verdict about return-default at src/lib.rs (nothing was sealed to put it to), so the native run's killed is a lead and not a verdict"
+          },
+          "partialFingerprints": {
+            "njutestFinding/v1": "unproven-mutant:src/lib.rs"
+          },
+          "ruleId": "unproven-mutant"
+        },
+        {
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/lib.rs"
+                },
+                "region": {
+                  "startColumn": 8,
+                  "startLine": 11
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "no sealed execution established a verdict about negate-condition at src/lib.rs (nothing was sealed to put it to), so the native run's killed is a lead and not a verdict"
+          },
+          "partialFingerprints": {
+            "njutestFinding/v1": "unproven-mutant:src/lib.rs"
+          },
+          "ruleId": "unproven-mutant"
+        },
+        {
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/lib.rs"
+                },
+                "region": {
+                  "startColumn": 8,
+                  "startLine": 11
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "no sealed execution established a verdict about condition-to-true at src/lib.rs (nothing was sealed to put it to), so the native run's killed is a lead and not a verdict"
+          },
+          "partialFingerprints": {
+            "njutestFinding/v1": "unproven-mutant:src/lib.rs"
+          },
+          "ruleId": "unproven-mutant"
+        },
+        {
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/lib.rs"
+                },
+                "region": {
+                  "startColumn": 8,
+                  "startLine": 11
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "no sealed execution established a verdict about condition-to-false at src/lib.rs (nothing was sealed to put it to), so the native run's killed is a lead and not a verdict"
+          },
+          "partialFingerprints": {
+            "njutestFinding/v1": "unproven-mutant:src/lib.rs"
+          },
+          "ruleId": "unproven-mutant"
+        },
+        {
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/lib.rs"
+                },
+                "region": {
+                  "startColumn": 10,
+                  "startLine": 11
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "no sealed execution established a verdict about gt-to-ge at src/lib.rs (nothing was sealed to put it to), so the native run's survived is a lead and not a verdict: no test could have noticed it natively, since every one of the 1 targets that reach it was removed without being run, by never-infected"
+          },
+          "partialFingerprints": {
+            "njutestFinding/v1": "unproven-mutant:src/lib.rs"
+          },
+          "ruleId": "unproven-mutant"
+        },
+        {
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/lib.rs"
+                },
+                "region": {
+                  "startColumn": 16,
+                  "startLine": 11
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "no sealed execution established a verdict about return-default at src/lib.rs (nothing was sealed to put it to), so the native run's killed is a lead and not a verdict"
+          },
+          "partialFingerprints": {
+            "njutestFinding/v1": "unproven-mutant:src/lib.rs"
+          },
+          "ruleId": "unproven-mutant"
+        },
+        {
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/lib.rs"
+                },
+                "region": {
+                  "startColumn": 27,
+                  "startLine": 11
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "no sealed execution established a verdict about return-default at src/lib.rs (nothing was sealed to put it to), so the native run's killed is a lead and not a verdict"
+          },
+          "partialFingerprints": {
+            "njutestFinding/v1": "unproven-mutant:src/lib.rs"
+          },
+          "ruleId": "unproven-mutant"
+        },
+        {
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/lib.rs"
+                },
+                "region": {
+                  "startColumn": 5,
+                  "startLine": 16
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "no sealed execution established a verdict about return-true at src/lib.rs (nothing was sealed to put it to), so the native run's killed is a lead and not a verdict"
+          },
+          "partialFingerprints": {
+            "njutestFinding/v1": "unproven-mutant:src/lib.rs"
+          },
+          "ruleId": "unproven-mutant"
+        },
+        {
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/lib.rs"
+                },
+                "region": {
+                  "startColumn": 7,
+                  "startLine": 16
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "no sealed execution established a verdict about rem-to-mul at src/lib.rs (nothing was sealed to put it to), so the native run's killed is a lead and not a verdict"
+          },
+          "partialFingerprints": {
+            "njutestFinding/v1": "unproven-mutant:src/lib.rs"
+          },
+          "ruleId": "unproven-mutant"
+        },
+        {
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/lib.rs"
+                },
+                "region": {
+                  "startColumn": 11,
+                  "startLine": 16
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "no sealed execution established a verdict about eq-to-neq at src/lib.rs (nothing was sealed to put it to), so the native run's killed is a lead and not a verdict"
+          },
+          "partialFingerprints": {
+            "njutestFinding/v1": "unproven-mutant:src/lib.rs"
+          },
+          "ruleId": "unproven-mutant"
+        }
+      ],
+      "tool": {
+        "driver": {
+          "informationUri": "https://github.com/P4suta/njutest",
+          "name": "njutest",
+          "rules": [
+            {
+              "id": "dimension-not-measured",
+              "shortDescription": {
+                "text": "dimension not measured"
+              }
+            },
+            {
+              "id": "unproven-mutant",
+              "shortDescription": {
+                "text": "unproven mutant"
+              }
+            }
+          ],
+          "version": "0.1.0"
+        }
+      }
+    }
+  ],
+  "version": "2.1.0"
+}

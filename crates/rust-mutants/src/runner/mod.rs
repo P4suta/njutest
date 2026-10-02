@@ -3,6 +3,9 @@
 
 //! Starts one child process, supervises the platform's declared process set, and returns what happened.
 
+mod cancel;
+mod clock;
+mod group;
 pub mod output;
 
 #[cfg(unix)]
@@ -21,7 +24,13 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use output::{OutputError, TailBuffer};
+use rust_mutants_decision::answered::{Answer, Observed, Wait};
+use rust_mutants_decision::stall::Stillness;
 
+pub use clock::Clock;
+pub use group::GroupChild;
+#[cfg(unix)]
+pub use group::Leader;
 pub use output::{DEFAULT_OUTPUT_LIMIT, HeadBuffer, MIN_OUTPUT_LIMIT, OUTPUT_TRUNCATED_PREFIX};
 
 /// The conventional stand-in used only by legacy report projections when there is no exit status to report.
@@ -55,57 +64,7 @@ pub const TERMINATION_GRACE: Duration = Duration::from_secs(2);
 /// How long [`run`] waits for the output pipe to reach EOF after the child itself has exited.
 pub const IO_DRAIN_GRACE: Duration = Duration::from_secs(2);
 
-/// A cooperative cancellation flag shared between the caller and a run.
-#[derive(Debug, Clone)]
-pub struct Cancel {
-    own: Arc<AtomicBool>,
-    above: Vec<Arc<AtomicBool>>,
-}
-
-impl Cancel {
-    /// A flag that is not yet cancelled.
-    #[must_use]
-    #[expect(
-        clippy::new_without_default,
-        reason = "an execution-control state must be constructed explicitly, never by a semantic Default"
-    )]
-    pub fn new() -> Self {
-        Self {
-            own: Arc::new(AtomicBool::new(false)),
-            above: Vec::new(),
-        }
-    }
-
-    /// A flag cancelled whenever this one is, whose own cancellation this one never sees: what a run that stops its own work raises, so a caller does not read that stop as having been interrupted.
-    #[must_use]
-    pub fn child(&self) -> Self {
-        let mut above = self.above.clone();
-        above.push(Arc::clone(&self.own));
-        Self {
-            own: Arc::new(AtomicBool::new(false)),
-            above,
-        }
-    }
-
-    /// Requests cancellation.
-    /// Idempotent.
-    pub fn cancel(&self) {
-        self.own.store(true, Ordering::SeqCst);
-    }
-
-    /// Whether cancellation was requested, of this flag or of any it is a child of.
-    #[must_use]
-    pub fn is_cancelled(&self) -> bool {
-        self.own.load(Ordering::SeqCst) || self.above.iter().any(|flag| flag.load(Ordering::SeqCst))
-    }
-
-    /// The flag itself, so a composition root can raise it from a signal handler.
-    /// This crate never installs one: a signal is the process's business, not a library's.
-    #[must_use]
-    pub fn flag(&self) -> Arc<AtomicBool> {
-        Arc::clone(&self.own)
-    }
-}
+pub use cancel::{Cancel, Cancelled};
 
 /// How long a child may run before this process stops it.
 ///
@@ -212,17 +171,10 @@ pub(crate) struct Progress {
     pub(crate) quiet: Duration,
 }
 
-/// How many beats the child is told to fit into one quiet window.
-const BEATS_PER_WINDOW: u32 = 4;
-
 impl Progress {
-    /// How long the child may spend a reservation before it rewrites [`Progress::beat`]: a quarter of the window, and never less than a millisecond.
+    /// How long the child may spend a reservation before it rewrites [`Progress::beat`], as [`rust_mutants_decision::stall::beat_every`] decides.
     pub(crate) fn beat_every(&self) -> Duration {
-        let share = match self.quiet.checked_div(BEATS_PER_WINDOW) {
-            Some(share) => share,
-            None => self.quiet,
-        };
-        share.max(Duration::from_millis(1))
+        rust_mutants_decision::stall::beat_every(self.quiet)
     }
 
     /// What the child is told so that it is never quiet for a window while it moves, set over its environment by the runner that watches it.
@@ -370,6 +322,9 @@ pub enum RunnerError {
         #[source]
         source: io::Error,
     },
+    /// The reported first-failure ending contradicts the failure and process ending observed.
+    #[error("the answered-stop decision contradicts the observed failure and process ending")]
+    AnsweredStopInconsistent,
 }
 
 /// Which bounded process-set termination phase an operating-system failure interrupted.
@@ -670,6 +625,9 @@ pub trait Watch {
 
     /// Records one finished process.
     fn exec(&self, spec: &Spec, result: &RunResult);
+
+    /// Records something the caller decided that no process said, such as what an answer was read against.
+    fn note(&self, kind: &str, detail: &str);
 }
 
 /// The watch the engine's own commands run under: this run's cancellation and this run's trace.
@@ -698,11 +656,23 @@ impl Watch for Watched<'_> {
         self.trace
             .exec_result(crate::trace::ExecRecord::of(spec, result));
     }
+
+    fn note(&self, kind: &str, detail: &str) {
+        self.trace.note(kind, detail);
+    }
 }
 
 /// Starts the process described by `spec`, supervises the platform's declared process set, and returns when it has finished, timed out, or been cancelled.
 #[must_use]
 pub fn run(spec: &Spec, cancel: &Cancel) -> RunResult {
+    run_with_stall_candidate(spec, cancel, |quiet| quiet.is_zero())
+}
+
+fn run_with_stall_candidate(
+    spec: &Spec,
+    cancel: &Cancel,
+    stall_candidate: impl Fn(Duration) -> bool,
+) -> RunResult {
     let started = Instant::now();
     let program = match preflight(spec, cancel, started) {
         Preflight::Ready(program) => program,
@@ -725,14 +695,16 @@ pub fn run(spec: &Spec, cancel: &Cancel) -> RunResult {
         &running.supervisor,
         &running.child,
         Stops {
+            started,
             deadline,
             cancel,
             monitor: spec.stop_file.as_deref(),
             progress: spec.progress.as_ref(),
             answered: spec.stop_at_first_failure.then_some(answered.as_ref()),
         },
+        stall_candidate,
     );
-    let completed = complete(
+    let mut completed = complete(
         started,
         running,
         (
@@ -740,6 +712,8 @@ pub fn run(spec: &Spec, cancel: &Cancel) -> RunResult {
             spec.stop_at_first_failure.then_some(answered.as_ref()),
         ),
     );
+    completed.duration = cancel.clock.now(started, leader).duration_since(started);
+    cancel.clock.finished(leader);
     if let Some(leaders) = &spec.leaders {
         leaders.finished(leader);
     }
@@ -779,12 +753,16 @@ fn complete(
     child.finish();
     let duration = started.elapsed();
     let named_a_failure = answered.is_some_and(|answered| answered.load(Ordering::SeqCst));
+    let wait = outcome.wait();
+    let answer = rust_mutants_decision::answered::answer(wait, named_a_failure);
     let process_termination = match outcome {
-        Exit::Exited if named_a_failure => Termination::Answered,
+        Exit::Exited | Exit::Answered if answer == Answer::Answered => Termination::Answered,
         Exit::TimedOut => Termination::TimedOut,
         Exit::Stalled => Termination::Stalled,
         Exit::StoppedByMonitor => Termination::StoppedByMonitor,
-        Exit::Answered => Termination::Answered,
+        Exit::Answered => Termination::WaitFailed {
+            error: RunnerError::AnsweredStopInconsistent,
+        },
         Exit::MonitorFailed(failure) => Termination::MonitorFailed { failure },
         Exit::Cancelled => Termination::Cancelled { started: true },
         Exit::Exited => Termination::Exited(sys::process_exit(status)),
@@ -808,9 +786,19 @@ fn complete(
             None => (Vec::new(), false),
         },
     };
-    let termination = capture_failure.map_or(process_termination, |error| {
-        Termination::WaitFailed { error }
-    });
+    let capture_failed = capture_failure.is_some();
+    let termination = match capture_failure {
+        Some(error) => Termination::WaitFailed { error },
+        None => process_termination,
+    };
+    let termination = checked_answered_termination(
+        Observed {
+            wait,
+            named_a_failure,
+            capture_failed,
+        },
+        termination,
+    );
     RunResult {
         termination,
         duration,
@@ -1015,7 +1003,10 @@ fn start(spec: &Spec, program: &OsString, answered: &Arc<AtomicBool>) -> Result<
     let readers = match launch_readers(
         merged,
         structured,
-        spec.output_limit.unwrap_or(DEFAULT_OUTPUT_LIMIT),
+        match spec.output_limit {
+            Some(asked) => asked,
+            None => DEFAULT_OUTPUT_LIMIT,
+        },
         spec.stop_at_first_failure.then(|| Arc::clone(answered)),
     ) {
         Ok(readers) => readers,
@@ -1242,8 +1233,14 @@ impl<C: ReaderCapture> ReaderCapture for FirstFailure<C> {
 /// Whether `line` is libtest's report of one test that failed: `test <name> ... FAILED`, and never its closing `test result: FAILED.`.
 #[must_use]
 pub fn says_a_test_failed(line: &[u8]) -> bool {
-    let line = line.strip_suffix(b"\n").unwrap_or(line);
-    let line = line.strip_suffix(b"\r").unwrap_or(line);
+    let line = match line.strip_suffix(b"\n") {
+        Some(without_newline) => without_newline,
+        None => line,
+    };
+    let line = match line.strip_suffix(b"\r") {
+        Some(without_return) => without_return,
+        None => line,
+    };
     line.starts_with(b"test ") && line.ends_with(b" ... FAILED")
 }
 
@@ -1460,11 +1457,41 @@ enum Exit {
     SupervisionFailed(RunnerError),
 }
 
+impl Exit {
+    /// How the wait ended, as far as a stop at the first failing test reads it.
+    const fn wait(&self) -> Wait {
+        match self {
+            Self::Exited => Wait::Exited,
+            Self::Answered => Wait::Answered,
+            Self::WaitFailed(_)
+            | Self::TimedOut
+            | Self::Stalled
+            | Self::Cancelled
+            | Self::StoppedByMonitor
+            | Self::MonitorFailed(_)
+            | Self::SupervisionFailed(_) => Wait::Other,
+        }
+    }
+}
+
+/// `reported`, where it agrees with what was observed of the run, and otherwise the inconsistency, so an ending the answered stop cannot stand on is never a result.
+fn checked_answered_termination(observed: Observed, reported: Termination) -> Termination {
+    if rust_mutants_decision::answered::agrees(observed, matches!(reported, Termination::Answered))
+    {
+        reported
+    } else {
+        Termination::WaitFailed {
+            error: RunnerError::AnsweredStopInconsistent,
+        }
+    }
+}
+
 /// How often the wait loop looks at the cancellation flag.
 const POLL_INTERVAL: Duration = Duration::from_millis(25);
 
 #[derive(Clone, Copy)]
 struct Stops<'a> {
+    started: Instant,
     deadline: Option<Instant>,
     cancel: &'a Cancel,
     monitor: Option<&'a Path>,
@@ -1472,11 +1499,13 @@ struct Stops<'a> {
     answered: Option<&'a AtomicBool>,
 }
 
-/// What the wait loop last saw of each progress file, and when it last saw any of them change.
+/// What the wait loop last saw of each progress file, when it last sampled them, and when it last saw any of them change.
 struct Watching<'a> {
     progress: &'a Progress,
     seen: [Option<Vec<u8>>; 2],
-    moved: Instant,
+    started: Instant,
+    sampled: Duration,
+    stillness: Stillness,
 }
 
 impl<'a> Watching<'a> {
@@ -1484,23 +1513,55 @@ impl<'a> Watching<'a> {
         Self {
             progress,
             seen: [None, None],
-            moved: started,
+            started,
+            sampled: Duration::ZERO,
+            stillness: Stillness::new(progress.quiet),
         }
     }
 
-    /// Looks at the files and returns the moment they count as stalled; a failed read is not a change, since a child that is not writing never causes one.
-    fn look(&mut self, now: Instant) -> Option<Instant> {
+    /// How long after the watch began `now` is.
+    fn since(&self, now: Instant) -> Duration {
+        now.saturating_duration_since(self.started)
+    }
+
+    /// Samples the signals at `now`, first seen under an advanced clock at the previous sample, and returns when they count as stalled; a failed read is not a change.
+    fn look(&mut self, now: Instant, advanced: bool) -> Option<Instant> {
+        let mut changed = false;
         for (path, seen) in self.progress.signals().into_iter().zip(&mut self.seen) {
             match read_between_writes(path) {
                 Ok(content) if seen.as_ref() != Some(&content) => {
                     *seen = Some(content);
-                    self.moved = now;
+                    changed = true;
                 }
                 Ok(_unchanged) => {}
                 Err(_a_failed_read_is_not_a_change) => {}
             }
         }
-        self.moved.checked_add(self.progress.quiet)
+        let since = self.since(now);
+        let moved = if advanced { self.sampled } else { since };
+        self.stillness = self.stillness.looked(moved, changed);
+        self.sampled = since;
+        self.stillness
+            .stalls_at()
+            .and_then(|stalls| self.started.checked_add(stalls))
+    }
+
+    fn confirms_stall(&mut self, now: Instant) -> bool {
+        if !self.stillness.still_for_the_window(self.since(now)) {
+            return false;
+        }
+        for (path, seen) in self.progress.signals().into_iter().zip(&mut self.seen) {
+            match read_between_writes(path) {
+                Ok(content) if seen.as_ref() != Some(&content) => {
+                    *seen = Some(content);
+                    self.stillness = self.stillness.looked(self.since(now), true);
+                    return false;
+                }
+                Ok(_unchanged) => {}
+                Err(_a_failed_read_is_not_a_change) => {}
+            }
+        }
+        true
     }
 }
 
@@ -1606,10 +1667,16 @@ fn answered(
 }
 
 /// Waits for the child to exit, the deadline to pass, or the cancellation flag to be raised — and in the latter two cases ends the declared process set.
-fn await_exit(supervisor: &sys::Supervisor, child: &SupervisedChild, stops: Stops<'_>) -> Exit {
+fn await_exit(
+    supervisor: &sys::Supervisor,
+    child: &SupervisedChild,
+    stops: Stops<'_>,
+    stall_candidate: impl Fn(Duration) -> bool,
+) -> Exit {
     let mut watching = stops
         .progress
         .map(|progress| Watching::of(progress, Instant::now()));
+    let mut previous = stops.started;
     loop {
         match child.exit_observed() {
             Ok(true) => return Exit::Exited,
@@ -1621,11 +1688,13 @@ fn await_exit(supervisor: &sys::Supervisor, child: &SupervisedChild, stops: Stop
                 };
             }
         }
-        let now = Instant::now();
+        let (now, tick) = stops.cancel.clock.read(stops.started, child.handle().id());
+        let now = now.max(previous);
+        previous = now;
         let remaining = stops.deadline.map(|deadline| until(deadline, now));
         let quiet = watching
             .as_mut()
-            .and_then(|watching| watching.look(now))
+            .and_then(|watching| watching.look(now, tick.is_some()))
             .map(|stalled| until(stalled, now));
         let poll = match (remaining, quiet) {
             (Some(remaining), Some(quiet)) => remaining.min(quiet),
@@ -1642,33 +1711,10 @@ fn await_exit(supervisor: &sys::Supervisor, child: &SupervisedChild, stops: Stop
         if let Some(answered) = answered(supervisor, child, stops.answered) {
             return answered;
         }
-        if let Some(path) = stops.monitor {
-            match inspect_monitor(path) {
-                MonitorState::Absent => {}
-                MonitorState::PresentRegular => {
-                    return match terminate(supervisor, child) {
-                        Ok(()) => Exit::StoppedByMonitor,
-                        Err(error) => Exit::SupervisionFailed(error),
-                    };
-                }
-                MonitorState::InvalidType => {
-                    return match terminate(supervisor, child) {
-                        Ok(()) => Exit::MonitorFailed(MonitorError::InvalidType {
-                            path: path.to_path_buf(),
-                        }),
-                        Err(error) => Exit::SupervisionFailed(error),
-                    };
-                }
-                MonitorState::InspectFailed(source) => {
-                    return match terminate(supervisor, child) {
-                        Ok(()) => Exit::MonitorFailed(MonitorError::Inspect {
-                            path: path.to_path_buf(),
-                            source,
-                        }),
-                        Err(error) => Exit::SupervisionFailed(error),
-                    };
-                }
-            }
+        if let Some(path) = stops.monitor
+            && let Some(exit) = monitored(supervisor, child, path)
+        {
+            return exit;
         }
         if remaining.is_some_and(|remaining| remaining.is_zero()) {
             return match terminate(supervisor, child) {
@@ -1676,14 +1722,48 @@ fn await_exit(supervisor: &sys::Supervisor, child: &SupervisedChild, stops: Stop
                 Err(error) => Exit::SupervisionFailed(error),
             };
         }
-        if quiet.is_some_and(|quiet| quiet.is_zero()) {
+        if quiet.is_some_and(&stall_candidate)
+            && watching.as_mut().is_some_and(|w| w.confirms_stall(now))
+        {
             return match terminate(supervisor, child) {
                 Ok(()) => Exit::Stalled,
                 Err(error) => Exit::SupervisionFailed(error),
             };
         }
-        thread::sleep(poll);
+        if let Err(source) = stops
+            .cancel
+            .clock
+            .acknowledged(child.handle().id(), tick.as_deref())
+        {
+            return match terminate(supervisor, child) {
+                Ok(()) => Exit::WaitFailed(source),
+                Err(error) => Exit::SupervisionFailed(error),
+            };
+        }
+        if tick.is_some() {
+            thread::yield_now();
+        } else {
+            thread::sleep(poll);
+        }
     }
+}
+
+fn monitored(supervisor: &sys::Supervisor, child: &SupervisedChild, path: &Path) -> Option<Exit> {
+    let exit = match inspect_monitor(path) {
+        MonitorState::Absent => return None,
+        MonitorState::PresentRegular => Exit::StoppedByMonitor,
+        MonitorState::InvalidType => Exit::MonitorFailed(MonitorError::InvalidType {
+            path: path.to_path_buf(),
+        }),
+        MonitorState::InspectFailed(source) => Exit::MonitorFailed(MonitorError::Inspect {
+            path: path.to_path_buf(),
+            source,
+        }),
+    };
+    Some(match terminate(supervisor, child) {
+        Ok(()) => exit,
+        Err(error) => Exit::SupervisionFailed(error),
+    })
 }
 
 /// How long from `now` until `moment`, and nothing once it has passed.
@@ -1817,76 +1897,34 @@ pub enum GroupStop {
     Kill,
 }
 
-/// What stopping a group reached.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[must_use = "a stop that reached only the leader leaves the rest of the group running"]
-pub enum Stopped {
-    /// Every process of the group was signalled, or none besides its unreaped leader was left.
-    Group,
-    /// The kernel refused the group whole and only its leader was signalled, with other members still in the group or not seen.
-    LeaderOnly,
-}
+pub use rust_mutants_decision::group::{Delivered, Others, StopDecision, Stopped, decide_stop};
 
-/// What the kernel answered one signal with.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
-pub enum Delivered {
-    /// It was sent.
-    Sent,
-    /// Nothing by that id was left to send it to.
-    Gone,
-    /// Sending it is beyond this process's authority for some process it names.
-    Refused,
-    /// Any other failure.
-    Failed,
-}
-
-/// Who besides its leader a group was seen to hold.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
-pub enum Others {
-    /// Nobody.
-    Nobody,
-    /// Somebody still running.
-    Somebody,
-    /// The group could not be looked at.
-    Unseen,
-}
-
-/// What a group stop comes to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StopDecision {
-    /// It reached this much.
-    Reached(Stopped),
-    /// It failed.
-    Failed,
-}
-
-/// What a group stop comes to, from what the group's signal got, what its leader's got when the group was refused, and who else the group was seen to hold, as `tests/testdata/group-stop.tsv` lists for every combination.
-#[must_use]
-pub const fn decide_stop(group: Delivered, leader: Delivered, others: Others) -> StopDecision {
-    match group {
-        Delivered::Sent | Delivered::Gone => StopDecision::Reached(Stopped::Group),
-        Delivered::Failed => StopDecision::Failed,
-        Delivered::Refused => match (leader, others) {
-            (Delivered::Refused | Delivered::Failed, _) => StopDecision::Failed,
-            (Delivered::Sent | Delivered::Gone, Others::Nobody) => {
-                StopDecision::Reached(Stopped::Group)
-            }
-            (Delivered::Sent | Delivered::Gone, Others::Somebody | Others::Unseen) => {
-                StopDecision::Reached(Stopped::LeaderOnly)
-            }
-        },
+#[cfg(unix)]
+fn checked_decide_stop(
+    group: Delivered,
+    leader: Delivered,
+    others: Others,
+    classify: impl FnOnce(Delivered, Delivered, Others) -> StopDecision,
+) -> io::Result<StopDecision> {
+    let decision = classify(group, leader, others);
+    if rust_mutants_decision::group::agrees(group, leader, others, decision) {
+        Ok(decision)
+    } else {
+        Err(io::Error::other(format!(
+            "group-stop decision {decision:?} contradicts group {group:?}, leader {leader:?}, others {others:?}"
+        )))
     }
 }
 
-/// Stops every process of the group `leader` leads, a process started in a group of its own, and says how much of it the stop reached.
+/// Stops every process of the group `leader` leads, which a [`GroupChild`] started and has not reaped, and says how much of it the stop reached.
 ///
 /// A group already gone, or one whose members have all ended while its leader waits to be reaped, is reached whole: on macOS that group refuses a group signal with `EPERM`, and a look at the group finds nobody besides the leader.
 ///
 /// # Errors
-/// `leader` is no process id, or the kernel refuses the leader too, or fails for a reason other than its being gone.
+/// The kernel refuses the leader too, or fails for a reason other than its being gone.
 #[cfg(unix)]
-pub fn stop_group(leader: u32, how: GroupStop) -> io::Result<Stopped> {
-    unix::stop_group(leader, how)
+pub fn stop_group(leader: Leader<'_>, how: GroupStop) -> io::Result<Stopped> {
+    unix::stop_group(leader.pid(), how)
 }
 
 /// Ends the one process `pid` at once, where it is still there: a process a run started that left every group it supervised.
@@ -1923,11 +1961,256 @@ mod tests {
     use std::time::Duration;
 
     #[cfg(unix)]
+    use super::{Bound, Cancel, RunResult, SIDE_CHANNEL_LIMIT, Spec, read_side_channel, run};
+    #[cfg(unix)]
+    use super::{Delivered, Others, StopDecision, Stopped, checked_decide_stop, decide_stop};
     use super::{
-        Bound, Cancel, ProcessExit, RunResult, SIDE_CHANNEL_LIMIT, Spec, Termination,
-        read_side_channel, run,
+        MonitorState, ProcessExit, Progress, Termination, classify_monitor, inspect_monitor,
     };
-    use super::{MonitorState, Progress, classify_monitor, inspect_monitor};
+
+    #[cfg(unix)]
+    #[test]
+    fn group_stop_self_check_accepts_every_decision_the_classifier_makes() {
+        for group in Delivered::ALL {
+            for leader in Delivered::ALL {
+                for others in Others::ALL {
+                    let checked = checked_decide_stop(group, leader, others, decide_stop);
+                    assert_eq!(
+                        checked.expect("the classifier's decision matches the independent check"),
+                        decide_stop(group, leader, others)
+                    );
+                }
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_planted_whole_group_claim_for_a_refused_group_is_rejected() {
+        for others in [Others::Somebody, Others::Unseen] {
+            let checked =
+                checked_decide_stop(Delivered::Refused, Delivered::Sent, others, |_, _, _| {
+                    StopDecision::Reached(Stopped::Group)
+                });
+            let error = checked.expect_err("the planted classifier must not pass its self-check");
+            let said = error.to_string();
+            assert!(
+                said.contains("group-stop decision Reached(Group)")
+                    && said.contains(&format!("others {others:?}")),
+                "{said}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn every_planted_wrong_group_stop_decision_is_rejected() {
+        for group in Delivered::ALL {
+            for leader in Delivered::ALL {
+                for others in Others::ALL {
+                    for planted in Stopped::ALL
+                        .map(StopDecision::Reached)
+                        .into_iter()
+                        .chain(std::iter::once(StopDecision::Failed))
+                    {
+                        if planted == decide_stop(group, leader, others) {
+                            continue;
+                        }
+                        let checked = checked_decide_stop(group, leader, others, |_, _, _| planted);
+                        assert!(
+                            checked.is_err(),
+                            "a planted {planted:?} passed for {group:?}, {leader:?}, {others:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_overdue_declared_wait_is_decided_before_the_ack_releases_it() {
+        let events = tempfile::tempdir().expect("clock events");
+        let monitor = tempfile::tempdir().expect("monitor events");
+        let script = format!(
+            "while [ \"$(cat {}/$$.ack 2>/dev/null)\" != 60000 ]; do :; done; \
+             printf stopped > {}; while :; do :; done",
+            events.path().display(),
+            monitor.path().join("stop").display()
+        );
+        let cancel = Cancel::new().with_clock(super::Clock::events(events.path().to_path_buf()));
+        let mut supervisor = super::sys::Supervisor::new().expect("a supervisor");
+        let mut command = std::process::Command::new("sh");
+        command.args(["-c", &script]);
+        supervisor.configure(&mut command);
+        let mut child =
+            super::SupervisedChild::launch(&mut command, super::Reaping::Normal).expect("starts");
+        supervisor
+            .adopt(child.handle())
+            .expect("the group is adopted");
+        std::fs::write(events.path().join(child.handle().id().to_string()), "60000")
+            .expect("the fixture's declared elapsed minute");
+        let started = std::time::Instant::now();
+        let exit = super::await_exit(
+            &supervisor,
+            &child,
+            super::Stops {
+                started,
+                deadline: Some(started + Duration::from_millis(200)),
+                cancel: &cancel,
+                monitor: Some(&monitor.path().join("stop")),
+                progress: None,
+                answered: None,
+            },
+            |quiet| quiet.is_zero(),
+        );
+        let acknowledged =
+            std::fs::read(events.path().join(format!("{}.ack", child.handle().id()))).is_ok();
+        let released_child = std::fs::read(monitor.path().join("stop")).is_ok();
+        assert!(
+            super::reap_or_abort(&child, super::REAPING_GRACE),
+            "the ended child is reaped within the grace"
+        );
+        let status = child.reap_observed();
+        assert!(
+            super::release_supervisor(&mut supervisor).is_ok(),
+            "the supervisor is released: {status:?}"
+        );
+        child.finish();
+        assert!(
+            matches!(exit, super::Exit::TimedOut),
+            "the overdue declaration must end the run at the bound: {status:?}"
+        );
+        assert!(
+            !acknowledged,
+            "an overdue declaration was acknowledged before the bound decided it, so the blocked child could have become a clean exit"
+        );
+        assert!(
+            !released_child,
+            "the blocked child was released by the acknowledgement and published a monitor stop"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_declared_wait_within_the_bound_is_acknowledged_and_the_child_finishes() {
+        let events = tempfile::tempdir().expect("clock events");
+        let script = format!(
+            "printf 100 > {}/$$; while [ \"$(cat {}/$$.ack 2>/dev/null)\" != 100 ]; do :; done",
+            events.path().display(),
+            events.path().display()
+        );
+        let cancel = Cancel::new().with_clock(super::Clock::events(events.path().to_path_buf()));
+        let mut supervisor = super::sys::Supervisor::new().expect("a supervisor");
+        let mut command = std::process::Command::new("sh");
+        command.args(["-c", &script]);
+        supervisor.configure(&mut command);
+        let mut child =
+            super::SupervisedChild::launch(&mut command, super::Reaping::Normal).expect("starts");
+        supervisor
+            .adopt(child.handle())
+            .expect("the group is adopted");
+        let started = std::time::Instant::now();
+        let exit = super::await_exit(
+            &supervisor,
+            &child,
+            super::Stops {
+                started,
+                deadline: Some(started + Duration::from_secs(5)),
+                cancel: &cancel,
+                monitor: None,
+                progress: None,
+                answered: None,
+            },
+            |quiet| quiet.is_zero(),
+        );
+        assert!(
+            super::reap_or_abort(&child, super::REAPING_GRACE),
+            "the finished child is reaped within the grace"
+        );
+        let status = child.reap_observed();
+        assert!(
+            super::release_supervisor(&mut supervisor).is_ok(),
+            "the supervisor is released: {status:?}"
+        );
+        child.finish();
+        assert!(
+            matches!(exit, super::Exit::Exited),
+            "an in-bound declaration is acknowledged and the child finishes: {status:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pre_tick_progress_sampled_at_an_advanced_instant_keeps_its_elapsed_quiet_time() {
+        let events = tempfile::tempdir().expect("clock events");
+        let signals = tempfile::tempdir().expect("progress signals");
+        let monitor = tempfile::tempdir().expect("monitor events");
+        let script = format!(
+            "while [ \"$(cat {}/$$.ack 2>/dev/null)\" != 60000 ]; do :; done; \
+             printf stopped > {}; while :; do :; done",
+            events.path().display(),
+            monitor.path().join("stop").display()
+        );
+        let cancel = Cancel::new().with_clock(super::Clock::events(events.path().to_path_buf()));
+        let mut supervisor = super::sys::Supervisor::new().expect("a supervisor");
+        let mut command = std::process::Command::new("sh");
+        command.args(["-c", &script]);
+        supervisor.configure(&mut command);
+        let mut child =
+            super::SupervisedChild::launch(&mut command, super::Reaping::Normal).expect("starts");
+        supervisor
+            .adopt(child.handle())
+            .expect("the group is adopted");
+        std::fs::write(signals.path().join("step"), b"1").expect("a step before the wait");
+        std::fs::write(signals.path().join("beat"), b"1").expect("a beat before the wait");
+        std::fs::write(events.path().join(child.handle().id().to_string()), "60000")
+            .expect("the fixture's declared elapsed minute");
+        let progress = Progress {
+            path: signals.path().join("step"),
+            beat: signals.path().join("beat"),
+            quiet: Duration::from_millis(300),
+        };
+        let started = std::time::Instant::now();
+        let exit = super::await_exit(
+            &supervisor,
+            &child,
+            super::Stops {
+                started,
+                deadline: None,
+                cancel: &cancel,
+                monitor: Some(&monitor.path().join("stop")),
+                progress: Some(&progress),
+                answered: None,
+            },
+            |quiet| quiet.is_zero(),
+        );
+        let acknowledged =
+            std::fs::read(events.path().join(format!("{}.ack", child.handle().id()))).is_ok();
+        let released_child = std::fs::read(monitor.path().join("stop")).is_ok();
+        assert!(
+            super::reap_or_abort(&child, super::REAPING_GRACE),
+            "the ended child is reaped within the grace"
+        );
+        let status = child.reap_observed();
+        assert!(
+            super::release_supervisor(&mut supervisor).is_ok(),
+            "the supervisor is released: {status:?}"
+        );
+        child.finish();
+        assert!(
+            matches!(exit, super::Exit::Stalled),
+            "quiet time that elapsed under the declared wait must stall: {status:?}"
+        );
+        assert!(
+            !acknowledged,
+            "the stall was decided without releasing the blocked child"
+        );
+        assert!(
+            !released_child,
+            "the blocked child was released and published a monitor stop instead of stalling"
+        );
+    }
 
     #[cfg(unix)]
     #[test]
@@ -2012,6 +2295,77 @@ mod tests {
         assert!(matches!(failure, MonitorState::InspectFailed(_)));
     }
 
+    #[test]
+    fn a_planted_exit_after_a_named_failure_is_refused() {
+        let termination = super::checked_answered_termination(
+            super::Observed {
+                wait: super::Exit::Exited.wait(),
+                named_a_failure: true,
+                capture_failed: false,
+            },
+            Termination::Exited(ProcessExit::Code(101)),
+        );
+        assert!(matches!(
+            termination,
+            Termination::WaitFailed {
+                error: super::RunnerError::AnsweredStopInconsistent
+            }
+        ));
+    }
+
+    #[test]
+    fn a_planted_answer_without_failure_evidence_is_refused() {
+        let termination = super::checked_answered_termination(
+            super::Observed {
+                wait: super::Exit::Answered.wait(),
+                named_a_failure: false,
+                capture_failed: false,
+            },
+            Termination::Answered,
+        );
+        assert!(matches!(
+            termination,
+            Termination::WaitFailed {
+                error: super::RunnerError::AnsweredStopInconsistent
+            }
+        ));
+    }
+
+    #[test]
+    fn answered_stop_self_check_accepts_both_failure_endings() {
+        for outcome in [super::Exit::Exited, super::Exit::Answered] {
+            let termination = super::checked_answered_termination(
+                super::Observed {
+                    wait: outcome.wait(),
+                    named_a_failure: true,
+                    capture_failed: false,
+                },
+                Termination::Answered,
+            );
+            assert!(matches!(termination, Termination::Answered));
+        }
+    }
+
+    #[test]
+    fn a_failed_capture_cannot_be_overridden_by_a_named_test_failure() {
+        let termination = super::checked_answered_termination(
+            super::Observed {
+                wait: super::Exit::Exited.wait(),
+                named_a_failure: true,
+                capture_failed: true,
+            },
+            Termination::WaitFailed {
+                error: super::RunnerError::OutputReaderDisconnected { stream: "output" },
+            },
+        );
+        assert!(matches!(
+            termination,
+            Termination::WaitFailed {
+                error: super::RunnerError::OutputReaderDisconnected { stream: "output" }
+            }
+        ));
+    }
+
     #[cfg(unix)]
     #[test]
     fn a_process_that_named_its_failure_is_answered_whichever_ending_arrives_first() {
@@ -2039,6 +2393,16 @@ mod tests {
 
     #[cfg(unix)]
     fn watched(script: &str, quiet: Duration, ceiling: Duration) -> Option<RunResult> {
+        watched_with(script, quiet, ceiling, |quiet| quiet.is_zero())
+    }
+
+    #[cfg(unix)]
+    fn watched_with(
+        script: &str,
+        quiet: Duration,
+        ceiling: Duration,
+        stall_candidate: impl Fn(Duration) -> bool,
+    ) -> Option<RunResult> {
         let directory = tempfile::tempdir();
         assert_eq!(result_state(&directory), Returned, "{directory:?}");
         let Ok(directory) = directory else {
@@ -2061,7 +2425,11 @@ mod tests {
             beat,
             quiet,
         });
-        Some(run(&spec, &Cancel::new()))
+        Some(super::run_with_stall_candidate(
+            &spec,
+            &Cancel::new(),
+            stall_candidate,
+        ))
     }
 
     #[cfg(unix)]
@@ -2084,6 +2452,31 @@ mod tests {
              {:?} after {:?}",
             result.termination,
             result.duration
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_planted_stall_cannot_stop_a_child_that_keeps_beating() {
+        let planted = std::sync::atomic::AtomicBool::new(false);
+        let result = watched_with(
+            "echo 0 > PROGRESS; i=0; while [ $i -lt 30 ]; do echo $i > BEAT; i=$((i+1)); sleep 0.05; done",
+            Duration::from_millis(500),
+            Duration::from_secs(20),
+            |_| {
+                planted.store(true, std::sync::atomic::Ordering::SeqCst);
+                true
+            },
+        );
+        let Some(result) = result else { return };
+        assert!(planted.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(
+            matches!(
+                result.termination,
+                Termination::Exited(ProcessExit::Code(0))
+            ),
+            "a false stall decision cannot replace the exit of a child whose beat continues: {:?}",
+            result.termination
         );
     }
 

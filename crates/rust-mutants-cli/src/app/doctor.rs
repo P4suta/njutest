@@ -42,7 +42,11 @@ pub(super) fn doctor_document(
     let root = environment.rooted(asked.root);
     let mut checks: Vec<doctor_report::Check> = Vec::new();
 
-    let toolchain = rust_mutants::cargo::Toolchain::locate(&locating(environment), &root, cancel);
+    let toolchain = rust_mutants::cargo::Toolchain::locate(
+        &locating(environment),
+        &root,
+        &rust_mutants::runner::Watched::new(cancel, &rust_mutants::trace::Recorder::disabled()),
+    );
     match &toolchain {
         Ok(found) => {
             checks.push(noted("cargo", Well, &found.cargo_version().summary));
@@ -129,7 +133,10 @@ fn temp_check(temp: &Path) -> doctor_report::Check {
         Ok(_not_a_directory) => (Fail, Some("it is not a directory".to_owned())),
         Err(error) => (Fail, Some(format!("its metadata cannot be read: {error}"))),
     };
-    let suffix = problem.map_or_else(String::new, |problem| format!("; {problem}"));
+    let suffix = match problem {
+        Some(problem) => format!("; {problem}"),
+        None => String::new(),
+    };
     doctor_report::Check::new(
         "temp",
         standing,
@@ -395,7 +402,12 @@ pub fn rendered_bytes(bytes: u64) -> Result<String, crate::error::CliError> {
         whole /= 1024;
         unit = next;
     }
-    let name = UNITS.get(unit).copied().unwrap_or("B");
+    let Some(name) = UNITS.get(unit).copied() else {
+        return Err(crate::error::CliError::ProjectionOverflow {
+            projection: "doctor",
+            field: "the byte-size unit name",
+        });
+    };
     if unit == 0 {
         return Ok(format!("{whole} {name}"));
     }
@@ -467,17 +479,15 @@ fn workspace_check(root: &Path, manifest: &Path) -> doctor_report::Check {
                 .any(|line| line.trim_start().starts_with("[workspace"))
         })
     });
-    above.map_or_else(
-        || doctor_report::Check::new("workspace", Well, &manifest.display().to_string(), None),
-        |found| {
-            doctor_report::Check::new(
-                "workspace",
-                Fail,
-                &format!("{} is a member of {}", root.display(), found.display()),
-                Some("run with --root at the workspace root, and --package to narrow it"),
-            )
-        },
-    )
+    match above {
+        Some(found) => doctor_report::Check::new(
+            "workspace",
+            Fail,
+            &format!("{} is a member of {}", root.display(), found.display()),
+            Some("run with --root at the workspace root, and --package to narrow it"),
+        ),
+        None => doctor_report::Check::new("workspace", Well, &manifest.display().to_string(), None),
+    }
 }
 
 /// Whether a reserved variable is already set, which would make every answer a run gives an answer about something else.

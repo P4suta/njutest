@@ -18,7 +18,7 @@ A test that finished and failed noticed the mutation whatever the clock did afte
 | `src/lib.rs` | lib | `ready`: the comparison and its return |
 
 ```fates
-src/lib.rs:9:5 return-true not_run
+src/lib.rs:9:5 return-true survived
 src/lib.rs:9:11 gt-to-ge survived
 src/lib.rs:9:13 int-increment killed
 ```

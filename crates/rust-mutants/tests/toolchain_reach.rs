@@ -188,7 +188,9 @@ fn coverage_is_refused_only_for_target_specific_rustflags() {
     let session = prepared(&refused, true);
     assert_eq!(
         session.reached().limitations,
-        vec![rust_mutants::reach::CONFIGURED_FLAGS.to_owned()],
+        vec![rust_mutants::limitation::Limited::whole(
+            rust_mutants::limitation::Limitation::CoverageRefusedConfiguredRustflags
+        )],
         "which of cargo's target tables apply is cargo's decision, and a guess compiles \
          something other than the project's own binaries"
     );

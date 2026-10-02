@@ -8,21 +8,11 @@ name: dogfood
 
 on:
   workflow_dispatch:
-    inputs:
-      include:
-        description: The files to mutate, as a glob. Empty means the ledger's own selection.
-        required: false
-        type: string
-      tier:
-        description: Which tier of operators to apply.
-        required: false
-        default: balanced
-        type: choice
-        options: [balanced, strong, all]
   schedule:
     - cron: "17 5 * * 2"
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -46,12 +36,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: ./.github/actions/setup-rust
       - name: Fetch the locked dependency graph
         run: cargo fetch --locked
       - name: Build the engine and the gates, and put the engine on the path
         run: |
-          cargo build --locked --release --bin rust-mutants -p xtask
+          cargo build --locked --release --bin rust-mutants -p rust-mutants-cli
+          cargo build --locked --release --bin xtask -p xtask
           echo "$PWD/target/release" >> "$GITHUB_PATH"
       # The store the action restores and saves is what makes this one job: a run reads back every answer the last one established that still holds, and a run the clock ends keeps what it established for the next.
       # A survivor is the audit's business, not this step's, so the step's outcome and verdict are decided on below rather than failing here.
@@ -60,9 +52,7 @@ jobs:
         continue-on-error: true
         uses: ./.github/actions/rust-mutants
         with:
-          args: >-
-            --locked --tier ${{ inputs.tier || 'balanced' }} --trace
-            ${{ inputs.include && format('--include {0}', inputs.include) || '' }}
+          args: --locked --trace
           changed-from: ""
           upload-sarif: "false"
       - name: Say whether the recording is complete, and re-decide the run against the ledger
@@ -81,7 +71,7 @@ jobs:
           esac
           run=$(dirname "$REPORT")
           rust-mutants trace check --dir "$run/trace"
-          xtask engine-audit "$run" --trace "$run/trace" --sites --ledger .rust-mutants.toml
+          xtask engine-audit "$run" --trace "$run/trace" --sites --root . --ledger .rust-mutants.toml
           cp "$REPORT" whole.json
           if [ "$VERDICT" = interrupted ]; then
             echo "the run was ended by the clock; the next one continues from the store this one kept" >> "$GITHUB_STEP_SUMMARY"

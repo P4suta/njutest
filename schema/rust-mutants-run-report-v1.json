@@ -26,7 +26,7 @@
       "const": "rust-mutants/run-report"
     },
     "schema_version": {
-      "const": 3
+      "const": 5
     },
     "tool_version": {
       "type": "string",
@@ -170,7 +170,8 @@
           "enum": [
             "balanced",
             "strong",
-            "all"
+            "all",
+            "compiled"
           ]
         },
         "operators": {
@@ -227,39 +228,52 @@
         "executed",
         "killed",
         "survived",
+        "unproven",
         "step_limit_reached",
         "waited",
         "inconclusive",
         "errored",
         "not_run",
         "unreached",
-        "discharged",
         "declined",
-        "expected"
+        "expected",
+        "unproven_killed",
+        "unproven_survived",
+        "unproven_unreached",
+        "unproven_discharged"
       ],
       "properties": {
         "cataloged": {
           "type": "integer",
           "minimum": 0,
-          "description": "The number of candidate rows in mutants, excluding compiler refusals. A not_run/unselected row makes no compiler-acceptance claim."
+          "description": "The number of candidate rows in mutants, excluding every candidate validation left out. A not_run/unselected row makes no compiler-acceptance claim."
         },
         "refused": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "description": "The rejections whose reason is compiler-refused."
         },
         "skipped": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "description": "The sum of every skip record's count, the places validation found evaluated before the program runs included."
         },
         "executed": {
           "type": "integer",
           "minimum": 0
         },
         "killed": {
+          "description": "Mutants a sealed execution detected.",
           "type": "integer",
           "minimum": 0
         },
         "survived": {
+          "description": "Mutants every sealed execution that reached them passed on.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "unproven": {
+          "description": "Mutants no sealed execution decided, where a native run said something of them, which is a lead and not a verdict (ADR 0046).",
           "type": "integer",
           "minimum": 0
         },
@@ -286,12 +300,7 @@
           "minimum": 0
         },
         "unreached": {
-          "description": "Of the mutants that never ran, how many no measured target reaches. Absent in a report written before coverage routing existed.",
-          "type": "integer",
-          "minimum": 0
-        },
-        "discharged": {
-          "description": "Of the mutants that never ran, how many a proof removed every target from.",
+          "description": "Of the mutants that never ran, how many no sealed control reaches.",
           "type": "integer",
           "minimum": 0
         },
@@ -301,6 +310,26 @@
           "minimum": 0
         },
         "expected": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unproven_killed": {
+          "description": "Of the unproven, how many a native run killed.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "unproven_survived": {
+          "description": "Of the unproven, how many every native test passed on.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "unproven_unreached": {
+          "description": "Of the unproven, how many no native test reached.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "unproven_discharged": {
+          "description": "Of the unproven, how many a proof from a native run removed every target of.",
           "type": "integer",
           "minimum": 0
         }
@@ -376,7 +405,9 @@
           "identical",
           "expected",
           "unreached",
-          "source_run_id"
+          "source_run_id",
+          "part_run_id",
+          "evidence"
         ],
         "properties": {
           "index": {
@@ -650,6 +681,98 @@
               }
             ],
             "description": "The run that established this outcome, when it was read back rather than executed."
+          },
+          "part_run_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string",
+                "minLength": 1
+              }
+            ],
+            "description": "The run of the part that decided this row, on whose bench its executions ran, where the report merges the parts of a catalog; null in a run's own report, which decided every row itself."
+          },
+          "evidence": {
+            "description": "What the verdict rests on: the sealed executions that established it, or no verdict and every reason why, in which case the outcome is a native lead (ADR 0046).",
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "executions"],
+                "properties": {
+                  "kind": {
+                    "const": "sealed"
+                  },
+                  "executions": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["target", "test", "came_to"],
+                      "properties": {
+                        "target": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "test": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "came_to": {
+                          "enum": [
+                            "passed",
+                            "panicked",
+                            "failed",
+                            "trapped",
+                            "fuel-exceeded",
+                            "memory-exceeded",
+                            "declined",
+                            "exited-early",
+                            "stack-overflow",
+                            "refused",
+                            "unaccounted",
+                            "unmatched",
+                            "set-aside"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "reasons"],
+                "properties": {
+                  "kind": {
+                    "const": "unproven"
+                  },
+                  "reasons": {
+                    "type": "array",
+                    "minItems": 1,
+                    "uniqueItems": true,
+                    "items": {
+                      "enum": [
+                        "not-sealed",
+                        "native",
+                        "guard-absent",
+                        "test-absent",
+                        "reach-differs",
+                        "exited-early",
+                        "stack-overflow",
+                        "refused",
+                        "unaccounted",
+                        "declined",
+                        "unmatched"
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
           }
         },
         "allOf": [
@@ -684,7 +807,8 @@
           "rule",
           "code",
           "diagnostic",
-          "isolated"
+          "isolated",
+          "reason"
         ],
         "properties": {
           "index": {
@@ -719,6 +843,13 @@
           "isolated": {
             "type": "boolean",
             "description": "Whether the compiler refused it on its own, rather than only alongside another mutant."
+          },
+          "reason": {
+            "enum": [
+              "compiler-refused",
+              "evaluated-before-run"
+            ],
+            "description": "Why validation left it out. Only compiler-refused is counted as refused; evaluated-before-run is counted with the places passed over, under the skip reason of the same name (ADR 0047)."
           }
         }
       }
@@ -952,7 +1083,7 @@
               "errored-mutant",
               "not-run-mutant",
               "unreached-mutant",
-              "discharged-mutant",
+              "unproven-mutant",
               "stale-expectation",
               "unmatched-expectation",
               "unmatched-skip"
@@ -994,7 +1125,8 @@
           "kind",
           "harness",
           "limitations",
-          "tests"
+          "tests",
+          "sealed"
         ],
         "properties": {
           "id": {
@@ -1016,9 +1148,81 @@
             }
           },
           "tests": {
-            "description": "How many tests this target's baseline ran, which is what asking the whole of it about one mutation costs.",
-            "type": "integer",
+            "description": "How many tests this target's own baseline ran, or null where its baseline did not run and nothing counted them.",
+            "type": [
+              "integer",
+              "null"
+            ],
             "minimum": 0
+          },
+          "sealed": {
+            "description": "How the sealed build answers for this target: `sealed` with the tests its native baseline ran that have no sealed control, or the reason it has no sealed tests and what to do about it (ADR 0046).",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "state",
+              "remedy",
+              "uncontrolled"
+            ],
+            "properties": {
+              "state": {
+                "enum": [
+                  "sealed",
+                  "not-asked",
+                  "target-missing",
+                  "not-built",
+                  "doctests-unaccounted",
+                  "not-verified",
+                  "native-unnamed",
+                  "proc-macro",
+                  "not-listed",
+                  "no-harness",
+                  "flags-unmerged",
+                  "platform-unanswered"
+                ]
+              },
+              "remedy": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1
+              },
+              "uncontrolled": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "test",
+                    "reason"
+                  ],
+                  "properties": {
+                    "test": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "reason": {
+                      "enum": [
+                        "panicked",
+                        "failed",
+                        "trapped",
+                        "fuel-exceeded",
+                        "memory-exceeded",
+                        "declined",
+                        "exited-early",
+                        "stack-overflow",
+                        "refused",
+                        "unaccounted",
+                        "unmatched",
+                        "unbuilt",
+                        "not-held"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }

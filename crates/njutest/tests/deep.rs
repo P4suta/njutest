@@ -121,7 +121,7 @@ fn what_the_interpreter_will_not_interpret_is_stated_and_never_read_as_a_pass() 
     let done = interpreted(said, 1, dir.path()).expect("ran");
     assert!(done.executed);
     assert_eq!(
-        done.limitations.first().map(|one| one.name.clone()),
+        done.limitations.first().map(|one| one.name().to_owned()),
         Some("miri-unsupported".to_owned())
     );
     assert_eq!(
@@ -132,14 +132,26 @@ fn what_the_interpreter_will_not_interpret_is_stated_and_never_read_as_a_pass() 
 }
 
 #[test]
-fn a_test_that_fails_under_the_interpreter_is_a_failing_test() {
+fn a_test_that_fails_under_the_interpreter_without_undefined_behaviour_is_not_measured() {
     let dir = tempfile::tempdir().expect("tempdir");
     let said = FAILED_RUN;
     let done = interpreted(said, 101, dir.path()).expect("ran");
+    assert!(done.executed, "{done:?}");
+    let kinds: Vec<FindingKind> = done.findings.iter().map(|one| one.kind).collect();
     assert_eq!(
-        done.findings.first().map(|one| one.kind),
-        Some(FindingKind::FailingTest)
+        kinds,
+        [FindingKind::NotMeasured],
+        "the interpreter withholds from a test the environment, the files and the clocks it is \
+         given natively, so a test that fails there without the interpreter saying it found \
+         undefined behaviour failed on the interpreter's limit, not the suite's: a DEFECT on it \
+         blames the suite, and a pass claims soundness nobody established: {done:?}"
     );
+    let limitations: Vec<&str> = done
+        .limitations
+        .iter()
+        .map(njutest::report::Limitation::name)
+        .collect();
+    assert_eq!(limitations, ["miri-failed-isolated"], "{done:?}");
 }
 
 #[test]
@@ -189,6 +201,69 @@ fn a_cargo_that_is_not_there_is_a_toolchain_with_no_interpreter() {
     )
     .expect_err("no interpreter");
     assert_eq!(refused.code().code, "NJ7001", "{refused}");
+}
+
+#[test]
+fn a_run_that_was_asked_to_stop_is_interrupted_and_not_a_toolchain_with_no_interpreter() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cancel = Cancel::new();
+    cancel.cancel();
+    let trace = Recorder::disabled();
+    let cargo = cargo();
+    let stopped = interpret(
+        &Interpreting {
+            root: dir.path(),
+            cargo: rust_mutants::cargo::Selecting::named(&cargo),
+            env: saying(PASSED, 0),
+            packages: &[],
+            flags: &[],
+            timeout: Some(Duration::from_secs(30)),
+            offline: true,
+            locked: true,
+            absent: Absent::Refused,
+        },
+        Watch::new(&cancel, &trace),
+    )
+    .expect_err("a run that was asked to stop answers nothing");
+    assert!(
+        matches!(stopped, RunnerError::Interrupted),
+        "a stop the run asked for is the run being interrupted; reading it as a toolchain \
+         with no interpreter tells somebody to install one: {stopped}"
+    );
+}
+
+#[test]
+fn a_question_about_the_interpreter_nobody_answered_is_not_an_interpreter_that_is_absent() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cancel = Cancel::new();
+    let trace = Recorder::disabled();
+    let cargo = cargo();
+    let mut env = saying(FAILED_RUN, 101);
+    env.set("FAKE_CARGO_PROBE_SIGNAL", "KILL");
+    let done = interpret(
+        &Interpreting {
+            root: dir.path(),
+            cargo: rust_mutants::cargo::Selecting::named(&cargo),
+            env,
+            packages: &[],
+            flags: &[],
+            timeout: Some(Duration::from_secs(30)),
+            offline: true,
+            locked: true,
+            absent: Absent::Refused,
+        },
+        Watch::new(&cancel, &trace),
+    )
+    .expect(
+        "a version probe that ended by a signal said nothing about whether the interpreter is \
+         there, so it is not a toolchain with no interpreter",
+    );
+    assert_eq!(
+        done.findings.first().map(|one| one.kind),
+        Some(FindingKind::NotMeasured),
+        "what the interpreter's own run said is what is read, and it said a test failed without \
+         saying it found undefined behaviour: {done:?}"
+    );
 }
 
 #[test]
@@ -255,12 +330,14 @@ fn a_run_that_named_packages_asks_the_interpreter_for_those_and_not_the_workspac
     let trace = recording();
     let cargo = cargo();
     let packages = ["core".to_owned(), "app".to_owned()];
+    let mut env = saying(PASSED, 0);
+    env.set("NJUTEST_NIGHTLY", "nightly-2026-07-02");
 
     let done = interpret(
         &Interpreting {
             root: dir.path(),
             cargo: rust_mutants::cargo::Selecting::named(&cargo),
-            env: saying(PASSED, 0),
+            env,
             packages: &packages,
             flags: &[],
             timeout: Some(Duration::from_secs(30)),
@@ -286,7 +363,7 @@ fn a_run_that_named_packages_asks_the_interpreter_for_those_and_not_the_workspac
         argv,
         vec![
             cargo.display().to_string(),
-            "+nightly".to_owned(),
+            "+nightly-2026-07-02".to_owned(),
             "miri".to_owned(),
             "test".to_owned(),
             "--package".to_owned(),
@@ -469,9 +546,26 @@ fn what_the_interpreter_established_is_said_in_words_a_person_can_act_on() {
     let failing = interpreted(FAILED_RUN, 101, dir.path()).expect("an interpreter that ran");
     assert!(
         failing.findings.iter().any(|one| one.subject == "soundness"
-            && one.detail == "a test fails under the interpreter that passes without it"),
+            && one
+                .detail
+                .contains("on what it withholds rather than on undefined behaviour")
+            && one
+                .detail
+                .contains("nothing is claimed about the unsafe the suite holds")),
         "and a suite that fails only under the interpreter says that it is the \
-         interpreter that makes the difference: {failing:?}"
+         interpreter that makes the difference, and what is therefore not established: \
+         {failing:?}"
+    );
+    assert!(
+        failing
+            .limitations
+            .iter()
+            .any(|one| one.name() == "miri-failed-isolated"
+                && one.detail.contains(
+                    "withholds from a test the environment variables, files and \
+                                    clocks"
+                )),
+        "and the limitation says what the interpreter withholds: {failing:?}"
     );
 }
 
@@ -536,7 +630,7 @@ fn an_interpreter_that_ran_out_of_time_interpreted_nothing_whole() {
     assert_eq!(
         done.limitations
             .first()
-            .map(|one| one.name.clone())
+            .map(|one| one.name().to_owned())
             .as_deref(),
         Some(njutest::limitation::MIRI_TIMED_OUT),
         "and the reason is the time rather than anything about the code, which is the \
@@ -560,7 +654,7 @@ fn a_contract_that_asks_every_dimension_names_a_missing_interpreter_as_a_hole() 
             .expect("a machine with no interpreter is a hole under this contract, not an error");
         assert!(!done.executed, "{done:?}");
         assert_eq!(
-            done.limitations.first().map(|one| one.name.clone()),
+            done.limitations.first().map(|one| one.name().to_owned()),
             Some("miri-unavailable".to_owned()),
             "{done:?}"
         );
@@ -594,7 +688,7 @@ fn an_interpreter_that_ran_no_test_found_nothing_to_fail_and_interpreted_nothing
         "{done:?}"
     );
     assert_eq!(
-        done.limitations.first().map(|one| one.name.clone()),
+        done.limitations.first().map(|one| one.name().to_owned()),
         Some("miri-ran-no-test".to_owned()),
         "{done:?}"
     );
@@ -647,11 +741,11 @@ fn the_phase_comes_to_the_verdict_the_published_contract_gives_every_case() {
         let limitations: Vec<&str> = done
             .limitations
             .iter()
-            .map(|one| one.name.as_str())
+            .map(njutest::report::Limitation::name)
             .collect();
         let came = match (done.executed, kinds.as_slice(), limitations.as_slice()) {
             (true, [], []) => "passed",
-            (true, [FindingKind::FailingTest], []) => "failed",
+            (true, [FindingKind::NotMeasured], ["miri-failed-isolated"]) => "failed",
             (true, [FindingKind::UndefinedBehaviour], []) => "undefined",
             (true, [FindingKind::NotMeasured], ["miri-unsupported"]) => "unsupported",
             (false, [FindingKind::NotMeasured], ["miri-ran-no-test"]) => "ran-no-test",

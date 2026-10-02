@@ -14,6 +14,7 @@ use crate::coverage::{
     Block, Point, Tools, covered, instrumented, profile_pattern, written_profiles,
 };
 use crate::execute::{self, Context, ExecRequest};
+use crate::limitation::{Limitation, Limited, TargetId};
 use crate::runner::{Cancel, Watched};
 use crate::session::PrepareOptions;
 use crate::trace::Recorder;
@@ -41,14 +42,15 @@ pub struct Reached {
     /// A place outside this is a place the measurement says nothing about — code in another binary, code the instrumented build did not compile — and nothing about it may be concluded.
     pub instrumented: BTreeSet<Block>,
     /// Why the measurement is not what it could be, in the order it was found out.
-    pub limitations: Vec<String>,
+    pub limitations: Vec<Limited>,
 }
 
 impl Reached {
     /// This measurement with `target` unmeasured, so every mutant routes to it as to a target nothing measured.
     pub fn unmeasured(&mut self, target: &str) {
         self.targets.remove(target);
-        let named = format!("{UNMEASURED}:{target}");
+        let named =
+            Limited::for_target(Limitation::CoverageNotMeasured, TargetId::generated(target));
         if !self.limitations.contains(&named) {
             self.limitations.push(named);
         }
@@ -66,7 +68,7 @@ impl Reached {
     pub fn whole(&self) -> bool {
         self.limitations
             .iter()
-            .all(|limitation| !limitation.starts_with(UNMEASURED))
+            .all(|limited| limited.limitation != Limitation::CoverageNotMeasured)
     }
 
     /// The targets whose run covered `position` in `path`, in identity order, or nothing at all when the measurement never instrumented that place and so says nothing about it.
@@ -120,11 +122,18 @@ pub fn establish(
 /// The limitation a cargo configuration refuses a coverage measurement with, before a build is attempted.
 #[must_use]
 pub const fn refusal(flags: &Configured) -> Option<&'static str> {
+    match refusal_kind(flags) {
+        Some(limitation) => Some(limitation.name()),
+        None => None,
+    }
+}
+
+const fn refusal_kind(flags: &Configured) -> Option<Limitation> {
     if flags.unreadable {
-        return Some(UNREADABLE_CONFIGURATION);
+        return Some(Limitation::CargoConfigurationUnreadable);
     }
     if flags.target_specific {
-        return Some(CONFIGURED_FLAGS);
+        return Some(Limitation::CoverageRefusedConfiguredRustflags);
     }
     None
 }
@@ -137,7 +146,7 @@ fn measure(
 ) -> Result<Reached, EngineError> {
     let root = workspace.snapshot_root();
     let flags = config::configured(root, config::home(&workspace.base_env).as_deref());
-    if let Some(named) = refusal(&flags) {
+    if let Some(named) = refusal_kind(&flags) {
         return Ok(refused(named, trace));
     }
     let coverage = workspace.build_dir().nested("coverage");
@@ -147,7 +156,7 @@ fn measure(
         &CompileOptions {
             kind: CompileKind::Tests,
             packages: options.packages.clone(),
-            target_dir: Some(coverage),
+            target_dir: coverage,
             locked: workspace.locked,
             offline: workspace.offline,
             timeout: Workspace::timeout(options.build_timeout),
@@ -156,25 +165,24 @@ fn measure(
         },
     );
     let Ok(built) = built else {
-        return Ok(refused(UNBUILDABLE, trace));
+        return Ok(refused(Limitation::CoverageBuildFailed, trace));
     };
-    if !built.success {
-        return Ok(refused(UNBUILDABLE, trace));
+    match built.completion() {
+        crate::cargo::Completion::Built => {}
+        crate::cargo::Completion::Refused => {
+            return Ok(refused(Limitation::CoverageBuildFailed, trace));
+        }
     }
     let targets = execute::startable(
-        &execute::targets_of(
-            &built.messages,
-            &workspace.metadata.packages,
-            Some(&target_dir),
-        )?,
+        &execute::targets_of(&built.messages, &workspace.metadata.packages, &target_dir)?,
         &options.skip_targets,
     );
     if targets.is_empty() {
-        return Ok(refused(UNMEASURED, trace));
+        return Ok(refused(Limitation::CoverageNotMeasured, trace));
     }
     let watch = Watched::new(cancel, &workspace.trace);
     let Ok(tools) = Tools::locate(&workspace.toolchain, root, &watch) else {
-        return Ok(refused(TOOLS_MISSING, trace));
+        return Ok(refused(Limitation::CoverageToolsMissing, trace));
     };
     let profiles = target_dir.join("profiles");
     std::fs::create_dir_all(&profiles).map_err(|source| SessionError::WriteFailed {
@@ -196,7 +204,7 @@ fn measure(
         cancel,
     );
     if reached.targets.is_empty() {
-        return Ok(refused(UNMEASURED, trace));
+        return Ok(refused(Limitation::CoverageNotMeasured, trace));
     }
     trace.note(
         "coverage",
@@ -220,13 +228,14 @@ fn run_targets(
     let mut reached = Reached::default();
     for (at, target) in targets.iter().enumerate() {
         if cancel.is_cancelled() {
-            reached.limitations.extend(
-                targets
-                    .get(at..)
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|left| format!("{UNMEASURED}:{}", left.id)),
-            );
+            reached
+                .limitations
+                .extend(targets.split_at(at).1.iter().map(|left| {
+                    Limited::for_target(
+                        Limitation::CoverageNotMeasured,
+                        TargetId::generated(left.id()),
+                    )
+                }));
             break;
         }
         let pattern = profile_pattern(reading.profiles, &key(target));
@@ -237,12 +246,14 @@ fn run_targets(
         ) {
             Ok(scratch) => scratch,
             Err(error) => {
-                workspace
-                    .trace
-                    .note("coverage", &format!("{}: not measured: {error}", target.id));
-                reached
-                    .limitations
-                    .push(format!("{UNMEASURED}:{}", target.id));
+                workspace.trace.note(
+                    "coverage",
+                    &format!("{}: not measured: {error}", target.id()),
+                );
+                reached.limitations.push(Limited::for_target(
+                    Limitation::CoverageNotMeasured,
+                    TargetId::generated(target.id()),
+                ));
                 continue;
             }
         };
@@ -257,23 +268,51 @@ fn run_targets(
             steps: None,
             profile: Some(&pattern),
             crash: None,
+            fate: None,
         };
         let request = ExecRequest::new(target)
             .with_timeout(Workspace::timeout(options.build_timeout))
             .with_scratch(scratch);
         let ran = execute::exec(&request, &context, cancel, &workspace.trace);
-        drop(ran);
+        if !measured_whole(&ran) {
+            workspace.trace.note(
+                "coverage",
+                &format!(
+                    "{}: not measured: its run did not end on its own with its harness accounting for it",
+                    target.id()
+                ),
+            );
+            reached.limitations.push(Limited::for_target(
+                Limitation::CoverageNotMeasured,
+                TargetId::generated(target.id()),
+            ));
+            continue;
+        }
         match blocks_of(reading, target) {
             Some(measured) => {
                 reached.instrumented.extend(measured.instrumented);
-                reached.targets.insert(target.id.clone(), measured.covered);
+                reached
+                    .targets
+                    .insert(target.id().to_owned(), measured.covered);
             }
-            None => reached
-                .limitations
-                .push(format!("{UNMEASURED}:{}", target.id)),
+            None => reached.limitations.push(Limited::for_target(
+                Limitation::CoverageNotMeasured,
+                TargetId::generated(target.id()),
+            )),
         }
     }
     reached
+}
+
+/// Whether a coverage run measured the whole of its target: it ended on its own, and its harness, where it has one, accounted for the run.
+///
+/// A profile is written however a process exits, so a run that ended before its harness closed its report leaves the coverage of part of the target, which reads as reach nothing else had.
+fn measured_whole(ran: &execute::MutantResult) -> bool {
+    matches!(ran.stopped, execute::Stopped::Exited { .. })
+        && !matches!(
+            ran.harness_report(crate::libtest::Asked::Whole),
+            Some(Err(_))
+        )
 }
 
 /// Every executable the build produced, test harnesses and plain binaries alike.
@@ -293,7 +332,7 @@ fn executables(messages: &[crate::cargo::Message]) -> Vec<PathBuf> {
 
 /// A target's identity as one file name: the identity is a path of its own, and a profile is a file beside the others rather than a tree.
 fn key(target: &execute::TestTarget) -> String {
-    target.id.replace('/', "-")
+    target.id().replace('/', "-")
 }
 
 /// What one target's run is read back with.
@@ -360,12 +399,12 @@ fn relative(
 }
 
 /// A measurement that could not be made, stated rather than assumed away.
-fn refused(limitation: &str, trace: &Recorder) -> Reached {
-    trace.note("coverage", limitation);
+fn refused(limitation: Limitation, trace: &Recorder) -> Reached {
+    trace.note("coverage", limitation.name());
     Reached {
         targets: BTreeMap::new(),
         instrumented: BTreeSet::new(),
-        limitations: vec![limitation.to_owned()],
+        limitations: vec![Limited::whole(limitation)],
     }
 }
 
@@ -490,3 +529,6 @@ pub mod remembered {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

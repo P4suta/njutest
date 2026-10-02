@@ -7,8 +7,8 @@ The code is the searchable name of the failure: grep this file, the issue tracke
 and a trace for it.
 A test in each crate keeps this table and the code's own list equal in both directions, so a code is either here or it does not exist.
 
-Codes are `RM` (rust-mutants), `NJ` (njutest), or `XT` (xtask, the repository's gates and audits) followed by four digits.
-The first digit names an area:
+Codes are `RM` (rust-mutants), `RS` (rust-mutants-sealed, the deterministic host a sealed guest runs in), `NJ` (njutest), or `XT` (xtask, the repository's gates and audits) followed by four digits.
+The first digit names an area; `RS` and `XT` say what theirs are at the head of their own sections:
 
 | Digit | rust-mutants | njutest |
 | ---: | --- | --- |
@@ -46,6 +46,7 @@ The first digit names an area:
 | `RM0017` | Rust text the engine read is not Rust of the kind it asked for. | the message names the line and column in the text read; the file or fragment it came from is the one to look at |
 | `RM0018` | Rust text that would take its reading thread's locations past what they address: proc-macro2 keeps 32-bit locations per thread, and past them every location wraps. | a single file this large is refused rather than read to the wrong places; split it, or skip it with an exclude pattern |
 | `RM0019` | The thread Rust text is read on could not be started. | the operating system refused a thread; check the process and memory limits of this user, and run again |
+| `RM0020` | Rust text that runs deeper than its reading thread's stack holds: groups nested past 1000, or a path through one of its trees passing more than 12288 tokens, which the parser, the walks, the clone and the drop would each recurse through until the process aborted. | a file whose groups nest past 1000 or whose trees chain past 12288 tokens is refused rather than read into a stack overflow; split the expression, or skip the file with an exclude pattern |
 | `RM1001` | Snapshot options that cannot be honoured, such as a report directory that is absolute or climbs out of the source root. | name a report directory inside the workspace; one that climbs out of it would have the run write where nothing sweeps |
 | `RM1002` | A source root that is relative, cannot be read, or is not a directory. | pass --root at a directory that exists and holds the workspace manifest |
 | `RM1003` | An operating system failure while reading a tree: a directory that cannot be listed, an entry that cannot be stat'ed. | this is what the operating system said; the path it names is the one to look at |
@@ -106,9 +107,16 @@ The first digit names an area:
 | `RM6003` | `llvm-profdata` or `llvm-cov` failed. | `rustup component add llvm-tools-preview`, and check the versions match the toolchain in use |
 | `RM6004` | A test process wrote no coverage profile at all: the build was not instrumented, or the process did not exit normally. | the test process wrote no profile: check nothing in the suite sets LLVM_PROFILE_FILE for itself |
 | `RM7001` | An executable a successful build named could not be read back for equivalence comparison. | run again after checking nothing removes or rewrites target files while the build is being measured |
+| `RM7002` | A cost counter reached the width of its field. | this is a defect in this tool, which refused the record rather than wrap it; report the run that produced it |
+| `RM7003` | A diagnostic note did not carry what the cost accounting needed. | this is a defect in this tool, which refused the record rather than guess; report the run that produced the note |
+| `RM8001` | A sealed module the sealed build named could not be read. | run again after checking nothing removes or rewrites the sealed build's target directory while it is read |
+| `RM8002` | The sealed host could not run an invocation it was given. | the message carries the host's own code (RS...), which docs/errors.md says what to do about |
+| `RM8003` | A target's environment holds a name or a value that is not text. | a sealed instance reads its environment as text: move the package where its path is UTF-8, or leave the target out of sealing |
+| `RM8004` | A file of the instrumented tree could not be read into the sealed snapshot. | run again after checking nothing removes or rewrites the run's snapshot while it is read |
+| `RM8005` | A sealed execution's judgement broke the rule a pass keeps: it passed an ending its harness does not pass by, or failed one it does. | this is a defect in this tool, which stopped rather than write a verdict on it; report the target and the test the message names |
 | `RM9001` | A rule name the canonical registry does not know. | `rust-mutants rules` lists every rule this release knows |
 | `RM9002` | A pattern the caller gave is not a pattern. | a pattern is workspace-relative with forward slashes: `src/**/*.rs`, never a leading or trailing slash |
-| `RM9003` | A duration the caller gave is not a duration: an empty text, a number without a unit, a unit without a number, an unknown unit, or a number no duration can hold. | write a duration as 30s, 5m, or 1h30m |
+| `RM9003` | A duration the caller gave is not a duration: an empty text, a number without a unit, a unit without a number, an unknown unit, or a sum longer than any duration can be. | write a duration as 30s, 5m, or 1h30m |
 
 ## njutest
 
@@ -136,7 +144,7 @@ The first digit names an area:
 | `NJ5004` | A provider said it could not do what it was asked. | the provider refused and said why; nothing here can answer for it |
 | `NJ5005` | A provider offered an environment variable a run composes itself, which would decide what every test process measures. | a provider may not set a variable a run composes; remove it from what the provider offers |
 | `NJ5006` | A generation provider said something this version does not understand: another protocol version, an unknown field, more candidates than are read, content that is not base64. | this is a defect in the provider, not in this tool: what it printed is not the document the contract asks for |
-| `NJ5007` | A generation provider would write where it may not: outside the allowed paths, out of the tree, or a path that is absolute. | a generated candidate is stored beside the tree and never written into it; the provider named a path outside what it may write |
+| `NJ5007` | A generation provider would write where it may not: outside the allowed paths, out of the tree, a path that is absolute, or one another platform reads another way, with a backslash, a colon, or a control character in it. | a generated candidate is stored beside the tree and never written into it; the provider named a path outside what it may write |
 | `NJ5008` | The file a candidate patches is not the file the provider saw, so applying it would overwrite something nobody read. | the file changed after the provider read it; run again on a tree nothing else is writing |
 | `NJ5009` | A routing layer did not route the mutant planted for it before the baseline: the reach measurement, `branch-never-taken`, or `never-infected` left a planted mutant where that layer must not, so nothing the layer would remove from the run is believed and the run ends in `ERROR`. | this is a defect in the engine, not in the code under test; no setting skips a sentinel, because a layer that fails one would be deciding which of your mutants never run |
 | `NJ6001` | The report could not be written as JSON, which is an invariant failure rather than anything about the code under test. | this is a defect in this tool: a report it built could not be written as JSON |
@@ -149,6 +157,7 @@ The first digit names an area:
 | `NJ8003` | The store of earlier answers could not be used, a report was offered for storage that must not be stored, or the stream answers were being carried on or off this machine stopped. | remove the store and let it be rebuilt: what is in it is read-only evidence and nothing is lost |
 | `NJ8004` | A stored answer is not the answer it claims to be, or a line offered to this machine is not an answer at all: a document that does not parse, that does not carry the identity it is filed under, or that does not satisfy the audit every durable report must. | remove the store and let it be rebuilt: a stored answer that is not what it claims is never used |
 | `NJ8005` | No port could be listened on in front of a seam, so a run that was to record what went past it could record nothing. | check this machine allows a listener on the loopback interface, and that nothing has taken every port |
+| `NJ8006` | A stored answer's sealed executions did not come out the same when they ran again: one came to something other than the answer recorded, or could not be made again, or the answer names a build this configuration does not make. The message names the first such execution, what the answer recorded and what it came to now, and the run establishes everything again rather than reissue the answer ([ADR 0046](adr/0046-a-verdict-is-what-a-sealed-run-observed.md)). | nothing: the run establishes everything again and stores what it finds, since a stored answer is reissued only when every sealed execution it rests on comes out the same; one that keeps coming out differently on an unchanged tree is a defect in the sealed host, to report with the execution the message names |
 | `NJ7001` | The toolchain has no `cargo miri`, and the `deep-v1` contract promises the suite is interpreted. Install it (`rustup +nightly component add miri`) or verify under `standard-v1`. | `rustup +nightly component add miri`, or ask for a contract that does not promise interpretation |
 | `NJ7002` | The verified model-checking phase could not preserve its own evidence. | the message names the internal source or artifact boundary that failed; fix its permissions or report the invariant failure |
 | `NJ7003` | The run could not schedule measurements: a worker would not start, or state a panic interrupted would have to be trusted. When a worker would not start, the ones already started stop before taking anything. | run it again; a poisoned coordination lock is never recovered as ordinary state |
@@ -163,7 +172,7 @@ The first digit names an area:
 
 `cargo xtask` prints a failure as its code, a colon, then what it says.
 A gate that refused because of another coded failure prints both: `XT0001` for the refusal, then the cause's code.
-The first digit names an area: 0 the gates, their ledgers, and what runs them (the pre-push gate, the lanes, the other machines), 1 fixtures, 2 `proofaudit`, 3 `engine-audit`, 4 Kani and the model evidence, 5 audit specimens and lint sentinels, 6 identities and recordings, 7 `report-diff` and the bill of materials.
+The first digit names an area: 0 the gates, their ledgers, and what runs them (the pre-push gate, the lanes, the other machines), 1 fixtures, 2 `proofaudit`, 3 `engine-audit`, 4 Kani and the model evidence, 5 audit specimens and lint sentinels, 6 identities and recordings, 7 `report-diff`, the bill of materials, and the release bundle.
 
 | Code | Meaning | Remedy |
 | --- | --- | --- |
@@ -176,14 +185,15 @@ The first digit names an area: 0 the gates, their ledgers, and what runs them (t
 | `XT0007` | A decision record under the ADR directory is misnamed, shares its number, carries another's heading, is listed wrongly in the book, or is named by a link to no record. | fix the record, the book, or the link the message names |
 | `XT0008` | `docflows` could not check the workflows the documentation shows: a page could not be read, or actionlint could not be run or said something other than which workflows it refused. | check `actionlint` is installed, or name it with `--actionlint`, and read what it said |
 | `XT0009` | actionlint refused a workflow the documentation shows. | fix the snippet the message names, so a reader who copies it has a workflow that runs |
-| `XT0010` | The registry of critical decisions names an item the tree does not define, leaves a layer open that the gaps ledger does not give an owner, or lists a hole it does not have. | fix the cell, the ledger line, or the item the message names; a new critical decision arrives with what holds it |
+| `XT0010` | The registry of critical decisions names what resolves to no item of the tree, to several, or to one of another kind than its layer is held by, leaves a layer open that the gaps ledger does not give an owner, or lists a hole it does not have. | name the one item the message's candidates say holds the layer, qualified where several share its name, or fix the ledger line; a new critical decision arrives with what holds it |
 | `XT0101` | The push names something the pre-push gate cannot check: an update Git did not give whole, an object other than the checked-out commit, a remote commit that is not here, a move that is not a fast-forward, or only deletions. | fetch the remote ref and push the checked-out commit as a fast-forward of it |
 | `XT0102` | The tree the pre-push gate checks stopped being the pushed commit while it ran, or the check changed it. | leave the worktree alone while a push runs, then push again |
 | `XT0103` | The check the pre-push gate runs failed. | read the check's own output above, fix what it names, and push again |
 | `XT0104` | The check the pre-push gate runs was stopped: it outlived its budget, said nothing for longer than the gate allows, or the gate was asked to stop. | push again when the machine is less loaded, or raise the budget the message names |
 | `XT0105` | The pre-push gate could not run its check: a program, Git, one of its own files, a setting, its lane, or its progress output failed it. | fix what the message names and push again |
-| `XT0201` | The lane a whole-workspace run waits in could not be found, written, locked, or reported on. | set `NJUTEST_SLOT_DIR` to a writable directory, or fix the one the message names |
+| `XT0201` | The lane a whole-workspace run waits in could not be found, written, locked, read, or reported on, or a setting of it is not a whole number of seconds. | set `NJUTEST_SLOT_DIR` to a writable directory, or fix the one or the setting the message names |
 | `XT0202` | The run was asked to stop while it waited for its lane. | nothing is wrong with the tree; run it again |
+| `XT0203` | The run stopped waiting for its lane because the run holding it showed nothing new of its work — no change to its record, no process of its groups started, ended, or using the processor — for as long as `NJUTEST_SLOT_QUIET_SECONDS` allows. | look at the holder the message names: end it if it hangs, or run again once it has finished; a holder that is merely slow keeps showing something new and is waited for |
 | `XT0301` | A program a gate runs could not be started or watched, or the signals that stop it could not be armed. | check the program the message names is installed and that this process may be signalled |
 | `XT0401` | `remote-check` could not ask the other machines: its machines file could not be read or names none, or a program, Git, a log, or the thread asking a machine failed it. | fix the machines file or what the message names, and run it again |
 | `XT0402` | At least one other machine refused the commit. | read each machine's answer and fix what it names |
@@ -231,7 +241,7 @@ The first digit names an area: 0 the gates, their ledgers, and what runs them (t
 | `XT4102` | A retained model artifact is outside the run directory or cannot be read. | audit the run directory the artifacts were retained in |
 | `XT4103` | A retained Kani export is not the pinned schema, or does not establish the answer the report gives. | read the model record the message names |
 | `XT5001` | An audit specimen could not be laid out in a temporary directory. | check the temporary directory is writable |
-| `XT5002` | An event of an audit specimen's recording is not an object, or lacks its envelope. | fix the specimen in the sentinel module the gate names |
+| `XT5002` | An event of an audit specimen's recording is not an object, lacks its envelope, or states one its writer keeps: a sequence number that is not after every one before it, or a clock. | fix the specimen in the sentinel module the gate names |
 | `XT5003` | A flat audit specimen could not be completed into the document a run writes. | fix the specimen in the sentinel module the gate names |
 | `XT5101` | A planted text of the lint sentinels is not the header-and-files shape they are read in. | fix the planted text under `xtask/sentinels/` the message names |
 | `XT6001` | An identity field exceeds the length prefix of the recipe it is minted by. | report it; an identity this recipe cannot spell is not one to truncate |
@@ -240,3 +250,45 @@ The first digit names an area: 0 the gates, their ledgers, and what runs them (t
 | `XT6004` | A line of a recording passed its producer's schema and still lacks a field a reader of this audit reads, so the schema and the reader disagree. | report it; either the schema should require the field or the reader should not demand it |
 | `XT7001` | A report given to `report-diff` is not one this version understands. | give it two reports this release wrote |
 | `XT7002` | `cargo metadata` could not be read into a bill of materials. | run `cargo metadata --locked` and fix what it says |
+| `XT7003` | The manifests of the packages that publish binaries do not describe one archive `cargo binstall` can read: a package names no `[package.metadata.binstall]`, a key, a format or a template variable `bundle` does not fill, an archive another package does not name, or puts a binary outside the archive, on another entry, or in a second directory. | fix the manifest the message names; the archive is what the manifests say, so no list elsewhere needs changing |
+| `XT7004` | cargo could not describe the workspace or build a shipped binary for the target, did not report exactly the binaries the manifests declare, or a program `bundle` runs could not be started. | read cargo's own output above; a target this machine has no standard library for needs `rustup target add` first |
+| `XT7005` | A built binary did not name the version of its package when asked `--version`, so the archive would be named for a version its contents do not say. | make the binary report its package's version; nothing is written until every binary does |
+| `XT7006` | The archive or its checksum could not be written, a file it holds could not be read, or the archive read back is not exactly what was planned. | check the output directory is writable and read what the message names; nothing is written under the archive's name until it reads back as planned |
+| `XT8001` | `wasi-testsuite` could not read `crates/rust-mutants/tests/wasi-testsuite.toml`, or it does not name the repository, the full commit id and a result for each test. | fix the file the message names |
+| `XT8002` | `wasi-testsuite` could not fetch the pinned commit of WebAssembly/wasi-testsuite into its cache: the cache could not be written, or git could not fetch, check out or verify the commit. | check the network and that git is on the path, and read what git said; nothing half-fetched is kept |
+| `XT8003` | The cached checkout of WebAssembly/wasi-testsuite is not the pinned commit as it was fetched: its HEAD is another commit, or a file of it was changed, added or removed. | remove the checkout the message names; the next run fetches it afresh |
+| `XT8004` | `wasi-testsuite` could not start `cargo test` for the harness, or the harness ran no test of the suite, so nothing was established. | read what cargo said; the harness's test is `every_preview1_test_ends_as_the_expectations_say` of `crates/rust-mutants/tests/wasi_testsuite.rs` |
+| `XT8005` | A preview1 test of WebAssembly/wasi-testsuite ended on the sealed host otherwise than `crates/rust-mutants/tests/wasi-testsuite.toml` says, or the suite and the file name different tests. | read each departure the harness names: fix the host where it is a defect, or name the result and the row of the import table that documents it where the host refuses the call by design |
+
+## rust-mutants-sealed
+
+The sealed host runs a WebAssembly guest in a fresh instance for every invocation, so that what the guest did is a function of content-addressed inputs; [the sealed host](engine/sealed-host.md) says what each WASI call does there.
+Its codes are `RS` followed by four digits, and the first digit names an area: 0 the inputs of an invocation, 1 the module, 2 the engine and the host it links, 3 a run that is no answer about the guest, 9 internal invariants.
+A guest that exits, traps, runs out of fuel or out of memory is not an error: those are the stops a transcript records.
+
+| Code | Meaning | Remedy |
+| --- | --- | --- |
+| `RS0001` | An argument holds a NUL byte, which a WASI argument cannot carry. | pass the argument without the NUL byte: WASI hands every argument to the guest as a C string |
+| `RS0002` | An environment variable a WASI guest cannot be given: an empty name, a name holding `=` or NUL, a value holding NUL, or a name given twice. | name each variable once, without `=` or NUL in its name or NUL in its value |
+| `RS0003` | A snapshot path that is not a relative path of named components, a path the snapshot would hold twice or as both a file and a directory, or a change to a path whose directory the snapshot does not hold. | give each file once, by a relative path of `/`-separated names with no `.`, `..`, empty or NUL-bearing component |
+| `RS0004` | A preopened guest path that is empty, holds a NUL byte, or names the place another preopen names, as wasi-libc reads the two. | preopen each snapshot once, at a nonempty guest path without NUL bytes; wasi-libc reads `/a`, `a` and `a/` as one place, and `/` as `.`, the working directory's |
+| `RS0005` | A directory to start in that names no tree preopened before the root, or a directory that tree does not hold. | preopen the tree before the root, and name the directory by `/`-separated names below its root, or by nothing for the root itself |
+| `RS0006` | A path to halt at that no tree the invocation is given holds a place for: below no tree's guest path, naming the tree itself, or holding an empty name, `.`, `..` or NUL. | name the halt by a tree's guest path and `/`-separated names below it, where a rename puts the file that ends the guest |
+| `RS1001` | The bytes are not a WebAssembly binary the parser can read. | give the bytes of a `.wasm` file a WebAssembly toolchain wrote; the message says where the parser stopped |
+| `RS1002` | The bytes are a WebAssembly component, and only a core module runs sealed. | build the guest for `wasm32-wasip1`, which writes a core module, rather than for a component target |
+| `RS1003` | The module's memory is not one sealed execution runs: 64-bit, shared, imported, of a custom page size, or not exactly one. | build the guest for `wasm32-wasip1` without the memory64, threads, or multi-memory features |
+| `RS1004` | The module imports something outside the WASI preview1 table, or a table function with another signature. | a sealed guest may import only functions of `wasi_snapshot_preview1`; the message names the import to remove |
+| `RS1005` | The module is not a WASI command: no `_start` function of type () -> (), no exported memory, or a start section. | build a binary crate or a test harness for `wasm32-wasip1`, which exports `_start` and `memory` |
+| `RS1007` | The module names a function to answer through one it exports, and does not export it, exports one of another type, or has a code section this version cannot rewrite. | link the guest with the object and the exports the engine's sealed build adds, which answer the standard library's temporary and home directories; the message names what is missing |
+| `RS1008` | The owned compilation-cache directory or preparation lease could not be used. | the message names the refused path; check its access and retain it until its producer process ends |
+| `RS1006` | The module does not export the `chdir` and `malloc` of type (i32) -> i32 the host starts a guest in a directory through. | link the guest with `-C link-arg=--undefined=chdir -C link-arg=--export=chdir -C link-arg=--export=malloc`, as the engine's sealed build does |
+| `RS2001` | Wasmtime, its compiled-module cache, or the module preparation lock could not be configured or used. | the message names the refused setting, cache path or poisoned lock; check cache access and restart a runner whose preparation lock was poisoned |
+| `RS2002` | Wasmtime refused to compile the module under the deterministic feature set. | the module uses a WebAssembly feature sealed execution leaves off, such as relaxed SIMD; the message names it |
+| `RS2003` | The WASI host functions could not be linked to the module. | this is a defect in this tool: every import the validator lets through is one the host links |
+| `RS3001` | The thread that advances the watchdog's epochs could not be started. | the operating system refused a thread; check the process and memory limits of this user, and run again |
+| `RS3002` | The wall-clock watchdog stopped the guest; nothing about the guest follows from it. | the fuel budget, not the watchdog, bounds a guest: run it again on a machine less loaded, or with a longer watchdog |
+| `RS3003` | The runtime failed outside the guest: an instantiation, a fuel account, or a memory reservation the host could not complete. | this machine could not give the guest what its limits allow; the message says which, and nothing about the guest follows from it |
+| `RS3004` | The guest stopped with a trap this version cannot classify. | this is a defect in this tool: every trap of the pinned wasmtime has a kind, so report the message |
+| `RS3005` | The guest was stopped because whoever ran it stopped, as an interrupted run does; nothing about the guest follows from it. | nothing is wrong with the guest or the host: run it again to measure it |
+| `RS3006` | The guest's own `chdir` refused the directory it was to start in, so it cannot start where it was asked to. | the directory is not one the guest's C library reaches through the preopens; the message names it, so report it with the preopens it was given |
+| `RS9001` | The host broke an invariant of its own. | this is a defect in this tool; the message says which invariant, so report it |

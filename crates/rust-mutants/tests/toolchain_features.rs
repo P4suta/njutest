@@ -30,7 +30,7 @@ fn prepared(fixture: &Fixture, build: BuildConfig) -> Session {
             &PrepareOptions {
                 tier: Tier::All,
                 build,
-                ..PrepareOptions::default()
+                ..PrepareOptions::new(Tier::Balanced)
             },
             &Cancel::new(),
         )

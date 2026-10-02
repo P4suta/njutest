@@ -40,6 +40,8 @@ pub enum XtCode {
     LaneUnavailable,
     /// A run was stopped while it waited for its lane.
     LaneInterrupted,
+    /// A run stopped waiting behind a holder whose work showed nothing new.
+    LaneStalled,
     /// A gate's program could not be run.
     WorkUnrun,
     /// The other machines could not be asked.
@@ -152,6 +154,24 @@ pub enum XtCode {
     DiffUnreadable,
     /// The bill of materials could not be made.
     SbomMetadata,
+    /// The shipped manifests do not describe one archive binstall can read.
+    BundleManifest,
+    /// A shipped binary could not be described, built, or run.
+    BundleUnbuilt,
+    /// A shipped binary did not say the version its archive is named for.
+    BundleVersion,
+    /// The archive could not be written, or did not read back as planned.
+    BundleUnwritten,
+    /// The expectations of the WASI test suite could not be read.
+    SuiteExpectations,
+    /// The pinned WASI test suite could not be fetched.
+    SuiteFetch,
+    /// The cached WASI test suite is not the pinned commit, whole and unchanged.
+    SuiteCheckout,
+    /// The harness of the WASI test suite could not be run, or ran nothing.
+    SuiteUnrun,
+    /// A test of the WASI test suite ended otherwise than its expectation says.
+    SuiteDeparted,
 }
 
 impl XtCode {
@@ -228,8 +248,8 @@ impl XtCode {
             ),
             Self::InvariantRegistry => (
                 "XT0010",
-                "The registry of critical decisions names an item the tree does not define, leaves a layer open that the gaps ledger does not give an owner, or lists a hole it does not have.",
-                "fix the cell, the ledger line, or the item the message names; a new critical decision arrives with what holds it",
+                "The registry of critical decisions names what resolves to no item of the tree, to several, or to one of another kind than its layer is held by, leaves a layer open that the gaps ledger does not give an owner, or lists a hole it does not have.",
+                "name the one item the message's candidates say holds the layer, qualified where several share its name, or fix the ledger line; a new critical decision arrives with what holds it",
             ),
             Self::PushUnverifiable => (
                 "XT0101",
@@ -258,13 +278,18 @@ impl XtCode {
             ),
             Self::LaneUnavailable => (
                 "XT0201",
-                "The lane a whole-workspace run waits in could not be found, written, locked, or reported on.",
-                "set `NJUTEST_SLOT_DIR` to a writable directory, or fix the one the message names",
+                "The lane a whole-workspace run waits in could not be found, written, locked, read, or reported on, or a setting of it is not a whole number of seconds.",
+                "set `NJUTEST_SLOT_DIR` to a writable directory, or fix the one or the setting the message names",
             ),
             Self::LaneInterrupted => (
                 "XT0202",
                 "The run was asked to stop while it waited for its lane.",
                 "nothing is wrong with the tree; run it again",
+            ),
+            Self::LaneStalled => (
+                "XT0203",
+                "The run stopped waiting for its lane because the run holding it showed nothing new of its work — no change to its record, no process of its groups started, ended, or using the processor — for as long as `NJUTEST_SLOT_QUIET_SECONDS` allows.",
+                "look at the holder the message names: end it if it hangs, or run again once it has finished; a holder that is merely slow keeps showing something new and is waited for",
             ),
             Self::WorkUnrun => (
                 "XT0301",
@@ -503,7 +528,7 @@ impl XtCode {
             ),
             Self::SpecimenEvent => (
                 "XT5002",
-                "An event of an audit specimen's recording is not an object, or lacks its envelope.",
+                "An event of an audit specimen's recording is not an object, lacks its envelope, or states one its writer keeps: a sequence number that is not after every one before it, or a clock.",
                 "fix the specimen in the sentinel module the gate names",
             ),
             Self::SpecimenIncomplete => (
@@ -545,6 +570,51 @@ impl XtCode {
                 "XT7002",
                 "`cargo metadata` could not be read into a bill of materials.",
                 "run `cargo metadata --locked` and fix what it says",
+            ),
+            Self::BundleManifest => (
+                "XT7003",
+                "The manifests of the packages that publish binaries do not describe one archive `cargo binstall` can read: a package names no `[package.metadata.binstall]`, a key, a format or a template variable `bundle` does not fill, an archive another package does not name, or puts a binary outside the archive, on another entry, or in a second directory.",
+                "fix the manifest the message names; the archive is what the manifests say, so no list elsewhere needs changing",
+            ),
+            Self::BundleUnbuilt => (
+                "XT7004",
+                "cargo could not describe the workspace or build a shipped binary for the target, did not report exactly the binaries the manifests declare, or a program `bundle` runs could not be started.",
+                "read cargo's own output above; a target this machine has no standard library for needs `rustup target add` first",
+            ),
+            Self::BundleVersion => (
+                "XT7005",
+                "A built binary did not name the version of its package when asked `--version`, so the archive would be named for a version its contents do not say.",
+                "make the binary report its package's version; nothing is written until every binary does",
+            ),
+            Self::BundleUnwritten => (
+                "XT7006",
+                "The archive or its checksum could not be written, a file it holds could not be read, or the archive read back is not exactly what was planned.",
+                "check the output directory is writable and read what the message names; nothing is written under the archive's name until it reads back as planned",
+            ),
+            Self::SuiteExpectations => (
+                "XT8001",
+                "`wasi-testsuite` could not read `crates/rust-mutants/tests/wasi-testsuite.toml`, or it does not name the repository, the full commit id and a result for each test.",
+                "fix the file the message names",
+            ),
+            Self::SuiteFetch => (
+                "XT8002",
+                "`wasi-testsuite` could not fetch the pinned commit of WebAssembly/wasi-testsuite into its cache: the cache could not be written, or git could not fetch, check out or verify the commit.",
+                "check the network and that git is on the path, and read what git said; nothing half-fetched is kept",
+            ),
+            Self::SuiteCheckout => (
+                "XT8003",
+                "The cached checkout of WebAssembly/wasi-testsuite is not the pinned commit as it was fetched: its HEAD is another commit, or a file of it was changed, added or removed.",
+                "remove the checkout the message names; the next run fetches it afresh",
+            ),
+            Self::SuiteUnrun => (
+                "XT8004",
+                "`wasi-testsuite` could not start `cargo test` for the harness, or the harness ran no test of the suite, so nothing was established.",
+                "read what cargo said; the harness's test is `every_preview1_test_ends_as_the_expectations_say` of `crates/rust-mutants/tests/wasi_testsuite.rs`",
+            ),
+            Self::SuiteDeparted => (
+                "XT8005",
+                "A preview1 test of WebAssembly/wasi-testsuite ended on the sealed host otherwise than `crates/rust-mutants/tests/wasi-testsuite.toml` says, or the suite and the file name different tests.",
+                "read each departure the harness names: fix the host where it is a defect, or name the result and the row of the import table that documents it where the host refuses the call by design",
             ),
         }
     }

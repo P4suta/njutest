@@ -157,7 +157,7 @@ fn a_run_that_recorded_a_seam_and_put_nothing_says_how_much_it_left_unasked() {
     let stated = njutest::assure::wire::licensing(&observed())
         .expect("the fault catalogue derives")
         .expect("a limitation");
-    assert_eq!(stated.name, njutest::assure::wire::NOT_PUT);
+    assert_eq!(stated.name(), njutest::assure::wire::NOT_PUT);
     assert!(
         stated.detail.contains("1 exchange") && stated.detail.contains("6 question"),
         "a reader has to be told both how much went past the seam and how many \

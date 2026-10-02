@@ -13,6 +13,9 @@ That is the case a flat copy cannot hold: placing the tree at one fixed name and
 A copy places everything it holds by substituting one prefix — the ancestor the tree and what it reads share becomes the directory the copy is made in — so the path between them is the path they had.
 This fixture is why the group exists: a tree whose root sits below what it reads cannot be expressed by a flat directory.
 
+`njutest verify` permits the same directory through `[project] allow_outside` in this fixture's `.njutest.toml`.
+Its bytes enter the dependency digest used by whole-report and target cache identities, while the copied layout preserves the manifest's two-level climb.
+
 ## Fates
 
 What one run of this fixture establishes for every mutation of it.

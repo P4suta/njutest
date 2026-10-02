@@ -4,7 +4,7 @@
 //! The resolved dependency graph: what goes into one package's test binary, and what does not.
 
 use njutest_devkit::result::{ResultState::Returned, result_state};
-use rust_mutants::cargo::Metadata;
+use rust_mutants::cargo::{CargoErrorKind, Metadata};
 
 #[test]
 fn the_closure_of_a_package_is_what_goes_into_its_test_binary() {
@@ -93,5 +93,44 @@ fn a_document_with_no_resolved_graph_keys_on_every_package_it_names() {
         metadata.closure("anything"),
         ["path+file:///w#a@0.1.0"],
         "with no graph to narrow with, everything counts"
+    );
+}
+
+/// A metadata document whose one package says its manifest is at `path`.
+fn manifest_at(path: &str) -> String {
+    format!(
+        r#"{{"version":1,"workspace_root":"/w","target_directory":"/w/target","workspace_members":[],"packages":[{{"id":"registry+x#far@1.0.0","name":"far","version":"1.0.0","manifest_path":{}}}]}}"#,
+        serde_json::Value::String(path.to_owned())
+    )
+}
+
+#[test]
+fn a_manifest_path_that_names_no_file_in_a_directory_is_not_where_a_manifest_can_be() {
+    let crash = include_bytes!(
+        "../../../fuzz/regressions/cargo_metadata/crash-f2e44eb7540be2f622be6d3a40a02d46d678e568"
+    );
+    let refused = Metadata::parse(crash);
+    let Err(error) = refused else {
+        panic!("what a scheduled fuzz run found: a package whose manifest is `/`: {refused:?}");
+    };
+    assert_eq!(error.kind(), CargoErrorKind::MetadataUnparsable);
+    for path in ["/", "", "Cargo.toml", "/w/.."] {
+        let refused = Metadata::parse(manifest_at(path).as_bytes());
+        let Err(error) = refused else {
+            panic!(
+                "{path:?} is no file in a directory, so the directory a run takes for the \
+                 package is the path itself or nothing: {refused:?}"
+            );
+        };
+        assert_eq!(error.kind(), CargoErrorKind::MetadataUnparsable, "{path:?}");
+    }
+    let read = Metadata::parse(manifest_at("/w/far/Cargo.toml").as_bytes());
+    let Ok(metadata) = read else {
+        panic!("a manifest in a directory is read: {read:?}");
+    };
+    let far = metadata.packages.first();
+    assert_eq!(
+        far.map(rust_mutants::cargo::Package::manifest_dir),
+        Some(std::path::Path::new("/w/far"))
     );
 }

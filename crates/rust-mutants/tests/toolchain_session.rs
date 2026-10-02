@@ -14,11 +14,13 @@ use std::path::Path;
 
 use njutest_devkit::fixture::Fixture;
 use njutest_devkit::result::{ResultState::Refused, result_state};
+use rust_mutants::execute::TestTarget;
 use rust_mutants::outcome::Outcome;
 use rust_mutants::rule::Tier;
 use rust_mutants::run::Filter;
 use rust_mutants::runner::Cancel;
 use rust_mutants::session::{Observing, PrepareOptions, Request, Session};
+use rust_mutants::testkit::evidence::sealed_as;
 use rust_mutants::testkit::opening::opening;
 use rust_mutants::trace::{MutantExecRecord, Payload, PhaseRecord, ValidateRoundRecord};
 use rust_mutants::workspace::{OpenOptions, Workspace};
@@ -56,6 +58,8 @@ const fn relevant_payload(payload: &Payload) -> RelevantPayload<'_> {
         | Payload::Select { .. }
         | Payload::Identical { .. }
         | Payload::Evidence { .. }
+        | Payload::SealedControl { .. }
+        | Payload::SealedExec { .. }
         | Payload::Note { .. }
         | Payload::RunEnd { .. } => RelevantPayload::Other,
     }
@@ -83,7 +87,7 @@ fn prepared(fixture: &Fixture, coverage: bool) -> Session {
                 coverage,
                 branch_proofs: coverage,
                 touch: coverage,
-                ..PrepareOptions::default()
+                ..PrepareOptions::new(Tier::Balanced)
             },
             &Cancel::new(),
         )
@@ -194,11 +198,7 @@ fn preparing_catalogs_instruments_validates_and_builds() {
         ]
     );
 
-    let targets: Vec<&str> = session
-        .targets()
-        .iter()
-        .map(|target| target.id.as_str())
-        .collect();
+    let targets: Vec<&str> = session.targets().iter().map(TestTarget::id).collect();
     assert_eq!(
         targets,
         [
@@ -240,7 +240,7 @@ fn a_scoped_session_keeps_the_catalog_but_cannot_execute_an_unvalidated_candidat
                     rules: vec!["gt-to-ge".to_owned()],
                     ..Filter::default()
                 }),
-                ..PrepareOptions::default()
+                ..PrepareOptions::new(Tier::Balanced)
             },
             &Cancel::new(),
         )
@@ -292,7 +292,7 @@ fn consecutive_scopes_cannot_reuse_a_stale_instrumented_binary() {
         branch_proofs: false,
         touch: false,
         validation_filter: Some(filter),
-        ..PrepareOptions::default()
+        ..PrepareOptions::new(Tier::Balanced)
     };
 
     let first = open(&fixture)
@@ -543,7 +543,7 @@ fn the_trace_says_what_every_phase_did() {
                 verify: false,
                 coverage: false,
                 branch_proofs: false,
-                ..PrepareOptions::default()
+                ..PrepareOptions::new(Tier::Balanced)
             },
             &Cancel::new(),
         )
@@ -698,8 +698,8 @@ fn a_dependency_s_documentation_is_not_this_run_s_to_measure() {
     let documentation: Vec<&str> = session
         .targets()
         .iter()
-        .filter(|target| target.kind == rust_mutants::execute::TargetKind::Doc)
-        .map(|target| target.package.as_str())
+        .filter(|target| target.kind() == rust_mutants::execute::TargetKind::Doc)
+        .map(TestTarget::package)
         .collect();
 
     assert_eq!(
@@ -733,7 +733,7 @@ fn the_trace_of_a_covered_run_names_every_layer() {
         .prepare(
             &PrepareOptions {
                 coverage: true,
-                ..PrepareOptions::default()
+                ..PrepareOptions::new(Tier::Balanced)
             },
             &Cancel::new(),
         )
@@ -809,7 +809,7 @@ fn the_app_integration_test_finds_its_binary_where_cargo_put_it() {
     let target = session
         .targets()
         .iter()
-        .find(|target| target.id.contains("/test/"))
+        .find(|target| target.id().contains("/test/"))
         .expect("the workspace has an integration test")
         .clone();
     let binaries: Vec<(String, std::path::PathBuf)> = target
@@ -844,7 +844,7 @@ fn the_app_integration_test_finds_its_binary_where_cargo_put_it() {
 fn a_tree_that_checks_but_does_not_link_is_refused_as_a_tree_and_not_as_a_mutation() {
     let fixture = Fixture::copy("fixture-links-nowhere");
     let workspace = open(&fixture);
-    let refused = workspace.prepare(&PrepareOptions::default(), &Cancel::new());
+    let refused = workspace.prepare(&PrepareOptions::new(Tier::Balanced), &Cancel::new());
     assert_eq!(
         result_state(&refused),
         Refused,
@@ -871,9 +871,12 @@ fn a_tree_that_checks_but_does_not_link_is_refused_as_a_tree_and_not_as_a_mutati
 fn list_and_why_skipped_still_only_type_check() {
     let fixture = Fixture::copy("fixture-links-nowhere");
     let workspace = open(&fixture);
-    let discovery =
-        rust_mutants::session::preview(&workspace, &PrepareOptions::default(), &Cancel::new())
-            .expect("a preview rules on nothing, so a tree that does not link is one it can read");
+    let discovery = rust_mutants::session::preview(
+        &workspace,
+        &PrepareOptions::new(Tier::Balanced),
+        &Cancel::new(),
+    )
+    .expect("a preview rules on nothing, so a tree that does not link is one it can read");
     assert!(
         !discovery.candidates.is_empty(),
         "the preview still finds the candidates it would have proposed"
@@ -1103,6 +1106,7 @@ fn a_claim_written_for_several_mutations_stops_holding_when_one_of_them_is_kille
             source_run_id: None,
             declined: Vec::new(),
             step_notice: None,
+            evidence: sealed_as(outcome, None, "fixture-simple/lib/fixture_simple"),
         }
     };
 
@@ -1142,6 +1146,8 @@ fn a_claim_written_for_several_mutations_stops_holding_when_one_of_them_is_kille
         one.expected = false;
     }
     one_killed[indices.len() - 1].outcome = Outcome::Killed;
+    one_killed[indices.len() - 1].evidence =
+        sealed_as(Outcome::Killed, None, "fixture-simple/lib/fixture_simple");
     let broken = rust_mutants::run::verify(
         &session,
         std::slice::from_ref(&expectation),
@@ -1207,6 +1213,109 @@ fn a_claim_written_for_several_mutations_stops_holding_when_one_of_them_is_kille
         "a claim that named nothing was resolved against nothing"
     );
 
+    session.close().expect("the session closes");
+}
+
+#[test]
+fn a_claim_on_a_mutation_the_run_measured_nothing_about_is_unjudged_rather_than_stale() {
+    use rust_mutants::run::{NotRunReason, RowVerdict, Standing, verdict_finding};
+
+    let fixture = Fixture::copy("fixture-simple");
+    let session = prepared(&fixture, false);
+    let mutant = session
+        .catalog()
+        .mutants()
+        .first()
+        .expect("the fixture has a mutation");
+    let claim = rust_mutants::run::Expectation {
+        id: Some(mutant.id.to_string()),
+        locator: None,
+        reason: "a claim a reviewer wrote before the machine declined".to_owned(),
+        outcome: Outcome::Killed,
+        under: rust_mutants::run::Where::default(),
+    };
+    for (reason, evidence) in NotRunReason::ALL.into_iter().flat_map(|reason| {
+        [
+            (
+                reason,
+                sealed_as(
+                    Outcome::NotRun,
+                    Some(reason),
+                    "fixture-simple/lib/fixture_simple",
+                ),
+            ),
+            (reason, rust_mutants::sealed::record::Evidence::not_sealed()),
+        ]
+    }) {
+        let class = evidence.class();
+        let mut rows = [rust_mutants::run::Judged {
+            index: mutant.index,
+            id: mutant.id.to_string(),
+            display_id: mutant.display_id.to_string(),
+            outcome: Outcome::NotRun,
+            target: String::new(),
+            exit_code: 0,
+            start_failure: None,
+            protocol_failure: None,
+            duration: std::time::Duration::ZERO,
+            tests_run: None,
+            failed_tests: Vec::new(),
+            signal: None,
+            retried: false,
+            lingered: false,
+            expected: false,
+            not_run_reason: Some(reason),
+            route: None,
+            measured: false,
+            identical: rust_mutants::run::CodegenIdentity::NotMeasured,
+            source_run_id: None,
+            declined: Vec::new(),
+            step_notice: None,
+            evidence,
+        }];
+        let verified = rust_mutants::run::verify(
+            &session,
+            std::slice::from_ref(&claim),
+            &mut rows,
+            rust_mutants::run::Scope::WHOLE,
+        )
+        .expect("one claim is representable");
+        let raises = verdict_finding(
+            RowVerdict {
+                outcome: Outcome::NotRun,
+                not_run_reason: Some(reason),
+                expected: false,
+                evidence: class,
+            },
+            false,
+        );
+        match raises {
+            Some(rust_mutants::run::FindingKind::UnprovenMutant) => assert_eq!(
+                verified[0].standing,
+                Standing::Unjudged,
+                "a mutation not run because it was {} with nothing sealed is a lead, and a lead \
+                 neither meets a claim nor contradicts one",
+                reason.name()
+            ),
+            None => assert_eq!(
+                verified[0].standing,
+                Standing::Unjudged,
+                "a mutation not run because it was {} raises no finding, so the run established \
+                 nothing a claim about it could be held to, and a claim it cannot hold is not \
+                 contradicted",
+                reason.name()
+            ),
+            Some(kind) => assert_eq!(
+                verified[0].standing,
+                Standing::Stale {
+                    actual: Outcome::NotRun
+                },
+                "a mutation not run because it was {} is a {kind} the run established, which \
+                 contradicts a claim that it is killed",
+                reason.name()
+            ),
+        }
+    }
     session.close().expect("the session closes");
 }
 
@@ -1315,8 +1424,8 @@ fn a_mutation_reaches_the_documentation_of_its_own_library_and_no_other() {
     let doc: Vec<&str> = session
         .targets()
         .iter()
-        .filter(|target| target.kind == rust_mutants::execute::TargetKind::Doc)
-        .map(|target| target.id.as_str())
+        .filter(|target| target.kind() == rust_mutants::execute::TargetKind::Doc)
+        .map(TestTarget::id)
         .collect();
     assert_eq!(
         doc.len(),
@@ -1345,13 +1454,12 @@ fn a_mutation_reaches_the_documentation_of_its_own_library_and_no_other() {
         .targets()
         .iter()
         .filter(|target| {
-            target.kind == rust_mutants::execute::TargetKind::Doc
+            target.kind() == rust_mutants::execute::TargetKind::Doc
                 && target
                     .limitations
-                    .iter()
-                    .any(|one| one == rust_mutants::limitation::DOCTESTS_NONE)
+                    .contains(&rust_mutants::limitation::Limitation::DoctestsNone)
         })
-        .map(|target| target.id.as_str())
+        .map(TestTarget::id)
         .collect();
     assert_eq!(
         empty.len(),
@@ -1393,7 +1501,7 @@ fn targets_measured_under_coverage(skip_targets: Vec<String>) -> usize {
             &PrepareOptions {
                 coverage: true,
                 skip_targets,
-                ..PrepareOptions::default()
+                ..PrepareOptions::new(Tier::Balanced)
             },
             &Cancel::new(),
         )
@@ -1602,4 +1710,75 @@ fn a_request_that_names_its_target_runs_the_tests_its_route_names_only_when_it_a
          names the target and asks to be narrowed runs that test alone, as the plan a carried \
          answer is held to says it did: {ran:?}"
     );
+}
+
+/// One judged mutant of a session, with every field a stream line reads, named by `index`.
+fn judged_of(index: u32) -> rust_mutants::run::Judged {
+    rust_mutants::run::Judged {
+        index,
+        id: format!("{index:064x}"),
+        display_id: format!("{index:020x}"),
+        outcome: Outcome::Survived,
+        step_notice: None,
+        target: "fixture-simple/lib/fixture_simple".to_owned(),
+        exit_code: 0,
+        start_failure: None,
+        protocol_failure: None,
+        duration: std::time::Duration::from_millis(1),
+        tests_run: Some(1),
+        failed_tests: Vec::new(),
+        signal: None,
+        retried: false,
+        lingered: false,
+        expected: false,
+        not_run_reason: None,
+        route: None,
+        measured: true,
+        identical: rust_mutants::run::CodegenIdentity::NotMeasured,
+        source_run_id: None,
+        declined: Vec::new(),
+        evidence: rust_mutants::sealed::record::Evidence::Unproven {
+            reasons: Vec::new(),
+        },
+    }
+}
+
+#[test]
+fn what_a_session_cannot_decide_is_refused_rather_than_invented() {
+    let fixture = Fixture::copy("fixture-simple");
+    let session = prepare(&fixture);
+    let known = session
+        .catalog()
+        .mutants()
+        .first()
+        .expect("the fixture catalogs a mutation")
+        .clone();
+    let beyond = u32::try_from(session.catalog().mutants().len() * 4).expect("a small catalog");
+
+    let mut unplaced = known.clone();
+    unplaced.candidate.path = "src/nowhere.rs".to_owned();
+    let refused = session
+        .placed(&unplaced)
+        .expect_err("a mutant whose file the session holds no text of has no place");
+    assert!(
+        refused.to_string().contains("src/nowhere.rs"),
+        "the refusal names the file nothing read: {refused}"
+    );
+
+    let mut unattributed = known;
+    unattributed.index = beyond;
+    let refused = rust_mutants::report::catalog::mutant_document(&session, &unattributed)
+        .expect_err("a mutant no item of the catalog is named by has no item to name");
+    assert!(
+        refused.to_string().contains("item"),
+        "the refusal names what nothing attributes: {refused}"
+    );
+
+    let refused = rust_mutants::report::stream::MutantLine::of(&session, &judged_of(beyond))
+        .expect_err("a judgement of a mutant the catalog does not hold is no line of a stream");
+    assert!(
+        refused.to_string().contains(&format!("{beyond:020x}")),
+        "the refusal names the mutant it refuses: {refused}"
+    );
+    session.close().expect("close");
 }

@@ -165,9 +165,9 @@ fn only_decided_test_outcomes_fit_in_a_cache_record() {
 
 #[test]
 fn the_policy_break_has_a_new_schema_layout_and_cache_abi() {
-    assert_eq!(rust_mutants::outcomes::SCHEMA, "rust-mutants-outcome-v3");
-    assert_eq!(rust_mutants::outcomes::LAYOUT, "rust-mutants/outcomes-v3");
-    assert_eq!(rust_mutants::outcomes::CACHE_ABI, 9);
+    assert_eq!(rust_mutants::outcomes::SCHEMA, "rust-mutants-outcome-v4");
+    assert_eq!(rust_mutants::outcomes::LAYOUT, "rust-mutants/outcomes-v4");
+    assert_eq!(rust_mutants::outcomes::CACHE_ABI, 10);
     assert_eq!(rust_mutants::outcomes::INSTRUMENTATION_ABI, 3);
     assert_eq!(rust_mutants::outcomes::STEP_POLICY_ABI, 1);
 }

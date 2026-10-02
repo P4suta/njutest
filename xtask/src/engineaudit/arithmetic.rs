@@ -8,11 +8,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use sha2::{Digest as _, Sha256};
 
 use super::{
-    Audit, DECLINED, DISCHARGED, DISCHARGED_MUTANT, DISPLAY_ID_LENGTH, Decided, ERRORED,
-    ERRORED_MUTANT, ID_DOMAIN, INAPPLICABLE, INCONCLUSIVE, INCONCLUSIVE_MUTANT, KILLED, Layer, MET,
-    NOT_RUN, NOT_RUN_MUTANT, Notes, Report, Row, STALE, STALE_EXPECTATION, STEP_LIMIT_REACHED,
-    STEP_LIMIT_REACHED_MUTANT, STOPPED_EARLY, SURVIVED, SURVIVING_MUTANT, UNJUDGED, UNMATCHED,
-    UNMATCHED_EXPECTATION, UNREACHED, UNREACHED_MUTANT, UNSELECTED, WAITED, WAITED_MUTANT, count,
+    Audit, DECLINED, DISCHARGED, DISPLAY_ID_LENGTH, Decided, ERRORED, ERRORED_MUTANT, ID_DOMAIN,
+    INAPPLICABLE, INCONCLUSIVE, INCONCLUSIVE_MUTANT, KILLED, Layer, MET, NOT_RUN, NOT_RUN_MUTANT,
+    Notes, Report, Resting, Row, STALE, STALE_EXPECTATION, STEP_LIMIT_REACHED,
+    STEP_LIMIT_REACHED_MUTANT, STOPPED_EARLY, SURVIVED, SURVIVING_MUTANT, Said, UNJUDGED,
+    UNMATCHED, UNMATCHED_EXPECTATION, UNPROVEN, UNPROVEN_MUTANT, UNREACHED, UNREACHED_MUTANT,
+    UNSELECTED, WAITED, WAITED_MUTANT, count,
 };
 
 /// Every identity re-minted from the row that carries it.
@@ -136,29 +137,38 @@ fn digest(bytes: &[u8]) -> String {
 /// Every column re-tallied from the rows, and every equation the contract states.
 pub(super) fn accounting(report: &Report, audit: &mut Audit) -> Decided {
     let mut notes = Notes::on(audit, Layer::Accounting);
+    let rows =
+        |held: fn(&Row) -> bool| count(report.mutants.iter().filter(|row| held(row)).count());
     for (name, derived) in [
-        (KILLED, report.counted(KILLED)),
-        (SURVIVED, report.counted(SURVIVED)),
+        (KILLED, rows(|row| row.outcome == KILLED && !row.lead())),
+        (SURVIVED, rows(|row| row.outcome == SURVIVED && !row.lead())),
+        (UNPROVEN, rows(Row::lead)),
         (STEP_LIMIT_REACHED, report.counted(STEP_LIMIT_REACHED)),
         (WAITED, report.counted(WAITED)),
         (INCONCLUSIVE, report.counted(INCONCLUSIVE)),
         (ERRORED, report.counted(ERRORED)),
-        (NOT_RUN, report.counted(NOT_RUN)),
+        (NOT_RUN, rows(|row| row.outcome == NOT_RUN && !row.lead())),
         ("cataloged", count(report.mutants.len())),
-        ("refused", count(report.rejections.len())),
         (
-            UNREACHED,
-            count(report.mutants.iter().filter(|row| row.unreached).count()),
+            "refused",
+            count(report.rejections.iter().filter(|one| one.refused).count()),
+        ),
+        (UNREACHED, rows(|row| row.unreached && !row.lead())),
+        (
+            "unproven_killed",
+            rows(|row| row.lead() && row.outcome == KILLED),
         ),
         (
-            DISCHARGED,
-            count(
-                report
-                    .mutants
-                    .iter()
-                    .filter(|row| row.not_run(DISCHARGED))
-                    .count(),
-            ),
+            "unproven_survived",
+            rows(|row| row.lead() && row.outcome == SURVIVED),
+        ),
+        (
+            "unproven_unreached",
+            rows(|row| row.lead() && row.not_run(UNREACHED)),
+        ),
+        (
+            "unproven_discharged",
+            rows(|row| row.lead() && row.not_run(DISCHARGED)),
         ),
         (
             DECLINED,
@@ -288,6 +298,7 @@ fn equations(report: &Report, notes: &mut Notes<'_>) {
         &[
             KILLED,
             SURVIVED,
+            UNPROVEN,
             STEP_LIMIT_REACHED,
             WAITED,
             INCONCLUSIVE,
@@ -448,11 +459,11 @@ pub(super) fn findings(report: &Report, audit: &mut Audit) -> Decided {
     let mut notes = Notes::on(audit, Layer::Findings);
     let interrupted = report.interrupted;
     let raises = |kind: &str, row: &Row| match kind {
-        SURVIVING_MUTANT => row.outcome == SURVIVED && !row.expected,
+        SURVIVING_MUTANT => row.outcome == SURVIVED && !row.expected && !row.lead(),
         STEP_LIMIT_REACHED_MUTANT => row.outcome == STEP_LIMIT_REACHED,
         WAITED_MUTANT => row.outcome == WAITED,
-        UNREACHED_MUTANT => row.outcome == NOT_RUN && row.unreached,
-        DISCHARGED_MUTANT => row.outcome == NOT_RUN && row.not_run(DISCHARGED),
+        UNREACHED_MUTANT => row.outcome == NOT_RUN && row.unreached && !row.lead(),
+        UNPROVEN_MUTANT => row.lead(),
         INCONCLUSIVE_MUTANT => row.outcome == INCONCLUSIVE,
         ERRORED_MUTANT => row.outcome == ERRORED,
         NOT_RUN_MUTANT => {
@@ -471,7 +482,7 @@ pub(super) fn findings(report: &Report, audit: &mut Audit) -> Decided {
         STEP_LIMIT_REACHED_MUTANT,
         WAITED_MUTANT,
         UNREACHED_MUTANT,
-        DISCHARGED_MUTANT,
+        UNPROVEN_MUTANT,
         INCONCLUSIVE_MUTANT,
         ERRORED_MUTANT,
         NOT_RUN_MUTANT,
@@ -490,8 +501,9 @@ pub(super) fn findings(report: &Report, audit: &mut Audit) -> Decided {
                 finding
                     .mutant
                     .as_deref()
-                    .map(|mutant| report.row(mutant).map_or(mutant, Row::label))
+                    .and_then(|mutant| report.row(mutant))
             })
+            .map(Row::label)
             .collect();
         if reported != derived {
             notes.violated(
@@ -555,6 +567,16 @@ pub(super) fn expectations(report: &Report, audit: &mut Audit) -> Decided {
                         .to_owned(),
                 ),
                 Some(row) => {
+                    if !row.sealed() {
+                        notes.violated(
+                            &claim.id,
+                            format!(
+                                "the claim is met by {}, which no sealed execution decided; a \
+                                 claim a lead met is one nothing established",
+                                row.label()
+                            ),
+                        );
+                    }
                     if !row.expected {
                         notes.violated(
                             &claim.id,
@@ -617,15 +639,15 @@ pub(super) fn expectations(report: &Report, audit: &mut Audit) -> Decided {
 /// Every row a reviewer accepted, and every claim the run contradicted, against what the findings say.
 fn accounted(report: &Report, met: &BTreeMap<String, usize>, notes: &mut Notes<'_>) {
     for row in report.mutants.iter().filter(|row| row.expected) {
-        match met.get(row.label()).copied().unwrap_or_default() {
-            1 => {}
-            0 => notes.violated(
+        match met.get(row.label()).copied() {
+            Some(1) => {}
+            None | Some(0) => notes.violated(
                 row.label(),
                 "the row is marked expected and no claim was met by it; a row nobody \
                  accounted for is a finding"
                     .to_owned(),
             ),
-            several => notes.violated(
+            Some(several) => notes.violated(
                 row.label(),
                 format!("{several} claims were met by one row; a mutant is accepted once"),
             ),
@@ -658,7 +680,12 @@ pub(super) fn exit(report: &Report, audit: &mut Audit) -> Decided {
     let infrastructure = report.findings.iter().any(|finding| {
         matches!(
             finding.kind.as_str(),
-            ERRORED_MUTANT | NOT_RUN_MUTANT | STEP_LIMIT_REACHED_MUTANT | WAITED_MUTANT
+            ERRORED_MUTANT
+                | NOT_RUN_MUTANT
+                | STEP_LIMIT_REACHED_MUTANT
+                | WAITED_MUTANT
+                | INCONCLUSIVE_MUTANT
+                | UNPROVEN_MUTANT
         )
     });
     let derived = if report.interrupted {
@@ -678,4 +705,88 @@ pub(super) fn exit(report: &Report, audit: &mut Audit) -> Decided {
         );
     }
     notes.looked()
+}
+
+/// Every verdict a row says sealed executions established, decided again from the executions it records: a detection kills, and the first ends them; with none, every one passing or set aside survives where one passed, and none at all is unreached; a doubt establishes nothing, and neither do executions every one of which was set aside.
+pub(super) fn sealed(report: &Report, audit: &mut Audit) -> Decided {
+    let mut notes = Notes::on(audit, Layer::Sealed);
+    for row in &report.mutants {
+        let Resting::Sealed { executions } = &row.evidence else {
+            continue;
+        };
+        if executions
+            .iter()
+            .any(|run| run.came_to.said() == Said::Doubted)
+        {
+            notes.violated(
+                row.label(),
+                "the row rests on a sealed execution that established neither a pass nor a \
+                 detection; a doubt is a reason there is no verdict, never part of one"
+                    .to_owned(),
+            );
+            continue;
+        }
+        let first = executions
+            .iter()
+            .enumerate()
+            .find(|(_, run)| run.came_to.said() == Said::Detected);
+        let (outcome, reason) = match first {
+            Some((at, by)) => {
+                if at.checked_add(1) != Some(executions.len()) {
+                    notes.violated(
+                        row.label(),
+                        "the row records sealed executions after its first detection; the first \
+                         detection ends them"
+                            .to_owned(),
+                    );
+                }
+                if row.target != by.target || row.killed_by != [by.test.clone()] {
+                    notes.violated(
+                        row.label(),
+                        format!(
+                            "the sealed execution of {} in {} detected the mutation and the row \
+                             says {:?} in {} killed it",
+                            by.test, by.target, row.killed_by, row.target
+                        ),
+                    );
+                }
+                (KILLED, None)
+            }
+            None if executions.is_empty() => (NOT_RUN, Some(UNREACHED)),
+            None if executions
+                .iter()
+                .all(|run| run.came_to.said() == Said::SetAside) =>
+            {
+                notes.violated(
+                    row.label(),
+                    "the row rests on sealed executions every one of which declined to measure \
+                     as its control did; a mutant nothing measured has no verdict (ADR 0043)"
+                        .to_owned(),
+                );
+                continue;
+            }
+            None => (SURVIVED, None),
+        };
+        let said = row.not_run_reason.map(super::NotRunReason::as_str);
+        if row.outcome != outcome || said != reason {
+            notes.violated(
+                row.label(),
+                format!(
+                    "the row says {} and its sealed executions establish {}; a verdict is what \
+                     the sealed executions observed",
+                    spelled(row.outcome.as_str(), said),
+                    spelled(outcome, reason),
+                ),
+            );
+        }
+    }
+    notes.looked()
+}
+
+/// An outcome as a finding spells it, with why it was not run where it was not.
+fn spelled(outcome: &str, reason: Option<&str>) -> String {
+    match reason {
+        Some(reason) => format!("{outcome} ({reason})"),
+        None => outcome.to_owned(),
+    }
 }

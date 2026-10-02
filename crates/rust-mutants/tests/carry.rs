@@ -127,7 +127,7 @@ fn tree() -> Tree {
         now.items.insert(
             item(ordinal),
             Body {
-                digest: digest.to_owned(),
+                digest: Some(digest.to_owned()),
                 sealing: Sealing::Sealed,
                 start: Some(at(ordinal)),
             },
@@ -170,7 +170,7 @@ fn survival() -> Carried {
 fn an_answer_carries_across_an_edit_to_a_body_no_execution_entered() {
     let mut edited = tree();
     if let Some(body) = edited.items.get_mut(&item(1)) {
-        body.digest = "body-1-edited".to_owned();
+        body.digest = Some("body-1-edited".to_owned());
     }
     assert_eq!(
         believe(&kill(), &edited.now(), &plan(&[OTHER, TARGET])),
@@ -236,7 +236,7 @@ fn a_body_an_execution_entered_that_starts_elsewhere_refuses_it() {
 fn an_edit_to_a_body_an_execution_entered_refuses_it() {
     let mut edited = tree();
     if let Some(body) = edited.items.get_mut(&item(0)) {
-        body.digest = "body-0-edited".to_owned();
+        body.digest = Some("body-0-edited".to_owned());
     }
     assert_eq!(
         believe(&kill(), &edited.now(), &plan(&[OTHER, TARGET])),

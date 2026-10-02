@@ -2,10 +2,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The language server: what it says about a report, and what it refuses to do about it.
-//!
-//! Every test here needs a published report, and `Store::keep` answers `NJ6004` on Windows because publication is rooted at a POSIX directory capability. `docs/limitations.md` says so; these say it by not existing there.
 
-#![cfg(unix)]
 #![expect(
     clippy::assigning_clones,
     clippy::expect_used,
@@ -124,6 +121,7 @@ fn reported_at(position: Position, unplaced_finding: bool, measured: &str) -> Re
         item: "demo".to_owned(),
         original: ">".to_owned(),
         replacement: String::new(),
+        evidence: njutest::testkit::reports::sealed_as(&njutest::report::Decided::Survived),
         outcome: njutest::report::Decided::Survived,
         accepted: false,
         reuse: njutest::report::Reuse(njutest::report::Established::Here),
@@ -159,7 +157,7 @@ fn reported_at(position: Position, unplaced_finding: bool, measured: &str) -> Re
         });
     }
     source.limitations.push(Limitation::new(
-        "git-metadata-unavailable",
+        njutest::limitation::Limitation::GitMetadataUnavailable,
         "the LSP fixture is not a git repository",
     ));
     source
@@ -1157,7 +1155,9 @@ fn a_path_a_uri_cannot_spell_as_it_is_is_escaped_and_read_back_as_the_same_file(
         .prefix("njutest lsp #1 ")
         .tempdir()
         .expect("a directory whose name a URI has to escape");
-    let root = parent.path().join("a%20b?c");
+    let root = parent
+        .path()
+        .join(if cfg!(windows) { "a%20b#c" } else { "a%20b?c" });
     std::fs::create_dir_all(&root).expect("a root whose name looks like an escape");
     ran(&root);
     let said = answers(

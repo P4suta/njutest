@@ -3,7 +3,7 @@
 
 //! Planted examples a gate must find before its silence about the real tree is believed.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// One planted example, made of the files it needs by the path each would have in a repository.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -154,27 +154,18 @@ fn opened(header: &str) -> Result<Shape, PlantedError> {
     }
 }
 
-/// Writes the smallest repository every gate of this workspace reads without refusing it.
-///
-/// # Errors
-/// A directory or file that could not be written.
-pub fn skeleton(root: &Path) -> std::io::Result<()> {
-    crate::repository::init(root)?;
-    for directory in [
-        "compiler-surfaces",
-        "crates/app/src",
-        "crates/njutest-macros/src",
-        "xtask",
-        "fuzz/src",
-    ] {
-        std::fs::create_dir_all(root.join(directory))?;
-    }
-    for (path, text) in SKELETON {
-        std::fs::write(root.join(path), text)?;
-    }
-    Ok(())
+/// A tree laid for one planted shape: where it lies, every file it holds, and which of them the shape planted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Laid {
+    /// Where it lies.
+    pub root: PathBuf,
+    /// Every file it holds, by its repository-relative path in byte order: what git would list of it.
+    pub files: Vec<String>,
+    /// The files the shape planted over the skeleton, in the order it planted them.
+    pub planted: Vec<String>,
 }
 
+/// The smallest repository every gate of this workspace reads without refusing it, each file by its repository-relative path and its text.
 const SKELETON: [(&str, &str); 14] = [
     (
         "Cargo.toml",
@@ -217,18 +208,28 @@ const SKELETON: [(&str, &str); 14] = [
     ),
 ];
 
-/// Lays `files` over a fresh [`skeleton`] at `root`, creating the directories they name.
+/// Lays `files` over the skeleton at `root`, creating the directories each names, and says what the tree then holds.
 ///
 /// # Errors
 /// A directory or file that could not be written.
-pub fn plant(root: &Path, files: &[(String, String)]) -> std::io::Result<()> {
-    skeleton(root)?;
-    for (path, text) in files {
-        let at = root.join(path);
+pub fn lay(root: &Path, files: &[(String, String)]) -> std::io::Result<Laid> {
+    let skeleton = SKELETON
+        .iter()
+        .map(|(path, text)| ((*path).to_owned(), (*text).to_owned()));
+    let mut held = Vec::new();
+    for (path, text) in skeleton.chain(files.iter().cloned()) {
+        let at = root.join(&path);
         if let Some(parent) = at.parent() {
             std::fs::create_dir_all(parent)?;
         }
         std::fs::write(at, text)?;
+        held.push(path);
     }
-    Ok(())
+    held.sort();
+    held.dedup();
+    Ok(Laid {
+        root: root.to_path_buf(),
+        files: held,
+        planted: files.iter().map(|(path, _text)| path.clone()).collect(),
+    })
 }

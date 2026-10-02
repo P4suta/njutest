@@ -50,7 +50,14 @@ fn survived(entries: &[(&str, &str)]) -> Outcome {
 
 #[test]
 fn a_kill_is_believed_when_the_target_that_noticed_still_reaches_it_and_still_behaves_the_same() {
-    let one = record(mutant(1), "run-1", killed("t1", "k1"));
+    let one = record(
+        mutant(1),
+        "run-1",
+        (
+            killed("t1", "k1"),
+            rust_mutants::sealed::record::Evidence::not_sealed(),
+        ),
+    );
     assert_eq!(
         one.believable(&reaching(&["t1", "t2"]), &standing(&[("t1", "k1")])),
         Ok(())
@@ -81,7 +88,14 @@ fn a_kill_is_believed_when_the_target_that_noticed_still_reaches_it_and_still_be
 
 #[test]
 fn a_survival_is_believed_only_when_every_target_that_could_notice_is_one_that_did_not() {
-    let one = record(mutant(1), "run-1", survived(&[("t1", "k1"), ("t2", "k2")]));
+    let one = record(
+        mutant(1),
+        "run-1",
+        (
+            survived(&[("t1", "k1"), ("t2", "k2")]),
+            rust_mutants::sealed::record::Evidence::not_sealed(),
+        ),
+    );
     assert_eq!(
         one.believable(
             &reaching(&["t1", "t2"]),
@@ -137,12 +151,26 @@ fn what_one_run_recorded_is_what_the_next_one_reads() {
             .is_none()
     );
 
-    let one = record(mutant(1), "run-1", killed("t1", "k1"));
+    let one = record(
+        mutant(1),
+        "run-1",
+        (
+            killed("t1", "k1"),
+            rust_mutants::sealed::record::Evidence::not_sealed(),
+        ),
+    );
     let written = write(dir.path(), &one).expect("written");
     assert_eq!(written, path_of(dir.path(), &mutant(1)));
     assert_eq!(read(dir.path(), &mutant(1)).expect("readable"), Some(one));
 
-    let contradicted = record(mutant(1), "run-2", survived(&[("t1", "k1")]));
+    let contradicted = record(
+        mutant(1),
+        "run-2",
+        (
+            survived(&[("t1", "k1")]),
+            rust_mutants::sealed::record::Evidence::not_sealed(),
+        ),
+    );
     write(dir.path(), &contradicted).expect("written");
     assert_eq!(
         read(dir.path(), &mutant(1)).expect("readable"),
@@ -154,7 +182,18 @@ fn what_one_run_recorded_is_what_the_next_one_reads() {
 #[test]
 fn a_record_that_is_not_about_the_mutant_it_is_filed_under_is_refused() {
     let dir = tempfile::tempdir().expect("tempdir");
-    write(dir.path(), &record(mutant(1), "run-1", killed("t1", "k1"))).expect("written");
+    write(
+        dir.path(),
+        &record(
+            mutant(1),
+            "run-1",
+            (
+                killed("t1", "k1"),
+                rust_mutants::sealed::record::Evidence::not_sealed(),
+            ),
+        ),
+    )
+    .expect("written");
     std::fs::copy(
         path_of(dir.path(), &mutant(1)),
         path_of(dir.path(), &mutant(2)),
@@ -170,7 +209,14 @@ fn a_record_that_is_not_about_the_mutant_it_is_filed_under_is_refused() {
 
 #[test]
 fn a_record_says_what_shape_it_is_and_what_established_it() {
-    let one = record(mutant(1), "run-1", killed("t1", "k1"));
+    let one = record(
+        mutant(1),
+        "run-1",
+        (
+            killed("t1", "k1"),
+            rust_mutants::sealed::record::Evidence::not_sealed(),
+        ),
+    );
     assert_eq!(one.schema, SCHEMA);
     assert_eq!(one.run_id, "run-1");
     let text = serde_json::to_string(&one).expect("renders");
@@ -182,9 +228,12 @@ fn a_record_says_what_shape_it_is_and_what_established_it() {
     let other = record(
         mutant(2),
         "run-1",
-        Outcome::Survived {
-            targets: BTreeMap::new(),
-        },
+        (
+            Outcome::Survived {
+                targets: BTreeMap::new(),
+            },
+            rust_mutants::sealed::record::Evidence::not_sealed(),
+        ),
     );
     let text = serde_json::to_string(&other).expect("renders");
     assert!(text.contains("\"kind\":\"survived\""), "{text}");
@@ -193,7 +242,18 @@ fn a_record_says_what_shape_it_is_and_what_established_it() {
 #[test]
 fn a_record_that_says_it_is_another_shape_is_refused_rather_than_read_as_this_one() {
     let dir = tempfile::tempdir().expect("tempdir");
-    write(dir.path(), &record(mutant(1), "run-1", killed("t1", "k1"))).expect("written");
+    write(
+        dir.path(),
+        &record(
+            mutant(1),
+            "run-1",
+            (
+                killed("t1", "k1"),
+                rust_mutants::sealed::record::Evidence::not_sealed(),
+            ),
+        ),
+    )
+    .expect("written");
     let path = path_of(dir.path(), &mutant(1));
     let text = std::fs::read_to_string(&path).expect("the record");
     std::fs::write(&path, text.replace(SCHEMA, "njutest-mutation-evidence-v9"))
@@ -222,8 +282,18 @@ fn a_record_that_cannot_be_read_or_written_is_a_refusal_and_never_a_miss() {
          re-establishes what it could not read rather than saying it could not: {error}"
     );
 
-    let refused = write(dir.path(), &record(mutant(1), "run-1", killed("t1", "k1")))
-        .expect_err("a record that cannot be written");
+    let refused = write(
+        dir.path(),
+        &record(
+            mutant(1),
+            "run-1",
+            (
+                killed("t1", "k1"),
+                rust_mutants::sealed::record::Evidence::not_sealed(),
+            ),
+        ),
+    )
+    .expect_err("a record that cannot be written");
     assert!(
         matches!(refused, StoreError::Unusable { .. }),
         "and one it could not write is not one it wrote: a later run reads what is \
@@ -233,8 +303,18 @@ fn a_record_that_cannot_be_read_or_written_is_a_refusal_and_never_a_miss() {
 
     let blocked = dir.path().join("blocked");
     std::fs::write(&blocked, "a file where a store's directory goes").expect("the file");
-    let refused = write(&blocked, &record(mutant(2), "run-1", killed("t1", "k1")))
-        .expect_err("a store with nowhere to put its records");
+    let refused = write(
+        &blocked,
+        &record(
+            mutant(2),
+            "run-1",
+            (
+                killed("t1", "k1"),
+                rust_mutants::sealed::record::Evidence::not_sealed(),
+            ),
+        ),
+    )
+    .expect_err("a store with nowhere to put its records");
     let directory = path_of(&blocked, &mutant(2))
         .parent()
         .expect("the directory a record goes in")
@@ -267,7 +347,14 @@ fn killed_after(target: &str, before: &[(&str, &str)]) -> Outcome {
 #[test]
 fn a_kill_is_believed_only_where_this_run_would_ask_exactly_the_targets_asked_before_it() {
     let both = standing(&[("t1", "k1"), ("t2", "k2")]);
-    let one = record(mutant(1), "run-1", killed_after("t2", &[("t1", "k1")]));
+    let one = record(
+        mutant(1),
+        "run-1",
+        (
+            killed_after("t2", &[("t1", "k1")]),
+            rust_mutants::sealed::record::Evidence::not_sealed(),
+        ),
+    );
     assert_eq!(
         one.believable(&reaching(&["t1", "t2"]), &both),
         Ok(()),
@@ -275,7 +362,14 @@ fn a_kill_is_believed_only_where_this_run_would_ask_exactly_the_targets_asked_be
          what asking it again would say"
     );
 
-    let unasked = record(mutant(2), "run-1", killed_after("t2", &[]));
+    let unasked = record(
+        mutant(2),
+        "run-1",
+        (
+            killed_after("t2", &[]),
+            rust_mutants::sealed::record::Evidence::not_sealed(),
+        ),
+    );
     assert_eq!(
         unasked.believable(&reaching(&["t1", "t2"]), &both),
         Err(Refusal::TargetEntered {
@@ -311,7 +405,10 @@ fn a_kill_whose_earlier_answers_no_run_could_have_given_is_not_believed() {
     let reordered = record(
         mutant(3),
         "run-1",
-        killed_after("t3", &[("t2", "k2"), ("t1", "k1")]),
+        (
+            killed_after("t3", &[("t2", "k2"), ("t1", "k1")]),
+            rust_mutants::sealed::record::Evidence::not_sealed(),
+        ),
     );
     assert!(
         matches!(
@@ -324,15 +421,18 @@ fn a_kill_whose_earlier_answers_no_run_could_have_given_is_not_believed() {
     let noticed = record(
         mutant(4),
         "run-1",
-        Outcome::Killed {
-            target: "t2".to_owned(),
-            key: "k2".to_owned(),
-            before: vec![Answer {
-                target: "t1".to_owned(),
-                key: "k1".to_owned(),
-                outcome: njutest::report::Outcome::Killed,
-            }],
-        },
+        (
+            Outcome::Killed {
+                target: "t2".to_owned(),
+                key: "k2".to_owned(),
+                before: vec![Answer {
+                    target: "t1".to_owned(),
+                    key: "k1".to_owned(),
+                    outcome: njutest::report::Outcome::Killed,
+                }],
+            },
+            rust_mutants::sealed::record::Evidence::not_sealed(),
+        ),
     );
     assert!(
         matches!(

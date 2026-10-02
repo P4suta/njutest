@@ -20,8 +20,8 @@ Every test a run started is in it, including the ones it started to establish th
 
 The unit is a count and not a duration on purpose.
 A second is about this machine, this load, this job count; it cannot be compared between two runs and it cannot be ratcheted.
-A pair is the same number everywhere, so a change that makes the engine do less is a change a test can see —
-`xtask/work_ceiling.txt` holds each fixture's count, and like the seam allowlist it may shrink and never grow.
+A pair is the same number everywhere, so a change that makes the engine do less is a change a test can see.
+`xtask/work_ceiling.txt` holds a four-fixture sample of counts, and like the seam allowlist it may shrink and never grow.
 
 ```
 WORK  started=15 of 42 pairs across 3 targets; 64.3% removed
@@ -31,6 +31,7 @@ WORK  started=15 of 42 pairs across 3 targets; 64.3% removed
 ```
 
 `rust_mutants::work::Work` derives that from the stored report alone, so an audit re-derives it without the engine, and `engine-audit`'s `work` layer holds the total to the `mutant-exec` records the recording kept.
+A test is counted only where a baseline counted it: a target whose baseline ran no test counts none, and where a baseline did not run, as under `--no-verify`, the `tests=` line says `tests are not counted` rather than a number.
 Every removal is labelled with what kind it is:
 
 | Kind | What it means | Still the whole answer |
@@ -178,6 +179,12 @@ An answer of `identical` says the compiler produced the same program, and the co
 It never says `equivalent`.
 Two binaries being the same bytes is a fact about what the compiler produced under the profile the tests run; whether the mutation could change behaviour is a question about the program, and a comparison of binaries does not answer it ([ADR 0013](../adr/0013-codegen-identity-is-the-equivalence-proof.md)).
 A mutation the compiler refuses establishes nothing either: the question is about two programs, and there is only one.
+
+A comparison speaks only for a build that compiled the spliced file again.
+Cargo decides whether a unit is fresh from the times of the files it read, and where it says a unit that read the spliced file is fresh, the executable it hands back is the one it built before the splice, so comparing it with the original compares the original with itself.
+The layer's build directory is what makes cargo compile such a unit: it forgets the units of a member whose bytes moved and dates that member's files back to when they moved, never forward.
+A member's bytes are its own files and every file outside its directory its units read, which a `#[path]` can name and which the record keeps from the dep-info of the build before, so a splice there moves the member too, and fixture-shared-path holds it: `a_file_a_member_reads_from_outside_its_directory_is_compiled_again_whatever_its_time`, whose cargo dates the file back to 2000, is answered `differs`.
+A clock that disagrees with a file's time is still one more way for cargo to reuse what it built, so the build's own word is read as well: a mutated build in which a unit that read the spliced file was reused is not established, and neither is one in which no unit read it; a control in which a unit that read the restored file was reused withdraws the layer, as one that builds to other bytes does.
 
 ## Where a layer is silent
 

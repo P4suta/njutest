@@ -30,6 +30,11 @@ fn record(id: &str, outcome: &str, answered: &[(&str, &str)]) -> MutantRecord {
         item: "sign".to_owned(),
         original: ">".to_owned(),
         replacement: ">=".to_owned(),
+        evidence: njutest::testkit::reports::sealed_as(
+            &Decided::of(outcome, Some("pkg/lib/pkg".to_owned()), boundary)
+                .or_else(|| Decided::of(outcome, None, boundary))
+                .unwrap_or(Decided::Survived),
+        ),
         outcome: Decided::of(outcome, Some("pkg/lib/pkg".to_owned()), boundary)
             .or_else(|| Decided::of(outcome, None, boundary))
             .unwrap_or(Decided::Survived),

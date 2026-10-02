@@ -318,7 +318,11 @@ fn a_root_that_is_a_member_of_a_workspace_fails_and_names_the_root_to_use() {
         text.contains(&fixture.root().display().to_string()),
         "the root to use is named: {text}"
     );
-    assert_eq!(asked.status.code(), Some(2), "{text}");
+    assert_eq!(
+        asked.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_FAILED)),
+        "{text}"
+    );
 }
 
 #[test]
@@ -366,6 +370,7 @@ fn a_project_that_moved_its_reports_is_still_told_what_a_run_kept() {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: njutest_devkit::paths::environment_for_a_run()
             .into_iter()
             .collect(),

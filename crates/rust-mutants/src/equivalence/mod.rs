@@ -17,13 +17,14 @@ use crate::splice::{Splice, apply};
 use crate::trace::Recorder;
 use crate::workspace::{OpenOptions, Workspace};
 
-pub use artifacts::{Artifacts, Identity};
+pub use artifacts::{Artifacts, Identity, Recompiled};
 
 /// The reason a mutation whose file this tree does not hold establishes nothing.
 pub const NO_SUCH_FILE: &str = "the tree holds no file the mutation is in";
 
 /// The reason a build that did not succeed establishes nothing.
-pub const DID_NOT_BUILD: &str = "the tree with the mutation spliced in did not build";
+pub const DID_NOT_BUILD: &str =
+    "the original tree did not build, so there are not two programs to compare";
 
 /// The reason a mutation the compiler refuses establishes nothing about equivalence.
 pub const DOES_NOT_BUILD: &str =
@@ -31,6 +32,16 @@ pub const DOES_NOT_BUILD: &str =
 
 /// The reason a control that stopped matching withdraws the layer.
 pub const CONTROL_DRIFTED: &str = "the original tree stopped building to the bytes it built to, so nothing here compares two programs";
+
+/// The reason a mutated build whose spliced unit cargo reused establishes nothing.
+pub const NOT_RECOMPILED: &str = "cargo reused the artifact of a unit that read the spliced file, so what was compared was built before the splice";
+
+/// The reason a mutated build no unit of which read the spliced file establishes nothing.
+pub const SPLICE_UNREAD: &str =
+    "no unit of the mutated build read the spliced file, so nothing compared was compiled from it";
+
+/// The reason a control whose restored unit cargo reused withdraws the layer.
+pub const CONTROL_NOT_RECOMPILED: &str = "cargo reused the artifact of a unit that read the restored file, so the control compared what the mutated build left and says nothing of how the tree builds";
 
 /// The variable that takes the build history out of what a build emits.
 const WHOLE_BUILDS: (&str, &str) = ("CARGO_INCREMENTAL", "0");
@@ -50,10 +61,16 @@ pub struct ProveOptions {
 #[derive(Debug)]
 pub struct Prover {
     workspace: Workspace,
-    original: Artifacts,
+    original: Option<Artifacts>,
     settled: bool,
-    withdrawn: bool,
+    withdrawn: Option<&'static str>,
     options: ProveOptions,
+}
+
+/// What one build of the tree produced: the executables, and every unit with whether cargo compiled it.
+struct Built {
+    artifacts: Artifacts,
+    units: Vec<crate::cargo::Unit>,
 }
 
 impl Prover {
@@ -73,12 +90,21 @@ impl Prover {
         let workspace = Workspace::open(root, open, cancel)?;
         let mut prover = Self {
             workspace,
-            original: Artifacts::new(),
+            original: None,
             settled: false,
-            withdrawn: false,
+            withdrawn: None,
             options: options.clone(),
         };
-        prover.original = prover.build(cancel)?.unwrap_or_default();
+        let first = prover.build(cancel)?;
+        let kept = match &first {
+            Some(built) => prover.workspace.keep_includes_verbatim(&built.units)?,
+            None => Vec::new(),
+        };
+        prover.original = if kept.is_empty() {
+            first.map(|built| built.artifacts)
+        } else {
+            prover.build(cancel)?.map(|built| built.artifacts)
+        };
         Ok(prover)
     }
 
@@ -91,9 +117,12 @@ impl Prover {
         candidate: &Candidate,
         cancel: &Cancel,
     ) -> Result<Identity, EngineError> {
-        if self.withdrawn {
-            return Ok(Identity::NotEstablished(CONTROL_DRIFTED));
+        if let Some(why) = self.withdrawn {
+            return Ok(Identity::NotEstablished(why));
         }
+        let Some(original) = self.original.as_ref() else {
+            return Ok(Identity::NotEstablished(DID_NOT_BUILD));
+        };
         let path = self.workspace.snapshot_root().join(&candidate.path);
         let Ok(source) = std::fs::read(&path) else {
             return Ok(Identity::NotEstablished(NO_SUCH_FILE));
@@ -115,32 +144,49 @@ impl Prover {
         }
         let mutated = self.build(cancel);
         if std::fs::write(&path, &source).is_err() {
-            self.withdrawn = true;
-            return Ok(Identity::NotEstablished(CONTROL_DRIFTED));
+            return Ok(self.withdraw(CONTROL_DRIFTED));
         }
         let Some(mutated) = mutated? else {
             return Ok(Identity::NotEstablished(DOES_NOT_BUILD));
         };
-        let answer = artifacts::compare(&self.original, &mutated);
+        match artifacts::recompiled(&mutated.units, &path) {
+            Recompiled::Every => {}
+            Recompiled::Reused => return Ok(Identity::NotEstablished(NOT_RECOMPILED)),
+            Recompiled::Unread => return Ok(Identity::NotEstablished(SPLICE_UNREAD)),
+        }
+        let answer = artifacts::compare(original, &mutated.artifacts);
         if matches!(answer, Identity::NotEstablished(_))
             || (answer == Identity::Differs && self.settled)
         {
             return Ok(answer);
         }
-        let control = self.build(cancel)?.unwrap_or_default();
-        if control == self.original {
+        let Some(control) = self.build(cancel)? else {
+            return Ok(self.withdraw(CONTROL_DRIFTED));
+        };
+        match artifacts::recompiled(&control.units, &path) {
+            Recompiled::Every => {}
+            Recompiled::Reused | Recompiled::Unread => {
+                return Ok(self.withdraw(CONTROL_NOT_RECOMPILED));
+            }
+        }
+        if &control.artifacts == original {
             self.settled = true;
             Ok(answer)
         } else {
-            self.withdrawn = true;
-            Ok(Identity::NotEstablished(CONTROL_DRIFTED))
+            Ok(self.withdraw(CONTROL_DRIFTED))
         }
+    }
+
+    /// Withdraws every answer from here on for `why`, and answers this one with it.
+    const fn withdraw(&mut self, why: &'static str) -> Identity {
+        self.withdrawn = Some(why);
+        Identity::NotEstablished(why)
     }
 
     /// Whether a control has already withdrawn this layer's answers.
     #[must_use]
     pub const fn withdrawn(&self) -> bool {
-        self.withdrawn
+        self.withdrawn.is_some()
     }
 
     /// Removes the tree.
@@ -156,26 +202,32 @@ impl Prover {
     }
 
     /// What one build of the tree produced, or nothing when the tree did not build.
-    fn build(&self, cancel: &Cancel) -> Result<Option<Artifacts>, EngineError> {
-        let built = compile(
-            &self.workspace.driver(cancel),
-            &CompileOptions {
-                kind: CompileKind::Tests,
-                locked: self.options.open.locked,
-                offline: self.options.open.offline,
-                timeout: self.options.timeout,
-                build: self.options.build.clone(),
-                ..CompileOptions::default()
-            },
-        )?;
-        if !built.success {
-            return Ok(None);
+    fn build(&self, cancel: &Cancel) -> Result<Option<Built>, EngineError> {
+        let options = CompileOptions {
+            kind: CompileKind::Tests,
+            locked: self.options.open.locked,
+            offline: self.options.open.offline,
+            timeout: self.options.timeout,
+            build: self.options.build.clone(),
+            ..CompileOptions::new(self.workspace.build_dir().nested("equivalence"))
+        };
+        let built = compile(&self.workspace.driver(cancel), &options)?;
+        match built.completion() {
+            crate::cargo::Completion::Built => {}
+            crate::cargo::Completion::Refused => return Ok(None),
         }
-        let targets = targets_of(&built.messages, &self.workspace.metadata().packages, None)?;
+        let targets = targets_of(
+            &built.messages,
+            &self.workspace.metadata().packages,
+            options.target_dir.path(),
+        )?;
         let executables: Vec<(&str, &Path)> = targets
             .iter()
-            .map(|target| (target.id.as_str(), target.executable.as_path()))
+            .map(|target| (target.id(), target.executable.as_path()))
             .collect();
-        Ok(Some(artifacts::digests(executables)?))
+        Ok(Some(Built {
+            artifacts: artifacts::digests(executables)?,
+            units: built.units,
+        }))
     }
 }

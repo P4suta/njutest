@@ -3,7 +3,7 @@
 
 //! What changed between two assurance reports.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 /// The two documents being compared, as one argument.
@@ -45,6 +45,22 @@ pub enum DiffError {
         #[source]
         source: serde_json::Error,
     },
+    /// A JSON document names no report kind this comparison understands.
+    #[error("{path}: not a report this version understands: document_type {found}")]
+    UnsupportedDocumentType {
+        /// The document.
+        path: String,
+        /// The unknown value.
+        found: String,
+    },
+    /// A mutation run has a mutant row whose identity or outcome cannot be compared.
+    #[error("{path}: invalid run mutant row: {reason}")]
+    InvalidRunMutant {
+        /// The document.
+        path: String,
+        /// The row or field that is invalid.
+        reason: String,
+    },
 }
 
 impl crate::error::Coded for DiffError {
@@ -57,32 +73,212 @@ impl crate::error::Coded for DiffError {
 ///
 /// # Errors
 /// [`DiffError::Unreadable`] for a document that is not JSON.
+/// [`DiffError::UnsupportedDocumentType`] for a document whose kind is unknown.
+/// [`DiffError::InvalidRunMutant`] for a mutation run with an invalid mutant row.
 pub fn compare(before: (&str, &str), after: (&str, &str)) -> Result<Vec<Change>, DiffError> {
     let left = parse(before)?;
     let right = parse(after)?;
+    let (left_kind, right_kind) = (
+        ReportKind::of(before.0, &left)?,
+        ReportKind::of(after.0, &right)?,
+    );
+    if left_kind == ReportKind::Run {
+        validate_run_mutants(before.0, &left)?;
+    }
+    if right_kind == ReportKind::Run {
+        validate_run_mutants(after.0, &right)?;
+    }
     let mut changes = Vec::new();
 
     let pair = Pair {
         before: &left,
         after: &right,
     };
-    if is_run_report(pair) {
-        compare_run(pair, &mut changes);
-    } else {
-        compare_assurance(pair, &mut changes);
+    match (left_kind, right_kind) {
+        (ReportKind::Run, ReportKind::Run) => compare_run(pair, &mut changes),
+        (
+            ReportKind::Assurance(AssuranceShape::Envelope),
+            ReportKind::Assurance(AssuranceShape::Envelope),
+        ) => {
+            compare_tree(
+                "",
+                ReportLocation::Envelope,
+                (Some(pair.before), Some(pair.after)),
+                &mut changes,
+            );
+        }
+        (
+            ReportKind::Assurance(AssuranceShape::Bare),
+            ReportKind::Assurance(AssuranceShape::Bare),
+        ) => {
+            compare_assurance(pair, &mut changes);
+        }
+        _ => compare_scalar("document_type", pair, &mut changes),
     }
     changes.sort();
     Ok(changes)
 }
 
-/// Whether both documents are what a mutation run writes.
-fn is_run_report(pair: Pair<'_>) -> bool {
-    [pair.before, pair.after].iter().all(|document| {
-        document
-            .get("document_type")
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReportKind {
+    Run,
+    Assurance(AssuranceShape),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AssuranceShape {
+    Bare,
+    Envelope,
+}
+
+impl ReportKind {
+    fn of(path: &str, document: &serde_json::Value) -> Result<Self, DiffError> {
+        let Some(fields) = document.as_object() else {
+            return Err(DiffError::UnsupportedDocumentType {
+                path: path.to_owned(),
+                found: document.to_string(),
+            });
+        };
+        match fields.get("document_type") {
+            None => Ok(Self::Assurance(AssuranceShape::Bare)),
+            Some(serde_json::Value::String(kind)) if kind == RUN_REPORT => Ok(Self::Run),
+            Some(serde_json::Value::String(kind)) if kind == "complete" || kind == "shard" => {
+                Ok(Self::Assurance(AssuranceShape::Envelope))
+            }
+            Some(found) => Err(DiffError::UnsupportedDocumentType {
+                path: path.to_owned(),
+                found: found.to_string(),
+            }),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ReportLocation {
+    Envelope,
+    Report,
+    Builds,
+    Build,
+    Parts,
+    Part,
+    Targets,
+    Target,
+    Other,
+}
+
+impl ReportLocation {
+    fn field(self, name: &str) -> Self {
+        match (self, name) {
+            (Self::Envelope, "report") => Self::Report,
+            (Self::Report, "builds") => Self::Builds,
+            (Self::Build, "parts") => Self::Parts,
+            (Self::Part, "targets") => Self::Targets,
+            _ => Self::Other,
+        }
+    }
+
+    const fn element(self) -> Self {
+        match self {
+            Self::Builds => Self::Build,
+            Self::Parts => Self::Part,
+            Self::Targets => Self::Target,
+            _ => Self::Other,
+        }
+    }
+
+    fn volatile(self, name: &str) -> bool {
+        matches!(
+            (self, name),
+            (Self::Report, "run_id") | (Self::Part, "timing") | (Self::Target, "duration_ms")
+        )
+    }
+}
+
+fn validate_run_mutants(path: &str, document: &serde_json::Value) -> Result<(), DiffError> {
+    let rows = document
+        .get("mutants")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| DiffError::InvalidRunMutant {
+            path: path.to_owned(),
+            reason: "mutants must be an array".to_owned(),
+        })?;
+    let mut seen = BTreeSet::new();
+    for (index, row) in rows.iter().enumerate() {
+        let name = row
+            .get("display_id")
             .and_then(serde_json::Value::as_str)
-            == Some(RUN_REPORT)
-    })
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| DiffError::InvalidRunMutant {
+                path: path.to_owned(),
+                reason: format!("mutants[{index}].display_id must be a nonempty string"),
+            })?;
+        if !seen.insert(name) {
+            return Err(DiffError::InvalidRunMutant {
+                path: path.to_owned(),
+                reason: format!("mutants[{index}].display_id repeats {name:?}"),
+            });
+        }
+        if row
+            .get("outcome")
+            .and_then(serde_json::Value::as_str)
+            .is_none_or(str::is_empty)
+        {
+            return Err(DiffError::InvalidRunMutant {
+                path: path.to_owned(),
+                reason: format!("mutants[{index}].outcome must be a nonempty string"),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn compare_tree(
+    path: &str,
+    location: ReportLocation,
+    pair: (Option<&serde_json::Value>, Option<&serde_json::Value>),
+    changes: &mut Vec<Change>,
+) {
+    match pair {
+        (Some(serde_json::Value::Object(left)), Some(serde_json::Value::Object(right))) => {
+            let names: BTreeSet<&String> = left.keys().chain(right.keys()).collect();
+            for name in names {
+                if location.volatile(name) {
+                    continue;
+                }
+                let at = if path.is_empty() {
+                    name.to_owned()
+                } else {
+                    format!("{path}.{name}")
+                };
+                compare_tree(
+                    &at,
+                    location.field(name),
+                    (left.get(name), right.get(name)),
+                    changes,
+                );
+            }
+        }
+        (Some(serde_json::Value::Array(left)), Some(serde_json::Value::Array(right))) => {
+            for index in 0..left.len().max(right.len()) {
+                compare_tree(
+                    &format!("{path}[{index}]"),
+                    location.element(),
+                    (left.get(index), right.get(index)),
+                    changes,
+                );
+            }
+        }
+        (before, after) => {
+            let (before, after) = (text_of(before), text_of(after));
+            if before != after {
+                changes.push(Change {
+                    subject: path.to_owned(),
+                    before,
+                    after,
+                });
+            }
+        }
+    }
 }
 
 /// What a mutation run's document is compared by.
@@ -279,11 +475,7 @@ fn compare_named_records(
     }
 }
 
-fn names_in(
-    value: &serde_json::Value,
-    list: &str,
-    key: &str,
-) -> std::collections::BTreeSet<String> {
+fn names_in(value: &serde_json::Value, list: &str, key: &str) -> BTreeSet<String> {
     value
         .get(list)
         .and_then(serde_json::Value::as_array)

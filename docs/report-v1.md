@@ -18,12 +18,10 @@ The canonical document is `njutest-assurance-report-v1.json`; HTML, SARIF,
 JUnit and line output are projections of that document.
 `latest-any.json` names the latest completed run, and `latest-full.json` advances only for a full run.
 
-Authoritative report publication and reading currently require the Unix handle-relative filesystem backend.
-That backend holds the workspace,
-configured report root, selected run, and each file open while it validates and uses them; it never turns a checked path spelling back into authority.
-On Windows and other non-Unix hosts, commands that would publish, select,
-read, retain, or delete durable reports refuse with the typed `REPORT_NOT_KEPT` error.
-They do not fall back to pathname checks whose object could change between validation and use.
+Authoritative report publication and reading go through one capability directory, `rust_mutants::capdir`, on Unix and on Windows alike.
+It holds the workspace, configured report root, selected run, and each file open while it validates and uses them, and names every operation relative to a held handle; it never turns a checked path spelling back into authority.
+On Windows a store is kept only on NTFS or ReFS with POSIX unlink and rename semantics, and any other volume refuses with the typed `REPORT_NOT_KEPT` error naming its file system ([limitations](limitations.md)).
+Nothing falls back to pathname checks whose object could change between validation and use.
 
 ## Mutation records
 
@@ -43,19 +41,34 @@ Historical v1 `runaway` records have no matched control and are never reinterpre
 
 Every mutation row also carries an explicit `accepted` boolean.
 This makes the durable `accounting.mutants.accepted` column independently derivable;
-`true` is valid only for `survived`, `unreached`, or `equivalent` rows.
+`true` is valid only for `survived`, `unreached`, or `equivalent` rows that rest on sealed executions.
 
-`blind_in` names each build in which a mutation remains a hole, using exactly `unnoticed`, `unreached`, `step-limit-reached`, `waited`, or `errored`.
+`blind_in` names each build in which a mutation remains a hole, using exactly `unnoticed`, `unreached`, `unproven`, `step-limit-reached`, `waited`, or `errored`.
 Answered builds cannot be represented in that field.
+
+### What a decision rests on
+
+A verdict is what a sealed run observed ([ADR 0046](adr/0046-a-verdict-is-what-a-sealed-run-observed.md)), so every mutation row carries `evidence` beside its `decision`, in the engine's own shape ([sealed execution](engine/sealed.md)).
+`{ "kind": "sealed", "executions": [...] }` lists the sealed executions that established the decision, each with its `target`, its `test`, and what it `came_to`.
+`{ "kind": "unproven", "reasons": [...] }` says no sealed execution established a verdict, and gives every reason why: `not-sealed`, `native`, `guard-absent`, `test-absent`, `reach-differs`, `exited-early`, `stack-overflow`, `refused`, or `unaccounted`.
+`evidence` is `null` exactly where `routing` is, a mutation the compiler refused, which no execution was asked about.
+
+A `killed`, `survived`, `unreached` or `equivalent` row answers only where its evidence is sealed.
+Where it is unproven, the decision is what a native run said, which is a lead: the row is decided by nobody (`observers.unproven`), is `unproven` in `blind_in`, answers nothing, can be accepted by nobody, and raises one `unproven-mutant` finding in place of the finding its outcome would raise, so a report holding one concludes `INSUFFICIENT`.
+`compile-rejected` rests on no execution, and `model-noticed` and `model-proved` rest on the model checker's own proof, so neither is held to a sealed execution; `step-limit-reached`, `waited`, `unconfirmed`, `errored` and `declined` are holes whatever they rest on, and keep their own findings.
+
+A sealed row is held to its executions, decided again from them: a `killed` row names the target whose sealed execution detected it first, a `survived` or `equivalent` row rests on executions that all passed, and an `unreached` row on none.
+A sealed row this run established answers, in `routing.answered`, exactly what its executions did, one answer per target in the order each first ran: `killed` where one of its executions detected the mutation, `errored` where one established nothing, and `survived` where every one passed.
+A report is refused, when it is written and when it is read, if a row's evidence is not the one its decision can rest on.
 
 ## Findings
 
 A **finding** is an actionable defect or an explicit gap in what the run established.
 A finding is one of four derivations, by its kind (`FindingKind::derivation`).
-A mutation row decides the surviving, waited and step-limit ones; the part's own records decide the ones they are raised from — `hollow-target`, `unstable-baseline`, `unnoticed-fault`, `corrupt-after-crash`, `environment-dependent`, `environment-dependent-reach`, `schedule-dependent`, `dimension-not-measured`; `not-measured` is raised both from records and by phases; and the rest a phase observed.
+A mutation row decides the surviving, waited, step-limit and unproven ones; the part's own records decide the ones they are raised from — `hollow-target`, `unstable-baseline`, `unnoticed-fault`, `corrupt-after-crash`, `environment-dependent`, `environment-dependent-reach`, `schedule-dependent`, `dimension-not-measured`; `not-measured` is raised both from records and by phases; and the rest a phase observed.
 A report is refused, when it is written and when it is read, if the findings its records decide are not exactly the ones it holds: one no record raises, or one they raise that it dropped, is a report saying something its records contradict.
 
-There are twenty kinds, and every report carries the stable name:
+There are twenty-one kinds, and every report carries the stable name:
 
 | `kind` | what it says | a defect |
 | --- | --- | --- |
@@ -69,6 +82,7 @@ There are twenty kinds, and every report carries the stable name:
 | `timeout` | a non-mutation phase exhausted its time bound | no |
 | `waited-mutant` | a mutation execution exhausted its wall-clock bound | no |
 | `step-limit-reached-mutant` | a verified finite step boundary was crossed without a matched control verdict | no |
+| `unproven-mutant` | no sealed execution established a verdict about a mutation, so what a native run said of it is a lead | no |
 | `not-measured` | the run could not make the stated measurement | no |
 | `unmatched-acceptance` | an active acceptance names other than exactly one catalog entry | no |
 | `hollow-target` | a target was put to mutations and noticed none | no |
@@ -86,7 +100,7 @@ A report with a defect concludes `DEFECT`; a report with only gaps concludes `IN
 ## Who decided each mutation
 
 `accounting.mutants.observers` partitions the catalog.
-There are ten columns,
+There are eleven columns,
 in the same closed order as `Decision::ALL`:
 
 | column | what decided it | the outcome it comes from |
@@ -98,10 +112,12 @@ in the same closed order as `Decision::ALL`:
 | `proved` | no observer could distinguish the programs | `equivalent` |
 | `unnoticed` | every reaching test ran and none noticed | `survived` |
 | `unreached` | no measured target reached the mutation | `unreached` |
+| `unproven` | no sealed execution decided it, so what a native run said of it is a lead | `killed`, `survived`, `unreached`, `equivalent` |
 | `step-limit-reached` | a verified execution boundary was crossed, without a verdict | `step-limit-reached` |
 | `waited` | the wall-clock bound expired before completion | `waited` |
 | `errored` | no verdict could be established | `unconfirmed`, `errored`, `declined` |
 
+A row counts in `unproven` rather than in the column its outcome names wherever its evidence is unproven; the outcome columns beside them still count every row by its outcome, sealed or a lead.
 The accounting is re-derived exactly from the ID-level records.
 Mutation and target identities are unique, target rows are in canonical order, every target status column is reproduced from the rows, and every mutation outcome,
 reuse, and acceptance column equals the row-derived count.
@@ -116,7 +132,8 @@ reused_survived <= survived
 observers.total() = cataloged
 ```
 
-Only killed and survived mutation evidence is reusable.
+Only killed and survived mutation evidence is reusable, and a stored answer carries what it rests on: a sealed one is read back as it is, and a lead only once this run's sealing is tried and decides nothing.
+A run that reissues a whole stored report (`provenance.cached`, naming the run it read back from) marks every `killed` and `survived` row it restates with that run in its `reuse`, and counts each part's accounting again from the re-marked rows, so a reader or an audit holds those verdicts to the run that established them and asks this one only for the sealed executions it ran again.
 Model answers retain their generated source, raw export, process termination, hashes, pinned tool and backend identity so an independent audit can re-derive the affirmative answer rather than trusting a summary.
 
 Every model identity also carries one closed `crate_input` object.
@@ -154,17 +171,20 @@ duplicates and missing counterparts are rejected.
 | `granularity` | `all`, `block`, `test`, `discharged`, or `unreached` |
 | `reaching` | targets that could notice the mutation |
 | `discharged` | targets removed by `branch-never-taken` or `never-infected` |
-| `fallback` | why routing widened: `not-measured`, `position-unknown`, `outside-blocks`, `coverage-incomplete`, or `touch-incomplete` |
+| `fallback` | why routing widened: `not-measured`, `position-unknown`, `outside-blocks`, `coverage-incomplete`, `touch-incomplete`, or `compile-time` |
 | `answered` | targets actually asked, in order, with their outcomes: by this run, or by the run a read-back or resumed row came from |
 
 A row this run decided by a route it asked is held to that route's own answers, and a report that contradicts them is refused.
+The `compile-time` fallback asks every target about a const initializer built with its selector active, since runtime reach cannot narrow an expression evaluated during compilation.
 A `killed` row's answers end with the target it names noticing, and hold no other kill: the mutation phase stops at the first target that notices.
 A `survived` row's answers hold one survival from each target in `reaching` and nothing else, in whatever order the run asked them.
 A row read back from another run, or inherited from a checkpoint without a route, was not asked here, so the rule has nothing to hold it to.
 For a kill this run established, `by` is therefore a second copy of the last answer's target; the rule keeps the two in step until a later schema stops storing both.
 
 Evidence consultation records either the source run it reused or one closed refusal: `nothing-recorded`, `unreadable`, `target-unknown`, `not-routed`,
-`key-changed`, `not-passing`, `target-entered`, or `nothing-routed`.
+`key-changed`, `not-passing`, `target-entered`, `nothing-routed`, `superseded`, which a lead an earlier run kept gets where this run's sealed executions decided the mutation,
+or `unreproduced`, which a sealed verdict an earlier run kept gets where this run's sealed executions of the mutation did not come to what it recorded, in the order they ran, or did not establish the verdict it records ([reproducing a sealed verdict](engine/sealed.md#reproducing-a-sealed-verdict)).
+A row reused from a sealed verdict is one whose executions this run put again and saw come out the same.
 
 ## Drift
 
@@ -173,30 +193,40 @@ A record's `state` is `held` where an original-code control of the whole target 
 `moved` where it did not, with what only the control reported (`gained`) and what only the baseline reported (`lost`) for each union by catalog index,
 and `not-measured` with one closed `why`: `no-control` (the run was cancelled before any control of it ran), `unrecorded`, `unreadable`, `control-failed`, `other-tests`, `no-baseline`, `baseline-retried`, which a target whose baseline passed only when run again in the directory its failed first attempt left gets, because that run did not happen under the conditions a control's does, or `unparsed`, where the tests either run was read as passing do not come to the count its own summary gives, because then which tests passed is the parser's answer and not the harness's.
 
-A part that measured the whole catalog raises `unstable-baseline` about each moved target and states `drift-not-measured` naming every target that is not measured.
+A part that measured the whole catalog raises `unstable-baseline` about each moved target something still rests on and states `drift-not-measured` naming every target that is not measured.
 A shard records drift and raises neither, and concludes `INSUFFICIENT` rather than `PARTIAL` where a target moved; a merge raises both from the combined records of every part of the build.
 The same holds for `hollow-target`, since which targets answered about a mutation and noticed none is only known over the whole catalog.
 What only the whole catalog decides is one function, `report::whole_catalog`, called by a run that measured the catalog whole and by a merge over the combined records, so a catalog concludes the same whether it was measured whole or in shards.
-Re-executing what rested on a moved record is not done by this release; the finding is what a reader acts on.
+Every survived or unreached disposition whose route did not put a moved target to it rests on that target, and is run again against it ([ADR 0036](adr/0036-what-rested-on-a-moved-reach-is-run-again.md)): a lead natively, with its reach recorded, and replaced by what that run decides where it reached the site; a sealed verdict on the sealed bench, with the moved target counted among those reaching it, and replaced by the verdict that put re-establishes, the target then in its route, or, where the put establishes nothing, by what the native run judges of it, a lead run again as leads are.
+A moved target nothing rests on afterwards is stated as the limitation `reach-moved`, naming it and how many dispositions were run again.
+
+Every part also carries `repaired`: one `{ target, again }` for each target its drift records as `moved`, in drift order, saying how many dispositions the part ran again against that target and replaced, with an answer or a hole.
+A part whose `repaired` does not name exactly its moved targets, in that order, or counts more dispositions against one than the part holds, is not a v1 document.
+The count is the part's own, because only the run that ran them again knows it; a merge states `reach-moved` about a moved target nothing rests on over the combined records with the sum of every part's count for it, so a catalog measured in shards says what one measured whole says.
+`proofaudit` holds a merge's record stream to the same re-derivation: an `unstable-baseline` finding for each moved target something still rests on, counting what does, and a `reach-moved` limitation for each one nothing rests on, counting what every part ran again.
 
 ## Faults
 
 Every part carries `faults`, one record per site a fault was asked at, in catalog order, and empty unless the run was asked for faults ([ADR 0032](adr/0032-a-fault-is-a-failed-call-the-suite-is-asked-about.md)).
-A fault site is a `?` in a measured file; its catalog is its own, discovered by the rule `inject-error` alone, so `catalog_index` counts faults and a `K/N` shard owns the faults whose index modulo `N` is `K - 1`, exactly as it owns mutations.
-A record carries the fault's `id` and `display_id`, its `path`, `item` and `position`, and one closed `decision`:
+A fault site is a `?` in a measured file; its catalog is its own, holding the rule `inject-error` and the error-propagation mutations a fault is put beside, so `catalog_index` counts in that catalog and a `K/N` shard owns the faults whose index modulo `N` is `K - 1`, exactly as it owns mutations.
+A record carries the fault's `id` and `display_id`, and every field that identity is minted from, as a mutation's is: its `path`, `rule` (`inject-error`) and `rule_version`, the `span` of bytes the call covers, the `source_digest` of the whole file, the call as the file spells it (`original`) and what it becomes under the fault (`replacement`); `proofaudit` mints each identity again from them and refuses a record whose fields do not mint it.
+It also carries its `item` and `position`, and one closed `decision`:
 
 | `decision` | what it says | carries |
 | --- | --- | --- |
 | `noticed` | a test failed with the call failing and passed on the unchanged program, and failed again on a second run | `by`, the first target in target order that noticed |
-| `unnoticed` | every test that reached the site passed with the call failing | |
+| `unnoticed` | every test that reached the site passed with the call failing, and something formatted the failure it made, or the record of it cannot say | |
+| `absorbed` | every test that reached the site passed with the call failing, and a run of each dropped every failure it made without anything reading it | |
 | `unreached` | no test reached the site | |
 | `waited` | a bound expired with the call failing before a test finished | `on` |
 | `undecided` | a test failed with the call failing and the run could not confirm it, or could not run the test | `on`, `why` |
 | `not-put` | the compiler refused the fault, because the site propagates an error type the engine does not make | `diagnostic`, the compiler's first line |
 
 Nothing here is a kill, and nothing is proved: a fault changes what the program is given, never the program, and no discharge is applied to a fault's route.
-`accounting.faults` counts the records, and `noticed + unnoticed + unreached + waited + undecided + not_put` equals `sites`; a part whose counts do not is not a v1 document.
-Every `unnoticed` record raises one `unnoticed-fault` finding naming its `display_id`, and every `waited` or `undecided` one a `not-measured` finding naming it, so a run asked for faults that could not decide one is not `ASSURED`.
+`accounting.faults` counts the records, and `noticed + unnoticed + absorbed + unreached + waited + undecided + not_put` equals `sites`; a part whose counts do not is not a v1 document.
+Every `unnoticed` or `absorbed` record raises one `unnoticed-fault` finding naming its `display_id`, the `absorbed` one saying the failure went nowhere, and every `waited` or `undecided` one a `not-measured` finding naming it, so a run asked for faults that could not decide one is not `ASSURED`.
+`absorbed` rests on one more run of the fault on each target that reached it, in name order, stopping at the first that does not bear it out, with its runtime recording what became of each failure it made: `made`, `read` where something formatted it, `dropped`.
+Only an `std::io::Error` carries that record, so a site of any other error type stays `unnoticed`.
 `not-put` records are stated as one `fault-not-put` limitation naming each compiler error class with its sites.
 A tree whose faulted baseline could not be measured raises a `not-measured` finding about `fault-baseline-not-measured` and carries no records.
 A record's `position` is `null` where the run could not place the site.
@@ -231,7 +261,7 @@ Every part carries `concurrency`, one `{ target, standing }` per test binary the
 `single-threaded` where the binary's baseline reached nothing off its tests' threads and no package of its closure can start a thread or runs native code;
 `concurrent` with every reason that holds in `because`, each `loose-reach`, `parallel-tests` (libtest ran its tests on more than one thread, which it does unless the run passes `--test-threads=1`), or `starts` with the `package`, `path`, `line`, and `what` (`spawn`, `scope`, `parallel`, `runtime`);
 and `not-proven` with every reason in `why`: `no-touch`, `not-libtest`, `doctest`, `unread` with the `package` and `path`, or `native-code` with the `package` and `by` (a `path:line`, or `links`).
-`explored` says what delaying its guards found, closed by `state`: `unexplored` with `why` (`not-needed` for a single-threaded binary, `not-asked`, `not-passing`, `no-site`), `sampled` with the number of guards `asked` for and every guard `delayed` where each delayed control passed, `undecided` with `asked`, `delayed`, and those whose controls settled nothing or whose failure no round confirmed as `undecided`, or `broke` with the `site`, its `path` and `line`, the tests that `failed`, and the confirming `rounds`.
+`explored` says what delaying its guards found, closed by `state`: `unexplored` with `why` (`not-needed` for a single-threaded binary, `not-asked`, `not-passing`, `no-site`, `reach-unrecorded` for a binary whose baseline reach was not recorded, such as the documentation target, whose doctests run in processes the touch runtime cannot attribute), `sampled` with the number of guards `asked` for and every guard `delayed` where each delayed control passed, `undecided` with `asked`, `delayed`, and those whose controls settled nothing or whose failure no round confirmed as `undecided`, or `broke` with the `site`, its `path` and `line`, the tests that `failed`, and the confirming `rounds`.
 A delay broke a binary only where, in each of five rounds, a delayed control failed exactly the same tests and an undelayed one passed; the part then raises `schedule-dependent` about it, a defect, and a shard explores nothing.
 A part whose records name a binary twice or out of order is refused.
 
@@ -241,12 +271,15 @@ A part states `schedule-not-explored` naming every binary that is not `single-th
 
 Every part carries `crashes`, one record per call that writes a crash was asked at, in catalog order, and empty unless the run was asked for crashes ([ADR 0035](adr/0035-a-crash-is-a-stop-the-next-run-has-to-survive.md)).
 A crash site is a call that writes in a measured file, discovered by the rule `crash-after-write` alone; under it the call runs and the process stops at once.
-The first test that reaches the call, target by target in name order, is stopped there and run again with nothing active in the scratch the stop left, and each record carries one closed `decision`:
+The first test that reaches the call, target by target in name order, is stopped there and run again with nothing active in the scratch the stop left, and each record carries one closed `decision`.
+Where the run seals and the test's sealed control reached the call, the stop is a sealed instance the host halts in the call that publishes its notice, and the next run is a fresh instance started from everything it left but the runtime's own records; one round decides it, since the same instance comes out the same every time, and the record says `sealed: true` ([ADR 0046](adr/0046-a-verdict-is-what-a-sealed-run-observed.md)).
+`sealed` is true exactly where the decision rests on at least one run and every run it rests on was a sealed instance.
+A sealed stop names what it left as a native one does, relative to the temporary directory and from `~/` below the home, and names a change it made in the tree from `./`, below `CARGO_TARGET_TMPDIR` from `$CARGO_TARGET_TMPDIR/`, and a removal with ` (removed)` after it.
 
 | `decision` | what it says | carries |
 | --- | --- | --- |
 | `restarted` | the next run passed over the files the stop left | `on`, the target and test; `left`, those files |
-| `corrupt` | the next run failed, a fresh run passed, and a second stop failed the next run again | `on`; `failed`, the tests |
+| `corrupt` | the next run failed; natively a fresh run passed and a second stop failed the next run again, and sealed the next instance detected, its control having passed | `on`; `failed`, the tests |
 | `unshared` | the stopped run left nothing in its scratch | `on` |
 | `unreached` | no test that reached the call stopped at it | |
 | `undecided` | a run came to something other than passing or stopping at the call, which test reaches the call is not known, or an earlier stop wrote outside its scratch into the tree | `on`, `why` |
@@ -255,15 +288,18 @@ The first test that reaches the call, target by target in name order, is stopped
 `accounting.crashes` counts the records, and `restarted + corrupt + unshared + unreached + undecided + not_put` equals `sites`.
 Every `corrupt` record raises a `corrupt-after-crash` finding, a defect; every `unshared` or `undecided` one a `not-measured` finding.
 `restarted` says the next run passed over what the stop left, not that it read it, and a stop here is a process stopping, not the power failing; the durable column says it does not speak about either.
-A tree with no call that writes in a measured file states `crash-no-site`, and one whose crashed baseline could not be measured raises a `not-measured` finding about `crash-baseline-not-measured`.
+A tree with no call that writes in a measured file states `crash-no-site`, which discovery alone decides before anything is built or run, and one whose crashed baseline could not be measured raises a `not-measured` finding about `crash-baseline-not-measured`.
 
 ## The matrix
 
 A report is read along six dimensions, `mutation`, `repeatable`, `fault`, `schedule`, `wire` and `durable` ([ADR 0033](adr/0033-every-dimension-or-a-hole.md)).
 The matrix is derived from the records above and never stored: a stored column would be a second copy of them a reader could find disagreeing.
 Each column is `measured` with `catalogued`, `answered`, `holes` (which add up) and what it `speaks_not_about`, or `unmeasured` with why, `not-asked`, or `nothing-to-ask` with why.
-Mutation holes are the waited, step-limited, unconfirmed, errored and declined mutations; knob holes the uncompared and unsettled records, and knobs not put are what it does not speak about; fault holes the waited and undecided sites, and sites not put are what it does not speak about; wire holes the questions not reached and the seams not watched, and it never speaks about a seam the configuration does not name.
-The record stream carries one `DIMENSION` record per column.
+Every hole is named with why: a mutation by its identity and outcome, a knob by the target it was put on, a fault or a crash by its place, a question by its seam, and a test binary by its name and what left its schedules open.
+Mutation holes are the waited, step-limited, unconfirmed, errored and declined mutations, every lead, and each class of places a run chose not to mutate (`skipped-excluded`, `skipped-annotated`, `skipped-configured`), which another run could; every other `skipped-*` class is one no run of the engine can mutate, and is what the column does not speak about; knob holes the uncompared and unsettled records, and knobs not put are what it does not speak about; fault holes the waited and undecided sites, and sites not put are what it does not speak about; wire holes the questions not reached and the seams not watched, and it never speaks about a seam the configuration does not name.
+A limitation's `name` is one of the closed set the schema lists, every name a run of this release can state, so every reader places it by the same exhaustive rule: the runner's own reader and `cargo xtask proofaudit` both refuse a report naming another, rather than each place it a way of its own.
+A run whose baseline did not build is `unmeasured` along every dimension, with the build failure as why.
+The record stream carries one `DIMENSION` record per column, whose `open=` field names each hole and whose `speaks_not_about=` field names each class the column cannot put; the drawing names both beneath the column's line.
 Under `whole-v1`, every column that is not `measured` without a hole or `nothing-to-ask` is a `dimension-not-measured` finding whose subject is the dimension's name; a run of the whole catalog raises them, a shard raises none, and a merge raises them over every part.
 
 ## Sources
@@ -286,10 +322,10 @@ The engine resolves the width once, runs at it, and writes that value, so the re
 ## Shards and projections
 
 A `K/N` shard owns dense catalog indices whose index modulo `N` is `K - 1`.
-A part concludes `PARTIAL`; only a complete, non-overlapping set of all parts can be merged into an unsharded verdict.
+A part concludes `PARTIAL` and exits 2, as a run that established too little to conclude does, since a part assures nothing on its own; only a complete, non-overlapping set of all parts can be merged into an unsharded verdict.
 The merge re-derives accounting,
 findings and verdict from the union instead of adding claims from the parts.
-A run judges an expectation only on the mutations it decided: not those another part holds, a selection such as `--file` left out, or a stop came before.
+A run judges an expectation only on the mutations it decided: not those another part holds, a selection such as `--file` left out, a stop came before, or every test that reached them declined to measure ([ADR 0043](adr/0043-a-test-may-decline-to-measure.md)).
 A change set (`--changed`, `--changed-from`) builds the catalog from the files it names alone, so a claim on another file resolves to nothing there; it too is `unjudged`, while a claim on a file the change set kept that names nothing is still `unmatched`.
 One that decided none of them says `unjudged`, which is neither met nor contradicted and earns no finding, so a run over one file is not failed by claims about another.
 A `count` spread across parts is therefore checked by the parts together;
@@ -302,14 +338,15 @@ A `stale-expectation` or `unmatched-expectation` finding is derived from its exp
 JSON is canonical.
 Terminal output is tab-separated with the record kind first and verdict last; untrusted text is escaped.
 HTML, SARIF and JUnit carry the same audit identity and findings.
+Every drawing states a survivor's evidence under a fault, as `observable-under-fault`: the line output appends it under the survivor's own record, HTML holds a table of it, SARIF carries it as a `note` result a code-scanning reader sees beside the findings, and JUnit holds it as a passing testcase of an `evidence-under-fault` suite, counted as a test and never as a failure.
 
 ## Exit codes
 
 | Code | Meaning |
 | ---: | --- |
-| 0 | `ASSURED`, `CHANGE_ASSURED`, `SCOPE_ASSURED`, `PARTIAL`, `RESOLVED` |
+| 0 | `ASSURED`, `CHANGE_ASSURED`, `SCOPE_ASSURED`, `RESOLVED` |
 | 1 | `DEFECT`, `REPRODUCED` |
-| 2 | `INSUFFICIENT`, `INCONCLUSIVE` |
+| 2 | `INSUFFICIENT`, `PARTIAL`, `INCONCLUSIVE` |
 | 3 | `ERROR`, invalid input, or an infrastructure failure |
 | 130 | interrupted |
 | 143 | terminated |

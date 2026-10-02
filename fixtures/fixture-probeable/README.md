@@ -64,11 +64,11 @@ src/lib.rs:46:21 eq-to-neq unreached
 src/lib.rs:52:5 return-default killed
 src/lib.rs:53:17 int-increment survived
 src/lib.rs:54:14 string-to-empty killed
-src/lib.rs:63:5 return-default not_run
-src/lib.rs:80:5 return-default not_run
-src/lib.rs:86:5 return-default not_run
-src/lib.rs:92:5 return-default not_run
+src/lib.rs:63:5 return-default survived
+src/lib.rs:80:5 return-default survived
+src/lib.rs:86:5 return-default survived
+src/lib.rs:92:5 return-default survived
 src/lib.rs:92:5 return-some-default killed
 src/lib.rs:98:5 return-default survived
-src/lib.rs:107:5 return-default not_run
+src/lib.rs:107:5 return-default survived
 ```

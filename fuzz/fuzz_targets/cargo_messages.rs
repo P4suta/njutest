@@ -25,7 +25,7 @@ fuzz_target!(|data: &[u8]| {
             "a span that names no file: {span:?}"
         );
         assert!(
-            span.byte_start <= span.byte_end,
+            span.byte_start() <= span.byte_end(),
             "a span that ends before it starts: {span:?}"
         );
     }

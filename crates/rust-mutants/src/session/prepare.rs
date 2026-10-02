@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use super::compiled::Compiler;
 use super::{PrepareOptions, Session, Verified, verify};
 use crate::EngineError;
 use crate::cargo::{CompileKind, CompileOptions, compile};
@@ -31,7 +32,8 @@ pub(super) fn selection(options: &PrepareOptions) -> Result<Selection<'static>, 
         return Ok(Selection::tier(&REGISTRY, options.tier));
     }
     let names: Vec<&str> = options.operators.iter().map(String::as_str).collect();
-    Ok(Selection::rules(&REGISTRY, &names)?)
+    Ok(Selection::rules(&REGISTRY, &names)?
+        .compiling_items(options.tier == crate::rule::Tier::Compiled))
 }
 
 /// Refuses a tree that does not compile before anything is instrumented, and hands back the units the check compiled.
@@ -57,7 +59,7 @@ pub(super) fn pristine(
         &CompileOptions {
             kind: CompileKind::Check,
             packages: Vec::new(),
-            target_dir: Some(workspace.build_dir().nested(PRISTINE)),
+            target_dir: workspace.build_dir().nested(PRISTINE),
             locked: workspace.locked,
             offline: workspace.offline,
             timeout: Workspace::timeout(options.build_timeout),
@@ -65,12 +67,11 @@ pub(super) fn pristine(
             build: options.build.clone(),
         },
     )?;
-    if checked.success {
-        Ok(checked)
-    } else {
-        Err(EngineError::from(SessionError::PristineBroken {
+    match checked.completion() {
+        crate::cargo::Completion::Built => Ok(checked),
+        crate::cargo::Completion::Refused => Err(EngineError::from(SessionError::PristineBroken {
             first: crate::validate::first_error_of(&checked.messages),
-        }))
+        })),
     }
 }
 
@@ -200,10 +201,12 @@ fn said_by(
     let mut changed = Vec::new();
     let mut watched = BTreeMap::new();
     for line in text.lines() {
-        let line = line
+        let Some(line) = line
             .strip_prefix("cargo::")
             .or_else(|| line.strip_prefix("cargo:"))
-            .unwrap_or_default();
+        else {
+            continue;
+        };
         if let Some(path) = line.strip_prefix("rerun-if-changed=") {
             changed.push(path.to_owned());
         } else if let Some(name) = line.strip_prefix("rerun-if-env-changed=") {
@@ -229,8 +232,10 @@ fn watched_of(
     let mut inside = BTreeSet::new();
     let mut outside = BTreeMap::new();
     for path in changed {
-        let full =
-            directory.map_or_else(|| PathBuf::from(&path), |directory| directory.join(&path));
+        let full = match directory {
+            Some(directory) => directory.join(&path),
+            None => PathBuf::from(&path),
+        };
         let text = full
             .to_str()
             .ok_or_else(|| SessionError::EvidencePathNotUtf8 { path: full.clone() })?;
@@ -377,7 +382,7 @@ fn manifests_of(workspace: &Workspace) -> Result<String, SessionError> {
         .metadata
         .packages
         .iter()
-        .map(|package| package.manifest_path.clone())
+        .map(|package| package.manifest_path.as_path().to_path_buf())
         .chain([
             root.join("Cargo.toml"),
             root.join("Cargo.lock"),
@@ -465,7 +470,14 @@ pub(super) struct Building<'a> {
     pub(super) options: &'a PrepareOptions,
 }
 
-fn built(building: &Building<'_>) -> Result<(Built, crate::apparatus::Apparatus), EngineError> {
+/// The test binaries of the instrumented tree, what the build left beside them, and the tree's sealed build.
+type Assembled = (
+    Built,
+    crate::apparatus::Apparatus,
+    crate::sealed::SealedBuild,
+);
+
+fn built(building: &Building<'_>) -> Result<Assembled, EngineError> {
     let phase = building.trace.phase("build");
     let built = built_untraced(building)?;
     phase.end();
@@ -473,7 +485,8 @@ fn built(building: &Building<'_>) -> Result<(Built, crate::apparatus::Apparatus)
         built.0.iter().map(|target| target.executable.as_path()),
         building.workspace.target_dir(),
     );
-    Ok((built, apparatus))
+    let sealed = sealed_build(building, &built.0, None)?;
+    Ok((built, apparatus, sealed))
 }
 
 /// The test binaries the instrumented build produced, and what running them once established.
@@ -488,7 +501,7 @@ fn built_untraced(building: &Building<'_>) -> Result<Built, EngineError> {
     let mut targets = execute::targets_of(
         last_build,
         &workspace.metadata.packages,
-        Some(&workspace.target_dir),
+        &workspace.target_dir,
     )?;
     if targets.is_empty() {
         return Err(EngineError::from(SessionError::NoTargets {
@@ -504,16 +517,25 @@ fn built_untraced(building: &Building<'_>) -> Result<Built, EngineError> {
         targets.extend(execute::documentation_targets(
             &members,
             workspace.toolchain.cargo(),
-            &documentation_arguments(workspace),
+            &documentation_arguments(workspace, &options.build),
         ));
+    }
+    for target in &mut targets {
+        target
+            .cargo_env
+            .overlay(&compiled_environment(building.catalog.digest(), None));
     }
     let built: Vec<crate::trace::TargetRecord> = targets
         .iter()
         .map(|target| crate::trace::TargetRecord {
-            id: target.id.clone(),
-            kind: target.kind.name().to_owned(),
+            id: target.id().to_owned(),
+            kind: target.kind().name().to_owned(),
             harness: target.harness,
-            limitations: target.limitations.clone(),
+            limitations: target
+                .limitations
+                .iter()
+                .map(|limitation| limitation.name().to_owned())
+                .collect(),
         })
         .collect();
     let skipped = left_out(workspace, &targets, &options.skip_targets)?;
@@ -591,8 +613,8 @@ fn left_out(
     }
     Ok(targets
         .iter()
-        .filter(|target| named.iter().any(|one| one == &target.id))
-        .map(|target| target.id.clone())
+        .filter(|target| named.iter().any(|one| one == target.id()))
+        .map(|target| target.id().to_owned())
         .collect())
 }
 
@@ -602,11 +624,14 @@ fn excluded(targets: &mut Vec<TestTarget>, verified: &Verified, options: &Prepar
         return;
     }
     let failing = verified.failing();
-    targets.retain(|target| !failing.contains(&target.id.as_str()));
+    targets.retain(|target| !failing.contains(&target.id()));
 }
 
 /// What cargo is told before the documentation examples' own arguments, so that running them reuses the build this session already made.
-fn documentation_arguments(workspace: &Workspace) -> Vec<std::ffi::OsString> {
+fn documentation_arguments(
+    workspace: &Workspace,
+    build: &crate::cargo::BuildConfig,
+) -> Vec<std::ffi::OsString> {
     let mut args = vec![
         std::ffi::OsString::from("--target-dir"),
         workspace.target_dir.clone().into_os_string(),
@@ -617,6 +642,12 @@ fn documentation_arguments(workspace: &Workspace) -> Vec<std::ffi::OsString> {
     if workspace.offline {
         args.push(std::ffi::OsString::from("--offline"));
     }
+    args.extend(
+        build
+            .cargo_arguments()
+            .into_iter()
+            .map(std::ffi::OsString::from),
+    );
     args
 }
 
@@ -743,16 +774,14 @@ fn gated(
 ) -> Result<Gated, EngineError> {
     let pristine_phase = trace.phase("pristine");
     let checked = gate(workspace, options, cancel)?;
-    let read = Digested {
-        closure: super::Closure {
-            digest: closure_of(workspace, &checked)?,
-            units: unit_sources(workspace, &checked)?,
-            carrying: super::Carrying::fresh(),
-        },
-        inputs: inputs_of(workspace, &checked)?,
-        manifests: manifests_of(workspace)?,
-        compilation: crate::cargo::Compilation::of(&checked),
+    let closure = super::Closure {
+        digest: closure_of(workspace, &checked)?,
+        units: unit_sources(workspace, &checked)?,
+        carrying: super::Carrying::fresh(),
     };
+    let inputs = inputs_of(workspace, &checked)?;
+    let manifests = manifests_of(workspace)?;
+    let compilation = crate::cargo::Compilation::of(&checked);
     pristine_phase.end();
     let discover_phase = trace.phase("discover");
     let discovery = discover::discover(
@@ -772,7 +801,29 @@ fn gated(
         trace,
     )?;
     discover_phase.end();
-    Ok(Gated { discovery, read })
+    Ok(Gated {
+        discovery,
+        read: Digested {
+            closure,
+            inputs,
+            manifests,
+            compilation,
+            units: checked.units,
+        },
+    })
+}
+
+/// What discovery finds on the tree as it was copied, behind the gate the tree has to pass, with nothing instrumented, built or run.
+///
+/// # Errors
+/// The pristine gate and the failures of discovery.
+pub fn discovered(
+    workspace: &Workspace,
+    options: &PrepareOptions,
+    cancel: &Cancel,
+) -> Result<Catalog, EngineError> {
+    let trace = workspace.trace.clone();
+    Ok(gated(workspace, options, cancel, &trace)?.discovery.catalog)
 }
 
 /// What the gate established: what there is to mutate, and everything the build read.
@@ -781,12 +832,53 @@ struct Gated {
     read: Digested,
 }
 
+/// The bytes every planned file is compiled from, with the includes the plan kept, which name the files the build reads as text.
+type Compiled = (BTreeMap<String, Vec<u8>>, Vec<crate::verbatim::Kept>);
+
+/// The bytes every file of `sources` is compiled from: its pristine bytes, but for a file that reads a Rust source of the tree as text, whose include now reads the source as it was copied, in bytes of the same length on the same lines, so every position of the pristine file holds in it.
+///
+/// The includes the plan kept are named with the bytes, so a file the build only reads as text can be left as it was copied.
+///
+/// # Errors
+/// What [`Workspace::keep_includes_verbatim`] refuses, and a rewritten file that cannot be read back or has another length.
+fn compiled(
+    workspace: &mut Workspace,
+    units: &[crate::cargo::Unit],
+    sources: &BTreeMap<String, Vec<u8>>,
+) -> Result<Compiled, EngineError> {
+    let kept = workspace.keep_includes_verbatim(units)?;
+    let mut compiled = sources.clone();
+    for one in &kept {
+        let Some(bytes) = compiled.get_mut(&one.reader) else {
+            continue;
+        };
+        let now = std::fs::read(workspace.snapshot_root().join(&one.reader)).map_err(|source| {
+            SessionError::WriteFailed {
+                path: one.reader.clone(),
+                source,
+            }
+        })?;
+        if now.len() != bytes.len() {
+            return Err(SessionError::IncludeUnkept {
+                source: crate::verbatim::VerbatimError::Misplaced {
+                    path: one.reader.clone(),
+                    line: one.line,
+                },
+            }
+            .into());
+        }
+        *bytes = now;
+    }
+    Ok((compiled, kept))
+}
+
 /// What the build read, as digests a later run or a selection compares against, what each unit read, and what it compiled.
 struct Digested {
     closure: super::Closure,
     inputs: crate::select::Inputs,
     manifests: String,
     compilation: crate::cargo::Compilation,
+    units: Vec<crate::cargo::Unit>,
 }
 
 /// Every unit the pristine build compiled, named without a package id, with each file it read under the root or the target directory spelled by its class.
@@ -837,9 +929,10 @@ fn unit_sources(
             Some(_) | None => &[],
         };
         units.push(crate::skeleton::UnitSource {
-            package: names
-                .get(unit.package_id.as_str())
-                .map_or_else(|| unit.package_id.clone(), |name| (*name).to_owned()),
+            package: match names.get(unit.package_id.as_str()) {
+                Some(name) => (*name).to_owned(),
+                None => unit.package_id.clone(),
+            },
             target: unit.target.name.clone(),
             kind: unit.target.kind.join(","),
             test: unit.test,
@@ -868,31 +961,46 @@ fn text_of(path: &Path) -> Result<&str, SessionError> {
 
 /// A variable's value as a key holds it: unset, or the digest of what it was set to with the run's own directories spelled portably.
 fn env_value(value: Option<&str>, portable: impl Fn(&str) -> String) -> String {
-    value.map_or_else(
-        || "unset".to_owned(),
-        |value| format!("set:{}", crate::id::digest(portable(value).as_bytes())),
-    )
+    match value {
+        Some(value) => format!("set:{}", crate::id::digest(portable(value).as_bytes())),
+        None => "unset".to_owned(),
+    }
 }
 
-/// The pristine sources, selected placements, and complete-catalog indices one preparation must validate.
-type SelectionPlan = (
-    BTreeMap<String, Vec<u8>>,
-    BTreeMap<String, Vec<Placement>>,
-    BTreeSet<u32>,
-);
+/// What one preparation must validate: the pristine bytes of every mutable file, the bytes each is compiled from, the placements selected in each, and the complete-catalog indices to validate.
+#[derive(Debug)]
+struct Plan {
+    sources: BTreeMap<String, Vec<u8>>,
+    compiled: BTreeMap<String, Vec<u8>>,
+    placements: BTreeMap<String, Vec<Placement>>,
+    eligible: BTreeSet<u32>,
+}
 
+/// Plans the tree from what discovery found, and points every include of a Rust source the build's `units` compiled at the source as it was copied.
 fn selection_plan(
-    workspace: &Workspace,
-    discovery: &discover::Discovery,
+    workspace: &mut Workspace,
+    (discovery, units): (&discover::Discovery, &[crate::cargo::Unit]),
     options: &PrepareOptions,
     trace: &crate::trace::Recorder,
-) -> Result<SelectionPlan, EngineError> {
+) -> Result<Plan, EngineError> {
     let phase = trace.phase("plan");
-    let (sources, placements) = plan_tree(workspace.snapshot_root(), discovery)?;
+    let (mut sources, placements) = plan_tree(workspace.snapshot_root(), discovery)?;
     let eligible = eligible(discovery, &sources, options.validation_filter.as_ref())?;
-    let placements = selected_placements(placements, &eligible);
+    let mut placements = selected_placements(placements, &eligible);
+    let (mut compiled, verbatim) = compiled(workspace, units, &sources)?;
+    for read in verbatim.iter().map(|kept| kept.read.as_str()) {
+        if placements.get(read).is_none_or(Vec::is_empty) && sources.remove(read).is_some() {
+            compiled.remove(read);
+            placements.remove(read);
+        }
+    }
     phase.end();
-    Ok((sources, placements, eligible))
+    Ok(Plan {
+        sources,
+        compiled,
+        placements,
+        eligible,
+    })
 }
 
 /// Runs validation as one traced phase.
@@ -925,40 +1033,37 @@ fn target_facts(
 /// # Errors
 /// Every failure of the phases it runs.
 pub fn prepare(
-    workspace: Workspace,
+    mut workspace: Workspace,
     options: &PrepareOptions,
     cancel: &Cancel,
 ) -> Result<Session, EngineError> {
     let trace = workspace.trace.clone();
     let phase = trace.phase("prepare");
     let Gated { discovery, read } = gated(&workspace, options, cancel, &trace)?;
-    let (sources, placements, eligible) = selection_plan(&workspace, &discovery, options, &trace)?;
+    let plan = selection_plan(&mut workspace, (&discovery, &read.units), options, &trace)?;
     let asking = crate::prove::Asking {
         workspace: &workspace,
         discovery: &discovery,
-        sources: &sources,
+        sources: &plan.compiled,
         options,
     };
     let remembered = remembering(options, &read.closure.digest, &read.manifests, &workspace);
-    let (established, reached) = layers(&asking, &eligible, remembered.as_ref(), cancel)?;
+    let (established, reached) = layers(&asking, &plan.eligible, remembered.as_ref(), cancel)?;
 
     let instrumented = validated(
         &Establishing {
             workspace: &workspace,
             discovery: &discovery,
-            sources: &sources,
-            placements: &placements,
+            plan: &plan,
             established: &established,
-            eligible: &eligible,
             options,
         },
         cancel,
         &trace,
     )?;
 
-    let mut workspace = workspace;
-    let written_by_a_test = resealed(&mut workspace, &sources)?;
-    let ((targets, scratch, verified), apparatus) = built(&Building {
+    let written_by_a_test = resealed(&mut workspace, &plan.sources)?;
+    let ((targets, scratch, verified), apparatus, sealed) = built(&Building {
         workspace: &workspace,
         cancel,
         trace: &trace,
@@ -984,15 +1089,16 @@ pub fn prepare(
         item_refs,
         catalog: discovery.catalog,
         files: discovery.files,
-        skips: discovery.skips,
+        skips: crate::validate::passed_over(discovery.skips, &instrumented.validated.rejections)?,
         claims: discovery.claims,
-        sources: prepared_sources(sources)?,
+        sources: prepared_sources(plan.sources)?,
         packages,
         items,
         proofs: established.proofs,
         reached,
+        compile_time: Compiler::of(&plan.placements, &instrumented.validated, options),
         validated: instrumented.validated,
-        eligible,
+        eligible: plan.eligible,
         targets,
         scratch,
         verified,
@@ -1007,10 +1113,431 @@ pub fn prepare(
         leaders: crate::orphan::Leaders::default(),
         mutant_timeout: options.mutant_timeout,
         mutant_steps: options.mutant_steps,
-        harness_args: options.harness_args.clone(),
+        harness_args: crate::libtest::Configured::new(options.harness_args.clone()),
         scratch_working_directory: options.scratch_working_directory,
+        sealed,
+        transcripts: options.transcripts.clone(),
         workspace,
     })
+}
+
+/// The sealed build of the instrumented tree, where the run asked for one (ADR 0046).
+///
+/// # Errors
+/// A cargo that could not run or whose answer could not be read, and a sealed build whose targets could not be read.
+fn sealed_build(
+    building: &Building<'_>,
+    targets: &[TestTarget],
+    active: Option<u32>,
+) -> Result<crate::sealed::SealedBuild, EngineError> {
+    use crate::sealed::{BUILDS, SealedBuild, Sealing, TARGET, Unsealed, installed};
+    let Building {
+        workspace,
+        cancel,
+        trace,
+        options,
+        ..
+    } = *building;
+    match options.sealing {
+        Sealing::Off => return Ok(SealedBuild::none(targets, Unsealed::NotAsked)),
+        Sealing::On => {}
+    }
+    let held = match workspace.toolchain.sysroot().map(installed) {
+        Some(Ok(held)) => held,
+        Some(Err(error)) => {
+            trace.note(
+                "sealed-build",
+                &format!(
+                    "the sysroot could not be listed, so {TARGET} is not known to be there: {error}"
+                ),
+            );
+            false
+        }
+        None => {
+            trace.note(
+                "sealed-build",
+                "the toolchain names no sysroot to find the target in",
+            );
+            false
+        }
+    };
+    if !held {
+        return Ok(SealedBuild::none(targets, Unsealed::TargetMissing));
+    }
+    let (dir, owner) = workspace.sealed_build_dir();
+    let dir = if active.is_some() {
+        dir.nested("compiled-mutant")
+    } else {
+        dir
+    };
+    let flags = match sealed_flags(building, &dir)? {
+        Ok(flags) => flags,
+        Err(why) => return Ok(SealedBuild::none(targets, why)),
+    };
+    let examples = targets
+        .iter()
+        .any(|target| target.kind() == execute::TargetKind::Example);
+    let mut compiled = Vec::new();
+    for kind in BUILDS {
+        if kind == CompileKind::SealedExamples && !examples {
+            continue;
+        }
+        compiled.push(compile(
+            &workspace.driver(cancel),
+            &sealed_compile(building, (&dir, &flags), kind, active),
+        )?);
+    }
+    let captured = sealed_doctests(
+        building,
+        targets,
+        &sealed_compile(building, (&dir, &flags), CompileKind::SealedTests, active),
+    )?;
+    let sealed = SealedBuild::of(
+        targets,
+        (&compiled, captured),
+        (&workspace.metadata.packages, dir.path()),
+    )?;
+    trace.note(
+        "sealed-build",
+        &format!(
+            "{} of {} test targets built for {TARGET}, and the doctests of {} libraries",
+            sealed.modules.len(),
+            targets.len(),
+            sealed.doctests.len()
+        ),
+    );
+    Ok(sealed.keeping(owner))
+}
+
+/// The flags the sealed build compiles with, or why which flags cargo would use for the sealed target is not known.
+///
+/// # Errors
+/// A toolchain that cannot say what the sealed target is.
+fn sealed_flags(
+    building: &Building<'_>,
+    directory: &crate::cargo::BuildDir,
+) -> Result<Result<crate::sealed::Flags, crate::sealed::Unsealed>, EngineError> {
+    use crate::sealed::TARGET;
+    let Building {
+        workspace,
+        cancel,
+        trace,
+        ..
+    } = *building;
+    let root = directory.path().join("platform");
+    let object = match crate::sealed::platform::ready(
+        &workspace.module_owner,
+        &workspace.driver(cancel),
+        &root,
+    )? {
+        crate::sealed::platform::Readied::Object(object) => object,
+        crate::sealed::platform::Readied::Unanswered(said) => {
+            trace.note("sealed-build", &format!("platform-unanswered: {said}"));
+            return Ok(Err(crate::sealed::Unsealed::PlatformUnanswered));
+        }
+    };
+    let linked = crate::sealed::platform::flags(&object);
+    let facts =
+        workspace
+            .toolchain
+            .target_facts(workspace.snapshot_root(), Some(TARGET), cancel)?;
+    let layered = crate::cargo::config::layered(
+        workspace.snapshot_root(),
+        crate::cargo::config::home(&workspace.base_env).as_deref(),
+    );
+    let flags = crate::sealed::Flags::of(&workspace.base_env, &layered, &facts, &linked);
+    match &flags {
+        Ok(_flags) => trace.note(
+            "sealed-build",
+            &format!("every sealed module is linked with {}", linked.join(" ")),
+        ),
+        Err(why) => trace.note(
+            "sealed-build",
+            &format!(
+                "{}: which flags cargo compiles {TARGET} with is not known, so the sealed build \
+                 cannot link its modules with {}",
+                why.name(),
+                linked.join(" ")
+            ),
+        ),
+    }
+    Ok(flags)
+}
+
+/// How the sealed build compiles `kind` into `dir`: for the sealed target, with the features and profile the run asked for, the catalog its instrumentation reads, and `flags`.
+fn sealed_compile(
+    building: &Building<'_>,
+    (dir, flags): (&crate::cargo::BuildDir, &crate::sealed::Flags),
+    kind: CompileKind,
+    active: Option<u32>,
+) -> CompileOptions {
+    let mut env = compiled_environment(building.catalog.digest(), active);
+    env.overlay(&flags.environment());
+    CompileOptions {
+        kind,
+        packages: building.options.packages.clone(),
+        target_dir: dir.clone(),
+        locked: building.workspace.locked,
+        offline: building.workspace.offline,
+        timeout: building.options.build_timeout,
+        env,
+        build: crate::cargo::BuildConfig {
+            target: Some(crate::sealed::TARGET.to_owned()),
+            ..building.options.build.clone()
+        },
+    }
+}
+
+/// The catalog and exactly one compile-time selector, always overriding an inherited selector.
+pub(super) fn compiled_environment(catalog: &str, active: Option<u32>) -> crate::vars::Variables {
+    crate::vars::Variables::of([
+        (
+            std::ffi::OsString::from(crate::instrument::COMPILED_CATALOG_ENV),
+            std::ffi::OsString::from(catalog),
+        ),
+        (
+            std::ffi::OsString::from(crate::instrument::COMPILED_ACTIVE_ENV),
+            std::ffi::OsString::from(match active {
+                Some(index) => index.to_string(),
+                None => "none".to_owned(),
+            }),
+        ),
+    ])
+}
+
+/// The separately built native targets and sealed modules of one compile-time mutant.
+pub(super) fn compiled_build(
+    session: &Session,
+    index: u32,
+    options: &PrepareOptions,
+    cancel: &Cancel,
+) -> Result<(Vec<TestTarget>, crate::sealed::SealedBuild), EngineError> {
+    let phase = session.trace().phase("compiled-mutant");
+    let dir = session.workspace.build_dir().nested("compiled-native");
+    let built = compile(
+        &session.workspace.driver(cancel),
+        &CompileOptions {
+            kind: CompileKind::Tests,
+            packages: options.packages.clone(),
+            target_dir: dir.clone(),
+            locked: session.workspace.locked,
+            offline: session.workspace.offline,
+            timeout: options.build_timeout,
+            env: compiled_environment(session.catalog.digest(), Some(index)),
+            build: options.build.clone(),
+        },
+    )?;
+    if built.completion() == crate::cargo::Completion::Refused {
+        return Err(ValidateError::AttemptFailed {
+            message: format!(
+                "accepted compile-time mutant {index} no longer builds: {}",
+                crate::validate::first_error_of(&built.messages)
+            ),
+        }
+        .into());
+    }
+    let mut targets = execute::targets_of(
+        &built.messages,
+        &session.workspace.metadata.packages,
+        dir.path(),
+    )?;
+    targets.extend(compiled_documentation(session, (&dir, index))?);
+    session
+        .trace()
+        .note("compiled-mutant", &format!("{index} native built"));
+    let sealed = sealed_build(
+        &Building {
+            workspace: &session.workspace,
+            cancel,
+            trace: session.trace(),
+            catalog: &session.catalog,
+            accepted: session.accepted(),
+            narrowing: &session.verified.touched.narrowing,
+            items: crate::run::count(session.item_refs.len())?,
+            closure: &session.closure.digest,
+            manifests: &session.manifests,
+            asked: false,
+            last_build: &built.messages,
+            options,
+        },
+        &targets,
+        Some(index),
+    )?;
+    session.trace().note(
+        "compiled-mutant",
+        &format!(
+            "{index} sealed modules={} doctests={}",
+            sealed.modules.len(),
+            sealed.doctests.len()
+        ),
+    );
+    phase.end();
+    Ok((targets, sealed))
+}
+
+/// The native doctest targets rebuilt under the same single selector as the test binaries.
+fn compiled_documentation(
+    session: &Session,
+    (dir, index): (&crate::cargo::BuildDir, u32),
+) -> Result<Vec<TestTarget>, EngineError> {
+    let mut targets = Vec::new();
+    for target in session
+        .targets
+        .iter()
+        .filter(|target| target.kind() == execute::TargetKind::Doc)
+    {
+        let mut target = target.clone();
+        target
+            .cargo_env
+            .overlay(&compiled_environment(session.catalog.digest(), Some(index)));
+        let mut follows = false;
+        for argument in &mut target.through {
+            if follows {
+                dir.path().as_os_str().clone_into(argument);
+                follows = false;
+            } else {
+                follows = argument == "--target-dir";
+            }
+        }
+        if follows {
+            return Err(ValidateError::AttemptFailed {
+                message: "a doctest target lost its output directory argument".to_owned(),
+            }
+            .into());
+        }
+        targets.push(target);
+    }
+    Ok(targets)
+}
+
+/// Each documentation target's doctests, built for the sealed target the way `compile` built its tests and handed to a capture, or why they were not.
+///
+/// Every library is built once with `--list` among the doctests' test arguments, which lists each merged binary's doctests when it runs and makes rustdoc list the rest itself rather than running them; once more with `--list --ignored`, which lists each merged binary's doctests the sealed target ignores, where it has any; and once without either, where rustdoc listed any doctest itself, so each doctest compiled alone runs as itself and one that did not build for the target is known.
+///
+/// # Errors
+/// A capture that could not be built or emptied, and a cargo that could not run or was cancelled.
+fn sealed_doctests(
+    building: &Building<'_>,
+    targets: &[TestTarget],
+    compile: &CompileOptions,
+) -> Result<
+    BTreeMap<String, Result<crate::sealed::doctest::Captured, crate::sealed::Unsealed>>,
+    EngineError,
+> {
+    let documented: Vec<&TestTarget> = targets
+        .iter()
+        .filter(|target| target.kind() == execute::TargetKind::Doc)
+        .collect();
+    let mut answers = BTreeMap::new();
+    if documented.is_empty() {
+        return Ok(answers);
+    }
+    let driver = building.workspace.driver(building.cancel);
+    let root = compile.target_dir.path().join("doctests");
+    let program = crate::cargo::build_capture(&driver, &root.join("capture"))?;
+    for target in documented {
+        let answer = captured_library(building, (&driver, &program, &root), (target, compile))?;
+        answers.insert(target.id().to_owned(), answer);
+    }
+    Ok(answers)
+}
+
+/// One documentation target's doctests, built for the sealed target the way `compile` built its tests and handed to a capture under `root`, or why they were not.
+///
+/// The library is built once with `--list` among the doctests' test arguments, which lists each merged binary's doctests when it runs and makes rustdoc list the rest itself rather than running them; once more with `--list --ignored`, which lists each merged binary's doctests the sealed target ignores, where it has any; and once without either, where rustdoc listed any doctest itself, so each doctest compiled alone runs as itself and one that did not build for the target is known.
+///
+/// # Errors
+/// A capture that could not be emptied, a cargo that could not run or was cancelled, and a capture ledger that cannot be read.
+fn captured_library(
+    building: &Building<'_>,
+    (driver, program, root): (&crate::cargo::Driver<'_>, &Path, &Path),
+    (target, compile): (&TestTarget, &CompileOptions),
+) -> Result<Result<crate::sealed::doctest::Captured, crate::sealed::Unsealed>, EngineError> {
+    use crate::sealed::Unsealed;
+    use crate::sealed::doctest::{Baked, Captured, Uncaptured, captured, listing, merged_binaries};
+    let refused = |uncaptured: Uncaptured| match uncaptured {
+        Uncaptured::Unreported => Unsealed::NotBuilt,
+        uncaptured @ (Uncaptured::Unread { .. }
+        | Uncaptured::Unclosed { .. }
+        | Uncaptured::CountsDisagree { .. }
+        | Uncaptured::OutOfOrder { .. }
+        | Uncaptured::ClaimsDisagree { .. }
+        | Uncaptured::Missing { .. }) => {
+            building
+                .trace
+                .note("sealed-doctests", &format!("{}: {uncaptured}", target.id()));
+            Unsealed::DoctestsUnaccounted
+        }
+    };
+    let capture = |kind: &str, baked: Baked| {
+        captured_doctests(
+            driver,
+            (program, &root.join(kind).join(target.package())),
+            (target.package(), compile, baked),
+        )
+    };
+    let (stdout, held) = capture("listed", Baked::List)?;
+    let (listed, merged) = match listing(&stdout)
+        .and_then(|listed| merged_binaries(&listed, &held).map(|merged| (listed, merged)))
+    {
+        Ok(listed) => listed,
+        Err(uncaptured) => return Ok(Err(refused(uncaptured))),
+    };
+    let ignored = if merged.is_empty() {
+        Vec::new()
+    } else {
+        let (stdout, held) = capture("ignored", Baked::ListIgnored)?;
+        match listing(&stdout).and_then(|listed| merged_binaries(&listed, &held)) {
+            Ok(ignored) => ignored,
+            Err(uncaptured) => return Ok(Err(refused(uncaptured))),
+        }
+    };
+    Ok(if listed.standalone.is_empty() {
+        Ok(Captured {
+            merged,
+            ignored,
+            alone: Vec::new(),
+            unbuilt: Vec::new(),
+        })
+    } else {
+        let (stdout, held) = capture("kept", Baked::Run)?;
+        match captured(&stdout, &held) {
+            Ok(ran) => Ok(Captured {
+                merged,
+                ignored,
+                ..ran
+            }),
+            Err(uncaptured) => Err(refused(uncaptured)),
+        }
+    })
+}
+
+/// What rustdoc printed while it built `package`'s doctests as `compile` asks, with `baked` among their test arguments, with every binary handed to the capture `program` keeping them in `directory`, and what the capture holds after.
+///
+/// # Errors
+/// A capture directory that could not be emptied, a cargo that could not run or was cancelled, and a capture ledger that cannot be read.
+fn captured_doctests(
+    driver: &crate::cargo::Driver<'_>,
+    (program, directory): (&Path, &Path),
+    (package, compile, baked): (&str, &CompileOptions, crate::sealed::doctest::Baked),
+) -> Result<(Vec<u8>, crate::sealed::doctest::Held), EngineError> {
+    crate::cargo::empty_capture(directory)?;
+    let stdout = crate::cargo::capture_doctests(
+        driver,
+        &crate::cargo::DoctestCapture {
+            package,
+            capture: (program, directory),
+            compile,
+            baked,
+        },
+    )?;
+    let held = crate::sealed::doctest::Held::read(directory).map_err(|error| {
+        crate::cargo::CargoError::new(
+            crate::cargo::CargoErrorKind::BuildLedger,
+            format!("{}: {error}", directory.display()),
+        )
+    })?;
+    Ok((stdout, held))
 }
 
 /// Turns the mutable-file snapshot into the text a prepared session exposes.
@@ -1051,7 +1578,7 @@ fn narrowed(
     }
 }
 
-/// Every item of every mutable file, numbered in path order.
+/// Every item of every file the run instruments, numbered in path order, the files a report names before the ones it does not.
 fn cataloged_items(
     discovery: &discover::Discovery,
     sources: &BTreeMap<String, Vec<u8>>,
@@ -1059,12 +1586,19 @@ fn cataloged_items(
     let files: Vec<crate::instrument::ItemSource<'_>> = discovery
         .files
         .iter()
-        .filter_map(|file| {
+        .map(|file| (file.path.as_str(), file.package.as_str()))
+        .chain(
+            discovery
+                .entered_only
+                .iter()
+                .map(|(path, package)| (path.as_str(), package.as_str())),
+        )
+        .filter_map(|(path, package)| {
             sources
-                .get(&file.path)
+                .get(path)
                 .map(|source| crate::instrument::ItemSource {
-                    path: &file.path,
-                    package: &file.package,
+                    path,
+                    package,
                     source,
                 })
         })
@@ -1121,14 +1655,10 @@ struct Establishing<'a> {
     workspace: &'a Workspace,
     /// What there is to mutate, with the catalog every guard names.
     discovery: &'a discover::Discovery,
-    /// The pristine bytes of every mutable file.
-    sources: &'a BTreeMap<String, Vec<u8>>,
-    /// The mutants placed in each file.
-    placements: &'a BTreeMap<String, Vec<Placement>>,
+    /// The pristine bytes of every mutable file, the bytes each is compiled from, the mutants placed in each, and the catalog indices this preparation will validate and place.
+    plan: &'a Plan,
     /// What the proof layers established about them: the branch proofs, and which guards may compare their two branches.
     established: &'a crate::prove::Established,
-    /// The catalog indices this preparation will validate and place.
-    eligible: &'a BTreeSet<u32>,
     /// What the run was asked to prepare.
     options: &'a PrepareOptions,
 }
@@ -1142,18 +1672,17 @@ fn establish(
     let Establishing {
         workspace,
         discovery,
-        sources,
-        placements,
+        plan,
         established,
-        eligible,
         options,
     } = *asking;
-    let items = cataloged_items(discovery, sources)?;
+    let eligible = &plan.eligible;
+    let items = cataloged_items(discovery, &plan.sources)?;
     let mut writer = TreeCompiler {
         first_items: &items.first,
         workspace,
-        sources,
-        placements,
+        sources: &plan.compiled,
+        placements: &plan.placements,
         catalog: &discovery.catalog,
         cancel,
         timeout: Workspace::timeout(options.build_timeout),
@@ -1167,8 +1696,9 @@ fn establish(
         compared: BTreeSet::new(),
         marked: BTreeSet::new(),
         beside: BTreeSet::new(),
+        constness: crate::validate::Constness::default(),
     };
-    let validated = validate_selected(
+    let mut validated = validate_selected(
         &discovery.catalog,
         eligible,
         &mut writer,
@@ -1180,6 +1710,7 @@ fn establish(
             trace,
         },
     )?;
+    writer.validate_items(&mut validated, trace)?;
     Ok(Instrumented {
         validated,
         beside: writer.beside,
@@ -1221,8 +1752,8 @@ fn resealed(
         .collect())
 }
 
-/// Reads every mutable file of the snapshot and pairs its candidates with their catalog entries.
-/// Files without a candidate are retained because a mutation activated elsewhere can enter their loops or functions later in the same process, and those boundaries share the same step allowance.
+/// Reads every file of the snapshot the run instruments and pairs its candidates with their catalog entries.
+/// Files without a candidate are retained because a mutation activated elsewhere can enter their loops or functions later in the same process, and those boundaries share the same step allowance, and because every body that runs records its entry (ADR 0041).
 type Planned = (BTreeMap<String, Vec<u8>>, BTreeMap<String, Vec<Placement>>);
 
 fn plan_tree(root: &Path, discovery: &discover::Discovery) -> Result<Planned, EngineError> {
@@ -1233,20 +1764,20 @@ fn plan_tree(root: &Path, discovery: &discover::Discovery) -> Result<Planned, En
         .collect();
     let mut sources: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     let mut placements: BTreeMap<String, Vec<Placement>> = BTreeMap::new();
-    for file in &discovery.files {
-        if file.whole_file.is_some() && !discovery.marked_only.contains(&file.path) {
-            continue;
-        }
+    let instrumented = discovery
+        .files
+        .iter()
+        .filter(|file| file.whole_file.is_none() || discovery.marked_only.contains(&file.path))
+        .map(|file| &file.path)
+        .chain(discovery.entered_only.keys());
+    for path in instrumented {
         let source =
-            std::fs::read(root.join(&file.path)).map_err(|source| SessionError::WriteFailed {
-                path: file.path.clone(),
+            std::fs::read(root.join(path)).map_err(|source| SessionError::WriteFailed {
+                path: path.clone(),
                 source,
             })?;
-        sources.insert(file.path.clone(), source);
-        placements.insert(
-            file.path.clone(),
-            plan_file(&discovery.catalog, &file.path, &found)?,
-        );
+        sources.insert(path.clone(), source);
+        placements.insert(path.clone(), plan_file(&discovery.catalog, path, &found)?);
     }
     Ok((sources, placements))
 }
@@ -1324,18 +1855,16 @@ fn lines(bytes: &[u8]) -> Result<u64, ValidateError> {
 
 /// How many lines the rewritten body holds, the appended runtime excluded.
 fn body_lines(file: &FileOutput) -> Result<u64, ValidateError> {
-    let text = file.text.as_bytes();
-    match file.text.rfind("\n#[doc(hidden)]") {
-        Some(at) => {
-            let body = text
-                .get(..=at)
-                .ok_or_else(|| ValidateError::AttemptFailed {
-                    message: format!("runtime boundary {at} is not a source byte boundary"),
-                })?;
-            lines(body)
-        }
-        None => lines(text),
-    }
+    let body = file
+        .text
+        .get(..file.runtime_at)
+        .ok_or_else(|| ValidateError::AttemptFailed {
+            message: format!(
+                "runtime boundary {} is not a byte boundary of the rewritten text",
+                file.runtime_at
+            ),
+        })?;
+    lines(body.as_bytes())
 }
 
 /// The markers each file carries, by the file the bodies they mark are in.
@@ -1396,14 +1925,136 @@ struct TreeCompiler<'a> {
     beside: BTreeSet<(u32, u32)>,
     /// The item index each file's first item takes.
     first_items: &'a BTreeMap<String, u32>,
+    constness: crate::validate::Constness,
 }
 
 impl TreeCompiler<'_> {
+    /// Compiles each accepted const initializer alone and removes every refusal from the final tree.
+    fn validate_items(
+        &mut self,
+        validated: &mut Validated,
+        trace: &crate::trace::Recorder,
+    ) -> Result<(), EngineError> {
+        let indices: BTreeSet<u32> = self
+            .placements
+            .values()
+            .flat_map(|placements| placements.iter())
+            .filter(|placement| {
+                placement.hint.form == crate::syntax::Form::B
+                    && validated.accepted.contains(&placement.index)
+            })
+            .map(|placement| placement.index)
+            .collect();
+        let mut refused = BTreeSet::new();
+        for index in indices {
+            let built = compile(
+                &self.workspace.driver(self.cancel),
+                &CompileOptions {
+                    kind: CompileKind::Tests,
+                    packages: self.packages.clone(),
+                    target_dir: self.workspace.build_dir().nested("compiled-native"),
+                    locked: self.workspace.locked,
+                    offline: self.workspace.offline,
+                    timeout: self.timeout,
+                    env: compiled_environment(self.catalog.digest(), Some(index)),
+                    build: self.build.clone(),
+                },
+            )?;
+            let success = built.completion() == crate::cargo::Completion::Built;
+            let mut attributed = Vec::new();
+            if !success {
+                let rejection = compiled_rejection(self.catalog, index, &built)?;
+                attributed.push(crate::trace::AttributionRecord {
+                    index,
+                    code: rejection.code.clone(),
+                    said: rejection.diagnostic.clone(),
+                });
+                validated.rejections.push(rejection);
+                refused.insert(index);
+            }
+            validated.rounds =
+                validated
+                    .rounds
+                    .checked_add(1)
+                    .ok_or_else(|| ValidateError::AttemptFailed {
+                        message: "compile-time validation rounds exceed u32".to_owned(),
+                    })?;
+            trace.validate_round(crate::trace::ValidateRoundRecord {
+                round: validated.rounds,
+                condemned: crate::run::count(validated.rejections.len())?,
+                success,
+                written: 0,
+                attributed,
+                carried: Vec::new(),
+                unattributed: Vec::new(),
+            });
+            trace.note(
+                "compiled-mutant",
+                &format!(
+                    "{index} validation {}",
+                    if success { "built" } else { "refused" }
+                ),
+            );
+        }
+        if refused.is_empty() {
+            return Ok(());
+        }
+        self.without_items(validated, &refused, trace)
+    }
+
+    /// Writes and compiles the final original control tree without refused initializer selectors.
+    fn without_items(
+        &mut self,
+        validated: &mut Validated,
+        refused: &BTreeSet<u32>,
+        trace: &crate::trace::Recorder,
+    ) -> Result<(), EngineError> {
+        validated.accepted.retain(|index| !refused.contains(index));
+        validated
+            .rejections
+            .sort_by_key(|rejection| rejection.index);
+        let condemned = self
+            .catalog
+            .mutants()
+            .iter()
+            .filter(|mutant| !validated.accepted.contains(&mutant.index))
+            .map(|mutant| mutant.index)
+            .collect();
+        let constness = self.constness.clone();
+        let attempt = self.attempt(&condemned, &constness)?;
+        if attempt.completion != crate::cargo::Completion::Built {
+            return Err(ValidateError::AttemptFailed {
+                message: format!(
+                    "the tree refused after removing invalid const initializers: {}",
+                    crate::validate::first_error_of(&attempt.messages)
+                ),
+            }
+            .into());
+        }
+        validated.rounds =
+            validated
+                .rounds
+                .checked_add(1)
+                .ok_or_else(|| ValidateError::AttemptFailed {
+                    message: "compile-time validation rounds exceed u32".to_owned(),
+                })?;
+        trace.validate_round(crate::trace::ValidateRoundRecord {
+            round: validated.rounds,
+            condemned: crate::run::count(validated.rejections.len())?,
+            success: true,
+            written: attempt.written,
+            attributed: Vec::new(),
+            carried: Vec::new(),
+            unattributed: Vec::new(),
+        });
+        Ok(())
+    }
+
     /// Instruments and writes one planned file, reporting whether its bytes changed since the preceding validation round.
     fn instrument_one(
         &mut self,
         path: &str,
-        kept: &[Placement],
+        (kept, carriers): (&[Placement], &[crate::span::Span]),
     ) -> Result<(FileOutput, bool), ValidateError> {
         let source = self
             .sources
@@ -1415,7 +2066,11 @@ impl TreeCompiler<'_> {
             path,
             source,
             placements: kept,
-            markers: self.markers.get(path).map_or(&[], Vec::as_slice),
+            carriers,
+            markers: match self.markers.get(path) {
+                Some(markers) => markers.as_slice(),
+                None => &[],
+            },
             comparable: self.comparable,
             probed: self.probed,
             catalog_digest: self.catalog.digest(),
@@ -1463,7 +2118,12 @@ impl TreeCompiler<'_> {
 }
 
 impl Compile for TreeCompiler<'_> {
-    fn attempt(&mut self, condemned: &BTreeSet<u32>) -> Result<Attempt, ValidateError> {
+    fn attempt(
+        &mut self,
+        condemned: &BTreeSet<u32>,
+        constness: &crate::validate::Constness,
+    ) -> Result<Attempt, ValidateError> {
+        self.constness.clone_from(constness);
         let mut files: Vec<FileOutput> = Vec::new();
         let mut written: u32 = 0;
         let planned: Vec<(String, Vec<Placement>)> = self
@@ -1478,8 +2138,17 @@ impl Compile for TreeCompiler<'_> {
                 (path.clone(), kept)
             })
             .collect();
+        let carriers = constness.carriers_of(
+            planned
+                .iter()
+                .map(|(path, kept)| (path.as_str(), kept.as_slice())),
+        );
         for (path, kept) in planned {
-            let (file, changed) = self.instrument_one(&path, &kept)?;
+            let carried = match carriers.get(&path) {
+                Some(carried) => carried.as_slice(),
+                None => &[][..],
+            };
+            let (file, changed) = self.instrument_one(&path, (&kept, carried))?;
             if changed {
                 written = written
                     .checked_add(1)
@@ -1494,19 +2163,16 @@ impl Compile for TreeCompiler<'_> {
             &CompileOptions {
                 kind: CompileKind::Tests,
                 packages: self.packages.clone(),
-                target_dir: Some(self.workspace.build_dir()),
+                target_dir: self.workspace.build_dir(),
                 locked: self.workspace.locked,
                 offline: self.workspace.offline,
                 timeout: self.timeout,
-                env: crate::vars::Variables::of([(
-                    std::ffi::OsString::from(crate::instrument::COMPILED_CATALOG_ENV),
-                    std::ffi::OsString::from(self.catalog.digest()),
-                )]),
+                env: compiled_environment(self.catalog.digest(), None),
                 build: self.build.clone(),
             },
         )?;
-        let success = compiled.success;
-        if success {
+        let completion = compiled.completion();
+        if completion == crate::cargo::Completion::Built {
             self.last_build.clone_from(&compiled.messages);
             self.compared = files
                 .iter()
@@ -1524,10 +2190,46 @@ impl Compile for TreeCompiler<'_> {
         Ok(Attempt {
             files,
             messages: compiled.messages,
-            success,
+            completion,
             written,
         })
     }
+}
+
+/// The isolated compiler refusal of one initializer, retaining its exact catalog identity.
+fn compiled_rejection(
+    catalog: &Catalog,
+    index: u32,
+    built: &crate::cargo::Compiled,
+) -> Result<crate::validate::Rejection, EngineError> {
+    let mutant = catalog
+        .by_index(index)
+        .ok_or_else(|| ValidateError::AttemptFailed {
+            message: format!("const initializer {index} is absent from its catalog"),
+        })?;
+    let diagnostic = crate::validate::first_error_of(&built.messages);
+    let code = built.messages.iter().find_map(|message| match message {
+        crate::cargo::Message::CompilerMessage(message) if message.message.level == "error" => {
+            message.message.code.clone()
+        }
+        crate::cargo::Message::CompilerMessage(_)
+        | crate::cargo::Message::CompilerArtifact(_)
+        | crate::cargo::Message::BuildScriptExecuted(_)
+        | crate::cargo::Message::BuildFinished(_)
+        | crate::cargo::Message::Other { .. } => None,
+    });
+    Ok(crate::validate::Rejection {
+        index,
+        id: mutant.id.to_string(),
+        display_id: mutant.display_id.to_string(),
+        path: mutant.candidate.path.clone(),
+        span: mutant.candidate.span,
+        rule: mutant.candidate.rule.name.to_owned(),
+        code,
+        diagnostic,
+        isolated: true,
+        reason: crate::validate::Condemnation::CompilerRefused,
+    })
 }
 
 /// Whether a round has to write this file again: only what its condemnations changed.

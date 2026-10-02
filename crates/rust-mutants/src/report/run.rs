@@ -21,7 +21,7 @@ use crate::run::{
 pub const DOCUMENT_TYPE: &str = "rust-mutants/run-report";
 
 /// The version of that shape.
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 5;
 
 /// The file one run writes under its own directory.
 pub const FILE_NAME: &str = "run-report-v1.json";
@@ -65,9 +65,9 @@ pub struct RunDocument {
     pub established_tests: u64,
     /// One record per non-refused candidate the run accounts for, in catalog order.
     pub mutants: Vec<RunMutantDocument>,
-    /// Every candidate the compiler refused.
+    /// Every candidate validation left out, and why.
     pub rejections: Vec<RejectionDocument>,
-    /// Every place discovery passed over.
+    /// Every place the run passed over.
     pub skips: Vec<SkipDocument>,
     /// The claims a reviewer declared, as the run left them.
     pub expectations: Vec<ExpectationDocument>,
@@ -115,18 +115,20 @@ pub struct JobsDocument {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Accounting {
-    /// How many candidate rows the run accounts for, excluding compiler refusals.
+    /// How many candidate rows the run accounts for, excluding every candidate validation left out.
     pub cataloged: u32,
     /// How many candidates the compiler refused.
     pub refused: Beside,
-    /// How many places discovery passed over.
+    /// How many places the run passed over: what discovery decided, and what validation found evaluated before the program runs.
     pub skipped: Beside,
-    /// How many mutants an execution reached a verdict on.
+    /// How many mutants an execution reached a verdict or a lead on.
     pub executed: Beside,
-    /// How many a test failed on.
+    /// How many a sealed execution detected.
     pub killed: Of,
-    /// How many every test passed on.
+    /// How many every sealed execution that reached them passed on.
     pub survived: Of,
+    /// How many no sealed execution decided, where a native run said something of them, which is a lead (ADR 0046).
+    pub unproven: Of,
     /// How many reached the per-process guard-take limit without deciding the mutation.
     pub step_limit_reached: Of,
     /// How many this machine stopped waiting for, twice over.
@@ -137,14 +139,46 @@ pub struct Accounting {
     pub errored: Of,
     /// How many never ran.
     pub not_run: Of,
-    /// How many of those never ran because no measured target reaches them.
+    /// How many of those never ran because no sealed control reaches them.
     pub unreached: Within,
-    /// How many of those never ran because a proof removed every target that could have noticed them.
-    pub discharged: Within,
     /// How many of those measured nothing because every test that reached them declined to measure on this machine, as the baseline's did (ADR 0043).
     pub declined: Within,
     /// How many survivors a reviewer had declared, and the run confirmed.
     pub expected: Within,
+    /// How many of the unproven a native run killed.
+    pub unproven_killed: Within,
+    /// How many of the unproven every native test passed on.
+    pub unproven_survived: Within,
+    /// How many of the unproven no native test reached.
+    pub unproven_unreached: Within,
+    /// How many of the unproven a proof from a native run removed every target of.
+    pub unproven_discharged: Within,
+}
+
+impl From<crate::run::Tally> for Accounting {
+    fn from(tally: crate::run::Tally) -> Self {
+        Self {
+            cataloged: tally.cataloged,
+            refused: tally.refused.into(),
+            skipped: tally.skipped.into(),
+            executed: tally.executed.into(),
+            killed: tally.killed.into(),
+            survived: tally.survived.into(),
+            unproven: tally.unproven.into(),
+            step_limit_reached: tally.step_limit_reached.into(),
+            waited: tally.waited.into(),
+            inconclusive: tally.inconclusive.into(),
+            errored: tally.errored.into(),
+            not_run: tally.not_run.into(),
+            unreached: tally.unreached.into(),
+            declined: tally.declined.into(),
+            expected: tally.expected.into(),
+            unproven_killed: tally.unproven_killed.into(),
+            unproven_survived: tally.unproven_survived.into(),
+            unproven_unreached: tally.unproven_unreached.into(),
+            unproven_discharged: tally.unproven_discharged.into(),
+        }
+    }
 }
 
 /// One count of a set that adds up to a stated whole.
@@ -308,6 +342,11 @@ pub struct RunMutantDocument {
     /// The run that established this, when it was not this one.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
     pub source_run_id: Option<String>,
+    /// The run of the part that decided this row, on whose bench its executions ran, where the report merges the parts of a catalog; none in a run's own report, which decided every row itself.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub part_run_id: Option<String>,
+    /// What the verdict rests on: sealed executions, or nothing and every reason why (ADR 0046).
+    pub evidence: crate::sealed::record::Evidence,
 }
 
 /// One declared expectation, as the run left it.
@@ -487,6 +526,19 @@ pub enum DocumentError {
         /// The contradictory mutant.
         mutant: String,
     },
+    /// A row says which part's run decided it where the report is one run's, or says none where the report merges parts.
+    #[error(
+        "mutant {mutant} {said} the part run that decided it, and the report is {is}: a merge \
+         names the part run of every row, and a run's own report of none"
+    )]
+    PartProvenance {
+        /// The row that disagrees with the report.
+        mutant: String,
+        /// Whether the row names a part run.
+        said: &'static str,
+        /// What the report's other rows or its shard make it.
+        is: &'static str,
+    },
     /// A not-run reason was attached to a result that did run.
     #[error("mutant {mutant} carries a not-run reason that contradicts its outcome")]
     NotRunReason {
@@ -519,6 +571,12 @@ pub enum DocumentError {
         /// The contradictory mutant.
         mutant: String,
     },
+    /// A row's outcome is not the verdict its sealed executions establish.
+    #[error("mutant {mutant} says an outcome its sealed executions do not establish")]
+    Evidence {
+        /// The contradictory mutant.
+        mutant: String,
+    },
     /// A verdict finding names no row whose verdict could imply it.
     #[error("verdict finding {kind} names no judged mutant {mutant}")]
     UnknownFindingMutant {
@@ -540,6 +598,18 @@ pub enum DocumentError {
     FindingFact {
         /// The unsupported finding kind.
         kind: FindingKind,
+    },
+    /// The places a file says it passed over in a function evaluated before the program runs are not the candidates of that file left out for that reason.
+    #[error(
+        "{path} counts {counted} places evaluated before the program runs and leaves out {left} candidates for it"
+    )]
+    PassedOver {
+        /// The file the two disagree about.
+        path: String,
+        /// How many its skip record counts.
+        counted: u32,
+        /// How many of its candidates the report leaves out for that reason.
+        left: u32,
     },
 }
 
@@ -563,11 +633,13 @@ impl RunDocument {
     pub fn validate(&self) -> Result<(), DocumentError> {
         self.validate_header()?;
         self.validate_catalog_rows()?;
+        self.validate_part_provenance()?;
         for one in &self.mutants {
             self.validate_mutant(one)?;
         }
         self.validate_verdict_finding_references()?;
         self.validate_nonverdict_findings()?;
+        self.validate_passed_over()?;
         let expected_accounting = accounting_from_document(self)?;
         if let Some(field) = accounting_difference(&self.accounting, &expected_accounting) {
             return Err(DocumentError::Accounting { field });
@@ -581,6 +653,38 @@ impl RunDocument {
                 expected: expected_exit,
                 actual: self.run.exit_code,
             });
+        }
+        Ok(())
+    }
+
+    /// Every row names the part run that decided it, in a merge, or none does, in a run's own report; a part of a catalog is a run's own report.
+    fn validate_part_provenance(&self) -> Result<(), DocumentError> {
+        let merge = self.run.shard.is_none()
+            && self
+                .mutants
+                .first()
+                .is_some_and(|first| first.part_run_id.is_some());
+        let is = if merge {
+            "a merge of parts"
+        } else {
+            "one run's own"
+        };
+        for one in &self.mutants {
+            let named = one
+                .part_run_id
+                .as_deref()
+                .is_some_and(|run| !run.is_empty());
+            if named != merge || one.part_run_id.is_some() != merge {
+                return Err(DocumentError::PartProvenance {
+                    mutant: one.id.clone(),
+                    said: if one.part_run_id.is_some() {
+                        "names"
+                    } else {
+                        "names no"
+                    },
+                    is,
+                });
+            }
         }
         Ok(())
     }
@@ -636,11 +740,13 @@ impl RunDocument {
                 mutant: one.id.clone(),
             });
         }
+        sealed_agrees(one)?;
         let expected = crate::run::verdict_finding(
             crate::run::RowVerdict {
                 outcome: one.outcome,
                 not_run_reason: one.not_run_reason,
                 expected: one.expected,
+                evidence: one.evidence.class(),
             },
             self.run.interrupted,
         );
@@ -658,6 +764,38 @@ impl RunDocument {
             });
         }
         Ok(())
+    }
+
+    /// Every place counted as evaluated before the program runs is a candidate left out for that reason, file by file, and nothing else is.
+    fn validate_passed_over(&self) -> Result<(), DocumentError> {
+        let reason = crate::validate::Condemnation::EvaluatedBeforeRun;
+        let mut counted: BTreeMap<&str, (u32, u32)> = BTreeMap::new();
+        for skip in self.skips.iter().filter(|skip| {
+            reason
+                .skipped()
+                .is_some_and(|named| skip.reason == named.name())
+        }) {
+            let entry = counted.entry(skip.path.as_str()).or_insert((0, 0));
+            entry.0 = entry
+                .0
+                .checked_add(skip.count)
+                .ok_or(DocumentError::CatalogTooLarge)?;
+        }
+        for rejection in self.rejections.iter().filter(|one| one.reason == reason) {
+            let entry = counted.entry(rejection.path.as_str()).or_insert((0, 0));
+            entry.1 = entry
+                .1
+                .checked_add(1)
+                .ok_or(DocumentError::CatalogTooLarge)?;
+        }
+        match counted.into_iter().find(|(_, (skips, left))| skips != left) {
+            Some((path, (counted, left))) => Err(DocumentError::PassedOver {
+                path: path.to_owned(),
+                counted,
+                left,
+            }),
+            None => Ok(()),
+        }
     }
 
     fn validate_verdict_finding_references(&self) -> Result<(), DocumentError> {
@@ -718,15 +856,15 @@ impl RunDocument {
         let mut display_ids = BTreeSet::new();
         let mut previous = None;
         let registry = crate::rule::Registry::canonical();
-        let shard = self
-            .run
-            .shard
-            .as_deref()
-            .map(crate::run::Shard::parse)
-            .transpose()
-            .map_err(|_error| DocumentError::Shard {
-                shard: self.run.shard.clone().unwrap_or_default(),
-            })?;
+        let shard =
+            match self.run.shard.as_deref() {
+                Some(spelled) => Some(crate::run::Shard::parse(spelled).map_err(|_error| {
+                    DocumentError::Shard {
+                        shard: spelled.to_owned(),
+                    }
+                })?),
+                None => None,
+            };
         for one in &self.mutants {
             if let Some(shard) = shard
                 && !shard.holds(one.index)
@@ -834,7 +972,7 @@ impl RunDocument {
                 | FindingKind::ErroredMutant
                 | FindingKind::NotRunMutant
                 | FindingKind::UnreachedMutant
-                | FindingKind::DischargedMutant => true,
+                | FindingKind::UnprovenMutant => true,
             };
             if !valid_mutant || finding.detail.trim().is_empty() {
                 return Err(DocumentError::FindingFact { kind: finding.kind });
@@ -884,21 +1022,49 @@ fn finding_order(a: &FindingDocument, b: &FindingDocument) -> std::cmp::Ordering
 impl FindingKind {
     /// Whether the finding restates an expectation's standing rather than a mutant's verdict.
     const fn restates_a_claim(self) -> bool {
-        matches!(self, Self::StaleExpectation | Self::UnmatchedExpectation)
+        match self {
+            Self::StaleExpectation | Self::UnmatchedExpectation => true,
+            Self::SurvivingMutant
+            | Self::InconclusiveMutant
+            | Self::StepLimitReachedMutant
+            | Self::WaitedMutant
+            | Self::ErroredMutant
+            | Self::NotRunMutant
+            | Self::UnreachedMutant
+            | Self::UnprovenMutant
+            | Self::UnmatchedSkip => false,
+        }
     }
 
+    /// Whether a row's verdict raises the finding, rather than a claim or a marker.
     const fn is_verdict(self) -> bool {
-        matches!(
-            self,
+        match self {
             Self::SurvivingMutant
-                | Self::InconclusiveMutant
-                | Self::StepLimitReachedMutant
-                | Self::WaitedMutant
-                | Self::ErroredMutant
-                | Self::NotRunMutant
-                | Self::UnreachedMutant
-                | Self::DischargedMutant
-        )
+            | Self::InconclusiveMutant
+            | Self::StepLimitReachedMutant
+            | Self::WaitedMutant
+            | Self::ErroredMutant
+            | Self::NotRunMutant
+            | Self::UnreachedMutant
+            | Self::UnprovenMutant => true,
+            Self::StaleExpectation | Self::UnmatchedExpectation | Self::UnmatchedSkip => false,
+        }
+    }
+}
+
+/// Refuses a row whose sealed executions establish a verdict other than its outcome, deciding it again from them.
+fn sealed_agrees(one: &RunMutantDocument) -> Result<(), DocumentError> {
+    match &one.evidence {
+        crate::sealed::record::Evidence::Sealed { .. }
+            if one.evidence.found().map(crate::sealed::record::row_of)
+                != Some((one.outcome, one.not_run_reason)) =>
+        {
+            Err(DocumentError::Evidence {
+                mutant: one.id.clone(),
+            })
+        }
+        crate::sealed::record::Evidence::Sealed { .. }
+        | crate::sealed::record::Evidence::Unproven { .. } => Ok(()),
     }
 }
 
@@ -920,51 +1086,27 @@ const fn declines_agree(one: &RunMutantDocument) -> bool {
 }
 
 fn accounting_from_document(document: &RunDocument) -> Result<Accounting, DocumentError> {
-    let mut accounting = Accounting {
-        cataloged: document_count(document.mutants.len())?,
-        refused: document_count(document.rejections.len())?.into(),
-        skipped: document
-            .skips
-            .iter()
-            .try_fold(0u32, |total, skip| {
-                total
-                    .checked_add(skip.count)
-                    .ok_or(DocumentError::CatalogTooLarge)
-            })?
-            .into(),
-        ..Accounting::default()
-    };
-    for one in &document.mutants {
-        let outcome = match one.outcome {
-            Outcome::Killed => &mut accounting.killed,
-            Outcome::Survived => &mut accounting.survived,
-            Outcome::StepLimitReached => &mut accounting.step_limit_reached,
-            Outcome::Waited => &mut accounting.waited,
-            Outcome::Inconclusive => &mut accounting.inconclusive,
-            Outcome::Errored => &mut accounting.errored,
-            Outcome::NotRun => &mut accounting.not_run,
-        };
-        outcome.raise()?;
-        if one.not_run_reason == Some(NotRunReason::Unreached) {
-            accounting.unreached.raise()?;
-        }
-        if one.not_run_reason == Some(NotRunReason::Discharged) {
-            accounting.discharged.raise()?;
-        }
-        if one.not_run_reason == Some(NotRunReason::Declined) {
-            accounting.declined.raise()?;
-        }
-        if one.expected {
-            accounting.expected.raise()?;
-        }
-    }
-    accounting.executed = Beside::new(
-        accounting
-            .cataloged
-            .checked_sub(accounting.not_run.count())
-            .ok_or(CountOverflowError)?,
-    );
-    Ok(accounting)
+    let skipped = document.skips.iter().try_fold(0u32, |total, skip| {
+        total
+            .checked_add(skip.count)
+            .ok_or(DocumentError::CatalogTooLarge)
+    })?;
+    let refused = document
+        .rejections
+        .iter()
+        .filter(|rejection| rejection.refused())
+        .count();
+    let tally = crate::run::Tally::of(
+        (document_count(refused)?, skipped),
+        document.mutants.iter().map(|one| crate::run::RowVerdict {
+            outcome: one.outcome,
+            not_run_reason: one.not_run_reason,
+            expected: one.expected,
+            evidence: one.evidence.class(),
+        }),
+    )
+    .map_err(|_overflow| DocumentError::CatalogTooLarge)?;
+    Ok(tally.into())
 }
 
 fn document_count(count: usize) -> Result<u32, DocumentError> {
@@ -1001,14 +1143,34 @@ fn accounting_difference(actual: &Accounting, expected: &Accounting) -> Option<&
         ("errored", actual.errored.count(), expected.errored.count()),
         ("not_run", actual.not_run.count(), expected.not_run.count()),
         (
+            "unproven",
+            actual.unproven.count(),
+            expected.unproven.count(),
+        ),
+        (
             "unreached",
             actual.unreached.count(),
             expected.unreached.count(),
         ),
         (
-            "discharged",
-            actual.discharged.count(),
-            expected.discharged.count(),
+            "unproven_killed",
+            actual.unproven_killed.count(),
+            expected.unproven_killed.count(),
+        ),
+        (
+            "unproven_survived",
+            actual.unproven_survived.count(),
+            expected.unproven_survived.count(),
+        ),
+        (
+            "unproven_unreached",
+            actual.unproven_unreached.count(),
+            expected.unproven_unreached.count(),
+        ),
+        (
+            "unproven_discharged",
+            actual.unproven_discharged.count(),
+            expected.unproven_discharged.count(),
         ),
         (
             "declined",
@@ -1036,17 +1198,25 @@ pub struct Meta<'a> {
     pub finished_at: Timestamp,
 }
 
-/// Every test target the run built, as documents.
-fn target_documents(session: &Session) -> Vec<TargetDocument> {
+/// Every test target the run built, as documents, each with how the sealed build answered for it in `answering`.
+fn target_documents(
+    session: &Session,
+    answering: &BTreeMap<String, crate::sealed::bench::Answering>,
+) -> Vec<TargetDocument> {
     session
         .targets()
         .iter()
         .map(|target| TargetDocument {
-            id: target.id.clone(),
-            kind: target.kind.name().to_owned(),
+            id: target.id().to_owned(),
+            kind: target.kind().name().to_owned(),
             harness: target.harness,
-            tests: session.tests_of(&target.id),
-            limitations: target.limitations.clone(),
+            tests: session.baseline_tests(target.id()),
+            limitations: target
+                .limitations
+                .iter()
+                .map(|limitation| limitation.name().to_owned())
+                .collect(),
+            sealed: SealedTargetDocument::of(answering.get(target.id())),
         })
         .collect()
 }
@@ -1082,25 +1252,9 @@ pub fn document(
         },
         workspace: crate::report::catalog::workspace_document(session)?,
         selection,
-        targets: target_documents(session),
+        targets: target_documents(session, &run.answering),
         established_tests: session.established_tests()?,
-        accounting: Accounting {
-            cataloged: tally.cataloged,
-            refused: tally.refused.into(),
-            skipped: tally.skipped.into(),
-            executed: tally.executed.into(),
-            killed: tally.killed.into(),
-            survived: tally.survived.into(),
-            step_limit_reached: tally.step_limit_reached.into(),
-            waited: tally.waited.into(),
-            inconclusive: tally.inconclusive.into(),
-            errored: tally.errored.into(),
-            not_run: tally.not_run.into(),
-            expected: tally.expected.into(),
-            unreached: tally.unreached.into(),
-            discharged: tally.discharged.into(),
-            declined: tally.declined.into(),
-        },
+        accounting: tally.into(),
         score: run.score()?.map(|score| ScoreDocument {
             detected: score.detected,
             decided: score.decided,
@@ -1110,12 +1264,18 @@ pub fn document(
             .judged
             .iter()
             .map(|one| {
-                let catalog = session
-                    .catalog()
-                    .by_index(one.index)
-                    .map(|mutant| crate::report::catalog::mutant_document(session, mutant))
-                    .transpose()?;
-                mutant(one, catalog)
+                let Some(found) = session.catalog().by_index(one.index) else {
+                    return Err(crate::EngineError::from(
+                        crate::workspace::SessionError::UncatalogedJudgement {
+                            index: one.index,
+                            id: one.id.clone(),
+                        },
+                    ));
+                };
+                mutant(
+                    one,
+                    crate::report::catalog::mutant_document(session, found)?,
+                )
             })
             .collect::<Result<Vec<_>, _>>()?,
         rejections: crate::report::catalog::rejection_documents(session),
@@ -1179,27 +1339,8 @@ fn finding(finding: &Finding) -> FindingDocument {
 
 fn mutant(
     one: &crate::run::Judged,
-    catalog: Option<MutantDocument>,
+    catalog: MutantDocument,
 ) -> Result<RunMutantDocument, crate::EngineError> {
-    let catalog = catalog.unwrap_or_else(|| MutantDocument {
-        index: one.index,
-        id: one.id.clone(),
-        display_id: one.display_id.clone(),
-        path: String::new(),
-        package: String::new(),
-        family: String::new(),
-        rule: String::new(),
-        item: String::new(),
-        rule_version: 0,
-        line: 0,
-        column: 0,
-        start_byte: 0,
-        end_byte: 0,
-        source_digest: String::new(),
-        original: String::new(),
-        replacement: String::new(),
-        branch: None,
-    });
     Ok(RunMutantDocument {
         index: catalog.index,
         id: catalog.id,
@@ -1239,9 +1380,11 @@ fn mutant(
         declined: one.declined.clone(),
         route: one.route.clone(),
         identical: one.identical,
+        evidence: one.evidence.clone(),
         expected: one.expected,
         unreached: one.not_run_reason == Some(NotRunReason::Unreached),
         source_run_id: one.source_run_id.clone(),
+        part_run_id: None,
     })
 }
 
@@ -1255,10 +1398,63 @@ pub struct TargetDocument {
     pub kind: String,
     /// Whether it is built with the libtest harness, which decides how its silence is read.
     pub harness: bool,
-    /// How many tests its baseline ran, which is what asking the whole of it about one mutation costs.
-    pub tests: u32,
+    /// How many tests its own baseline ran, or null where its baseline did not run and nothing counted them.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub tests: Option<u32>,
     /// What a run could not establish about it, each named.
     pub limitations: Vec<String>,
+    /// How the sealed build answers for it.
+    pub sealed: SealedTargetDocument,
+}
+
+/// How the sealed build answers for one target (ADR 0046).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SealedTargetDocument {
+    /// `sealed` where it has sealed tests, or the reason it has none.
+    pub state: String,
+    /// What to do so that it seals, where it has no sealed tests.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub remedy: Option<String>,
+    /// Each test its native baseline ran that has no sealed control, and why.
+    pub uncontrolled: Vec<UncontrolledDocument>,
+}
+
+/// One test a native baseline ran that has no sealed control.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UncontrolledDocument {
+    /// The test.
+    pub test: String,
+    /// Why it has no control: what its control came to, `declined`, `unbuilt`, or `not-held`.
+    pub reason: String,
+}
+
+impl SealedTargetDocument {
+    /// What `answering` says of a target, where the sealed build was given it at all.
+    #[must_use]
+    pub fn of(answering: Option<&crate::sealed::bench::Answering>) -> Self {
+        let unsealed = |why: crate::sealed::Unsealed| Self {
+            state: why.name().to_owned(),
+            remedy: Some(why.remedy().to_owned()),
+            uncontrolled: Vec::new(),
+        };
+        match answering {
+            Some(crate::sealed::bench::Answering::Station { uncontrolled }) => Self {
+                state: "sealed".to_owned(),
+                remedy: None,
+                uncontrolled: uncontrolled
+                    .iter()
+                    .map(|(test, why)| UncontrolledDocument {
+                        test: test.clone(),
+                        reason: why.name().to_owned(),
+                    })
+                    .collect(),
+            },
+            Some(crate::sealed::bench::Answering::Unsealed(why)) => unsealed(*why),
+            None => unsealed(crate::sealed::Unsealed::NotAsked),
+        }
+    }
 }
 
 /// One route, as a document, with the targets an execution of it actually ran.
@@ -1458,17 +1654,7 @@ pub fn merge(parts: &[RunDocument]) -> Result<RunDocument, MergeError> {
             });
         }
     }
-    let mut mutants: BTreeMap<u32, RunMutantDocument> = BTreeMap::new();
-    for part in parts {
-        for one in &part.mutants {
-            if mutants.insert(one.index, one.clone()).is_some() {
-                return Err(MergeError::Overlapping {
-                    mutant: one.id.clone(),
-                });
-            }
-        }
-    }
-    let mutants: Vec<RunMutantDocument> = mutants.into_values().collect();
+    let mutants = decided_in(parts)?;
     let accounting = accounting_of(&mutants, first)?;
     let mut merged = first.clone();
     merged.run = RunMeta {
@@ -1503,50 +1689,51 @@ pub fn merge(parts: &[RunDocument]) -> Result<RunDocument, MergeError> {
     Ok(merged)
 }
 
+/// Every row of `parts`, in catalog order, each naming the run of the part that decided it: a merge runs nothing, so a row rests on what its part's run ran, on that run's bench.
+///
+/// # Errors
+/// [`MergeError::Overlapping`] where two parts decided one mutant.
+fn decided_in(parts: &[RunDocument]) -> Result<Vec<RunMutantDocument>, MergeError> {
+    let mut mutants: BTreeMap<u32, RunMutantDocument> = BTreeMap::new();
+    for part in parts {
+        for one in &part.mutants {
+            let decided = RunMutantDocument {
+                part_run_id: Some(match &one.part_run_id {
+                    Some(earlier) => earlier.clone(),
+                    None => part.run.id.clone(),
+                }),
+                ..one.clone()
+            };
+            if mutants.insert(one.index, decided).is_some() {
+                return Err(MergeError::Overlapping {
+                    mutant: one.id.clone(),
+                });
+            }
+        }
+    }
+    Ok(mutants.into_values().collect())
+}
+
 /// The columns the merged records add up to.
 /// What no part executed — refusals and skips — is a fact about the catalog rather than about a part, so it is taken from one of them rather than summed.
 fn accounting_of(
     mutants: &[RunMutantDocument],
     first: &RunDocument,
 ) -> Result<Accounting, MergeError> {
-    let mut counted = Accounting {
-        cataloged: u32::try_from(mutants.len())
-            .map_err(|_outside_range| MergeError::CatalogTooLarge)?,
-        refused: first.accounting.refused,
-        skipped: first.accounting.skipped,
-        ..Accounting::default()
-    };
-    for one in mutants {
-        let slot = match one.outcome {
-            Outcome::Killed => &mut counted.killed,
-            Outcome::Survived => &mut counted.survived,
-            Outcome::StepLimitReached => &mut counted.step_limit_reached,
-            Outcome::Waited => &mut counted.waited,
-            Outcome::Inconclusive => &mut counted.inconclusive,
-            Outcome::NotRun => &mut counted.not_run,
-            Outcome::Errored => &mut counted.errored,
-        };
-        slot.raise()?;
-        if one.unreached {
-            counted.unreached.raise()?;
-        }
-        if one.not_run_reason == Some(NotRunReason::Discharged) {
-            counted.discharged.raise()?;
-        }
-        if one.not_run_reason == Some(NotRunReason::Declined) {
-            counted.declined.raise()?;
-        }
-        if one.expected {
-            counted.expected.raise()?;
-        }
-    }
-    counted.executed = Beside::new(
-        counted
-            .cataloged
-            .checked_sub(counted.not_run.count())
-            .ok_or(CountOverflowError)?,
-    );
-    Ok(counted)
+    let tally = crate::run::Tally::of(
+        (
+            first.accounting.refused.count(),
+            first.accounting.skipped.count(),
+        ),
+        mutants.iter().map(|one| crate::run::RowVerdict {
+            outcome: one.outcome,
+            not_run_reason: one.not_run_reason,
+            expected: one.expected,
+            evidence: one.evidence.class(),
+        }),
+    )
+    .map_err(|_overflow| MergeError::CatalogTooLarge)?;
+    Ok(tally.into())
 }
 
 fn score_of(accounting: &Accounting) -> Result<Option<ScoreDocument>, CountOverflowError> {

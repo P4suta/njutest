@@ -36,7 +36,10 @@ impl VersionInfo {
 /// [`CargoErrorKind::VersionUnreadable`] when the `release:` or `host:` line is missing: without them the toolchain cannot be named or keyed.
 pub fn parse_version(output: &str) -> Result<VersionInfo, CargoError> {
     let mut lines = output.lines();
-    let summary = lines.next().unwrap_or_default().trim().to_owned();
+    let summary = match lines.next() {
+        Some(first) => first.trim().to_owned(),
+        None => String::new(),
+    };
     let mut release = None;
     let mut commit_hash = None;
     let mut commit_date = None;

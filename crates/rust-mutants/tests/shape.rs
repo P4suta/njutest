@@ -19,7 +19,7 @@ use rust_mutants::instrument::{
     Instrumenting, MODULE_STEM, instrument_file, module_name, plan_file,
 };
 use rust_mutants::rule::{Registry, Tier};
-use rust_mutants::syntax::{Selection, discover_file};
+use rust_mutants::syntax::{Form, Selection, discover_file};
 use syn::visit_mut::VisitMut;
 use syn::{Expr, Stmt};
 
@@ -56,7 +56,7 @@ fn asks(expr: &Expr) -> bool {
             expr,
             ..
         }) => asks(expr),
-        other => matches!(called(other), Some((name, _)) if name == "active"),
+        other => matches!(called(other), Some((name, _)) if name == "active" || name == "baked"),
     }
 }
 
@@ -342,13 +342,19 @@ fn function() -> impl Strategy<Value = String> {
     })
 }
 
+struct Instrumented {
+    text: String,
+    sites: Vec<(u32, Form, String)>,
+    guards: Vec<(u32, Form)>,
+}
+
 /// Every mutation of `source` at every tier, instrumented into one file whose runtime module is named `__rm`.
-fn instrumented(source: &str) -> String {
+fn instrumented(source: &str) -> Instrumented {
     let registry = Registry::canonical();
     let discovery = discover_file(
         "src/lib.rs",
         source.as_bytes(),
-        &Selection::tier(&registry, Tier::All),
+        &Selection::tier(&registry, Tier::Compiled),
     )
     .expect("the generated source is discovered");
     let mut builder = Builder::new();
@@ -359,6 +365,17 @@ fn instrumented(source: &str) -> String {
     }
     let catalog = builder.build().expect("the catalog");
     let placements = plan_file(&catalog, "src/lib.rs", &discovery.candidates).expect("the plan");
+    let sites = placements
+        .iter()
+        .map(|placement| {
+            let start = usize::try_from(placement.hint.site.start).expect("site start fits usize");
+            let end = usize::try_from(placement.hint.site.end).expect("site end fits usize");
+            let text = source
+                .get(start..end)
+                .expect("a planned site is in the written source");
+            (placement.index, placement.hint.form, text.to_owned())
+        })
+        .collect();
     let comparable: BTreeSet<u32> = discovery
         .candidates
         .iter()
@@ -376,6 +393,7 @@ fn instrumented(source: &str) -> String {
         path: "src/lib.rs",
         source: source.as_bytes(),
         placements: &placements,
+        carriers: &[],
         markers: &[],
         comparable: &comparable,
         probed: &BTreeMap::new(),
@@ -384,31 +402,104 @@ fn instrumented(source: &str) -> String {
         watched: "/watched",
     })
     .unwrap_or_else(|error| panic!("the source is instrumented: {error}\n{source}"));
-    file.text.replace(
-        &module_name("src/lib.rs", source).expect("the generated source has valid tokens"),
-        MODULE_STEM,
-    )
+    let guards = file
+        .guards
+        .iter()
+        .map(|guard| (guard.index, guard.form))
+        .collect();
+    Instrumented {
+        text: file.text.replace(
+            &module_name("src/lib.rs", source).expect("the generated source has valid tokens"),
+            MODULE_STEM,
+        ),
+        sites,
+        guards,
+    }
+}
+
+struct Checked {
+    written: syn::File,
+    instrumented: syn::File,
+    text: String,
+    sites: Vec<(u32, Form, String)>,
+    guards: Vec<(u32, Form)>,
 }
 
 /// Instruments `source` and says what taking every guard back out of it leaves, beside what the source holds.
-fn undone(source: &str) -> (syn::File, syn::File, String) {
-    let written = syn::parse_file(source)
+fn undone(source: &str) -> Checked {
+    let written = njutest_devkit::lexed::file(source)
         .unwrap_or_else(|error| panic!("the generated source parses: {error}\n{source}"));
-    let text = instrumented(source);
-    let instrumented = syn::parse_file(&text)
+    let Instrumented {
+        text,
+        sites,
+        guards,
+    } = instrumented(source);
+    let instrumented = njutest_devkit::lexed::file(&text)
         .unwrap_or_else(|error| panic!("the instrumented file parses: {error}\n{source}\n{text}"));
-    (tree(written), tree(instrumented), text)
+    Checked {
+        written: tree(written),
+        instrumented: tree(instrumented),
+        text,
+        sites,
+        guards,
+    }
 }
 
 #[test]
 fn a_block_arm_without_a_comma_keeps_standing_as_a_block() {
     let source = "pub enum Reach { Subtree, Exact }\n\npub fn reaches(reach: Reach, empty: bool) -> bool {\n    match reach {\n        Reach::Subtree => { true }\n        Reach::Exact => empty,\n    }\n}\n";
-    let (written, instrumented, text) = undone(source);
+    let checked = undone(source);
     assert!(
-        written == instrumented,
+        checked.written == checked.instrumented,
         "a guard over a block arm has to stand where a block stood, or the next arm is read as \
-         part of it: {text}"
+         part of it: {}",
+        checked.text
     );
+}
+
+const fn source_for(form: Form) -> &'static [(&'static str, &'static str)] {
+    match form {
+        Form::C => &[(
+            "pub fn f(a: i32) -> bool { if a > 0 { true } else { false } }\n",
+            "a > 0",
+        )],
+        Form::E => &[
+            ("pub fn f(a: i32) -> i32 { a + 1 }\n", "a + 1"),
+            (
+                "pub fn f(a: i32) -> i32 { if a > 0 { a } else { 0 } }\n",
+                "if a > 0",
+            ),
+        ],
+        Form::S => &[("pub fn f() { f(); }\n", "f();")],
+        Form::B => &[("pub const VALUE: u32 = 40 + 2;\n", "40 + 2")],
+        Form::M => &[(
+            "pub fn f(a: i32) -> i32 { match a { 0 => 1, _ => 2 } }\n",
+            "0",
+        )],
+    }
+}
+
+#[test]
+fn every_guard_form_is_observed_with_the_independent_tree_oracle() {
+    for form in Form::ALL {
+        for &(source, at) in source_for(form) {
+            let checked = undone(source);
+            assert!(
+                checked.sites.iter().any(|(index, planned, text)| {
+                    *planned == form
+                        && text.starts_with(at)
+                        && checked.guards.contains(&(*index, form))
+                }),
+                "{form:?} was not planned at {at:?} for {source}: {:?}",
+                checked.sites
+            );
+            assert!(
+                checked.written == checked.instrumented,
+                "{form:?} changed the source tree:\n{source}\n{}",
+                checked.text
+            );
+        }
+    }
 }
 
 proptest! {
@@ -416,12 +507,12 @@ proptest! {
 
     #[test]
     fn instrumenting_keeps_the_tree_of_every_file(source in function()) {
-        let (written, instrumented, text) = undone(&source);
+        let checked = undone(&source);
         prop_assert!(
-            written == instrumented,
+            checked.written == checked.instrumented,
             "taking every guard back out has to give the tree that was written:\n{}\n{}",
             source,
-            text
+            checked.text
         );
     }
 }

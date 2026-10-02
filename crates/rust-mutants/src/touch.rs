@@ -241,13 +241,32 @@ fn record(
         }
     };
     let reported = sites(indices, within, number)?;
-    let into = if name == UNATTRIBUTED {
-        &mut seen.loose
-    } else {
-        seen.tests.entry(name.to_owned()).or_default()
+    let into = match Reporter::named(name) {
+        Reporter::Nobody => &mut seen.loose,
+        Reporter::Test(test) => seen.tests.entry(test.to_owned()).or_default(),
     };
     into.extend(reported);
     Ok(())
+}
+
+/// Who the thread field of a record says made it: the one place a record is attributed.
+#[derive(Debug, Clone, Copy)]
+enum Reporter<'a> {
+    /// The thread a test ran on, by that test's name, which is never empty.
+    Test(&'a str),
+    /// A thread no test answers for: one the runtime wrote as unattributed, or one named nothing at all.
+    Nobody,
+}
+
+impl<'a> Reporter<'a> {
+    /// Who a record's thread field names.
+    fn named(name: &'a str) -> Self {
+        if name.is_empty() || name == UNATTRIBUTED {
+            Self::Nobody
+        } else {
+            Self::Test(name)
+        }
+    }
 }
 
 /// Which catalog a record's indices are about, and how many it holds.
@@ -302,8 +321,8 @@ pub use crate::limitation::TOUCH_LOG_UNREADABLE as UNREADABLE;
 pub struct Touched {
     /// What each target's guards recorded, by target identity.
     pub targets: BTreeMap<String, TargetTouches>,
-    /// Why a target the run built is not in `targets`, as `<limitation>:<target>`.
-    pub limitations: Vec<String>,
+    /// Why a target the run built is not in `targets`.
+    pub limitations: Vec<crate::limitation::Limited>,
     /// Which of the records above are facts about which mutant, without which the rest is only silence.
     #[serde(default)]
     pub narrowing: Narrowing,
@@ -628,7 +647,11 @@ impl Touched {
     }
 
     /// Records that `target` said nothing this run can route by, and why.
-    pub fn limited(&mut self, limitation: &str, target: &str) {
-        self.limitations.push(format!("{limitation}:{target}"));
+    pub fn limited(&mut self, limitation: crate::limitation::Limitation, target: &str) {
+        self.limitations
+            .push(crate::limitation::Limited::for_target(
+                limitation,
+                crate::limitation::TargetId::generated(target),
+            ));
     }
 }

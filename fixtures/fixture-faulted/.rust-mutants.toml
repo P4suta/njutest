@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: 2026 njutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+version = 1
+
+[mutation]
+timeout = "2s"

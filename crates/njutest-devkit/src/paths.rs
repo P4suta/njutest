@@ -376,16 +376,39 @@ pub fn text_in_json(text: &str) -> String {
 pub const TOOLCHAIN_TESTS_AT_ONCE: usize = 4;
 
 /// The jobs a cargo started by a test may use: this machine's share for one of [`TOOLCHAIN_TESTS_AT_ONCE`] tests, never fewer than one.
+///
+/// # Panics
+/// `CARGO_BUILD_JOBS` is present but is not a positive textual count.
 #[must_use]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "invalid nested Cargo setup must fail the test before measuring any fixture"
+)]
 pub fn nested_build_jobs() -> usize {
     let cores = match std::thread::available_parallelism() {
         Ok(cores) => cores.get(),
         Err(_unknown) => 1,
     };
-    cores
-        .checked_div(TOOLCHAIN_TESTS_AT_ONCE)
-        .unwrap_or(1)
-        .max(1)
+    let ceiling = match std::env::var(JOBS) {
+        Ok(value) => Some(
+            value
+                .parse::<std::num::NonZeroUsize>()
+                .expect("CARGO_BUILD_JOBS names a positive test build budget")
+                .get(),
+        ),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(std::env::VarError::NotUnicode(_)) => panic!("CARGO_BUILD_JOBS must be textual"),
+    };
+    nested_job_share(cores, ceiling)
+}
+
+fn nested_job_share(cores: usize, ceiling: Option<usize>) -> usize {
+    let budget = match ceiling {
+        Some(ceiling) => cores.min(ceiling),
+        None => cores,
+    };
+    (budget / TOOLCHAIN_TESTS_AT_ONCE).max(1)
 }
 
 /// The parent's environment for a new in-process run, with the variables that run must compose for itself taken out.
@@ -414,6 +437,18 @@ pub fn environment_for_a_run() -> Vec<(std::ffi::OsString, std::ffi::OsString)> 
             !(reserved || (outer_coverage && cargo_llvm_cov_owns(name)))
         })
         .collect();
+    if !kept
+        .iter()
+        .any(|(name, _value)| same_name(name, std::ffi::OsStr::new("NJUTEST_FIXTURE_BUILD_CACHE")))
+    {
+        kept.push((
+            std::ffi::OsString::from("NJUTEST_FIXTURE_BUILD_CACHE"),
+            workspace_root()
+                .join("target")
+                .join("fixture-build-cache")
+                .into_os_string(),
+        ));
+    }
     kept.push(jobs());
     kept
 }
@@ -461,12 +496,23 @@ pub const ALSO_ON_THIS_PLATFORM: [&str; 13] = [
 #[cfg(not(windows))]
 pub const ALSO_ON_THIS_PLATFORM: [&str; 0] = [];
 
-/// The least of the parent's environment a nested run of either product needs, and the names `also` adds.
+/// The least of the parent's environment a nested run of either product needs, the names `also` adds, and the toolchain this repository pins.
+///
+/// A copied fixture is outside the checkout rustup reads the pin from, and the pinned toolchain holds the sealed target every machine that checks this repository installs, where a default toolchain may not.
 #[must_use]
 pub fn environment_for_a_toolchain_run(
     also: &[&str],
 ) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
-    let wanted: [&str; 4] = ["PATH", "HOME", "RUSTUP_HOME", "CARGO_HOME"];
+    let wanted: [&str; 8] = [
+        "PATH",
+        "HOME",
+        "RUSTUP_HOME",
+        "CARGO_HOME",
+        "NJUTEST_FIXTURE_BUILD_CACHE",
+        "NJUTEST_TEST_COST_DIR",
+        "NEXTEST_BINARY_ID",
+        "NEXTEST_TEST_NAME",
+    ];
     let mut kept: Vec<(std::ffi::OsString, std::ffi::OsString)> = environment_for_a_run()
         .into_iter()
         .filter(|(name, _value)| {
@@ -480,9 +526,19 @@ pub fn environment_for_a_toolchain_run(
     if let Some(cache) = compilation_cache() {
         kept.push((std::ffi::OsString::from(WRAPPER), cache));
     }
+    if let Some(pinned) = pinned_toolchain() {
+        kept.retain(|(name, _value)| !same_name(name, std::ffi::OsStr::new(TOOLCHAIN)));
+        kept.push((
+            std::ffi::OsString::from(TOOLCHAIN),
+            std::ffi::OsString::from(pinned),
+        ));
+    }
     kept.push(jobs());
     kept
 }
+
+/// The variable rustup reads the toolchain to run from.
+const TOOLCHAIN: &str = "RUSTUP_TOOLCHAIN";
 
 /// The variable a compiler wrapper is named in, which two different things use.
 const WRAPPER: &str = "RUSTC_WRAPPER";
@@ -503,6 +559,38 @@ fn compilation_cache() -> Option<std::ffi::OsString> {
         .find(|(name, _value)| same_name(name, std::ffi::OsStr::new(WRAPPER)))
         .map(|(_name, value)| value)
         .filter(|value| names_a_cache(value))
+}
+
+/// One variable of a nested run given a home of its own, beside the run it was copied from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Given {
+    /// Set to this value.
+    Set(&'static str, std::ffi::OsString),
+    /// Removed.
+    Removed(&'static str),
+}
+
+/// What a nested run given `home` as its home changes: the home under both names a platform reads it by, the toolchain's own homes kept where they were, and no compilation cache, whose own configuration it would look for under the home it no longer has.
+#[must_use]
+pub fn given_home(home: &Path) -> Vec<Given> {
+    let real =
+        std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from);
+    let mut given = Vec::new();
+    for (name, beside) in [("CARGO_HOME", ".cargo"), ("RUSTUP_HOME", ".rustup")] {
+        let kept = std::env::var_os(name)
+            .or_else(|| real.as_ref().map(|real| real.join(beside).into_os_string()));
+        given.push(match kept {
+            Some(kept) => Given::Set(name, kept),
+            None => Given::Removed(name),
+        });
+    }
+    for name in ["HOME", "USERPROFILE"] {
+        given.push(Given::Set(name, home.as_os_str().to_owned()));
+    }
+    if compilation_cache().is_some() {
+        given.push(Given::Removed(WRAPPER));
+    }
+    given
 }
 
 /// Whether a compiler wrapper is the compilation cache rather than something else wearing the variable.
@@ -558,4 +646,175 @@ pub const NOT_INHERITED: [&str; 3] = ["LLVM_PROFILE_FILE", "RUSTFLAGS", "CARGO_E
 )]
 fn remove_environment(command: &mut std::process::Command, name: &str) {
     command.env_remove(name);
+}
+
+/// The target a sealed host runs a suite as, which `rust-toolchain.toml` installs beside the pinned toolchain.
+pub const SEALED_TARGET: &str = "wasm32-wasip1";
+
+/// Where `rustc` keeps the standard library of `target`, a missing one refused in words that say how to install it.
+///
+/// # Panics
+/// `rustc` cannot say where the target's libraries are, or no standard library for the target is there.
+#[must_use]
+#[track_caller]
+#[expect(
+    clippy::panic,
+    reason = "a test without the target it builds for cannot say anything about its subject, and saying how to install it is its only honest answer"
+)]
+pub fn target_libdir(rustc: &Path, target: &str) -> PathBuf {
+    let asked = command(rustc)
+        .args(["--print", "target-libdir", "--target", target])
+        .output();
+    let printed = match asked {
+        Ok(printed) if printed.status.success() => printed.stdout,
+        Ok(printed) => panic!(
+            "`{} --print target-libdir --target {target}` failed: {}",
+            rustc.display(),
+            crate::process::strict_utf8(&printed.stderr)
+        ),
+        Err(error) => panic!("`{}` could not be started: {error}", rustc.display()),
+    };
+    let libdir = PathBuf::from(crate::process::strict_utf8(&printed).trim_end());
+    match holds_a_standard_library(&libdir) {
+        Ok(true) => libdir,
+        Ok(false) => panic!(
+            "{}",
+            missing_target(target, &libdir, pinned_toolchain().as_deref())
+        ),
+        Err(error) => panic!("{} could not be read: {error}", libdir.display()),
+    }
+}
+
+/// Whether `libdir` holds a compiled standard library, where a directory that is not there holds none.
+fn holds_a_standard_library(libdir: &Path) -> std_io::Result<bool> {
+    let entries = match fs::read_dir(libdir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std_io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    for entry in entries {
+        let name = entry?.file_name();
+        let library = Path::new(&name);
+        let std = library
+            .file_stem()
+            .and_then(std::ffi::OsStr::to_str)
+            .is_some_and(|stem| stem.starts_with("libstd-"));
+        let compiled = library
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("rlib"));
+        if std && compiled {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The toolchain `rust-toolchain.toml` pins, which is the one a missing target is installed for and every nested run of a test uses.
+#[must_use]
+pub fn pinned_toolchain() -> Option<String> {
+    let channel = toolchain_setting("channel")?;
+    Some(channel.strip_prefix('"')?.strip_suffix('"')?.to_owned())
+}
+
+/// What `rust-toolchain.toml` writes after `key =`, or nothing where it cannot be read or says nothing of `key`.
+fn toolchain_setting(key: &str) -> Option<String> {
+    let text = match fs::read_to_string(workspace_root().join("rust-toolchain.toml")) {
+        Ok(text) => text,
+        Err(_unreadable) => return None,
+    };
+    text.lines().find_map(|line| {
+        let value = line
+            .trim()
+            .strip_prefix(key)?
+            .trim_start()
+            .strip_prefix('=')?
+            .trim();
+        Some(value.to_owned())
+    })
+}
+
+/// The missing-target diagnostic, naming the command that installs it.
+fn missing_target(target: &str, libdir: &Path, toolchain: Option<&str>) -> String {
+    let install = match toolchain {
+        Some(toolchain) => format!("rustup target add {target} --toolchain {toolchain}"),
+        None => format!("rustup target add {target}"),
+    };
+    format!(
+        "this test builds for `{target}`, and the toolchain that builds this workspace has no \
+         standard library for it in {}: install it with `{install}`",
+        libdir.display()
+    )
+}
+
+#[cfg(test)]
+mod target_tests {
+    use std::fs;
+    use std::io;
+
+    use super::{
+        SEALED_TARGET, holds_a_standard_library, missing_target, pinned_toolchain,
+        toolchain_setting,
+    };
+
+    #[test]
+    fn nested_cargos_share_the_callers_build_budget() {
+        assert_eq!(super::nested_job_share(24, Some(3)), 1);
+        assert_eq!(super::nested_job_share(24, Some(8)), 2);
+        assert_eq!(super::nested_job_share(8, None), 2);
+    }
+
+    #[test]
+    fn a_standard_library_is_held_only_where_one_was_compiled() -> io::Result<()> {
+        let scratch = tempfile::tempdir()?;
+        let libdir = scratch.path().join("lib");
+        let absent = holds_a_standard_library(&libdir)?;
+        fs::create_dir_all(&libdir)?;
+        fs::write(libdir.join("libcore-0123.rlib"), "")?;
+        let without = holds_a_standard_library(&libdir)?;
+        fs::write(libdir.join("libstd-0123.rlib"), "")?;
+        let with = holds_a_standard_library(&libdir)?;
+        if (absent, without, with) == (false, false, true) {
+            Ok(())
+        } else {
+            Err(io::Error::other(format!(
+                "a missing directory, one without std, and one with it read as {absent}, \
+                 {without}, {with}"
+            )))
+        }
+    }
+
+    #[test]
+    fn a_missing_target_names_the_command_that_installs_it_for_the_pinned_toolchain()
+    -> io::Result<()> {
+        let pinned = pinned_toolchain().ok_or_else(|| {
+            io::Error::other("rust-toolchain.toml names no channel this helper can read")
+        })?;
+        let message = missing_target(
+            SEALED_TARGET,
+            std::path::Path::new("/nowhere"),
+            Some(&pinned),
+        );
+        let command = format!("`rustup target add {SEALED_TARGET} --toolchain {pinned}`");
+        if message.contains(&command) && pinned.starts_with(|first: char| first.is_ascii_digit()) {
+            Ok(())
+        } else {
+            Err(io::Error::other(format!(
+                "the refusal does not say {command}, or {pinned:?} is not a pinned release: \
+                 {message}"
+            )))
+        }
+    }
+
+    #[test]
+    fn the_pinned_toolchain_installs_the_target_a_sealed_host_runs() -> io::Result<()> {
+        let targets = toolchain_setting("targets").unwrap_or_default();
+        if targets.contains(&format!("\"{SEALED_TARGET}\"")) {
+            Ok(())
+        } else {
+            Err(io::Error::other(format!(
+                "the suite builds for {SEALED_TARGET}, so rust-toolchain.toml installs its \
+                 standard library wherever the pinned toolchain is installed: targets = {targets}"
+            )))
+        }
+    }
 }

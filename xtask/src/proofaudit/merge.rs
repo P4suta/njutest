@@ -31,6 +31,12 @@ pub enum MergeRule {
     Models,
     /// Each shard, re-decided against its own recording, holds.
     Shards,
+    /// Every row a part rests on sealed executions is one the part's own run recorded those executions of, in order (ADR 0046).
+    Sealed,
+    /// The record stream kept beside the merge says of each dimension what every part's records establish.
+    Dimensions,
+    /// The record stream kept beside the merge raises `unstable-baseline` about each target a part saw move that something still rests on, and states `reach-moved` about each one nothing rests on with what every part ran again against it (ADR 0036 decisions 3 and 4).
+    Moved,
 }
 
 impl MergeRule {
@@ -47,6 +53,9 @@ impl MergeRule {
             Self::Identity => "identity",
             Self::Models => "models",
             Self::Shards => "shards",
+            Self::Sealed => "sealed",
+            Self::Dimensions => "dimensions",
+            Self::Moved => "moved",
         }
     }
 }
@@ -148,6 +157,44 @@ enum Document {
 pub struct AuditedShard {
     report: ShardReport,
     audit: Audit,
+    witnessed: Witnessed,
+}
+
+/// The sealed executions a shard's own recording holds, which every sealed row of its part is held to.
+#[derive(Debug)]
+enum Witnessed {
+    /// Every sealed execution its engine recordings hold, with the mutation each ran, in the order recorded.
+    Held(Vec<(String, super::SealedRun)>),
+    /// Its recording keeps no engine recording.
+    Unrecorded,
+    /// An engine recording holds a sealed execution this audit cannot read.
+    Unreadable,
+}
+
+impl Witnessed {
+    /// What the engine recordings `engines` hold, each read and held to its schema once.
+    fn of(
+        checkers: &crate::schemas::Checkers,
+        engines: &[(String, String)],
+    ) -> Result<Self, AuditError> {
+        if engines.is_empty() {
+            return Ok(Self::Unrecorded);
+        }
+        let mut held = Vec::new();
+        for (recording_path, text) in engines {
+            let checked =
+                crate::route::Checked::<crate::schemas::EngineLines>::read(text, checkers)
+                    .map_err(|source| AuditError::MalformedRecording {
+                        path: recording_path.clone(),
+                        source,
+                    })?;
+            match super::sealed_runs(checked.events()) {
+                Some(runs) => held.extend(runs),
+                None => return Ok(Self::Unreadable),
+            }
+        }
+        Ok(Self::Held(held))
+    }
 }
 
 /// The run a shard document at `path` holding `text` names, which is where its recording is kept.
@@ -184,9 +231,11 @@ pub fn audited(
         });
     };
     let audit = super::audit_with(checkers, reported, recorded, run)?;
+    let witnessed = Witnessed::of(checkers, recorded.engines)?;
     Ok(AuditedShard {
         report: *report,
         audit,
+        witnessed,
     })
 }
 
@@ -196,8 +245,8 @@ pub fn audited(
 /// A document that is not JSON or is off its schema, a report that is not a merge, a shard given twice, and a shard the report was not merged from.
 pub fn merged_with(
     checkers: &crate::schemas::Checkers,
-    path: &str,
-    text: &str,
+    super::Reported { path, text }: super::Reported<'_>,
+    kept: Option<&str>,
     shards: &[AuditedShard],
 ) -> Result<Audit, AuditError> {
     let Document::Complete(merged) = read(checkers, path, text)? else {
@@ -217,8 +266,7 @@ pub fn merged_with(
         targets: shards
             .iter()
             .map(|shard| shard.audit.targets)
-            .max()
-            .unwrap_or_default(),
+            .fold(0, usize::max),
         remarks: Vec::new(),
         coverage: std::collections::BTreeMap::new(),
     };
@@ -229,7 +277,14 @@ pub fn merged_with(
             .iter()
             .find(|shard| shard.report.run_id == source.run_id)
         {
-            Some(shard) => held(&merged, (position, source, shard), &mut notes),
+            Some(shard) => {
+                held(&merged, (position, source, shard), &mut notes);
+                for build in &merged.builds {
+                    if let Some(part) = build.parts.get(position) {
+                        witnessed(part, (&source.run_id, &shard.witnessed), &mut notes);
+                    }
+                }
+            }
             None => notes.unaudited(
                 &source.run_id,
                 format!(
@@ -240,6 +295,8 @@ pub fn merged_with(
             ),
         }
     }
+    dimensioned(&merged, kept, &mut notes);
+    moved(&merged, kept, &mut notes);
     let Decided(()) = notes.looked();
     let whole = shards.len() == sources.len();
     for layer in Layer::ALL
@@ -303,6 +360,435 @@ fn given(path: &str, sources: &[Source], shards: &[AuditedShard]) -> Result<(), 
     Ok(())
 }
 
+/// Every list of `merged` a matrix is read off: what each part decided from every part, and what every part's shared baseline holds from each build's first part.
+struct Lists {
+    targets: Vec<Value>,
+    findings: Vec<Value>,
+    limitations: Vec<Value>,
+    knobs: Vec<Value>,
+    concurrency: Vec<Value>,
+    faults: Vec<Value>,
+    crashes: Vec<Value>,
+    seams: Vec<Value>,
+    unsettled: bool,
+    found: Vec<(String, String)>,
+}
+
+/// What a merged report lacks that a matrix is read off.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Unlisted {
+    /// A build that holds no part.
+    Build(String),
+    /// A part without the list.
+    List(&'static str),
+    /// A row without the text at the pointer.
+    Field(&'static str),
+    /// A row whose evidence is in no shape a run writes.
+    Evidence,
+    /// Repair counts over one target that no count holds.
+    Count,
+}
+
+impl Unlisted {
+    /// What a violation says of it.
+    fn said(&self) -> String {
+        match self {
+            Self::Build(name) => format!("the build {name} holds no part"),
+            Self::List(name) => format!("a part holds no {name} list"),
+            Self::Field(pointer) => format!("a row holds no {pointer}"),
+            Self::Evidence => "a row holds evidence in no shape a run writes".to_owned(),
+            Self::Count => "the parts' repair counts over one target do not fit a count".to_owned(),
+        }
+    }
+}
+
+impl Lists {
+    /// What every part of `merged` holds, or the first thing a part does not hold.
+    fn of(merged: &Complete) -> Result<Self, Unlisted> {
+        let list = |part: &Value, name: &'static str| -> Result<Vec<Value>, Unlisted> {
+            part.get(name)
+                .and_then(Value::as_array)
+                .cloned()
+                .ok_or(Unlisted::List(name))
+        };
+        let text = |row: &Value, pointer: &'static str| -> Result<String, Unlisted> {
+            row.pointer(pointer)
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+                .ok_or(Unlisted::Field(pointer))
+        };
+        let mut lists = Self {
+            targets: Vec::new(),
+            findings: Vec::new(),
+            limitations: Vec::new(),
+            knobs: Vec::new(),
+            concurrency: Vec::new(),
+            faults: Vec::new(),
+            crashes: Vec::new(),
+            seams: Vec::new(),
+            unsettled: false,
+            found: Vec::new(),
+        };
+        for build in &merged.builds {
+            let baseline = build
+                .parts
+                .first()
+                .ok_or_else(|| Unlisted::Build(build.name.clone()))?;
+            lists.targets.extend(list(baseline, "targets")?);
+            lists.concurrency.extend(list(baseline, "concurrency")?);
+            lists.seams.extend(list(baseline, "seams")?);
+            for part in &build.parts {
+                lists.limitations.extend(list(part, "limitations")?);
+                lists.knobs.extend(list(part, "knobs")?);
+                lists.faults.extend(list(part, "faults")?);
+                lists.crashes.extend(list(part, "crashes")?);
+                for finding in list(part, "findings")? {
+                    lists
+                        .found
+                        .push((text(&finding, "/kind")?, text(&finding, "/subject")?));
+                    lists.findings.push(finding);
+                }
+                for mutant in list(part, "mutants")? {
+                    let outcome = text(&mutant, "/decision/outcome")?;
+                    let rests = mutant
+                        .get("evidence")
+                        .and_then(super::Rests::read)
+                        .ok_or(Unlisted::Evidence)?;
+                    let lead = matches!(rests, super::Rests::Unproven(_))
+                        && super::SEALED_OUTCOMES.contains(&outcome.as_str());
+                    lists.unsettled = lists.unsettled || super::undecided(&outcome, lead);
+                }
+            }
+        }
+        Ok(lists)
+    }
+
+    /// The same lists, as the matrix's re-derivation reads them.
+    fn held(&self) -> super::Held<'_> {
+        super::Held {
+            part: super::Part {
+                targets: &self.targets,
+                findings: &self.findings,
+                limitations: &self.limitations,
+                drift: &[],
+                repaired: &[],
+                knobs: &self.knobs,
+                concurrency: &self.concurrency,
+                faults: &self.faults,
+                beside: &[],
+                crashes: &self.crashes,
+                seams: &self.seams,
+            },
+            unsettled: self.unsettled,
+            findings: self
+                .found
+                .iter()
+                .map(|(kind, subject)| (kind.as_str(), subject.as_str()))
+                .collect(),
+        }
+    }
+}
+
+/// Whether the record stream `kept` beside `merged` says of each dimension what every part's records establish, and names each one a `whole-v1` merge leaves a hole, re-derived without the runner's code (ADR 0033); a merged document stores no column, so where no stream was kept nothing was said to hold.
+fn dimensioned(merged: &Complete, kept: Option<&str>, notes: &mut Notes<'_>) {
+    let Some(kept) = kept else {
+        return;
+    };
+    let lists = match Lists::of(merged) {
+        Ok(lists) => lists,
+        Err(why) => {
+            broke(notes, MergeRule::Dimensions, "dimensions", &why.said());
+            return;
+        }
+    };
+    let holed = super::holed_dimensions(&lists.held());
+    let said = super::Said::of(kept);
+    for (dimension, why) in super::columns_disagree(&said, &holed) {
+        broke(notes, MergeRule::Dimensions, dimension, &why);
+    }
+    let whole = merged.contract.as_str() == Some("whole-v1");
+    for dimension in super::DIMENSIONS {
+        let owed = whole && holed.contains(dimension);
+        let named = said.named.contains(dimension);
+        if owed != named {
+            broke(
+                notes,
+                MergeRule::Dimensions,
+                dimension,
+                &format!(
+                    "the record stream {} a dimension-not-measured finding about it, and a merge \
+                     under {} whose parts' records {} it a hole owes {}",
+                    if named { "holds" } else { "holds no" },
+                    merged.contract,
+                    if holed.contains(dimension) {
+                        "leave"
+                    } else {
+                        "do not leave"
+                    },
+                    if owed { "one" } else { "none" }
+                ),
+            );
+        }
+    }
+    for extra in said
+        .named
+        .iter()
+        .filter(|name| !super::DIMENSIONS.contains(&name.as_str()))
+    {
+        broke(
+            notes,
+            MergeRule::Dimensions,
+            extra,
+            "the record stream names a dimension no matrix has",
+        );
+    }
+}
+
+/// What the merge owes the record stream about one target a part saw move, re-derived from every part's drift, rows and repair counts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Owed {
+    /// Something still rests on it: the `unstable-baseline` finding, with the words that count what does.
+    Unstable(String),
+    /// Nothing does: the `reach-moved` limitation, with the words that count what every part ran again.
+    Repaired(String),
+}
+
+/// How many mutations, in the words a finding counts them in.
+fn mutations(count: usize) -> String {
+    if count == 1 {
+        "1 mutation".to_owned()
+    } else {
+        format!("{count} mutations")
+    }
+}
+
+/// Every part's records one build of a merge re-derives its moves from: the targets a part saw move, every row, and each part's repair count against each target.
+struct Moves {
+    moved: BTreeSet<String>,
+    rows: Vec<Value>,
+    repaired: Vec<(String, u64)>,
+}
+
+impl Moves {
+    /// What every part of `build` holds, or the first thing a part does not hold.
+    fn of(build: &Build) -> Result<Self, Unlisted> {
+        let list = |part: &Value, name: &'static str| -> Result<Vec<Value>, Unlisted> {
+            part.get(name)
+                .and_then(Value::as_array)
+                .cloned()
+                .ok_or(Unlisted::List(name))
+        };
+        let text = |record: &Value, name: &'static str| -> Result<String, Unlisted> {
+            record
+                .get(name)
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+                .ok_or(Unlisted::Field(name))
+        };
+        let mut moves = Self {
+            moved: BTreeSet::new(),
+            rows: Vec::new(),
+            repaired: Vec::new(),
+        };
+        for part in &build.parts {
+            for record in list(part, "drift")? {
+                if record.get("state").and_then(Value::as_str) == Some("moved") {
+                    moves.moved.insert(text(&record, "target")?);
+                }
+            }
+            for record in list(part, "repaired")? {
+                let again = record
+                    .get("again")
+                    .and_then(Value::as_u64)
+                    .ok_or(Unlisted::Field("again"))?;
+                moves.repaired.push((text(&record, "target")?, again));
+            }
+            moves.rows.extend(list(part, "mutants")?);
+        }
+        Ok(moves)
+    }
+
+    /// How many rows came to `outcome` and rest on `target`: those whose route did not put `target` to it.
+    fn resting(&self, target: &str, outcome: &str) -> usize {
+        self.rows
+            .iter()
+            .filter(|row| row.pointer("/decision/outcome").and_then(Value::as_str) == Some(outcome))
+            .filter(|row| {
+                !row.pointer("/routing/reaching")
+                    .and_then(Value::as_array)
+                    .is_some_and(|reaching| reaching.iter().any(|one| one.as_str() == Some(target)))
+            })
+            .count()
+    }
+
+    /// What the merge owes about `target`, one of the moved.
+    fn owed(&self, target: &str) -> Result<Owed, Unlisted> {
+        let (survived, unreached) = (
+            self.resting(target, "survived"),
+            self.resting(target, "unreached"),
+        );
+        if survived > 0 || unreached > 0 {
+            return Ok(Owed::Unstable(format!(
+                ": {} a proof removed its run of, and {} no test reached, rest on it",
+                mutations(survived),
+                mutations(unreached)
+            )));
+        }
+        let again = self
+            .repaired
+            .iter()
+            .filter(|(named, _)| named == target)
+            .try_fold(0_u64, |sum, (_, again)| sum.checked_add(*again))
+            .ok_or(Unlisted::Count)?;
+        Ok(Owed::Repaired(format!(
+            "; {again} {} that rested on its baseline {} run again against it",
+            if again == 1 {
+                "disposition"
+            } else {
+                "dispositions"
+            },
+            if again == 1 { "was" } else { "were" }
+        )))
+    }
+}
+
+/// What the merge owes about each target a part of `merged` saw move, or what a part does not hold that it would be read from.
+fn owed_moves(merged: &Complete) -> Result<Vec<(String, Owed)>, Unlisted> {
+    let mut owed = Vec::new();
+    for build in &merged.builds {
+        let moves = Moves::of(build)?;
+        for target in &moves.moved {
+            owed.push((target.clone(), moves.owed(target)?));
+        }
+    }
+    Ok(owed)
+}
+
+/// What a record stream says about moved targets: each `unstable-baseline` finding's subject and detail, and each `reach-moved` limitation's detail.
+fn said_moves(kept: &str) -> (Vec<(String, String)>, Vec<String>) {
+    let mut found = Vec::new();
+    let mut stated = Vec::new();
+    for line in kept.lines() {
+        match line.split('\t').collect::<Vec<&str>>().as_slice() {
+            ["FINDING", "unstable-baseline", subject, detail, ..] => {
+                found.push(((*subject).to_owned(), (*detail).to_owned()));
+            }
+            ["LIMITATION", "reach-moved", detail, ..] => stated.push((*detail).to_owned()),
+            _ => {}
+        }
+    }
+    (found, stated)
+}
+
+/// Whether the record stream `kept` beside `merged` raises `unstable-baseline` and states `reach-moved` exactly where every part's drift, rows and repair counts decide, each counting what they count, re-derived without the runner's code (ADR 0036 decisions 3 and 4); where no stream was kept nothing was said to hold.
+fn moved(merged: &Complete, kept: Option<&str>, notes: &mut Notes<'_>) {
+    let Some(kept) = kept else {
+        return;
+    };
+    let owed = match owed_moves(merged) {
+        Ok(owed) => owed,
+        Err(why) => {
+            broke(notes, MergeRule::Moved, "moved", &why.said());
+            return;
+        }
+    };
+    let (found, stated) = said_moves(kept);
+    for (target, owing) in &owed {
+        held_to_owed((target, owing), (&found, &stated), notes);
+    }
+    for (subject, _) in &found {
+        if !owed.iter().any(|(target, _)| target == subject) {
+            broke(
+                notes,
+                MergeRule::Moved,
+                subject,
+                "the record stream raises unstable-baseline about it, and no part saw its reach \
+                 move",
+            );
+        }
+    }
+    for detail in &stated {
+        if !owed
+            .iter()
+            .any(|(target, _)| detail.ends_with(&format!("({target})")))
+        {
+            broke(
+                notes,
+                MergeRule::Moved,
+                "reach-moved",
+                &format!(
+                    "the record stream states reach-moved about a target no part saw move: \
+                     {detail}"
+                ),
+            );
+        }
+    }
+}
+
+/// Whether the record stream's `found` findings and `stated` limitations say of `target` exactly what `owing` owes, once, with its count, and not the other.
+fn held_to_owed(
+    (target, owing): (&str, &Owed),
+    (found, stated): (&[(String, String)], &[String]),
+    notes: &mut Notes<'_>,
+) {
+    let about = format!("({target})");
+    let finding: Vec<&String> = found
+        .iter()
+        .filter(|(subject, _)| subject == target)
+        .map(|(_, detail)| detail)
+        .collect();
+    let limitation: Vec<&String> = stated
+        .iter()
+        .filter(|detail| detail.ends_with(&about))
+        .collect();
+    let (said, counted, other, owed_name) = match owing {
+        Owed::Unstable(counted) => (
+            finding,
+            counted,
+            limitation.len(),
+            "the unstable-baseline finding",
+        ),
+        Owed::Repaired(counted) => (
+            limitation,
+            counted,
+            finding.len(),
+            "the reach-moved limitation",
+        ),
+    };
+    match said.as_slice() {
+        [one] if one.contains(counted.as_str()) => {}
+        [one] => broke(
+            notes,
+            MergeRule::Moved,
+            target,
+            &format!(
+                "the record stream holds {owed_name} about it without `{}`, which every part's \
+                 records count: {one}",
+                counted.trim_start_matches([':', ';', ' '])
+            ),
+        ),
+        others => broke(
+            notes,
+            MergeRule::Moved,
+            target,
+            &format!(
+                "a part saw its reach move, and the record stream holds {} of {owed_name} about \
+                 it where every part's records owe exactly one",
+                others.len()
+            ),
+        ),
+    }
+    if other > 0 {
+        broke(
+            notes,
+            MergeRule::Moved,
+            target,
+            "the record stream both raises unstable-baseline and states reach-moved about it, \
+             and every part's records decide one of them",
+        );
+    }
+}
+
 /// A violation of `rule` about `subject`.
 fn broke(notes: &mut Notes<'_>, rule: MergeRule, subject: &str, detail: &str) {
     notes.violated(subject, format!("{}: {detail}", rule.label()));
@@ -310,10 +796,16 @@ fn broke(notes: &mut Notes<'_>, rule: MergeRule, subject: &str, detail: &str) {
 
 /// Whether the composition and the builds of `merged` are one complete division of its catalog, the merged run is none of its inputs, and it completes no model batch.
 fn divided(merged: &Complete, sources: &[Source], notes: &mut Notes<'_>) {
-    let of = sources
-        .first()
-        .map(|source| source.shard.of)
-        .unwrap_or_default();
+    let Some(first) = sources.first() else {
+        broke(
+            notes,
+            MergeRule::Division,
+            "composition",
+            "the report names no shard it was merged from",
+        );
+        return;
+    };
+    let of = first.shard.of;
     let indices: Vec<u64> = sources.iter().map(|source| source.shard.index).collect();
     let expected: Vec<u64> = (1..=of).collect();
     if of == 0 || sources.iter().any(|source| source.shard.of != of) || indices != expected {
@@ -360,11 +852,20 @@ fn placed(merged: &Complete, sources: &[Source], notes: &mut Notes<'_>) {
         })
         .collect();
     for build in &merged.builds {
-        let placed: Vec<Value> = build
+        let Some(placed) = build
             .parts
             .iter()
-            .map(|part| part.get("part").cloned().unwrap_or(Value::Null))
-            .collect();
+            .map(|part| part.get("part").cloned())
+            .collect::<Option<Vec<Value>>>()
+        else {
+            broke(
+                notes,
+                MergeRule::Parts,
+                &build.name,
+                "a part of the build does not say which shard it is",
+            );
+            continue;
+        };
         if placed != owed {
             broke(
                 notes,
@@ -488,6 +989,92 @@ fn held(
                 ),
             );
         }
+    }
+}
+
+/// Every row of `part` that rests on sealed executions, held to the sealed executions the run `run_id` that measured it recorded of its mutation, in order: a merge that affirms a row its part's own recording does not hold affirms what no run was seen to run.
+fn witnessed(part: &Value, (run_id, witnessed): (&str, &Witnessed), notes: &mut Notes<'_>) {
+    let Some(rows) = part.get("mutants").and_then(Value::as_array) else {
+        broke(
+            notes,
+            MergeRule::Sealed,
+            run_id,
+            "a part of the merge holds no list of its rows, so none of them can be held to what              its run recorded",
+        );
+        return;
+    };
+    let sealed: Vec<(&Value, Vec<super::SealedRun>)> = rows
+        .iter()
+        .filter_map(|row| Some((row, rested_on(row.get("evidence")?)?)))
+        .collect();
+    if sealed.is_empty() {
+        return;
+    }
+    let recorded = match witnessed {
+        Witnessed::Held(recorded) => recorded,
+        Witnessed::Unrecorded => {
+            notes.unaudited(
+                run_id,
+                format!(
+                    "{} of its rows rest on sealed executions, and its recording keeps no engine \
+                     recording, so whether its run ran them cannot be re-derived",
+                    sealed.len()
+                ),
+            );
+            return;
+        }
+        Witnessed::Unreadable => {
+            notes.unaudited(
+                run_id,
+                "an engine recording of its run holds a sealed execution this audit cannot read, \
+                 so whether its run ran its sealed rows' executions cannot be re-derived"
+                    .to_owned(),
+            );
+            return;
+        }
+    };
+    for (row, named) in sealed {
+        let names = |mutant: &str| {
+            ["display_id", "id"].into_iter().any(|key| {
+                row.get(key)
+                    .and_then(Value::as_str)
+                    .is_some_and(|name| !name.is_empty() && name == mutant)
+            })
+        };
+        let ran: Vec<&super::SealedRun> = recorded
+            .iter()
+            .filter(|(mutant, _)| names(mutant))
+            .map(|(_, run)| run)
+            .collect();
+        if !named.iter().eq(ran.iter().copied()) {
+            let said = |runs: &mut dyn Iterator<Item = &super::SealedRun>| {
+                runs.map(|run| format!("{} {} {}", run.target, run.test, run.came_to))
+                    .collect::<Vec<_>>()
+            };
+            broke(
+                notes,
+                MergeRule::Sealed,
+                run_id,
+                &format!(
+                    "{} rests on the sealed executions {:?}, and the run that measured its part \
+                     recorded {:?} of it",
+                    match row.get("display_id").and_then(Value::as_str) {
+                        Some(display) => display,
+                        None => "a row that names no mutant",
+                    },
+                    said(&mut named.iter()),
+                    said(&mut ran.into_iter())
+                ),
+            );
+        }
+    }
+}
+
+/// The sealed executions `evidence` names, where it says the row rests on sealed executions and names each whole; nothing otherwise.
+fn rested_on(evidence: &Value) -> Option<Vec<super::SealedRun>> {
+    match super::Rests::read(evidence)? {
+        super::Rests::Sealed(runs) => Some(runs),
+        super::Rests::Nothing | super::Rests::Unproven(_) => None,
     }
 }
 

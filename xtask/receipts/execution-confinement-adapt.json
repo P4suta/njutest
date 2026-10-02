@@ -1,0 +1,485 @@
+{
+  "schema": "njutest-mutation-receipt-v1",
+  "decision": "execution-confinement",
+  "package": "rust-mutants-adapt",
+  "module": "crates/rust-mutants-adapt/src/confinement.rs",
+  "source_sha256": "df53ba1a3d02ed53fbe1c8e33028c79c1a1f260b52b0d84a0a3e174fd7396d78",
+  "mutants": [
+    {
+      "display_id": "0fac2d33a0cf1224fdfe",
+      "position": "43:27",
+      "rule": "string-to-empty",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "confinement::tests::an_execution_lays_its_directories_side_by_side_under_its_own",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "4d5bd08fe361cc0d319b",
+      "position": "44:30",
+      "rule": "string-to-empty",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "confinement::tests::an_execution_lays_its_directories_side_by_side_under_its_own",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "03551f98d059de783342",
+      "position": "46:49",
+      "rule": "string-to-empty",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "confinement::tests::an_execution_lays_its_directories_side_by_side_under_its_own",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "4fd181f7d9334efb9e32",
+      "position": "73:9",
+      "rule": "return-default",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "confinement::tests::an_execution_lays_its_directories_side_by_side_under_its_own",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "3e3591769f8f5c33d96a",
+      "position": "106:5",
+      "rule": "return-default",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "confinement::tests::every_name_a_temporary_directory_is_found_by_names_the_executions",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "a5da3ed3f1b874de964c",
+      "position": "125:12",
+      "rule": "negate-condition",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "confinement::tests::a_confined_home_pins_the_build_homes_drops_the_given_identity_and_names_itself_everywhere",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "a0185a7979910f68c769",
+      "position": "125:12",
+      "rule": "condition-to-true",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "confinement::tests::a_confined_home_pins_the_build_homes_drops_the_given_identity_and_names_itself_everywhere",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "6b27a728f12623566087",
+      "position": "125:12",
+      "rule": "condition-to-false",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "confinement::tests::a_confined_home_pins_the_build_homes_drops_the_given_identity_and_names_itself_everywhere",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "66a1187a240bc7894377",
+      "position": "126:13",
+      "rule": "continue-to-break",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "confinement::tests::a_confined_home_pins_the_build_homes_drops_the_given_identity_and_names_itself_everywhere",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "7f237a054ae252e7d335",
+      "position": "129:13",
+      "rule": "delete-call-statement",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "confinement::tests::a_confined_home_pins_the_build_homes_drops_the_given_identity_and_names_itself_everywhere",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "f6a2c3f258ca0a4fa8e5",
+      "position": "135:5",
+      "rule": "delete-call-statement",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "confinement::tests::a_confined_home_pins_the_build_homes_drops_the_given_identity_and_names_itself_everywhere",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "7d884e6953df366f9e99",
+      "position": "139:9",
+      "rule": "delete-call-statement",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "confinement::tests::a_confined_home_pins_the_build_homes_drops_the_given_identity_and_names_itself_everywhere",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "ae32712319f6baacda4b",
+      "position": "145:9",
+      "rule": "delete-call-statement",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "confinement::tests::a_home_the_confinement_lays_on_a_drive_names_the_drive_in_its_changes",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "aec185266cda86dfc6c1",
+      "position": "147:5",
+      "rule": "return-default",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "confinement::tests::a_confined_home_pins_the_build_homes_drops_the_given_identity_and_names_itself_everywhere",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "84f9c29b34212a0399f6",
+      "position": "159:5",
+      "rule": "delete-call-statement",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "confinement::tests::a_home_on_a_drive_is_spelled_by_the_drive_and_the_rest_under_it",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "3c94db5564f2105f9f87",
+      "position": "162:19",
+      "rule": "string-to-empty",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "confinement::tests::a_home_on_a_drive_is_spelled_by_the_drive_and_the_rest_under_it",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "d83c23fb4c1b3e5e0981",
+      "position": "166:19",
+      "rule": "string-to-empty",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "confinement::tests::a_home_on_a_drive_is_spelled_by_the_drive_and_the_rest_under_it",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "03113ff7098bd262a72e",
+      "position": "179:62",
+      "rule": "remove-not",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "confinement::tests::git_reads_an_identity_where_the_environment_says_or_under_the_given_home",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "cc6b08cb417137cb511e",
+      "position": "182:50",
+      "rule": "string-to-empty",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "confinement::tests::git_reads_an_identity_where_the_environment_says_or_under_the_given_home",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "af50d438e167231735a5",
+      "position": "183:55",
+      "rule": "string-to-empty",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "confinement::tests::git_reads_an_identity_where_the_environment_says_or_under_the_given_home",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "e69634becf18b5714189",
+      "position": "183:70",
+      "rule": "string-to-empty",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "confinement::tests::git_reads_an_identity_where_the_environment_says_or_under_the_given_home",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "f576b8d40122cd4521c5",
+      "position": "186:86",
+      "rule": "string-to-empty",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "confinement::tests::git_reads_an_identity_where_the_environment_says_or_under_the_given_home",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "9ae0645ee7080b0eb459",
+      "position": "188:9",
+      "rule": "delete-call-statement",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "confinement::tests::git_reads_an_identity_where_the_environment_says_or_under_the_given_home",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "8b25bb4e9450cbc3ab7c",
+      "position": "189:32",
+      "rule": "string-to-empty",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "confinement::tests::git_reads_an_identity_where_the_environment_says_or_under_the_given_home",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "607f94ca3f335dfbc907",
+      "position": "189:44",
+      "rule": "string-to-empty",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "confinement::tests::git_reads_an_identity_where_the_environment_says_or_under_the_given_home",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "f966b9b9e929f73c06b8",
+      "position": "190:13",
+      "rule": "string-to-empty",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "confinement::tests::git_reads_an_identity_where_the_environment_says_or_under_the_given_home",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "00c03e553464cf1ec47a",
+      "position": "193:5",
+      "rule": "return-default",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "confinement::tests::git_reads_an_identity_where_the_environment_says_or_under_the_given_home",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "937e715e59a94fc099dd",
+      "position": "201:48",
+      "rule": "remove-not",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "confinement::tests::a_directory_below_a_home_is_every_directory_it_passes_through",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "42bf0939507171f9c2e2",
+      "position": "202:9",
+      "rule": "delete-call-statement",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "confinement::tests::a_directory_below_a_home_is_every_directory_it_passes_through",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "7803ad6c2d85f577bcae",
+      "position": "203:9",
+      "rule": "delete-call-statement",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "confinement::tests::a_directory_below_a_home_is_every_directory_it_passes_through",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "1e085016ae16c2daffd3",
+      "position": "204:9",
+      "rule": "delete-call-statement",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "confinement::tests::a_directory_below_a_home_is_every_directory_it_passes_through",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "7aaa4ea79fea38f602f0",
+      "position": "206:5",
+      "rule": "return-default",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "confinement::tests::a_directory_below_a_home_is_every_directory_it_passes_through",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "bba58b29224c1673d891",
+      "position": "212:5",
+      "rule": "return-default",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "confinement::tests::a_directory_below_a_home_is_every_directory_it_passes_through",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "10427549e1130baa888d",
+      "position": "213:34",
+      "rule": "return-default",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "confinement::tests::a_directory_below_a_home_is_every_directory_it_passes_through",
+          "came_to": "panicked"
+        }
+      ]
+    }
+  ]
+}

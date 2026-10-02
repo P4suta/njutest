@@ -172,6 +172,169 @@ pub fn encoded(
     Ok(Some(OsString::from(flags.join(&SEPARATOR.to_string()))))
 }
 
+/// One `target.<key>` table that configures flags: its key, a target triple or a `cfg(…)` predicate, and the flags it gives, where it gives any.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Targeted {
+    /// The key: a target triple, or `cfg(…)`.
+    pub key: String,
+    /// Its `rustflags`, where it sets them.
+    pub rustflags: Option<Vec<String>>,
+    /// Its `rustdocflags`, where it sets them.
+    pub rustdocflags: Option<Vec<String>>,
+}
+
+/// What the configuration files say about every flag a build compiles or documents with, each list lowest precedence first.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Layered {
+    /// `build.rustflags`.
+    pub build: Vec<String>,
+    /// `build.rustdocflags`.
+    pub build_doc: Vec<String>,
+    /// Every `target.<key>` table that configures flags, a key the files repeat once for each.
+    pub targets: Vec<Targeted>,
+    /// Whether a configuration file was found that this could not read faithfully, so what it configures is unknown.
+    pub unreadable: bool,
+}
+
+/// Reads every flag every configuration file a build in `root` would read configures, in cargo's own precedence order, lowest first, as cargo joins the arrays of several files.
+#[must_use]
+pub fn layered(root: &Path, cargo_home: Option<&Path>) -> Layered {
+    let mut layers: Vec<Layered> = Vec::new();
+    let mut unreadable = false;
+    for directory in root.ancestors().chain(cargo_home) {
+        let text = match holding(directory) {
+            Held::Absent => continue,
+            Held::Text(text) => text,
+            Held::Unreadable => {
+                unreadable = true;
+                continue;
+            }
+        };
+        let one = layer(&text);
+        unreadable |= one.unreadable;
+        layers.push(one);
+    }
+    layers.reverse();
+    let mut found = Layered {
+        unreadable,
+        ..Layered::default()
+    };
+    for one in layers {
+        found.build.extend(one.build);
+        found.build_doc.extend(one.build_doc);
+        found.targets.extend(one.targets);
+    }
+    found
+}
+
+/// What one key of a configuration table holds as flags.
+enum Given {
+    /// The key is not there.
+    Absent,
+    /// The flags it holds.
+    Flags(Vec<String>),
+    /// Something that is not a list of flags, or one holding the separator the encoded form splits on.
+    Unread,
+}
+
+/// What `table` holds under `name` as flags.
+fn given(table: Option<&toml::Value>, name: &str) -> Given {
+    match table.and_then(|table| table.get(name)) {
+        None => Given::Absent,
+        Some(value) => match as_flags(value) {
+            Some(flags) if !flags.iter().any(|flag| flag.contains(SEPARATOR)) => {
+                Given::Flags(flags)
+            }
+            Some(_) | None => Given::Unread,
+        },
+    }
+}
+
+/// Every flag one configuration file configures.
+#[must_use]
+pub fn layer(text: &str) -> Layered {
+    let unreadable = Layered {
+        unreadable: true,
+        ..Layered::default()
+    };
+    let Ok(document) = text.parse::<toml::Table>() else {
+        return unreadable;
+    };
+    let build = document.get("build");
+    let mut found = Layered::default();
+    match (given(build, "rustflags"), given(build, "rustdocflags")) {
+        (Given::Unread, _) | (_, Given::Unread) => return unreadable,
+        (compile, document_flags) => {
+            if let Given::Flags(flags) = compile {
+                found.build = flags;
+            }
+            if let Given::Flags(flags) = document_flags {
+                found.build_doc = flags;
+            }
+        }
+    }
+    match document.get("target") {
+        None => {}
+        Some(toml::Value::Table(targets)) => {
+            for (key, table) in targets {
+                let (rustflags, rustdocflags) = match (
+                    given(Some(table), "rustflags"),
+                    given(Some(table), "rustdocflags"),
+                ) {
+                    (Given::Unread, _) | (_, Given::Unread) => return unreadable,
+                    (Given::Absent, Given::Absent) => continue,
+                    (compile, document_flags) => (flags_of(compile), flags_of(document_flags)),
+                };
+                found.targets.push(Targeted {
+                    key: key.clone(),
+                    rustflags,
+                    rustdocflags,
+                });
+            }
+        }
+        Some(_) => return unreadable,
+    }
+    found
+}
+
+/// The flags `given` holds, where it holds any.
+fn flags_of(given: Given) -> Option<Vec<String>> {
+    match given {
+        Given::Flags(flags) => Some(flags),
+        Given::Absent | Given::Unread => None,
+    }
+}
+
+/// What the environment gives a build in place of the configuration, `encoded` before `plain`, as cargo reads the two.
+///
+/// # Errors
+/// Refuses a non-UTF-8 flag variable instead of changing its bytes with a lossy conversion.
+pub fn inherited_as(
+    env: &crate::vars::Variables,
+    (encoded, plain): (&'static str, &'static str),
+) -> Result<Option<Vec<String>>, ConfigError> {
+    let of = |name: &'static str| -> Result<Option<String>, ConfigError> {
+        match env.var(name) {
+            Some(value) => value
+                .to_str()
+                .map(str::to_owned)
+                .map(Some)
+                .ok_or(ConfigError::NonUtf8Environment { variable: name }),
+            None => Ok(None),
+        }
+    };
+    if let Some(flags) = of(encoded)? {
+        return Ok(Some(
+            flags
+                .split(SEPARATOR)
+                .filter(|flag| !flag.is_empty())
+                .map(ToOwned::to_owned)
+                .collect(),
+        ));
+    }
+    Ok(of(plain)?.map(|flags| split_plain(&flags)))
+}
+
 /// What the first of the two names that one directory holds says.
 enum Held {
     Absent,

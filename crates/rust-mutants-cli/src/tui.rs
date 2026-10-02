@@ -194,8 +194,11 @@ impl Browser {
 
     /// What the filter is narrowed to.
     #[must_use]
-    pub fn narrowing(&self) -> &'static str {
-        self.filter.outcome.map_or(EVERY, Outcome::as_str)
+    pub const fn narrowing(&self) -> &'static str {
+        match self.filter.outcome {
+            Some(narrowed) => narrowed.as_str(),
+            None => EVERY,
+        }
     }
 
     /// What the reader is searching for.
@@ -400,17 +403,15 @@ fn status(browser: &Browser) -> Span<'static> {
 
 fn header(frame: &mut Frame<'_>, browser: &Browser, area: Rect) {
     let accounting = &browser.document.accounting;
-    let score = browser.document.score.as_ref().map_or_else(
-        || "no score: the run decided nothing".to_owned(),
-        |score| {
-            format!(
-                "{:.1}%  ({} detected of {} decided)",
-                score.value * 100.0,
-                score.detected,
-                score.decided
-            )
-        },
-    );
+    let score = match browser.document.score.as_ref() {
+        Some(score) => format!(
+            "{:.1}%  ({} detected of {} decided)",
+            score.value * 100.0,
+            score.detected,
+            score.decided
+        ),
+        None => "no score: the run decided nothing".to_owned(),
+    };
     let text = vec![
         Line::from(format!(
             "{}  ·  {}",
@@ -460,23 +461,21 @@ fn list(frame: &mut Frame<'_>, browser: &Browser, area: Rect) {
 }
 
 fn detail(frame: &mut Frame<'_>, browser: &Browser, area: Rect) {
-    let text = browser.current().map_or_else(
-        || vec![Line::from("nothing here")],
-        |mutant| {
-            vec![
-                Line::from(format!("{}:{}:{}", mutant.path, mutant.line, mutant.column)),
-                Line::from(format!("{} ({})", mutant.rule, mutant.family)),
-                Line::from(""),
-                Line::from(format!("{}  →  {}", mutant.original, mutant.replacement)),
-                Line::from(""),
-                Line::from(format!("outcome   {}", mutant.outcome)),
-                Line::from(format!("target    {}", mutant.target)),
-                Line::from(format!("duration  {} ms", mutant.duration_ms)),
-                Line::from(format!("noticed   {}", mutant.killed_by.join(", "))),
-                Line::from(format!("id        {}", mutant.id)),
-            ]
-        },
-    );
+    let text = match browser.current() {
+        Some(mutant) => vec![
+            Line::from(format!("{}:{}:{}", mutant.path, mutant.line, mutant.column)),
+            Line::from(format!("{} ({})", mutant.rule, mutant.family)),
+            Line::from(""),
+            Line::from(format!("{}  →  {}", mutant.original, mutant.replacement)),
+            Line::from(""),
+            Line::from(format!("outcome   {}", mutant.outcome)),
+            Line::from(format!("target    {}", mutant.target)),
+            Line::from(format!("duration  {} ms", mutant.duration_ms)),
+            Line::from(format!("noticed   {}", mutant.killed_by.join(", "))),
+            Line::from(format!("id        {}", mutant.id)),
+        ],
+        None => vec![Line::from("nothing here")],
+    };
     frame.render_widget(
         Paragraph::new(text)
             .wrap(Wrap { trim: false })
@@ -486,22 +485,21 @@ fn detail(frame: &mut Frame<'_>, browser: &Browser, area: Rect) {
 }
 
 fn source(frame: &mut Frame<'_>, browser: &Browser, area: Rect) {
-    let title = browser.current().map_or_else(
-        || " source ".to_owned(),
-        |mutant| format!(" {} ", mutant.path),
-    );
-    let text = browser.current().map_or_else(
-        || vec![Line::from("nothing here")],
-        |mutant| match browser.sources.get(&mutant.path) {
-            Some(Held::Measured(held)) => listing(held, mutant),
-            Some(Held::Changed) => vec![Line::from(
-                "this file changed since the run, so what it holds now is not what was measured",
-            )],
-            None => vec![Line::from(
-                "this tree does not hold the file the run measured",
-            )],
-        },
-    );
+    let (title, text) = match browser.current() {
+        Some(mutant) => (
+            format!(" {} ", mutant.path),
+            match browser.sources.get(&mutant.path) {
+                Some(Held::Measured(held)) => listing(held, mutant),
+                Some(Held::Changed) => vec![Line::from(
+                    "this file changed since the run, so what it holds now is not what was measured",
+                )],
+                None => vec![Line::from(
+                    "this tree does not hold the file the run measured",
+                )],
+            },
+        ),
+        None => (" source ".to_owned(), vec![Line::from("nothing here")]),
+    };
     frame.render_widget(
         Paragraph::new(text).block(Block::default().borders(Borders::ALL).title(title)),
         area,

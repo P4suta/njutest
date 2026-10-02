@@ -36,7 +36,7 @@ fn prepare(fixture: &Fixture, failing: Failing) -> Result<Session, EngineError> 
         &PrepareOptions {
             tier: Tier::All,
             failing,
-            ..PrepareOptions::default()
+            ..PrepareOptions::new(Tier::Balanced)
         },
         &Cancel::new(),
     )
@@ -49,7 +49,7 @@ fn baseline_options(fixture: &Fixture) -> PrepareOptions {
         branch_proofs: false,
         doctests: false,
         measurements: Some(fixture.cache().to_path_buf()),
-        ..PrepareOptions::default()
+        ..PrepareOptions::new(Tier::Balanced)
     }
 }
 
@@ -127,7 +127,7 @@ fn ran(session: &Session) -> Ran {
         .iter()
         .map(|target| {
             (
-                target.id.clone(),
+                target.id().to_owned(),
                 (
                     target.executable.clone(),
                     njutest_devkit::reproducible::digest(&target.executable),
@@ -274,16 +274,19 @@ fn excluding_hands_back_the_table_of_what_every_target_came_to() {
             "the table covers every target that ran, not only the ones that passed"
         );
         assert!(
-            session.targets().iter().all(|kept| kept.id != target),
+            session.targets().iter().all(|kept| kept.id() != target),
             "{target} was left out of the run rather than measured against"
         );
     }
     for target in verified.failing() {
         assert!(
-            verified
-                .touched
-                .limitations
-                .contains(&format!("baseline-not-passing:{target}")),
+            verified.touched.limitations.iter().any(|limited| {
+                limited.limitation == rust_mutants::limitation::Limitation::BaselineNotPassing
+                    && limited
+                        .target
+                        .as_ref()
+                        .is_some_and(|id| id.as_str() == target)
+            }),
             "the record says why {target} is not in it: {:?}",
             verified.touched.limitations
         );
@@ -444,7 +447,7 @@ fn a_failing_baseline_is_never_remembered() {
                 doctests: false,
                 failing: Failing::Exclude,
                 measurements: Some(fixture.cache().to_path_buf()),
-                ..PrepareOptions::default()
+                ..PrepareOptions::new(Tier::Balanced)
             },
             &Cancel::new(),
         )
@@ -526,10 +529,10 @@ fn a_target_that_did_not_pass_the_first_time_is_run_once_more_before_the_session
     );
     assert!(
         verified.touched.limitations.iter().any(|one| {
-            one == &format!(
-                "{}:fixture-verify-fails/lib/fixture_verify_fails",
-                rust_mutants::limitation::BASELINE_PASSED_ON_RETRY
-            )
+            one.limitation == rust_mutants::limitation::Limitation::BaselinePassedOnRetry
+                && one.target.as_ref().is_some_and(|id| {
+                    id.as_str() == "fixture-verify-fails/lib/fixture_verify_fails"
+                })
         }),
         "and the run says which target it was, because a single result against a target \
          that once came out differently is worth that much less: {:?}",

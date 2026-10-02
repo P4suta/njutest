@@ -76,6 +76,41 @@ where
     Ok(found)
 }
 
+/// Whether a build compiled the file it was asked about again, which is the only build a comparison may speak for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Recompiled {
+    /// Every unit that read the file was compiled, and at least one did.
+    Every,
+    /// Cargo reused the artifact of a unit that read the file, so that artifact was built from the bytes before the file changed.
+    Reused,
+    /// No unit of the build read the file, so nothing the build produced was compiled from it.
+    Unread,
+}
+
+/// Whether every unit of `units` that read the file at `changed` was compiled rather than reused, a file named however its dep-info spells it.
+#[must_use]
+pub fn recompiled(units: &[crate::cargo::Unit], changed: &Path) -> Recompiled {
+    let named = crate::cargo::resolved(changed);
+    let mut read = false;
+    for unit in units {
+        let reads = unit.inputs.iter().any(|input| {
+            input.file_name() == changed.file_name() && crate::cargo::resolved(input) == named
+        });
+        if !reads {
+            continue;
+        }
+        if unit.fresh {
+            return Recompiled::Reused;
+        }
+        read = true;
+    }
+    if read {
+        Recompiled::Every
+    } else {
+        Recompiled::Unread
+    }
+}
+
 /// What one build's artifacts say about another's.
 #[must_use]
 pub fn compare(original: &Artifacts, mutated: &Artifacts) -> Identity {

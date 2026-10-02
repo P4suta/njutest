@@ -93,6 +93,7 @@ fn asked(fixture: &Fixture, args: &[&str]) -> Output {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: njutest_devkit::paths::environment_for_a_run()
             .into_iter()
             .collect(),
@@ -209,7 +210,11 @@ fn a_json_run_whose_store_cannot_be_pruned_has_one_error_terminal() {
     let text = njutest_devkit::process::strict_utf8(&output.stdout);
     let lines = read(&text).expect("the failed stream still reads through its own reader");
 
-    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_FAILED)),
+        "{output:?}"
+    );
     assert!(
         matches!(lines.last(), Some(Line::Error { .. })),
         "the postcondition failure is the one terminal answer: {lines:?}"
@@ -274,7 +279,11 @@ fn the_v1_reader_requires_explicit_null_and_rejects_duplicate_keys() {
 fn a_stream_and_a_display_are_two_ways_of_saying_one_thing_and_never_both() {
     let fixture = Fixture::copy("fixture-simple");
     let output = run(&fixture, &["--json", "--ui", "plain"]);
-    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_FAILED)),
+        "{output:?}"
+    );
     let complaint = njutest_devkit::process::strict_utf8(&output.stderr);
     assert!(complaint.contains("--ui"), "{complaint}");
 }

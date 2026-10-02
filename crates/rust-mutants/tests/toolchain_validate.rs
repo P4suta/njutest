@@ -22,9 +22,12 @@ use rust_mutants::catalog::Catalog;
 use rust_mutants::instrument::{Instrumenting, Placement, instrument_file, plan_file};
 use rust_mutants::rule::Tier;
 use rust_mutants::runner::Cancel;
+use rust_mutants::runner::Watched;
 use rust_mutants::syntax::Selection;
 use rust_mutants::trace::Recorder;
-use rust_mutants::validate::{Attempt, Compile, ValidateError, ValidateOptions, validate};
+use rust_mutants::validate::{
+    Attempt, Compile, Condemnation, Constness, ValidateError, ValidateOptions, validate,
+};
 
 /// Instruments a copy of a fixture and compiles it with a real cargo.
 struct CargoScripted {
@@ -39,19 +42,35 @@ struct CargoScripted {
 }
 
 impl Compile for CargoScripted {
-    fn attempt(&mut self, condemned: &BTreeSet<u32>) -> Result<Attempt, ValidateError> {
+    fn attempt(
+        &mut self,
+        condemned: &BTreeSet<u32>,
+        constness: &Constness,
+    ) -> Result<Attempt, ValidateError> {
         let mut files = Vec::new();
-        for (path, placements) in &self.placements {
-            let kept: Vec<Placement> = placements
-                .iter()
-                .filter(|placement| !condemned.contains(&placement.index))
-                .cloned()
-                .collect();
-            let source = &self.sources[path];
+        let kept: BTreeMap<&String, Vec<Placement>> = self
+            .placements
+            .iter()
+            .map(|(path, placements)| {
+                let kept = placements
+                    .iter()
+                    .filter(|placement| !condemned.contains(&placement.index))
+                    .cloned()
+                    .collect();
+                (path, kept)
+            })
+            .collect();
+        let carriers = constness.carriers_of(
+            kept.iter()
+                .map(|(path, placements)| (path.as_str(), placements.as_slice())),
+        );
+        for (path, kept) in &kept {
+            let source = &self.sources[*path];
             let file = instrument_file(&Instrumenting {
                 path,
                 source,
-                placements: &kept,
+                placements: kept,
+                carriers: carriers.get(*path).map_or(&[][..], Vec::as_slice),
                 markers: &[],
                 comparable: &BTreeSet::default(),
                 probed: &BTreeMap::default(),
@@ -79,10 +98,7 @@ impl Compile for CargoScripted {
             &CompileOptions {
                 kind: CompileKind::Tests,
                 packages: Vec::new(),
-                target_dir: Some(rust_mutants::cargo::BuildDir::new(
-                    self.target.clone(),
-                    Vec::new(),
-                )),
+                target_dir: rust_mutants::cargo::BuildDir::new(self.target.clone(), Vec::new()),
                 locked: true,
                 offline: true,
                 timeout: None,
@@ -97,8 +113,8 @@ impl Compile for CargoScripted {
             })?;
         Ok(Attempt {
             files,
+            completion: checked.completion(),
             messages: checked.messages,
-            success: checked.success,
             written,
         })
     }
@@ -131,10 +147,15 @@ fn prepare_fixture_with(name: &str, arrange: impl FnOnce(&std::path::Path)) -> C
     let toolchain = Toolchain::locate(
         &LocateOptions {
             cargo: Some(njutest_devkit::paths::cargo_binary()),
+            env: Some(
+                njutest_devkit::paths::environment_for_a_run()
+                    .into_iter()
+                    .collect(),
+            ),
             ..LocateOptions::default()
         },
         &root,
-        &cancel,
+        &Watched::new(&cancel, &Recorder::disabled()),
     )
     .expect("locate");
     let driver = Driver {
@@ -156,10 +177,7 @@ fn prepare_fixture_with(name: &str, arrange: impl FnOnce(&std::path::Path)) -> C
         &CompileOptions {
             kind: CompileKind::Check,
             packages: Vec::new(),
-            target_dir: Some(rust_mutants::cargo::BuildDir::new(
-                target.path().to_path_buf(),
-                Vec::new(),
-            )),
+            target_dir: rust_mutants::cargo::BuildDir::new(target.path().to_path_buf(), Vec::new()),
             locked: true,
             offline: true,
             timeout: None,
@@ -330,10 +348,7 @@ pub fn name(flag: bool) -> &'static str {
         &CompileOptions {
             kind: CompileKind::Tests,
             packages: Vec::new(),
-            target_dir: Some(rust_mutants::cargo::BuildDir::new(
-                fixture.target.clone(),
-                Vec::new(),
-            )),
+            target_dir: rust_mutants::cargo::BuildDir::new(fixture.target.clone(), Vec::new()),
             locked: true,
             offline: true,
             timeout: None,
@@ -342,7 +357,11 @@ pub fn name(flag: bool) -> &'static str {
         },
     )
     .expect("compile the standalone mutant");
-    assert!(!standalone.success, "{standalone:?}");
+    assert_eq!(
+        standalone.completion(),
+        rust_mutants::cargo::Completion::Refused,
+        "{standalone:?}"
+    );
     let standalone_code = standalone
         .messages
         .iter()
@@ -361,10 +380,13 @@ pub fn name(flag: bool) -> &'static str {
     );
 
     let final_attempt = fixture
-        .attempt(&validated.rejections.iter().map(|one| one.index).collect())
+        .attempt(
+            &validated.rejections.iter().map(|one| one.index).collect(),
+            &Constness::default(),
+        )
         .expect("final strict attempt");
     assert!(
-        final_attempt.success,
+        final_attempt.completion == rust_mutants::cargo::Completion::Built,
         "the identity macro preserves coercions, temporary extension, ?, break, and async: {:?}",
         final_attempt.messages
     );
@@ -431,9 +453,204 @@ fn the_compiler_decides_which_mutants_are_real_and_says_why_for_each() {
     assert!(validated.rounds >= 2);
 
     let final_attempt = fixture
-        .attempt(&validated.rejections.iter().map(|r| r.index).collect())
+        .attempt(
+            &validated.rejections.iter().map(|r| r.index).collect(),
+            &Constness::default(),
+        )
         .expect("attempt");
-    assert!(final_attempt.success, "the accepted tree compiles");
+    assert_eq!(
+        final_attempt.completion,
+        rust_mutants::cargo::Completion::Built,
+        "the accepted tree compiles"
+    );
+}
+
+/// A const item that calls a chain of two `const fn`s, and a `const fn` whose only guard the compiler refuses, which calls a third that only the program calls.
+const EVALUATED: &str = "pub const X: u32 = outer(1);
+
+pub const fn outer(n: u32) -> u32 {
+    inner(n) + 1
+}
+
+pub const fn inner(n: u32) -> u32 {
+    n * 2
+}
+
+pub struct Wrapped(pub u32);
+
+pub const fn relay(n: u32) -> Wrapped {
+    Wrapped(lone(n))
+}
+
+pub const fn lone(n: u32) -> u32 {
+    n - 1
+}
+";
+
+#[test]
+fn a_chain_the_compiler_evaluates_gives_back_one_const_a_round_and_a_caller_only_the_program_calls_carries_the_guard()
+ {
+    let mut fixture = prepare_fixture_with("fixture-rejectable", |root| {
+        std::fs::write(root.join("src/lib.rs"), EVALUATED).expect("write the chain");
+    });
+    let catalog = fixture.catalog.clone();
+    let of = |name: &str| -> BTreeSet<u32> {
+        let placements: Vec<Placement> = fixture
+            .placements
+            .values()
+            .flat_map(|file| file.iter().cloned())
+            .collect();
+        placements
+            .iter()
+            .filter(|placement| {
+                placement
+                    .hint
+                    .const_fn
+                    .as_ref()
+                    .is_some_and(|function| function.name == name)
+            })
+            .map(|placement| placement.index)
+            .collect()
+    };
+    let (outer, inner, relay, lone) = (of("outer"), of("inner"), of("relay"), of("lone"));
+    assert!(
+        [&outer, &inner, &relay, &lone]
+            .iter()
+            .all(|held| !held.is_empty()),
+        "every function holds a guard going in"
+    );
+    let validated = validate(
+        &catalog,
+        &mut fixture,
+        &rust_mutants::validate::Validating {
+            options: options(),
+            cancel: &Cancel::new(),
+            trace: &Recorder::disabled(),
+        },
+    )
+    .expect("validation settles");
+    let left = |reason: Condemnation| -> BTreeSet<u32> {
+        validated
+            .rejections
+            .iter()
+            .filter(|rejection| rejection.reason == reason)
+            .map(|rejection| rejection.index)
+            .collect()
+    };
+    let evaluated: BTreeSet<u32> = outer.union(&inner).copied().collect();
+    assert_eq!(
+        left(Condemnation::EvaluatedBeforeRun),
+        evaluated,
+        "the const item evaluates outer, and outer, const again, evaluates inner: every mutant of \
+         both is left out for that, and none of any other function is: {:?}",
+        validated.rejections
+    );
+    assert!(
+        validated
+            .rejections
+            .iter()
+            .filter(|rejection| rejection.reason == Condemnation::EvaluatedBeforeRun)
+            .all(|rejection| rejection.code.as_deref() == Some("E0015")),
+        "in the compiler's own words, which name the call it would have to make before the \
+         program runs: {:?}",
+        validated.rejections
+    );
+    assert!(
+        relay.is_subset(&left(Condemnation::CompilerRefused)),
+        "relay's only guard is a return the compiler refuses, as it would anywhere: {:?}",
+        validated.rejections
+    );
+    assert!(
+        lone.iter().all(|index| validated.accepted.contains(index)),
+        "relay keeps its const only for want of a guard, and it calls lone, which nothing \
+         evaluates before the program runs: relay goes without its const too, so lone's \
+         mutants are mutants: {validated:?}"
+    );
+    assert_eq!(
+        (validated.rounds, validated.bisections),
+        (3, 0),
+        "outer in the first round, inner and relay's call in the second, and a tree that builds \
+         in the third: each round learns something about a function, so the rounds end without \
+         a bisection, and the build is never refused"
+    );
+}
+
+/// A `const fn` holding no guard whose own `const` calls a function that holds one, and another whose body calls it, each kept `const` by a marker.
+const NESTED: &str = "pub struct Held;
+
+impl Held {
+    pub const fn make(n: u32) -> u32 {
+        n * 2
+    }
+}
+
+// rust-mutants: skip the constant inside is what the compiler evaluates
+pub const fn nests(n: u32) -> u32 {
+    const INNER: u32 = Held::make(1);
+    n + INNER
+}
+
+// rust-mutants: skip only the program calls this one
+pub const fn keeps(n: u32) -> u32 {
+    Held::make(n)
+}
+";
+
+#[test]
+fn the_pinned_compiler_s_own_spans_tell_a_constant_inside_a_const_fn_from_its_body() {
+    let mut fixture = prepare_fixture_with("fixture-rejectable", |root| {
+        std::fs::write(root.join("src/lib.rs"), NESTED).expect("write the nesting");
+    });
+    let catalog = fixture.catalog.clone();
+    let placements: Vec<Placement> = fixture
+        .placements
+        .values()
+        .flat_map(|file| file.iter().cloned())
+        .collect();
+    let make: BTreeSet<u32> = placements
+        .iter()
+        .filter(|placement| {
+            placement
+                .hint
+                .const_fn
+                .as_ref()
+                .is_some_and(|function| function.name == "make")
+        })
+        .map(|placement| placement.index)
+        .collect();
+    assert!(
+        !make.is_empty() && make.len() == placements.len(),
+        "make holds every guard, and the markers keep nests and keeps without one: {placements:?}"
+    );
+    let validated = validate(
+        &catalog,
+        &mut fixture,
+        &rust_mutants::validate::Validating {
+            options: options(),
+            cancel: &Cancel::new(),
+            trace: &Recorder::disabled(),
+        },
+    )
+    .expect("validation settles");
+    let evaluated: BTreeSet<u32> = validated
+        .rejections
+        .iter()
+        .filter(|rejection| rejection.reason == Condemnation::EvaluatedBeforeRun)
+        .map(|rejection| rejection.index)
+        .collect();
+    assert_eq!(
+        evaluated, make,
+        "the call inside INNER is inside nests's body, and the compiler evaluates INNER on its \
+         own: where it points is enough to say make is evaluated before the program runs, so \
+         every mutant of make is left out for that: {:?}",
+        validated.rejections
+    );
+    assert_eq!(
+        (validated.rounds, validated.bisections),
+        (2, 0),
+        "the first round pins make for INNER and learns keeps's call, and the second builds: \
+         keeps carries nothing once make keeps its const"
+    );
 }
 
 /// A session over `fixture`, with `RUSTFLAGS` set to `flags` or left alone.
@@ -454,7 +671,7 @@ fn prepared(
         .prepare(
             &rust_mutants::session::PrepareOptions {
                 tier: Tier::All,
-                ..rust_mutants::session::PrepareOptions::default()
+                ..rust_mutants::session::PrepareOptions::new(Tier::Balanced)
             },
             &cancel,
         )
@@ -470,13 +687,15 @@ fn compiles_by_hand(name: &str, candidate: &rust_mutants::catalog::Candidate) ->
     let end = usize::try_from(candidate.span.end).expect("a small offset");
     source.splice(start..end, candidate.replacement.iter().copied());
     std::fs::write(&path, source).expect("the edit by hand");
-    std::process::Command::new(njutest_devkit::paths::cargo_binary())
+    let mut command = std::process::Command::new(njutest_devkit::paths::cargo_binary());
+    command
         .args(["check", "--all-targets", "--offline", "--locked", "--quiet"])
         .current_dir(fixture.root())
         .env("RUSTFLAGS", "-D warnings")
-        .env("CARGO_TARGET_DIR", fixture.temp().join("by-hand"))
-        .status()
+        .env("CARGO_TARGET_DIR", fixture.temp().join("by-hand"));
+    njutest_devkit::cost::cargo(command, "a hand-written validation build")
         .expect("cargo runs")
+        .status
         .success()
 }
 

@@ -282,15 +282,13 @@ fn stored(wanted: &Where<'_>, environment: &Environment) -> Result<(String, Path
         None => kept.into_iter().next_back(),
     };
     found.ok_or_else(|| CliError::ReportMissing {
-        message: wanted.run.map_or_else(
-            || format!("no recording is stored under {}", reports.display()),
-            |run| {
-                format!(
-                    "no recording named {run} is stored under {}",
-                    reports.display()
-                )
-            },
-        ),
+        message: match wanted.run {
+            Some(run) => format!(
+                "no recording named {run} is stored under {}",
+                reports.display()
+            ),
+            None => format!("no recording is stored under {}", reports.display()),
+        },
     })
 }
 

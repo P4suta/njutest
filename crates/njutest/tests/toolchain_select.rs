@@ -38,6 +38,7 @@ fn fixture(name: &str) -> Fixture {
 fn asked(root: &Path, args: &[&str]) -> Output {
     let cache = njutest_devkit::paths::cache_beside(root).expect("a cache directory");
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: cache,
         working_directory: root.to_path_buf(),
         temp_directory: njutest_devkit::paths::temp_beside(root).expect("a temporary directory"),

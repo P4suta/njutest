@@ -69,14 +69,23 @@ fn mutant(index: u32, outcome: Outcome) -> RunMutantDocument {
         signal: None,
         not_run_reason: None,
         declined: Vec::new(),
-        route: None,
+        route: Some(rust_mutants_cli::report::run::RouteDocument {
+            granularity: "all".to_owned(),
+            fallback: None,
+            reaching: Vec::new(),
+            discharged: Vec::new(),
+            executed: Vec::new(),
+            tests: std::collections::BTreeMap::new(),
+        }),
         identical: rust_mutants::run::CodegenIdentity::NotMeasured,
         retried: false,
         lingered: false,
         expected: false,
         unreached: false,
         source_run_id: None,
+        part_run_id: None,
         step_notice: None,
+        evidence: rust_mutants::testkit::evidence::sealed_as(outcome, None, "demo/lib/demo"),
     }
 }
 
@@ -170,7 +179,11 @@ fn accounting(survivors: u32) -> Accounting {
         inconclusive: 0_u32.into(),
         errored: 0_u32.into(),
         unreached: 0_u32.into(),
-        discharged: 0_u32.into(),
+        unproven: 0_u32.into(),
+        unproven_killed: 0_u32.into(),
+        unproven_survived: 0_u32.into(),
+        unproven_unreached: 0_u32.into(),
+        unproven_discharged: 0_u32.into(),
         declined: 0_u32.into(),
         not_run: 0_u32.into(),
         expected: 0_u32.into(),
@@ -238,6 +251,7 @@ impl Said {
 
 fn gate(host: CiHost, root: &Path, args: &[&OsString]) -> Said {
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: njutest_devkit::paths::environment_for_a_run()
             .into_iter()
             .collect(),
@@ -394,7 +408,7 @@ fn a_root_outside_the_checkout_is_refused_rather_than_misplaced() {
             &os("github"),
         ],
     );
-    assert_eq!(said.code, 2, "{}", said.out);
+    assert_eq!(said.code, rust_mutants_cli::EXIT_USAGE, "{}", said.out);
     assert!(
         said.err.contains("RM0015") && said.annotations().is_empty(),
         "an annotation the runner cannot place is refused by its code, and no annotation \
@@ -417,7 +431,7 @@ fn github_asked_for_where_the_runner_named_no_files_is_refused() {
             &os("github"),
         ],
     );
-    assert_eq!(said.code, 2, "{}", said.out);
+    assert_eq!(said.code, rust_mutants_cli::EXIT_USAGE, "{}", said.out);
     assert!(
         said.err.contains("RM0014"),
         "a host that is asked for and not there is a refusal, not a plain run: {}",
@@ -557,7 +571,7 @@ fn every_verdict_is_one_code_and_one_word() {
     }
     assert_eq!(
         Verdict::ALL.map(Verdict::word),
-        ["detected", "found", "failed", "interrupted"]
+        ["detected", "found", "unproven", "interrupted"]
     );
     assert_eq!(
         Verdict::of(143),
@@ -624,6 +638,50 @@ fn with_a_change_only_the_survivors_on_its_lines_are_annotated() {
 }
 
 #[test]
+fn a_change_whose_base_shares_no_commit_with_head_is_read_against_the_base_and_says_so() {
+    let repo = njutest_devkit::repo::Repo::new();
+    repo.write("src/lib.rs", &numbered(20, &[]));
+    repo.commit();
+    let asked = njutest_devkit::repo::git(repo.root())
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .expect("git names the first commit");
+    let base = String::from_utf8(asked.stdout)
+        .expect("a commit is named in hex")
+        .trim()
+        .to_owned();
+    repo.write("src/lib.rs", &numbered(20, &[5]));
+    repo.commit();
+    repo.write("src/lib.rs", &numbered(20, &[5, 12]));
+    let job = Job::new();
+    let report = job.report(&document(3));
+    let said = gate(
+        CiHost::GitHub {
+            summary: job.path("summary.md"),
+            output: job.path("output.txt"),
+            workspace: repo.root().to_path_buf(),
+        },
+        repo.root(),
+        &[
+            &os("--report"),
+            &report.into_os_string(),
+            &os("--host"),
+            &os("github"),
+            &os("--changed-from"),
+            &os(&base),
+        ],
+    );
+    assert_eq!(said.code, 1, "{}", said.err);
+    let summary = job.read("summary.md");
+    assert!(
+        summary.contains(&format!("read against {base} itself")),
+        "git names no commit the base and HEAD share, so the lines are counted from the base, \
+         which counts what the base changed since too; the summary says so rather than \
+         reading as the change alone: {summary}"
+    );
+}
+
+#[test]
 fn a_change_git_cannot_be_asked_for_is_refused_rather_than_read_as_none() {
     let job = Job::new();
     let report = job.report(&document(1));
@@ -639,7 +697,7 @@ fn a_change_git_cannot_be_asked_for_is_refused_rather_than_read_as_none() {
             &os("HEAD"),
         ],
     );
-    assert_eq!(said.code, 2, "{}", said.out);
+    assert_eq!(said.code, rust_mutants_cli::EXIT_USAGE, "{}", said.out);
     assert!(
         said.err.contains("RM0010") && said.annotations().is_empty(),
         "a checkout that is not a repository says nothing about which lines changed, and \

@@ -39,6 +39,8 @@ It advances no index and stores no verdict.
 - stable repair-candidate validation when a candidate is produced.
 
 `deep-v1` uses the expanded operator set and exploration limits, runs Miri on every crate with a non-empty soundness inventory and every crate that links one, and may add sanitizers.
+What the interpreter establishes is undefined behaviour, which it says in a diagnostic of its own.
+A test that fails under it without that diagnostic failed on what the interpreter withholds from a test, the environment variables cargo sets, the files and the clocks it is given natively, so it is neither a failing test nor a pass: it is a `not-measured` finding beside `miri-failed-isolated`.
 
 `whole-v1` asks every dimension: mutations, knobs, faults, seams, schedules and durability ([ADR 0033](adr/0033-every-dimension-or-a-hole.md)).
 It runs soundness as `deep-v1` does and puts every fault, every crash and every knob, and each dimension it did not establish — not asked, unmeasured, or measured with a hole — is a `dimension-not-measured` finding, so the run is not `ASSURED`.
@@ -106,6 +108,7 @@ The faults are catalogued, built and run in a session of their own, so no mutati
 A fault is put only to the tests that reached its `?`, because two programs identical up to the site run identically until it is reached; no other proof is applied to a fault, since every other proof is read off the program without the fault.
 A fault is `noticed` only when a test failed with it, passed on the unchanged program, and failed with it again.
 Every fault every reaching test passed is an `unnoticed-fault` finding and makes the run `INSUFFICIENT`, never `DEFECT`: it changes what the program is given, not the program, and says only that no test asserts what happens when that call fails.
+Such a fault is `absorbed` rather than `unnoticed` where a further run on each reaching target dropped every failure it made without anything reading it, which says the program went on as if the call had not failed.
 A path of the tree under measurement first written while faults were put is a `not-measured` finding about `fault-write-unattributed`, since the faulted executions share one tree and run at once; a path already written before any fault was put is not named.
 `broken-under-fault`, which is a `DEFECT`, is reserved for a write tied to one fault, which a fault run alone makes and the same test run alone without it does not.
 A fault the run put and could not decide is a `not-measured` finding, so such a run is not `ASSURED`.
@@ -128,7 +131,7 @@ A target no kill was confirmed on is run whole once more, alone and under the sa
 Where it passed exactly the tests the baseline passed and the target's union of sites reached, bodies entered, or sites infected differs, the baseline record is one sample rather than a measurement, and the report raises `unstable-baseline` about the target, counting the `unreached` claims and the discharged executions that rest on it.
 One such observation is enough; a counterexample does not wait for a second.
 A measured target whose control could not be compared — it failed, passed other tests, or could not record — is named by `drift-not-measured`, because a proof read off it rests on one run.
-What rested on a moved target is run again against it with its reach recorded, and replaced by what that run decides where it reached the site ([ADR 0036](adr/0036-what-rested-on-a-moved-reach-is-run-again.md)); `unstable-baseline` counts only what could not be, and a moved target nothing rests on any more is named in `reach-moved`.
+What rested on a moved target is run again against it ([ADR 0036](adr/0036-what-rested-on-a-moved-reach-is-run-again.md)): a lead natively, with its reach recorded, and replaced by what that run decides where it reached the site, and a sealed verdict on the sealed bench, with the target counted among those reaching it, and replaced by the verdict that put establishes or the lead it leaves; `unstable-baseline` counts only what could not be, and a moved target nothing rests on any more is named in `reach-moved`.
 
 A second run under the same conditions cannot see a suite that depends on the conditions themselves: a clock read in the local zone, a string folded under the locale, a temporary path built into a command line without quotes, a file the home directory is expected to hold, the mode a new file gets, the width of a terminal, or a test that only passes while another runs beside it.
 Asked for with `[repeatable] knobs`, a run starts one more control of every target whose baseline passed per knob, with exactly that one thing set to a value chosen to differ, and compares it with the baseline as drift does ([ADR 0031](adr/0031-a-knob-is-one-control-started-differently.md)).
@@ -254,6 +257,7 @@ On a project that leaves it at the default the layer proves almost nothing, and 
 
 This removes findings and never executions.
 Every test that reaches the mutation has already run by the time the layer does, and turning the layer off leaves the finding in place.
+An equivalence found among survivors rests on what their survival rests on, so one found of a survivor only a native run said survived is a lead, as that survival is ([What a verdict rests on](#what-a-verdict-rests-on)).
 
 ### A run stands on its sentinels
 
@@ -283,7 +287,7 @@ The caller's harness arguments are not carried over, because they name and selec
 Every answer is a `sentinel` event of the trace.
 The first planted mutant a layer did not route as it must ends the run in `ERROR` with `NJ5009`, naming the layer, the mutant, what was due, and what the engine did: nothing that layer would remove from the run is believed, and a run that believed it would report a survivor as never reached or never run a test that would have killed it.
 No setting skips the sentinels.
-A run answered whole from the store runs nothing and removes nothing, so it plants nothing either.
+A run answered whole from the store runs only the sealed executions the stored answer rests on, each exactly as recorded, and removes nothing, so it plants nothing either.
 They cost one more prepared session per configured build — a copy, a build, the instrumented build, and one run of a three-test suite — and no mutant execution.
 
 Every layer that removes work is sentineled in the runs that could use it.
@@ -291,9 +295,28 @@ Routing by coverage alone is what a run falls back to where the guards recorded 
 `[mutation] equivalence` costs builds of a tree of its own, so its pair is planted only in a run that asked for the layer: a second small crate, built at `opt-level = 2` in its test profile, where the layer must call `n + 0` made `n - 0` identical and must not call `n + 1` made `n - 1` so.
 A layer a control withdrew calls nothing identical and so removes nothing, which neither half counts against; a layer still in service that renders the first, or calls the second identical, ends the run with `NJ5009` like any other.
 
+## What a verdict rests on
+
+A verdict is what a sealed run observed ([ADR 0046](adr/0046-a-verdict-is-what-a-sealed-run-observed.md)).
+Where the build's session sealed anything — which it does unless `[mutation] seal = false` or `--no-seal` says otherwise — the mutation phase first puts each mutation to the sealed executions of the tests whose sealed controls reached it ([sealed execution](engine/sealed.md)), and decides it from them alone: `killed` by the first that detected it, `survived` where every one passed, and `unreached` where no sealed control reaches it.
+Nothing native runs for a mutation they decided, no confirmation pair among it, since one sealed execution is the same every time it runs.
+A stored answer sealed executions established is read back only once they, put again on this run's own bench, come to what it recorded, in the order they ran, and establish again the verdict it records ([reproducing a sealed verdict](engine/sealed.md#reproducing-a-sealed-verdict)); where they do not, or one of them cannot be made again, the stored answer is `unreproduced`, an `unreproduced` note in the trace names the first execution that parted, and the mutation is established afresh from what they came to now.
+One a native run established, or one carried across an edit, which rests on native executions too, is read back only once sealing is tried and decides nothing, and where sealing decides it the stored answer is `superseded`.
+A whole report an earlier run of the same inputs stored is reissued only once every sealed execution it rests on has run again on this machine and come to what the report recorded ([reproducing a sealed verdict](engine/sealed.md#reproducing-a-sealed-verdict)); where one does not, or cannot be made again, the run names it with `NJ8006` and establishes everything again, and a report that rests on no sealed execution affirms nothing sealed and is reissued as it is.
+
+Where the sealed executions establish nothing — a test that reaches the mutation natively is not in the sealed build or reaches it natively and not sealed, a test ran only natively, the sealed build does not hold its guard, or one of them established nothing — the native pipeline below runs, and what it says is a lead.
+The row carries every reason there is no verdict as its `evidence` ([report v1](report-v1.md#what-a-decision-rests-on)), raises one `unproven-mutant` finding, answers nothing, can be accepted by nobody, and leaves the run `INSUFFICIENT`.
+`compile-rejected` rests on no execution, and the model checker's answers on its own proof, so neither waits for a sealed run; every other outcome is a hole whatever it rests on.
+A run with `--no-seal` builds nothing for the sealed target, so every answer it gives is a lead and it concludes `INSUFFICIENT`: it is for looking at what a native run says, never for assuring anything.
+
+A redo of what rested on a moved reach ([ADR 0036](adr/0036-what-rested-on-a-moved-reach-is-run-again.md)) runs again only what a native run said, since a native execution never stands in for a sealed one; a checkpoint keeps only the kills sealed executions established, with those executions, and a run that resumes from it inherits one only once they, put again on its own bench, come to what the checkpoint recorded, and establishes the mutation afresh, with an `unreproduced` note, where they do not.
+
+The fault, crash and knob phases, `measure`, `fix` and `replay` build nothing sealed and answer from native executions as before; sealing them is not done by this release.
+
 ## Mutation confirmation
 
-A mutant is `killed` only after:
+A native run is what a lead comes from, and it confirms what it says before the lead is reported.
+A native kill is one only after:
 
 1. an initial mutant execution fails;
 2. the original-code control for that request passes; and
@@ -359,7 +382,7 @@ Fuzz targets disqualify a survival in both directions.
 #### An answer carried across an edit
 
 Where this tree's own store has no answer to believe, the run asks the store of answers carried across edits ([ADR 0041](adr/0041-an-answer-carries-across-an-edit-it-never-entered.md)), under the mutation's locus: the item its edit is inside, that body's digest, the edit, and everything the engine keys an answer on but the pristine closure, with a digest of what this runner decides an answer under beside it — the platform, the environment, the contract, the versions and the corpora — so an answer one contract or machine established never answers another.
-It is believed only where every premise of that ADR holds, which the engine decides, and is otherwise refused with the word of the premise it failed: `skeleton-changed`, `item-changed`, `unsealed`, `entry-incomplete`, `route-grew`, `filter-differs`, `reach-moved`, or `uncontrolled`.
+It is believed only where every premise of that ADR holds, which the engine decides, and is otherwise refused with the word of the premise it failed: `skeleton-changed`, `item-changed`, `unsealed`, `item-moved`, `entry-incomplete`, `route-grew`, `filter-differs`, `reach-moved`, or `uncontrolled`.
 Every execution of a mutation runs only the tests the route puts it to, and in a run that keeps a store it also records the items its process entered: that is the execution a carried record says it rests on.
 
 #### A mutant the evidence cannot say nothing reaches
@@ -367,6 +390,15 @@ Every execution of a mutation runs only the tests the route puts it to, and in a
 Settled by running the targets the route widened to, so the claim is recorded as the conjunction of those targets' own behaviour keys: a target that enters or leaves the route refuses reuse where one key over the package would have hidden it.
 A record this run cannot resolve to the targets its own baseline saw pass is neither believed nor written, because half of a set is a smaller claim wearing the same name.
 A mutant the premise of `unreached` holds for is a claim about the code and is reused by nothing.
+
+#### What a step counts
+
+A step is one boundary of the workspace's instrumented source that a mutated execution passes once the mutation's guard has first been taken: a function's entry, a loop's turn, an async block, a closure's invocation, in any process of the execution.
+Test code is counted with the code it tests.
+Every file of a member a test program compiles carries the checkpoints, a `#[test]` function, a `#[cfg(test)]` module, an integration test, a benchmark and an example among them, because a mutation can keep a test's own loop from ending as surely as a loop of the code under test, and the count is what stops either the same way on every machine.
+What cannot carry the runtime counts nothing, and neither does a dependency: a procedural macro, a build script, a crate without `std` or one that forbids what the runtime allows, a file pasted in as an expression; there the clock is the only bound.
+The allowance is `[execution] steps`, sized against what an ordinary execution of the same tests spends, and that floor is a count of the same boundaries, test code included.
+`a_loop_in_test_code_a_mutation_keeps_going_is_counted_like_any_other` in `crates/rust-mutants-cli/tests/toolchain_hang.rs` holds it: a stride of zero leaves a loop in an integration test spinning, and the count stops it at exactly one past the allowance.
 
 #### A bound that expired
 
@@ -451,7 +483,7 @@ That is what keeps dividing the work out of [ADR 0004](adr/0004-proof-layers-not
 A budget decides not to run something; this decides which machine runs it.
 The parts balance by count rather than by cost, so a part holding a slow mutation takes longer, and how long is something to measure rather than to predict.
 
-A part concludes `PARTIAL` and records its shard.
+A part concludes `PARTIAL`, records its shard, and exits 2, which is what a run that established too little to conclude exits with.
 It assures nothing on its own:
 the mutations it did not judge are not mutations nothing noticed, they are mutations nobody put to a test, and a report that called that an assurance would be claiming the one thing it did not look at.
 A finding in a part is a finding,
@@ -467,6 +499,10 @@ A run report is a collection of what running something said,
 and two collections add up whatever produced them; an assurance report is one claim, that a contract was met, and a claim assembled from a part that met it and a part that met something else is true of neither.
 
 The mutant rows of the whole are the union of the parts'.
+Each row stays in the part it came from, `builds[].parts[]`, under that part's own `run_id` and `part`, and the composition names every such run as a source: a merge runs nothing, so a row resting on sealed executions rests on the ones the run of its part recorded, on that run's bench, and says which run that was.
+`cargo xtask proofaudit <merged-report> --shard … --traces …` holds each such row to the `sealed-exec` records of its part's own recording (the `sealed` rule of the merge layer), so a merge affirms no sealed row whose executions its part's run is not seen to have run.
+`njutest merge --rerun` runs every sealed execution the whole rests on again, on this machine's bench, in the workspace `--directory` names, the working directory by default, and writes the whole only where each comes to what its part recorded; the first that does not is named with `NJ8006`, and nothing is written ([Reproducing a sealed verdict](engine/sealed.md#reproducing-a-sealed-verdict)).
+It is the same running again `verify` does before it reissues a stored report: a preparation that starts no test natively, builds by the configuration at that directory, and runs each recorded execution against its test's control.
 Its accounting is derived from that union rather than added up from what each part counted, so the whole's columns say what the whole's own records say.
 The exception is `accepted`, which is a fact about a reviewer rather than about a mutation and appears in no record, and is therefore summed — each mutation belongs to one part, so each acceptance is counted once.
 No score crosses a merge at all: two ratios over different denominators average into a number no run observed.
@@ -484,6 +520,8 @@ It runs nothing and establishes nothing: every line is a projection of the repor
 | what is left free | some build noticed nothing of a change that makes a different program there, and every build established something | `survived`, `unreached` |
 | what is the same program | every build found the change to be the same program | `equivalent`, `model-proved` |
 | what the run could not tell | some build established nothing about it | `step-limit-reached`, `waited`, `unconfirmed`, `errored`, `declined` |
+
+A change some build decided only natively is in the last section too, whatever its outcome, since a lead is not a verdict ([What a verdict rests on](#what-a-verdict-rests-on)); its line says every reason no sealed execution decided it.
 
 A change is listed under the section its builds decided together, which is the same lattice minimum the verdict reads, so a change one build noticed and another did not is free, and a change that waited in any build is in the last section.
 What each build established is on the lines beneath it.
@@ -530,7 +568,7 @@ It reads the latest run's report once, and again only when the store points at a
 ## DEFECT, INSUFFICIENT, and ERROR
 
 `DEFECT` means user code violated a baseline, soundness, build, or test contract.
-`INSUFFICIENT` means execution completed but a survivor, flaky or inconclusive outcome, unpersisted fuzz kill, excluded boundary, unsupported Miri operation, or other evidence gap remains.
+`INSUFFICIENT` means execution completed but a survivor, a lead no sealed execution decided, a flaky or inconclusive outcome, unpersisted fuzz kill, excluded boundary, unsupported Miri operation, or other evidence gap remains.
 `ERROR` covers incomplete accounting and toolchain, provider, filesystem, protocol, or workspace failures.
 
 Whatever a run holds, exactly one verdict is the one it supports:

@@ -7,13 +7,25 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 ## Status
 
-Proposed, 2026-09-24.
+Accepted, 2026-09-29.
+Proposed 2026-09-24, and accepted once every decision below was held by the code, a test and an audit layer.
 The contract `whole-v1` and the assurance matrix of the plan's Part III.
+Decision 5 happened in the change that measured the schedule column, and `whole-v1` is the default.
+
+| Decision | Held by |
+| --- | --- |
+| 1, a closed set of columns | `report::matrix`: `Dimension`, `Column`, and `Counted`, every record placed by one exhaustive match and every hole named with why; the mutation column's `skipped`, one match over `SkipReason`; a baseline every shard shares read once per build; a tree whose baseline did not build `unmeasured` along every dimension; `crates/njutest/tests/matrix.rs`, `report_merge::a_binary_every_shard_ran_is_one_hole_of_the_merge_however_many_shards_ran_it`; the proofaudit `dimensions` layer, which re-derives the holes of a flat part and of every part of a merge, and counts a lead as a hole as the runner does |
+| 2, derived, never stored | `matrix::rows` over `Evidence::of` and the report's `MatrixEvidence`; the `DIMENSION` record with `open=` and `speaks_not_about=`, and the drawing beneath each line; `report.golden.lines`, `gallery.golden`, `matrix::the_drawing_says_what_a_dimension_does_not_speak_about`; the audit holds a kept stream to one `DIMENSION` record per dimension, each saying what the records say of its holes, with `catalogued = answered + holes`, in `proofaudit::a_kept_stream_whose_column_the_records_contradict_is_refused` |
+| 3, `whole-v1` and its findings | `Config::asked_everything` and `asks_every_dimension`; `matrix::holes` raised once over the pooled matrix and derived again by `report::derived`; `matrix::a_whole_contract_puts_every_fault_and_knob_and_refuses_a_document_that_says_not_to`, `a_whole_contract_accepts_every_knob_named_in_any_order`, `the_schedule_row_names_which_binary_is_open_and_why`, `configured::a_dimension_several_builds_leave_open_is_one_finding_of_the_run`, `toolchain_matrix`; the proofaudit `dimensions` layer for a flat part's findings, and the merge layer's `dimensions` rule for a merge's, with its planted defect and `proofaudit::a_merged_stream_that_calls_a_dimension_established_where_the_parts_leave_it_open_is_refused` |
+| 4, contracts by what they ask | `Contract::runs_miri`, `proves_models`, `asks_every_dimension` and `name`, each one exhaustive match; `Config::verified` and `Report::checked` ask `proves_models`; the evidence key holds a `Contract`; `evidence_key::a_key_spells_each_contract_as_a_document_names_it` |
+| 5, the default | `Contract::PROTOCOL_DEFAULT`; `toolchain_matrix::a_whole_run_that_names_no_contract_asks_every_dimension_and_is_not_assured_while_one_is_a_hole`; `report_merge::a_whole_run_that_established_every_dimension_is_assured`, the premise that the default can be satisfied |
+
+The audit holds whether each column is a hole, and that its counts add up; the size of each count and the text of each named hole are the runner's, which the tests above hold.
 
 ## Context
 
 A run now measures along more than one dimension: what a mutation changes ([ADR 0004](0004-proof-layers-not-budgets.md)), what a seam is asked ([ADR 0021](0021-a-claim-is-a-perturbation-an-observer-and-a-decision.md)), what a knob sets differently ([ADR 0031](0031-a-knob-is-one-control-started-differently.md)), and what a failed call does ([ADR 0032](0032-a-fault-is-a-failed-call-the-suite-is-asked-about.md)).
-Schedules and durability are planned.
+Schedules and durability were planned when this was written; both are measured now ([ADR 0034](0034-a-binary-is-single-threaded-only-where-nothing-says-otherwise.md), [ADR 0035](0035-a-crash-is-a-stop-the-next-run-has-to-survive.md)).
 Each has its own closed set of decisions, and the report reads them part by part.
 
 Two things are missing.
@@ -43,6 +55,7 @@ The tree's own rule — what was not measured is not claimed as measured — sto
    Each such column is a `dimension-not-measured` finding whose subject is the dimension's name, so the verdict is decided by findings as every other verdict is; a run of the whole catalog raises them, a shard raises none, and a merge raises them over every part.
    A report's conclusion derives them from the records every time and ignores the ones a part stored, so a report that drops one still names it.
    The schedule column makes this strict for any suite with threads: a binary is answered only when it is proven to run one thread (`-- --test-threads=1` over a closure that starts no thread) or a delay broke it, since a sample of schedules is a hole ([ADR 0034](0034-a-binary-is-single-threaded-only-where-nothing-says-otherwise.md)), so an `INSUFFICIENT` `whole-v1` run is the contract answering rather than the tool failing, and the schedule row names which binary and why.
+   A toolchain with no interpreter is a hole here where `deep-v1` refuses the run: `whole-v1` states `miri-unavailable` beside a `not-measured` finding, so the run is not `ASSURED` ([limitations](../limitations.md)).
    Every other contract reads the matrix and is decided exactly as it was.
 
 4. **Contracts are answered by what they ask, never by comparing names.** The places that asked `contract == verified-v1` or `contract != deep-v1` now ask the contract what it runs — `runs_miri`, `proves_models`, `asks_every_dimension` — each an exhaustive match, so a contract added later is one the compiler makes somebody place.

@@ -6,11 +6,12 @@
 use std::collections::BTreeMap;
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::path::Path;
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{ChildStdin, Command, Stdio};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use rust_mutants::runner::GroupChild;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::error::{self, ErrorCode};
@@ -297,101 +298,6 @@ impl ProviderError {
     }
 }
 
-/// An owned child process that kills and reaps itself even on an early return.
-#[derive(Debug)]
-struct SupervisedChild {
-    child: Child,
-    reaped: bool,
-}
-
-impl SupervisedChild {
-    fn launch(command: &mut Command) -> std::io::Result<Self> {
-        command.spawn().map(|child| Self {
-            child,
-            reaped: false,
-        })
-    }
-
-    const fn take_stdin(&mut self) -> Option<ChildStdin> {
-        self.child.stdin.take()
-    }
-
-    const fn take_stdout(&mut self) -> Option<std::process::ChildStdout> {
-        self.child.stdout.take()
-    }
-
-    fn try_wait(&mut self) -> std::io::Result<bool> {
-        match self.child.try_wait()? {
-            Some(_status) => {
-                self.reaped = true;
-                Ok(true)
-            }
-            None => Ok(false),
-        }
-    }
-
-    fn wait(&mut self) -> std::io::Result<()> {
-        self.child.wait().map(|_status| {
-            self.reaped = true;
-        })
-    }
-
-    fn terminate_and_wait(&mut self) -> std::io::Result<()> {
-        let killed = kill_tree(&mut self.child);
-        let waited = self.wait();
-        match (killed, waited) {
-            (Ok(()), Ok(())) => Ok(()),
-            (Err(stopping), Ok(())) => Err(stopping),
-            (Ok(()), Err(wait)) => Err(wait),
-            (Err(stopping), Err(wait)) => Err(std::io::Error::new(
-                wait.kind(),
-                format!("cannot kill the provider tree: {stopping}; cannot reap it: {wait}"),
-            )),
-        }
-    }
-
-    fn finish(&mut self, timeout: Duration) -> std::io::Result<()> {
-        let deadline = Instant::now().checked_add(timeout).ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "the provider shutdown deadline is outside Instant's range",
-            )
-        })?;
-        loop {
-            match self.try_wait() {
-                Ok(true) => return Ok(()),
-                Ok(false) => {}
-                Err(poll) => {
-                    return match self.terminate_and_wait() {
-                        Ok(()) => Err(poll),
-                        Err(cleanup) => Err(std::io::Error::new(
-                            poll.kind(),
-                            format!(
-                                "cannot inspect the provider: {poll}; cleanup also failed: {cleanup}"
-                            ),
-                        )),
-                    };
-                }
-            }
-            if Instant::now() >= deadline {
-                return self.terminate_and_wait();
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-    }
-}
-
-impl Drop for SupervisedChild {
-    fn drop(&mut self) {
-        if self.reaped {
-            return;
-        }
-        if let Err(cleanup) = self.terminate_and_wait() {
-            drop(cleanup);
-        }
-    }
-}
-
 /// A join handle whose destructor cannot detach its thread.
 #[derive(Debug)]
 struct JoinedThread {
@@ -401,7 +307,7 @@ struct JoinedThread {
 /// A one-shot provider and the reader whose lifetime it owns.
 #[derive(Debug)]
 struct OneShot {
-    child: SupervisedChild,
+    child: GroupChild,
     answer: Option<Receiver<ReadAnswer>>,
     reader: Option<JoinedThread>,
 }
@@ -438,7 +344,7 @@ impl OneShot {
         let answer = self.answer.take();
         drop(answer);
         let process = if terminate {
-            self.child.terminate_and_wait()
+            self.child.stop()
         } else {
             self.child.finish(timeout)
         }
@@ -621,7 +527,7 @@ fn spawn_all_reader(
 /// One running provider process, and the line reader that keeps a slow answer from blocking the run.
 #[derive(Debug)]
 pub struct Process {
-    child: SupervisedChild,
+    child: GroupChild,
     stdin: Option<ChildStdin>,
     lines: Option<Receiver<ReadAnswer>>,
     reader: Option<JoinedThread>,
@@ -652,15 +558,14 @@ impl Process {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
-        grouped(&mut spawning);
-        let mut child = SupervisedChild::launch(&mut spawning).map_err(|source| {
+        let mut child = GroupChild::start(&mut spawning).map_err(|source| {
             ProviderError::new(
                 ProviderErrorKind::Unstartable,
                 format!("cannot start {program}: {source}"),
             )
         })?;
-        let stdin = child.take_stdin();
-        let stdout = child.take_stdout().ok_or_else(|| {
+        let stdin = child.stdin();
+        let stdout = child.stdout().ok_or_else(|| {
             ProviderError::new(ProviderErrorKind::Unstartable, "the provider has no stdout")
         })?;
         let (lines, reader) = spawn_line_reader(stdout)?;
@@ -892,14 +797,13 @@ pub fn once(asking: &Once<'_>) -> Result<String, ProviderError> {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    grouped(&mut spawning);
-    let mut child = SupervisedChild::launch(&mut spawning).map_err(|source| {
+    let mut child = GroupChild::start(&mut spawning).map_err(|source| {
         ProviderError::new(
             ProviderErrorKind::Unstartable,
             format!("cannot start {program}: {source}"),
         )
     })?;
-    let mut stdin = child.take_stdin().ok_or_else(|| {
+    let mut stdin = child.stdin().ok_or_else(|| {
         ProviderError::new(
             ProviderErrorKind::Unstartable,
             "the provider has no standard input",
@@ -917,7 +821,7 @@ pub fn once(asking: &Once<'_>) -> Result<String, ProviderError> {
             )
         })?;
     drop(stdin);
-    let stdout = child.take_stdout().ok_or_else(|| {
+    let stdout = child.stdout().ok_or_else(|| {
         ProviderError::new(ProviderErrorKind::Unstartable, "the provider has no stdout")
     })?;
     let (said, reader) = spawn_all_reader(stdout, limit)?;
@@ -940,59 +844,9 @@ pub fn once(asking: &Once<'_>) -> Result<String, ProviderError> {
     }
 }
 
-#[cfg(unix)]
-fn grouped(command: &mut Command) {
-    use std::os::unix::process::CommandExt as _;
-
-    command.process_group(0);
-}
-
-#[cfg(not(unix))]
-const fn grouped(_command: &mut Command) {}
-
-#[cfg(unix)]
-#[expect(
-    clippy::needless_pass_by_ref_mut,
-    reason = "the same signature as the platform without groups, whose child has to be killed through it"
-)]
-fn kill_tree(child: &mut Child) -> std::io::Result<()> {
-    match rust_mutants::runner::stop_group(child.id(), rust_mutants::runner::GroupStop::Kill)? {
-        rust_mutants::runner::Stopped::Group => Ok(()),
-        rust_mutants::runner::Stopped::LeaderOnly => Err(std::io::Error::new(
-            std::io::ErrorKind::PermissionDenied,
-            "the provider's process group refused the stop, and a process besides its leader is \
-             still running or could not be seen, so the provider is not stopped",
-        )),
-    }
-}
-
-#[cfg(not(unix))]
-fn kill_tree(child: &mut Child) -> std::io::Result<()> {
-    child.kill()
-}
-
 #[cfg(test)]
 mod tests {
     use super::{InstanceId, ProviderErrorKind, Request, read};
-
-    #[cfg(unix)]
-    #[test]
-    fn stopping_a_provider_whose_leader_has_already_exited_is_no_failure() {
-        let mut command = std::process::Command::new("true");
-        super::grouped(&mut command);
-        let launched = super::SupervisedChild::launch(&mut command);
-        let Ok(mut provider) = launched else {
-            panic!("`true` starts: {launched:?}");
-        };
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        let stopped = provider.terminate_and_wait();
-        assert!(
-            stopped.is_ok(),
-            "a provider that exited before its stop arrived, and is not reaped yet, is stopped: \
-             on macOS the group signal is refused with EPERM for such a group, and that is the \
-             group being gone rather than a cleanup that failed: {stopped:?}"
-        );
-    }
 
     fn protocol_error(document: &str, request: &Request) {
         let refusal = read(document, request).expect_err("protocol must be refused");

@@ -368,6 +368,58 @@ fn a_change_names_the_lines_it_left_and_every_line_of_a_file_git_does_not_track(
 }
 
 #[test]
+fn lines_read_against_a_base_that_shares_no_commit_with_head_are_noted_as_read_against_it() {
+    let asked = Asked::new(Vec::new());
+    asked.repo.write("src/lib.rs", &twenty(&[], &[]));
+    asked.repo.commit();
+    let named = njutest_devkit::repo::git(asked.repo.root())
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .expect("git names the first commit");
+    let base = String::from_utf8(named.stdout)
+        .expect("a commit is named in hex")
+        .trim()
+        .to_owned();
+    asked.repo.write("src/lib.rs", &twenty(&[5], &[]));
+    asked.repo.commit();
+    let recorder = rust_mutants::testkit::trace::memory_recorder();
+    let watch = Watched::new(cancel(), &recorder);
+    let said = lines(
+        &Asking {
+            root: asked.repo.root(),
+            env: &asked.env,
+            excluded: &asked.excluded,
+            watch: &watch,
+        },
+        &base,
+    );
+    assert_eq!(option_state(said.as_ref()), Present, "the changed lines");
+    let noted: Vec<String> = recorder
+        .events()
+        .into_iter()
+        .filter_map(|event| {
+            if let rust_mutants::trace::Payload::Note { note } = event.payload
+                && note.kind == "change-set"
+            {
+                Some(note.detail)
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert!(
+        noted.iter().any(|detail| detail.contains(&base)),
+        "git names no commit the base and HEAD share, so the lines are read against the base \
+         itself, and the trace says so: {noted:?}"
+    );
+    assert_eq!(
+        said.map(|read| read.merge_base),
+        Some(None),
+        "and the lines name no commit they were counted from"
+    );
+}
+
+#[test]
 fn a_line_that_reads_like_a_header_is_what_the_file_says() {
     let asked = Asked::new(Vec::new());
     asked.repo.write("src/lib.rs", "let a = 1;\n");
@@ -444,9 +496,8 @@ fn a_workspace_below_the_checkout_sees_only_its_own_files_by_its_own_paths() {
     asked.repo.write("ws/src/kept.rs", "pub fn k() {}\n");
     asked.repo.write("other/src/lib.rs", "pub fn g() {}\n");
     asked.repo.commit();
-    let Ok(base) = std::process::Command::new("git")
+    let Ok(base) = njutest_devkit::repo::git(asked.repo.root())
         .args(["rev-parse", "HEAD"])
-        .current_dir(asked.repo.root())
         .output()
     else {
         panic!("git names the first commit");
@@ -499,5 +550,43 @@ fn a_change_that_only_deletes_rust_files_touches_nothing_to_mutate() {
         matches!(within, Ok(rust_mutants::git::Within::Nothing { .. })),
         "a deleted file has nothing left to mutate, so the change touches nothing a run \
          measures rather than naming a file no pattern can select: {within:?}"
+    );
+}
+
+#[test]
+fn a_file_system_monitor_that_says_nothing_changed_is_never_asked() {
+    let asked = Asked::new(Vec::new());
+    asked.repo.package("demo").lib("pub fn f() {}\n");
+    asked.repo.commit();
+    let monitor = asked
+        .repo
+        .root()
+        .join(".git")
+        .join("monitor-that-sees-nothing");
+    std::fs::write(&monitor, "#!/bin/sh\nprintf 'token-%s\\0' \"$$\"\n")
+        .expect("the monitor is written");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&monitor, std::fs::Permissions::from_mode(0o755))
+            .expect("the monitor is executable");
+    }
+    let config = asked.repo.root().join(".git").join("config");
+    let mut said = std::fs::read_to_string(&config).expect("the repository's configuration");
+    said.push_str("[core]\n\tfsmonitor = ");
+    said.push_str(&monitor.display().to_string().replace('\\', "/"));
+    said.push('\n');
+    std::fs::write(&config, said).expect("the monitor is configured");
+    assert!(
+        asked.facts().is_some(),
+        "git states the facts of the tree, as a run's first question asks it to"
+    );
+    asked.repo.write("src/lib.rs", "pub fn f() -> i32 { 1 }\n");
+    let change = asked.changed("HEAD").expect("git answers what changed");
+    assert_eq!(
+        change.files,
+        vec!["src/lib.rs".to_owned()],
+        "a monitor a user configured is a daemon's say-so about the tree, and a change set \
+         is read from the tree itself: {change:?}"
     );
 }

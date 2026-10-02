@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use super::spec::{accounts, builds, glance, named, painted};
+use super::spec::{build_verdicts, builds, glance, named, painted};
 use super::{MeasuredLine, Missing, Strokes, Style, Telling, Terminal, folded, wide};
 use crate::spec::{Item, Line, Section, Specification};
 
@@ -143,7 +143,7 @@ pub fn told(line: &Line<'_>) -> String {
     line.changes()
         .map(|change| {
             let mut said = vec![glance(change, EDITOR)];
-            said.extend(accounts(change));
+            said.extend(build_verdicts(change));
             said.push(format!("njutest explain {}", change.locator()));
             said.join("\n")
         })

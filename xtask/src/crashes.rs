@@ -16,9 +16,11 @@ pub struct Run {
     pub test: String,
     /// Which run: `crash`, `next` or `fresh`.
     pub stage: String,
-    /// The exit status.
-    pub exit_code: i64,
-    /// What the engine made of it.
+    /// Whether it was a sealed instance rather than a process.
+    pub sealed: bool,
+    /// A process's exit status; nothing for a sealed instance.
+    pub exit_code: Option<i64>,
+    /// What the engine made of it: a native outcome, or for a sealed instance `halted` or what it came to against its control.
     pub outcome: String,
     /// Whether the runner says the runtime published the notice that it stopped at the call.
     pub noticed: bool,
@@ -26,6 +28,8 @@ pub struct Run {
     pub issued: Option<Issued>,
     /// What a stopped run left.
     pub left: Vec<String>,
+    /// The entry a stopped run left whose name is not text, where it left one, which leaves what it left unnamed.
+    pub unnamed: Option<String>,
     /// What a next or fresh run failed.
     pub failed: Vec<String>,
 }
@@ -82,7 +86,7 @@ pub enum Step {
     /// A stop of this crash wrote into the tree under measurement.
     Outside,
     /// One run of a test.
-    Ran(Run),
+    Ran(Box<Run>),
     /// A step of a kind this audit does not know, which decides nothing it can check.
     Unread(String),
 }
@@ -100,6 +104,8 @@ pub struct Site {
     pub left: Vec<String>,
     /// What the next run failed, where it says.
     pub failed: Vec<String>,
+    /// Whether the decision rests on at least one run and every run it rests on was a sealed instance.
+    pub sealed: bool,
 }
 
 /// Every step a recording holds about the crashes, keyed by crash, in recording order.
@@ -159,7 +165,7 @@ pub fn read(recorded: &crate::route::Checked<crate::schemas::RunnerLines>) -> Cr
                     }
                 };
                 let step = match ran(record, issued) {
-                    Some(run) => Step::Ran(run),
+                    Some(run) => Step::Ran(Box::new(run)),
                     None => Step::Unread("crash-exec without a field it requires".to_owned()),
                 };
                 crashed.steps.push((crash, step));
@@ -188,11 +194,21 @@ fn ran(record: &Value, issued: Option<Issued>) -> Option<Run> {
         target: text(record, "target")?,
         test: text(record, "test")?,
         stage: text(record, "stage")?,
-        exit_code: record.get("exit_code")?.as_i64()?,
+        sealed: record.get("sealed")?.as_bool()?,
+        exit_code: match record.get("exit_code")? {
+            Value::Null => None,
+            Value::Number(code) => Some(code.as_i64()?),
+            Value::Bool(_) | Value::String(_) | Value::Array(_) | Value::Object(_) => return None,
+        },
         outcome: text(record, "outcome")?,
         noticed: record.get("noticed")?.as_bool()?,
         issued,
         left: texts(record, "left")?,
+        unnamed: match record.get("unnamed")? {
+            Value::Null => None,
+            Value::String(entry) => Some(entry.clone()),
+            Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_) => return None,
+        },
         failed: texts(record, "failed")?,
     })
 }
@@ -295,11 +311,10 @@ pub fn issued_disagreements(
     let mut found = Vec::new();
     let mut nonces: BTreeMap<&str, &str> = BTreeMap::new();
     for (crash, step) in &crashed.steps {
-        let Step::Ran(Run {
-            issued: Some(issued),
-            ..
-        }) = step
-        else {
+        let Step::Ran(run) = step else {
+            continue;
+        };
+        let Some(issued) = &run.issued else {
             continue;
         };
         if ids.get(crash).is_some_and(|id| *id != issued.mutant) {
@@ -331,6 +346,7 @@ pub fn site(record: &Value) -> Option<Site> {
         on: said(decision, "on")?,
         left: said_list(decision, "left")?,
         failed: said_list(decision, "failed")?,
+        sealed: record.get("sealed")?.as_bool()?,
     })
 }
 
@@ -389,18 +405,80 @@ pub fn decided(crash: &str, steps: &[&Step], stained: bool) -> Result<Decided, U
             return Err(unmade("its first step is neither a route nor a refusal"));
         }
     };
+    let sealed = rests_on_sealed(steps);
     match rest {
         [] => Ok(Decided {
-            site: decided,
+            site: Site { sealed, ..decided },
             outside: false,
         }),
         [Step::Outside] if decided.decision != "not-put" => Ok(Decided {
-            site: site("undecided", RULE),
+            site: Site {
+                sealed,
+                ..site("undecided", RULE)
+            },
             outside: true,
         }),
         [..] => Err(unmade("a step was recorded after the one that decides it")),
     }
 }
+
+/// Whether `steps` hold at least one run and every run among them was a sealed instance, which is what a report's `sealed` says of the decision they rest on.
+fn rests_on_sealed(steps: &[&Step]) -> bool {
+    let runs: Vec<&Run> = steps
+        .iter()
+        .filter_map(|step| match step {
+            Step::Ran(run) => Some(run.as_ref()),
+            Step::Rejected | Step::Tainted | Step::Route(_) | Step::Outside | Step::Unread(_) => {
+                None
+            }
+        })
+        .collect();
+    !runs.is_empty() && runs.iter().all(|run| run.sealed)
+}
+
+/// What a sealed crash instance the host halted where its runtime publishes the notice is recorded as, written out again from the runner's contract rather than read from its code.
+pub const HALTED: &str = "halted";
+
+/// What a sealed next instance that could not start over what the stop left is recorded as, which decides nothing either way.
+pub const UNSTARTABLE: &str = "unstartable";
+
+/// What a sealed instance comes to judged against its control, and of those the ones that detect, written out again from the engine's contract rather than read from its code.
+pub const SEALED_OUTCOMES: [&str; 13] = [
+    "passed",
+    "panicked",
+    "failed",
+    "trapped",
+    "fuel-exceeded",
+    "memory-exceeded",
+    "declined",
+    "exited-early",
+    "stack-overflow",
+    "refused",
+    "unaccounted",
+    "unmatched",
+    "set-aside",
+];
+
+/// The sealed outcomes that detect: a next instance that came to one of them failed over what the stop left.
+pub const SEALED_DETECTIONS: [&str; 6] = [
+    "panicked",
+    "failed",
+    "trapped",
+    "fuel-exceeded",
+    "memory-exceeded",
+    "declined",
+];
+
+/// What a native run comes to, written out again from the engine's contract rather than read from its code.
+pub const NATIVE_OUTCOMES: [&str; 7] = [
+    "not_run",
+    "killed",
+    "survived",
+    "step_limit_reached",
+    "waited",
+    "inconclusive",
+    "errored",
+];
 
 /// The steps of one crash not yet read.
 struct Cursor<'a, 'b> {
@@ -438,8 +516,17 @@ impl<'b> Cursor<'_, 'b> {
                         }
                     )));
                 }
+                if run.unnamed.is_some() && (!stopped(run) || !run.left.is_empty()) {
+                    return Err(unmade(&format!(
+                        "a {stage} run of {target}::{test} names an entry left unnamed, which \
+                         only a stop that named nothing it left can"
+                    )));
+                }
+                if let Some(why) = unkind(run) {
+                    return Err(unmade(&format!("a {stage} run of {target}::{test} {why}")));
+                }
                 self.rest = rest;
-                Ok(run)
+                Ok(run.as_ref())
             }
             Step::Ran(_)
             | Step::Rejected
@@ -451,6 +538,53 @@ impl<'b> Cursor<'_, 'b> {
             ))),
         }
     }
+
+    /// The next step, which must be a run of `stage` of this test, sealed as `sealed` says: every run after a crash's is of the same kind as the crash's.
+    fn run_as(
+        &mut self,
+        (target, test, stage): (&str, &str, &str),
+        sealed: bool,
+    ) -> Result<&'b Run, Unmade> {
+        let run = self.run(target, test, stage)?;
+        if run.sealed != sealed {
+            return Err(unmade(&format!(
+                "a {stage} run of {target}::{test} is {} where the stop it follows was {}",
+                kind(run.sealed),
+                kind(sealed)
+            )));
+        }
+        Ok(run)
+    }
+}
+
+/// How a run is named by its kind.
+const fn kind(sealed: bool) -> &'static str {
+    if sealed { "sealed" } else { "native" }
+}
+
+/// What makes `run` no run of its kind the runner records, or nothing where it is one: a sealed instance has no exit status, no `fresh` run and one of the sealed outcomes, `halted` on a crash alone; a process has an exit status and a native outcome.
+fn unkind(run: &Run) -> Option<&'static str> {
+    if run.sealed {
+        if run.exit_code.is_some() {
+            return Some("is sealed and carries an exit status, which only a process has");
+        }
+        if run.stage == "fresh" {
+            return Some("is a sealed fresh run, which one sealed round never makes");
+        }
+        let halted = run.outcome == HALTED && run.stage == "crash";
+        let unstartable = run.outcome == UNSTARTABLE && run.stage == "next";
+        if !halted && !unstartable && !SEALED_OUTCOMES.contains(&run.outcome.as_str()) {
+            return Some("is sealed and names an outcome no sealed instance comes to");
+        }
+        return None;
+    }
+    if run.exit_code.is_none() {
+        return Some("is native and carries no exit status");
+    }
+    if !NATIVE_OUTCOMES.contains(&run.outcome.as_str()) {
+        return Some("is native and names an outcome no process comes to");
+    }
+    None
 }
 
 /// What the runs after a route decide: the first test that stopped at the call decides, a test that passed without stopping hands on to the next, and anything else is undecided.
@@ -471,15 +605,32 @@ fn routed(crash: &str, asked: &[Asked], cursor: &mut Cursor<'_, '_>) -> Result<S
             let on = format!("{}::{test}", reaches.target);
             let stop = cursor.run(&reaches.target, test, "crash")?;
             if !stopped(stop) {
-                if stop.outcome == "survived" {
+                let passed = if stop.sealed { "passed" } else { "survived" };
+                if stop.outcome == passed && !published(stop) {
                     continue;
                 }
+                return Ok(site("undecided", &on));
+            }
+            if stop.unnamed.is_some() {
                 return Ok(site("undecided", &on));
             }
             if stop.left.is_empty() {
                 return Ok(site("unshared", &on));
             }
-            let next = cursor.run(&reaches.target, test, "next")?;
+            let next = cursor.run_as((&reaches.target, test, "next"), stop.sealed)?;
+            if stop.sealed {
+                return Ok(match sealed_next(next, test)? {
+                    Next::Passed => Site {
+                        left: stop.left.clone(),
+                        ..site("restarted", &on)
+                    },
+                    Next::Detected => Site {
+                        failed: next.failed.clone(),
+                        ..site("corrupt", &on)
+                    },
+                    Next::Neither => site("undecided", &on),
+                });
+            }
             return Ok(match next.outcome.as_str() {
                 "survived" => Site {
                     left: stop.left.clone(),
@@ -506,7 +657,43 @@ fn routed(crash: &str, asked: &[Asked], cursor: &mut Cursor<'_, '_>) -> Result<S
     })
 }
 
-/// How many rounds confirm a corrupt stop, written out again from the runner's contract rather than read from its code.
+/// What a sealed next instance came to, which is all one sealed round needs.
+enum Next {
+    /// It passed over what the stop left.
+    Passed,
+    /// It detected something over it: the test failed.
+    Detected,
+    /// It established neither.
+    Neither,
+}
+
+/// What the sealed next instance `next` of `test` came to, in the one round a sealed crash is decided in.
+///
+/// # Errors
+/// A next instance whose failures are not exactly its test where it detected, or not none where it did not.
+fn sealed_next(next: &Run, test: &str) -> Result<Next, Unmade> {
+    let detected = SEALED_DETECTIONS.contains(&next.outcome.as_str());
+    let failed: &[String] = if detected {
+        std::slice::from_ref(&next.test)
+    } else {
+        &[]
+    };
+    if next.failed != failed || next.test != test {
+        return Err(unmade(&format!(
+            "a sealed next run of {test} came to {} and names {:?} as its failures",
+            next.outcome, next.failed
+        )));
+    }
+    Ok(if next.outcome == "passed" {
+        Next::Passed
+    } else if detected {
+        Next::Detected
+    } else {
+        Next::Neither
+    })
+}
+
+/// How many rounds confirm a corrupt native stop, written out again from the runner's contract rather than read from its code; a sealed stop needs none, since the same instance comes out the same every time.
 pub const CONFIRMATIONS: usize = 3;
 
 /// Whether a failing next run, with the stopped test among its failures, is held to [`CONFIRMATIONS`] rounds of a fresh run that passes and a later stop that leaves something and fails the next run over it the same way.
@@ -520,14 +707,14 @@ fn confirmed(
         return Ok(false);
     }
     for () in std::iter::repeat_n((), CONFIRMATIONS) {
-        if cursor.run(target, test, "fresh")?.outcome != "survived" {
+        if cursor.run_as((target, test, "fresh"), false)?.outcome != "survived" {
             return Ok(false);
         }
-        let again = cursor.run(target, test, "crash")?;
-        if !stopped(again) || again.left.is_empty() {
+        let again = cursor.run_as((target, test, "crash"), false)?;
+        if !stopped(again) || again.unnamed.is_some() || again.left.is_empty() {
             return Ok(false);
         }
-        let next = cursor.run(target, test, "next")?;
+        let next = cursor.run_as((target, test, "next"), false)?;
         if next.outcome != "killed" || next.failed != failed {
             return Ok(false);
         }
@@ -535,9 +722,19 @@ fn confirmed(
     Ok(true)
 }
 
-/// Whether a run stopped at the call: the stop's exit status, and the runtime's notice that it made it.
+/// Whether a run stopped at the call: for a process the stop's exit status, for a sealed instance the host's halt where the notice goes, and in either the runtime's notice that it made it.
 fn stopped(run: &Run) -> bool {
-    run.exit_code == CRASH_EXIT && run.issued.as_ref().is_some_and(Issued::published)
+    let ended = if run.sealed {
+        run.outcome == HALTED
+    } else {
+        run.exit_code == Some(CRASH_EXIT)
+    };
+    ended && published(run)
+}
+
+/// Whether the runtime published the notice `run` was issued, in whatever process of the test reached the call.
+fn published(run: &Run) -> bool {
+    run.issued.as_ref().is_some_and(Issued::published)
 }
 
 /// Every place a report's crash sites and the recorded steps disagree, each with the crash it is about.

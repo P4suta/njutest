@@ -273,3 +273,53 @@ fn only_a_compilation_cache_is_handed_to_a_nested_run_through_the_wrapper() {
         );
     }
 }
+
+#[test]
+fn a_run_given_another_home_is_not_handed_the_compilation_cache_of_this_one() {
+    use njutest_devkit::paths::{Given, given_home};
+
+    const STAGE: &str = "NJUTEST_DEVKIT_GIVEN_HOME_STAGE";
+    match std::env::var(STAGE).as_deref() {
+        Ok("cached") => {
+            let home = std::path::Path::new("given-home");
+            let given = given_home(home);
+            for name in ["HOME", "USERPROFILE"] {
+                assert!(
+                    given.contains(&Given::Set(name, home.as_os_str().to_owned())),
+                    "the run is given the home under {name}: {given:?}"
+                );
+            }
+            assert!(
+                given.contains(&Given::Removed(RUSTC_WRAPPER)),
+                "a compilation cache reads its own configuration from the home, and sccache on \
+                 Windows panics with `Unable to get config directory` under one it was not \
+                 configured in, which ended three toolchain suites' runs before a verdict: \
+                 {given:?}"
+            );
+            return;
+        }
+        Ok(other) => test_fail(format_args!("unknown test stage {other}")),
+        Err(_) => {}
+    }
+
+    let executable = test_ok(std::env::current_exe(), "this test binary");
+    let output = test_ok(
+        std::process::Command::new(executable)
+            .args([
+                "--exact",
+                njutest_devkit::process::test_name(
+                    module_path!(),
+                    "a_run_given_another_home_is_not_handed_the_compilation_cache_of_this_one",
+                )
+                .as_str(),
+            ])
+            .env(STAGE, "cached")
+            .env_remove(COVERAGE)
+            .env_remove(COVERAGE_TARGET)
+            .env_remove(COVERAGE_PRIVATE)
+            .env(RUSTC_WRAPPER, "sccache")
+            .output(),
+        "the given-home test runs",
+    );
+    assert_ran_the_one_test(&output);
+}

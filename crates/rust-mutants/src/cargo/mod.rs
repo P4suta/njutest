@@ -3,11 +3,14 @@
 
 //! The cargo boundary: locating the toolchain, reading `cargo metadata`, parsing `--message-format=json`, and reading dep-info to learn which files a unit really compiled.
 
+mod build_cache;
 mod build_identity;
 mod built;
 mod compile;
 pub mod config;
+mod cost;
 mod depinfo;
+mod doctests;
 mod locate;
 pub mod manifest;
 mod messages;
@@ -25,25 +28,30 @@ use crate::trace::Recorder;
 pub use build_identity::{BUILD_SELECTION_DOMAIN, BuildSelection, BuildSelectionDigest};
 pub use built::{BuildDir, LEDGER_NAME, LEDGER_SCHEMA, Member, MemberFile, fingerprint_of};
 pub use compile::{
-    BuildConfig, Compilation, CompileKind, CompileOptions, Compiled, compile, compile_arguments,
+    BuildConfig, Compilation, CompileKind, CompileOptions, Compiled, Completion, CompletionError,
+    Exited, compile, compile_arguments,
 };
+pub use cost::{DirectBuild, record_build};
 pub use depinfo::{
     Emitted, Unit, compile_time_inputs, dep_info_path, emitted_of, env_deps, every_unit_of,
     parse_dep_info, units_of,
+};
+pub use doctests::{
+    DoctestCapture, build_capture, capture_arguments, capture_doctests, empty_capture,
 };
 
 pub use locate::{
     ForTests, LocateOptions, Selecting, Toolchain, command_failed, resolve_executable,
 };
 pub use messages::{
-    Artifact, BuildScript, CompilerMessage, Diagnostic, DiagnosticSpan, Message, Profile,
+    Artifact, BuildScript, CompilerMessage, Diagnostic, DiagnosticSpan, Finished, Message, Profile,
     names_file, parse_messages,
 };
 pub use metadata::{
-    DepKind, Dependency, Metadata, MetadataOptions, Node, NodeDep, Package, Resolve, Target,
-    metadata_arguments,
+    DepKind, Dependency, ManifestPath, ManifestPathError, Metadata, MetadataOptions, Node, NodeDep,
+    Package, Resolve, Target, metadata_arguments,
 };
-pub use outside::{Outside, reaching_outside};
+pub use outside::{Outside, reaching_outside, resolved};
 pub use version::{VersionInfo, parse_version};
 
 /// Everything a cargo command needs besides its arguments: the toolchain, the directory to run in, the cancellation flag, and the trace.

@@ -108,63 +108,116 @@ mod __rm {
             }
         }
     }
-#[derive(Debug, Clone, Copy, PartialEq, Eq)] enum StepAction
-{ Activate, Checkpoint, } #[derive(Debug, Clone, Copy, PartialEq, Eq)] enum
-StepPhase { Dormant, Counting(usize), Active(usize), Stopping(usize), }
-#[derive(Debug, Clone, Copy, PartialEq, Eq)] enum StepAdvance
-{ Continue, Park, Reached { allowed : usize, observed : usize }, }
-#[derive(Debug, Clone, Copy, PartialEq, Eq)] enum StepMachineError
-{ Limit, Count, } const fn
-step_transition(phase : StepPhase, action : StepAction, allowed : usize,) ->
-Result < (StepPhase, StepAdvance), StepMachineError >
-{
-    if allowed == 0 || allowed == usize :: MAX
-    { return Err(StepMachineError :: Limit); } match (phase, action)
-    {
-        (StepPhase :: Dormant, StepAction :: Activate) =>
-        { Ok((StepPhase :: Active(1), StepAdvance :: Continue)) }
-        (StepPhase :: Dormant, StepAction :: Checkpoint) =>
-        { Ok((StepPhase :: Dormant, StepAdvance :: Continue)) }
-        (StepPhase :: Counting(seen), StepAction :: Checkpoint) =>
-        {
-            match seen.checked_add(1)
-            {
-                Some(next) =>
-                Ok((StepPhase :: Counting(next), StepAdvance :: Continue)),
-                None => Err(StepMachineError :: Count),
+    // The step machine, as rust-mutants-decision compiles and tests it,
+    // with what that crate exports kept to this one.
+    mod step {
+// SPDX-FileCopyrightText: 2026 njutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! How an execution spends its step allowance, one boundary at a time; this crate compiles and tests it, and every generated runtime holds this file as its module `step`.
+
+/// What the runtime asks of the machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StepAction {
+    /// The selected mutant's guard was taken.
+    Activate,
+    /// A function or loop boundary was raised.
+    Checkpoint,
+}
+
+/// Where an execution's allowance stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StepPhase {
+    /// No mutant has activated, and a boundary costs nothing.
+    Dormant,
+    /// Every boundary is counted, and none stops the execution.
+    Counting(usize),
+    /// The mutant is active and this many boundaries are spent.
+    Active(usize),
+    /// The allowance was passed at this boundary, and the execution is stopping.
+    Stopping(usize),
+}
+
+/// What the runtime does after a transition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StepAdvance {
+    /// It carries on.
+    Continue,
+    /// It waits for the stop already under way.
+    Park,
+    /// The allowance is spent: `allowed` boundaries were, and this one is `observed`.
+    Reached {
+        /// The allowance.
+        allowed: usize,
+        /// The boundary past it.
+        observed: usize,
+    },
+}
+
+/// Why a transition cannot be made.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StepMachineError {
+    /// The allowance is none the machine can spend: zero, or one with no boundary past it.
+    Limit,
+    /// The phase is not one the allowance can reach, or a count has no room left.
+    Count,
+}
+
+/// The phase `action` moves `phase` to under an allowance of `allowed`, and what the runtime does next.
+///
+/// # Errors
+/// An allowance of zero or of `usize::MAX`, and a phase or a count the allowance cannot reach.
+pub(crate) const fn step_transition(
+    phase: StepPhase,
+    action: StepAction,
+    allowed: usize,
+) -> Result<(StepPhase, StepAdvance), StepMachineError> {
+    if allowed == 0 || allowed == usize::MAX {
+        return Err(StepMachineError::Limit);
+    }
+    match (phase, action) {
+        (StepPhase::Dormant, StepAction::Activate) => {
+            Ok((StepPhase::Active(1), StepAdvance::Continue))
+        }
+        (StepPhase::Dormant, StepAction::Checkpoint) => {
+            Ok((StepPhase::Dormant, StepAdvance::Continue))
+        }
+        (StepPhase::Counting(seen), StepAction::Checkpoint) => match seen.checked_add(1) {
+            Some(next) => Ok((StepPhase::Counting(next), StepAdvance::Continue)),
+            None => Err(StepMachineError::Count),
+        },
+        (StepPhase::Counting(seen), StepAction::Activate) => {
+            Ok((StepPhase::Counting(seen), StepAdvance::Continue))
+        }
+        (StepPhase::Active(spent), StepAction::Activate) if spent > 0 && spent <= allowed => {
+            Ok((StepPhase::Active(spent), StepAdvance::Continue))
+        }
+        (StepPhase::Active(spent), StepAction::Checkpoint) if spent > 0 && spent < allowed => {
+            match spent.checked_add(1) {
+                Some(next) => Ok((StepPhase::Active(next), StepAdvance::Continue)),
+                None => Err(StepMachineError::Count),
             }
-        } (StepPhase :: Counting(seen), StepAction :: Activate) =>
-        { Ok((StepPhase :: Counting(seen), StepAdvance :: Continue)) }
-        (StepPhase :: Active(spent), StepAction :: Activate) if spent > 0 &&
-        spent <= allowed =>
-        { Ok((StepPhase :: Active(spent), StepAdvance :: Continue)) }
-        (StepPhase :: Active(spent), StepAction :: Checkpoint) if spent > 0 &&
-        spent < allowed =>
-        {
-            match spent.checked_add(1)
-            {
-                Some(next) =>
-                Ok((StepPhase :: Active(next), StepAdvance :: Continue)), None
-                => Err(StepMachineError :: Count),
+        }
+        (StepPhase::Active(spent), StepAction::Checkpoint) if spent == allowed => {
+            match allowed.checked_add(1) {
+                Some(observed) => Ok((
+                    StepPhase::Stopping(observed),
+                    StepAdvance::Reached { allowed, observed },
+                )),
+                None => Err(StepMachineError::Count),
             }
-        } (StepPhase :: Active(spent), StepAction :: Checkpoint) if spent ==
-        allowed =>
-        {
-            match allowed.checked_add(1)
-            {
-                Some(observed) =>
-                Ok((StepPhase :: Stopping(observed), StepAdvance :: Reached
-                { allowed, observed },)), None =>
-                Err(StepMachineError :: Count),
+        }
+        (StepPhase::Stopping(spent), _) => match allowed.checked_add(1) {
+            Some(observed) if spent == observed => {
+                Ok((StepPhase::Stopping(spent), StepAdvance::Park))
             }
-        } (StepPhase :: Stopping(spent), _) => match allowed.checked_add(1)
-        {
-            Some(observed) if spent == observed =>
-            { Ok((StepPhase :: Stopping(spent), StepAdvance :: Park)) }
-            Some(_) | None => Err(StepMachineError :: Count),
-        }, (StepPhase :: Active(_), _) => Err(StepMachineError :: Count),
+            Some(_) | None => Err(StepMachineError::Count),
+        },
+        (StepPhase::Active(_), _) => Err(StepMachineError::Count),
     }
 }
+    }
+    use self::step::{StepAction, StepAdvance, StepPhase, step_transition};
     // Which check of the step protocol failed, and the operating system's
     // code where a call it made is what failed: the process says both
     // before it stops, so a run names the check rather than only a status.
@@ -270,7 +323,48 @@ Result < (StepPhase, StepAdvance), StepMachineError >
     }
     impl Injectable for __rm_std::io::Error {
         fn injected() -> Self {
-            __rm_std::io::Error::other("a failure rust-mutants injected")
+            fated("made");
+            __rm_std::io::Error::other(Injected)
+        }
+    }
+    // The failure an io::Error a fault makes carries, which says what became
+    // of it: read by whatever formatted it, and dropped. A failure dropped
+    // unread went nowhere a person or a test could read it (ADR 0032).
+    struct Injected;
+    impl __rm_std::fmt::Display for Injected {
+        fn fmt(&self, formatter: &mut __rm_std::fmt::Formatter<'_>) -> __rm_std::fmt::Result {
+            fated("read");
+            formatter.write_str("a failure rust-mutants injected")
+        }
+    }
+    impl __rm_std::fmt::Debug for Injected {
+        fn fmt(&self, formatter: &mut __rm_std::fmt::Formatter<'_>) -> __rm_std::fmt::Result {
+            fated("read");
+            formatter.write_str("a failure rust-mutants injected")
+        }
+    }
+    impl __rm_std::error::Error for Injected {}
+    impl __rm_std::ops::Drop for Injected {
+        fn drop(&mut self) {
+            fated("dropped");
+        }
+    }
+    // One line per event, where a run asked for them. A line that cannot be
+    // written stops the process, so no run is read as one whose failure
+    // nothing read because the record of the reading was lost.
+    fn fated(event: &str) {
+        let path = match __rm_std::env::var_os("RUST_MUTANTS_FAULT_FATE") {
+            __rm_std::option::Option::Some(path) if !path.is_empty() => path,
+            _ => return,
+        };
+        let line = __rm_std::format!("rust-mutants-fate-v1\t{}\t{}\n", CATALOG, event);
+        let written = __rm_std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .and_then(|mut file| __rm_std::io::Write::write_all(&mut file, line.as_bytes()));
+        if let __rm_std::result::Result::Err(error) = written {
+            protocol_failed(Why::os("fate: write", &error));
         }
     }
     impl Injectable for __rm_std::str::Utf8Error {
@@ -319,7 +413,14 @@ Result < (StepPhase, StepAdvance), StepMachineError >
     // A crash lets the call that writes finish and then stops the process
     // with nothing after it: no destructor, flush or unwinding, so what the
     // call wrote is on disk and nothing later is.
-    pub(crate) fn crashed_after<T>(_written: T) -> T {
+    // A call whose value is a future has written nothing when it returns,
+    // so a stop after it would stop before the write. Every value is
+    // `Written<()>` and a future is `Written<u8>` as well, so for a future
+    // the compiler cannot choose, refuses the stop, and the crash is not put.
+    pub(crate) trait Written<Which> {}
+    impl<T> Written<()> for T {}
+    impl<F: __rm_std::future::Future> Written<u8> for F {}
+    pub(crate) fn crashed_after<T: Written<Which>, Which>(_written: T) -> T {
         let _published = publish_crash_notice();
         stop(93, Why::said("crash"))
     }
@@ -969,10 +1070,6 @@ Result < (StepPhase, StepAdvance), StepMachineError >
         stop(94, error)
     }
 
-    // The one way this module ends the process: it says why first, as one
-    // line whose first field is the schema, then the status, the check that
-    // failed and the operating system's code, so a run that reads the
-    // status alone is never all there is.
     #[cold]
     fn stop(status: i32, error: Why) -> ! {
         let said = __rm_std::format!("rust-mutants-stop-v1\t{}\t{}\t{}\n", status, error.check, error.os);

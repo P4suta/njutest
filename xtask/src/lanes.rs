@@ -3,7 +3,7 @@
 
 //! Machine-wide lanes that admit one whole-workspace run at a time, and say who holds each.
 
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -12,10 +12,17 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use thiserror::Error;
 
+use crate::environment::Environment;
 use crate::work::Stops;
 
 /// The variable that names the lanes a process already holds, so a run inside one never waits for itself.
 pub const HELD: &str = "NJUTEST_SLOT_HELD";
+
+/// The variable that says, in seconds, how long a run waits behind a holder whose work shows nothing new.
+pub const QUIET: &str = "NJUTEST_SLOT_QUIET_SECONDS";
+
+/// How long a run waits behind a holder whose work shows nothing new, where [`QUIET`] does not say.
+const DEFAULT_QUIET: Duration = Duration::from_secs(600);
 
 /// How often a waiting run looks at the lock again.
 const POLL: Duration = Duration::from_millis(200);
@@ -137,6 +144,18 @@ pub enum LaneError {
         /// The holder.
         pid: u32,
     },
+    /// Whether a run waiting for the lane still exists could not be read.
+    #[cfg(unix)]
+    #[error(
+        "whether the run waiting for the {lane} lane (pid {pid}) still exists could not be read, \
+         so its place in line is not removed"
+    )]
+    WaiterUnseen {
+        /// The lane.
+        lane: &'static str,
+        /// The waiting run.
+        pid: u32,
+    },
     /// Whether the group a dead holder's work ran in is still there could not be seen.
     #[cfg(unix)]
     #[error(
@@ -158,6 +177,31 @@ pub enum LaneError {
         /// The signal.
         signal: i32,
     },
+    /// A setting of the lanes is not a whole number of seconds.
+    #[error("{name} is {value:?}, which is not a whole number of seconds")]
+    Setting {
+        /// The variable.
+        name: &'static str,
+        /// What it holds.
+        value: String,
+    },
+    /// The holder showed nothing new of its work for longer than the quiet window allows.
+    #[error(
+        "the {lane} lane's holder, {holder}, has shown nothing new of its work for {silent}: its \
+         record and every process of the groups it names have neither changed nor used the \
+         processor for as long as {QUIET} allows ({quiet}), so this run stops waiting rather than \
+         wait for it forever"
+    )]
+    Stalled {
+        /// The lane.
+        lane: &'static str,
+        /// The holder, as its record describes it.
+        holder: String,
+        /// How long it showed nothing new.
+        silent: String,
+        /// The window.
+        quiet: String,
+    },
 }
 
 impl crate::error::Coded for LaneError {
@@ -167,11 +211,14 @@ impl crate::error::Coded for LaneError {
             | Self::Nowhere
             | Self::Io { .. }
             | Self::Lock { .. }
-            | Self::Progress { .. } => crate::error::XtCode::LaneUnavailable,
+            | Self::Progress { .. }
+            | Self::Setting { .. } => crate::error::XtCode::LaneUnavailable,
             #[cfg(unix)]
-            Self::Unended { .. } | Self::Unseen { .. } | Self::HolderUnseen { .. } => {
-                crate::error::XtCode::LaneUnavailable
-            }
+            Self::Unended { .. }
+            | Self::Unseen { .. }
+            | Self::HolderUnseen { .. }
+            | Self::WaiterUnseen { .. } => crate::error::XtCode::LaneUnavailable,
+            Self::Stalled { .. } => crate::error::XtCode::LaneStalled,
             Self::Interrupted { .. } => crate::error::XtCode::LaneInterrupted,
         }
     }
@@ -187,34 +234,40 @@ impl LaneError {
             | Self::Nowhere
             | Self::Io { .. }
             | Self::Lock { .. }
-            | Self::Progress { .. } => None,
+            | Self::Progress { .. }
+            | Self::Setting { .. }
+            | Self::Stalled { .. } => None,
             #[cfg(unix)]
-            Self::Unended { .. } | Self::Unseen { .. } | Self::HolderUnseen { .. } => None,
+            Self::Unended { .. }
+            | Self::Unseen { .. }
+            | Self::HolderUnseen { .. }
+            | Self::WaiterUnseen { .. } => None,
         }
     }
 }
 
-/// Where lanes are kept, and which of them the running process already holds.
+/// Where lanes are kept, which of them the running process already holds, and how long a run waits behind a holder whose work shows nothing new.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Lanes {
     directory: PathBuf,
     held: Vec<String>,
+    quiet: Duration,
 }
 
 impl Lanes {
-    /// The machine's lanes as the environment names them: `NJUTEST_SLOT_DIR`, else under the state directory, with [`HELD`] saying which are already held.
+    /// The machine's lanes as the environment names them: `NJUTEST_SLOT_DIR`, else under the state directory, with [`HELD`] saying which are already held and [`QUIET`] how long a waiting run bears a holder that shows nothing new.
     ///
     /// # Errors
-    /// Returns [`LaneError::Nowhere`] when the environment names no directory for them.
-    pub fn from_environment(environment: &[(OsString, OsString)]) -> Result<Self, LaneError> {
-        let directory = match variable(environment, "NJUTEST_SLOT_DIR") {
+    /// Returns [`LaneError::Nowhere`] when the environment names no directory for them, and [`LaneError::Setting`] when [`QUIET`] is not a whole number of seconds.
+    pub fn from_environment(environment: &Environment) -> Result<Self, LaneError> {
+        let directory = match environment.value("NJUTEST_SLOT_DIR") {
             Some(named) => PathBuf::from(named),
             None => state_directory(environment)
                 .ok_or(LaneError::Nowhere)?
                 .join("njutest")
                 .join("slots"),
         };
-        let held = match variable(environment, HELD) {
+        let held = match environment.value(HELD) {
             Some(value) => value
                 .to_str()
                 .ok_or(LaneError::NotText { name: HELD })?
@@ -224,16 +277,42 @@ impl Lanes {
                 .collect(),
             None => Vec::new(),
         };
-        Ok(Self { directory, held })
+        let quiet = match environment.value(QUIET) {
+            Some(value) => {
+                let text = value.to_str().ok_or(LaneError::NotText { name: QUIET })?;
+                match text.trim().parse::<u64>() {
+                    Ok(seconds) => Duration::from_secs(seconds),
+                    Err(_not_seconds) => {
+                        return Err(LaneError::Setting {
+                            name: QUIET,
+                            value: text.to_owned(),
+                        });
+                    }
+                }
+            }
+            None => DEFAULT_QUIET,
+        };
+        Ok(Self {
+            directory,
+            held,
+            quiet,
+        })
     }
 
-    /// Lanes kept in `directory` that nothing already holds, such as one repository's gate tree.
+    /// Lanes kept in `directory` that nothing already holds, such as one repository's gate tree, waited for as long as their holder shows something new within `quiet`.
     #[must_use]
-    pub const fn at(directory: PathBuf) -> Self {
+    pub const fn at(directory: PathBuf, quiet: Duration) -> Self {
         Self {
             directory,
             held: Vec::new(),
+            quiet,
         }
+    }
+
+    /// How long a run waits behind a holder whose work shows nothing new.
+    #[must_use]
+    pub const fn quiet(&self) -> Duration {
+        self.quiet
     }
 
     /// The lane this process is already inside, to record the work it starts there, or nothing when it holds none.
@@ -262,7 +341,7 @@ impl Lanes {
     /// Waits until the lane is free and the work its last holder left behind has ended, telling `progress` whom it waits for, and holds the lane until the answer is dropped.
     ///
     /// # Errors
-    /// Returns a [`LaneError`] when the lane's files cannot be written, its lock cannot be taken, or a signal ends the wait.
+    /// Returns a [`LaneError`] when the lane's files cannot be written, its lock cannot be taken, a signal ends the wait, or its holder shows nothing new of its work for as long as the quiet window.
     pub fn hold(&self, request: &Request<'_>, progress: &mut dyn Write) -> Result<Held, LaneError> {
         let lane = request.lane;
         if self.held.iter().any(|name| name == lane.name()) {
@@ -281,6 +360,7 @@ impl Lanes {
             directory: &self.directory,
             lock: &lock_path,
             record: &record,
+            quiet: self.quiet,
         };
         let lock = place.take(request, progress)?;
         place.outlast(request, progress)?;
@@ -293,12 +373,13 @@ impl Lanes {
     }
 }
 
-/// The files one lane lives in.
+/// The files one lane lives in, and how long a run waits there behind a holder that shows nothing new.
 #[derive(Debug, Clone, Copy)]
 struct Place<'a> {
     directory: &'a Path,
     lock: &'a Path,
     record: &'a Path,
+    quiet: Duration,
 }
 
 impl Place<'_> {
@@ -322,6 +403,7 @@ impl Place<'_> {
         let mut announced = false;
         let started = Instant::now();
         let mut reported = started;
+        let mut watch = Watch::new(self.quiet);
         loop {
             if self.first_in_line(request.lane, ticket)? {
                 let lock = self.open()?;
@@ -356,6 +438,10 @@ impl Place<'_> {
                     lane: request.lane.name(),
                     signal,
                 });
+            }
+            if let Some(silent) = watch.stalled(self.record) {
+                std::fs::remove_file(&marker).map_err(|source| io(&marker, source))?;
+                return Err(self.stalled(request, silent));
             }
             if reported.elapsed() >= REPORT {
                 reported = Instant::now();
@@ -453,6 +539,8 @@ impl Place<'_> {
         let entries = crate::repository::entries(self.directory)
             .map_err(|source| io(self.directory, source))?;
         let mut alive = Vec::new();
+        #[cfg(unix)]
+        let me = std::process::id();
         for entry in entries {
             let Some(pid) = entry
                 .file_name()
@@ -471,19 +559,30 @@ impl Place<'_> {
                 text.lines()
                     .find_map(|line| line.strip_prefix(name)?.strip_prefix('='))
             };
-            let started = started_at(pid);
-            let living = match (started.as_deref(), field("born")) {
-                (None, _) => cfg!(not(unix)),
-                (Some(_), None | Some("")) => true,
-                (Some(now), Some(born)) => now == born,
-            };
-            if !living {
-                match std::fs::remove_file(&entry) {
-                    Ok(()) => {}
-                    Err(gone) if gone.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(source) => return Err(io(&entry, source)),
+            #[cfg(unix)]
+            {
+                let now = if pid == me {
+                    Start::Unread
+                } else {
+                    start_of(pid)
+                };
+                match waiter_state(me, pid, field("born"), &now) {
+                    HolderState::Alive => {}
+                    HolderState::Dead => {
+                        match std::fs::remove_file(&entry) {
+                            Ok(()) => {}
+                            Err(gone) if gone.kind() == std::io::ErrorKind::NotFound => {}
+                            Err(source) => return Err(io(&entry, source)),
+                        }
+                        continue;
+                    }
+                    HolderState::Unseen => {
+                        return Err(LaneError::WaiterUnseen {
+                            lane: lane.name(),
+                            pid,
+                        });
+                    }
                 }
-                continue;
             }
             let ticket = match field("ticket").map(str::parse::<u64>) {
                 Some(Ok(ticket)) => ticket,
@@ -497,27 +596,33 @@ impl Place<'_> {
     /// Ends every group the last holder's work ran in, when that holder died before its work did: each is asked to stop, then killed, and the lane is taken only once every one is seen gone.
     #[cfg(unix)]
     fn outlast(&self, request: &Request<'_>, progress: &mut dyn Write) -> Result<(), LaneError> {
-        let text = match std::fs::read_to_string(self.record) {
-            Ok(text) => text,
-            Err(_no_record) => return Ok(()),
+        let bytes = match std::fs::read(self.record) {
+            Ok(bytes) => bytes,
+            Err(missing) if missing.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(source) => return Err(io(self.record, source)),
         };
-        let Some((pid, born)) = text
-            .lines()
-            .find_map(|line| line.strip_prefix("pid="))
+        let written = Record::read(&bytes);
+        for unread in written.unread() {
+            say(
+                progress,
+                &format!(
+                    "slot: the {} lane's record holds `{unread}`, which is no line its writer finished, so nothing it named is ended",
+                    request.lane.name()
+                ),
+            )?;
+        }
+        let Some((pid, born)) = written
+            .field("pid")
             .and_then(number)
-            .zip(
-                text.lines()
-                    .find_map(|line| line.strip_prefix("holder_born="))
-                    .filter(|born| !born.is_empty()),
-            )
+            .zip(written.field("holder_born").filter(|born| !born.is_empty()))
         else {
             return Ok(());
         };
-        let groups = groups_of(&text, boot().as_deref());
+        let groups = written.unreleased(boot().as_deref());
         if groups.is_empty() {
             return Ok(());
         }
-        Self::outwait_holder(request, progress, pid, born)?;
+        self.outwait_holder(request, progress, (pid, born))?;
         for group in groups {
             self.end_group(request, progress, &group)?;
         }
@@ -539,16 +644,17 @@ impl Place<'_> {
         Ok(())
     }
 
-    /// Waits while the holder the record names still runs, which a lock taken over a removed lock file cannot tell from one that died.
+    /// Waits while the holder the record names still runs, which a lock taken over a removed lock file cannot tell from one that died, and for as long as its work shows something new.
     #[cfg(unix)]
     fn outwait_holder(
+        &self,
         request: &Request<'_>,
         progress: &mut dyn Write,
-        pid: u32,
-        born: &str,
+        (pid, born): (u32, &str),
     ) -> Result<(), LaneError> {
         let lane = request.lane.name();
         let mut reported: Option<Instant> = None;
+        let mut watch = Watch::new(self.quiet);
         loop {
             match holder_state(&start_of(pid), born) {
                 HolderState::Dead => return Ok(()),
@@ -557,6 +663,9 @@ impl Place<'_> {
             }
             if let Some(signal) = request.stops.raised() {
                 return Err(LaneError::Interrupted { lane, signal });
+            }
+            if let Some(silent) = watch.stalled(self.record) {
+                return Err(self.stalled(request, silent));
             }
             if reported.is_none_or(|last| last.elapsed() >= REPORT) {
                 reported = Some(Instant::now());
@@ -568,6 +677,16 @@ impl Place<'_> {
                 )?;
             }
             std::thread::sleep(POLL);
+        }
+    }
+
+    /// The refusal a run waiting behind this lane's holder gives once the holder has shown nothing new for `silent`.
+    fn stalled(&self, request: &Request<'_>, silent: Duration) -> LaneError {
+        LaneError::Stalled {
+            lane: request.lane.name(),
+            holder: describe(self.record),
+            silent: span(silent.as_secs()),
+            quiet: span(self.quiet.as_secs()),
         }
     }
 
@@ -614,6 +733,103 @@ impl Place<'_> {
     }
 }
 
+/// What a run waiting behind a holder has seen of the holder's work, and since when it has seen nothing new (ADR 0026).
+#[cfg(unix)]
+#[derive(Debug)]
+struct Watch {
+    quiet: Duration,
+    look: Duration,
+    seen: Option<Vec<u8>>,
+    moved: Instant,
+    looked: Option<Instant>,
+}
+
+#[cfg(unix)]
+impl Watch {
+    /// A watch that calls a holder stalled once its work has shown nothing new for `quiet`, looking four times within it.
+    fn new(quiet: Duration) -> Self {
+        Self {
+            quiet,
+            look: quiet.checked_div(4).unwrap_or(POLL).max(POLL),
+            seen: None,
+            moved: Instant::now(),
+            looked: None,
+        }
+    }
+
+    /// How long the holder whose record is at `record` has shown nothing new of its work, once that is as long as the window; a look that fails shows nothing.
+    fn stalled(&mut self, record: &Path) -> Option<Duration> {
+        if self.looked.is_none_or(|last| last.elapsed() >= self.look) {
+            self.looked = Some(Instant::now());
+            if let Some(shown) = shown(record)
+                && self.seen.as_ref() != Some(&shown)
+            {
+                self.seen = Some(shown);
+                self.moved = Instant::now();
+            }
+        }
+        let silent = self.moved.elapsed();
+        (silent >= self.quiet).then_some(silent)
+    }
+}
+
+/// A watch where a group's processes cannot be listed, which is where a stalled holder cannot be told from a slow one, so the lock alone decides.
+#[cfg(not(unix))]
+#[derive(Debug)]
+struct Watch;
+
+#[cfg(not(unix))]
+impl Watch {
+    /// A watch that never calls a holder stalled, whatever `quiet` says.
+    const fn new(_quiet: Duration) -> Self {
+        Self
+    }
+
+    /// Nothing: a holder is never called stalled where its work cannot be seen.
+    #[expect(
+        clippy::unused_self,
+        clippy::needless_pass_by_ref_mut,
+        reason = "the same signature as the platform that can see a holder's work, whose watch remembers what it saw"
+    )]
+    const fn stalled(&mut self, _record: &Path) -> Option<Duration> {
+        None
+    }
+}
+
+/// What the holder whose record is at `record` shows of its work: the record, and every process of each group the record names with the processor time it has used, as `ps` lists them; nothing where either cannot be read.
+#[cfg(unix)]
+fn shown(record: &Path) -> Option<Vec<u8>> {
+    let mut shown = match std::fs::read(record) {
+        Ok(bytes) => bytes,
+        Err(_unread) => return None,
+    };
+    let groups: Vec<u32> = Record::read(&shown)
+        .groups()
+        .iter()
+        .map(|group| group.pid)
+        .collect();
+    let listing = answer(
+        Command::new("ps")
+            .args(["-A", "-o", "pid=,pgid=,time="])
+            .env("LC_ALL", "C"),
+    )?;
+    let mut rows: Vec<&str> = listing
+        .lines()
+        .filter(|row| {
+            row.split_whitespace()
+                .nth(1)
+                .and_then(number)
+                .is_some_and(|group| groups.contains(&group))
+        })
+        .collect();
+    rows.sort_unstable();
+    for row in rows {
+        shown.push(b'\n');
+        shown.extend_from_slice(row.as_bytes());
+    }
+    Some(shown)
+}
+
 /// Whether a group a lane's work ran in still holds a process that has not ended.
 #[cfg(unix)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -646,6 +862,61 @@ pub fn holder_state(now: &Start, born: &str) -> HolderState {
         Start::Running(started) if started == born => HolderState::Alive,
         Start::Running(_) | Start::Absent => HolderState::Dead,
         Start::Unread => HolderState::Unseen,
+    }
+}
+
+#[cfg(unix)]
+fn waiter_state(me: u32, pid: u32, born: Option<&str>, now: &Start) -> HolderState {
+    if pid == me {
+        return HolderState::Alive;
+    }
+    match now {
+        Start::Running(started) if born.is_none_or(|born| born.is_empty() || born == started) => {
+            HolderState::Alive
+        }
+        Start::Running(_) | Start::Absent => HolderState::Dead,
+        Start::Unread => HolderState::Unseen,
+    }
+}
+
+#[cfg(all(test, unix))]
+mod waiter_tests {
+    use super::{HolderState, Start, waiter_state};
+
+    #[test]
+    fn a_waiting_run_is_removed_only_when_absent_or_recycled() {
+        let cases = [
+            (7, Some("before"), Start::Unread, HolderState::Alive),
+            (
+                8,
+                Some("before"),
+                Start::Running("before".to_owned()),
+                HolderState::Alive,
+            ),
+            (
+                8,
+                None,
+                Start::Running("now".to_owned()),
+                HolderState::Alive,
+            ),
+            (
+                8,
+                Some(""),
+                Start::Running("now".to_owned()),
+                HolderState::Alive,
+            ),
+            (
+                8,
+                Some("before"),
+                Start::Running("now".to_owned()),
+                HolderState::Dead,
+            ),
+            (8, Some("before"), Start::Absent, HolderState::Dead),
+            (8, Some("before"), Start::Unread, HolderState::Unseen),
+        ];
+        for (pid, born, now, expected) in cases {
+            assert_eq!(waiter_state(7, pid, born, &now), expected);
+        }
     }
 }
 
@@ -742,32 +1013,92 @@ fn liveness(recorded: &Recorded) -> Liveness {
     )
 }
 
-/// Every group a lane's record names under the holder that wrote it, or none when that holder let the lane go itself or the record was written in another boot; a line the record ends in without its newline is one still being written, and is not read.
-#[cfg(unix)]
-#[must_use]
-pub fn groups_of(record: &str, this_boot: Option<&str>) -> Vec<Recorded> {
-    let written_in = record
-        .lines()
-        .find_map(|line| line.strip_prefix("boot="))
-        .filter(|then| !then.is_empty());
-    if let (Some(then), Some(now)) = (written_in, this_boot)
-        && then != now
-    {
-        return Vec::new();
+/// The byte the next writer ends a line with that a writer was killed before finishing, which no finished line holds.
+const TORN: u8 = 0;
+
+/// A lane's record as its writers finished it: every line that ends in a newline, holds no torn mark and is text, and every piece that is not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Record<'a> {
+    lines: Vec<&'a str>,
+    unread: Vec<&'a [u8]>,
+}
+
+impl<'a> Record<'a> {
+    /// `bytes` as the writers of a lane's record finished them.
+    #[must_use]
+    pub fn read(bytes: &'a [u8]) -> Self {
+        let mut record = Self {
+            lines: Vec::new(),
+            unread: Vec::new(),
+        };
+        for piece in bytes.split_inclusive(|byte| *byte == b'\n') {
+            match piece.strip_suffix(b"\n") {
+                Some(line) if !line.contains(&TORN) => match std::str::from_utf8(line) {
+                    Ok(text) => record.lines.push(text),
+                    Err(_not_text) => record.unread.push(line),
+                },
+                Some(torn) => {
+                    let mut unfinished = torn;
+                    while let Some(before) = unfinished.strip_suffix(&[TORN]) {
+                        unfinished = before;
+                    }
+                    if !unfinished.is_empty() {
+                        record.unread.push(unfinished);
+                    }
+                }
+                None => record.unread.push(piece),
+            }
+        }
+        record
     }
-    if record.lines().any(|line| line == "released") {
-        return Vec::new();
+
+    /// Every piece that is no finished line: one a writer was killed before finishing, one still being written, or one that is not text, each as a person can read it.
+    #[cfg(unix)]
+    #[must_use]
+    pub fn unread(&self) -> Vec<String> {
+        self.unread
+            .iter()
+            .map(|piece| piece.escape_ascii().to_string())
+            .collect()
     }
-    let holder = record.lines().find_map(|line| line.strip_prefix("pid="));
-    record
-        .split_inclusive('\n')
-        .filter_map(|line| line.strip_suffix('\n'))
-        .filter_map(|line| {
-            line.strip_prefix("group=")
-                .or_else(|| line.strip_prefix("leader="))
-        })
-        .filter_map(|group| recorded(group, holder))
-        .collect()
+
+    /// The value the first finished line that says `name=` gives it.
+    #[must_use]
+    pub fn field(&self, name: &str) -> Option<&'a str> {
+        self.lines
+            .iter()
+            .find_map(|line| line.strip_prefix(name)?.strip_prefix('='))
+    }
+
+    /// Every group a finished line names under the holder the record says wrote it, whether or not that holder has let the lane go.
+    #[cfg(unix)]
+    fn groups(&self) -> Vec<Recorded> {
+        let holder = self.field("pid");
+        self.lines
+            .iter()
+            .filter_map(|line| {
+                line.strip_prefix("group=")
+                    .or_else(|| line.strip_prefix("leader="))
+            })
+            .filter_map(|group| recorded(group, holder))
+            .collect()
+    }
+
+    /// Every group a finished line names under the holder that wrote it, or none when that holder let the lane go itself or wrote the record in a boot other than `this_boot`.
+    #[cfg(unix)]
+    #[must_use]
+    pub fn unreleased(&self, this_boot: Option<&str>) -> Vec<Recorded> {
+        let written_in = self.field("boot").filter(|then| !then.is_empty());
+        if let (Some(then), Some(now)) = (written_in, this_boot)
+            && then != now
+        {
+            return Vec::new();
+        }
+        if self.lines.contains(&"released") {
+            return Vec::new();
+        }
+        self.groups()
+    }
 }
 
 /// One group line, written as `pid holder=H session=S born=B` or, before sessions were recorded, as `pid B`, or nothing when it names another holder.
@@ -855,11 +1186,7 @@ impl Drop for Held {
             && !self.unended.get()
             && let Some(record) = &self.record
         {
-            match OpenOptions::new()
-                .append(true)
-                .open(record)
-                .and_then(|mut appending| appending.write_all(b"released\n"))
-            {
+            match append(record, "released") {
                 Ok(()) | Err(_) => {}
             }
         }
@@ -890,42 +1217,27 @@ impl Held {
                 Ok(())
             };
         };
-        let holder = match std::fs::read_to_string(record) {
-            Ok(text) => text
-                .lines()
-                .find_map(|line| line.strip_prefix("pid="))
-                .unwrap_or("")
-                .to_owned(),
+        let holder = match std::fs::read(record) {
+            Ok(bytes) => Record::read(&bytes).field("pid").unwrap_or("").to_owned(),
             Err(_no_record_yet) => String::new(),
         };
         let session = session_text(leader);
-        let mut appending = OpenOptions::new().create(true).append(true).open(record)?;
-        appending.write_all(
-            format!("group={leader} holder={holder} session={session} born={born}\n").as_bytes(),
+        append(
+            record,
+            &format!("group={leader} holder={holder} session={session} born={born}"),
         )
     }
 }
 
-/// The value of `name` in `environment`, when it is set to something.
-#[must_use]
-pub fn variable<'a>(environment: &'a [(OsString, OsString)], name: &str) -> Option<&'a OsStr> {
-    environment
-        .iter()
-        .find(|(key, value)| key == name && !value.is_empty())
-        .map(|(_key, value)| value.as_os_str())
-}
-
 /// The branch and short commit of the checkout at `directory`, or a dash for each that cannot be read; no `GIT_*` variable of `environment` reaches the git it asks.
 #[must_use]
-pub fn revision_of(directory: &Path, environment: &[(OsString, OsString)]) -> String {
+pub fn revision_of(directory: &Path, environment: &Environment) -> String {
     let ask = |arguments: &[&str]| {
-        let mut git = Command::new("git");
-        for (name, _value) in environment {
-            if name.as_encoded_bytes().starts_with(b"GIT_") {
-                git.env_remove(name);
-            }
+        let mut git = crate::repository::git(directory);
+        for name in environment.beginning("GIT_") {
+            git.env_remove(name);
         }
-        answer(git.args(arguments).current_dir(directory)).unwrap_or_else(|| "-".to_owned())
+        answer(git.args(arguments)).unwrap_or_else(|| "-".to_owned())
     };
     format!(
         "{} {}",
@@ -1078,14 +1390,14 @@ fn answer(command: &mut Command) -> Option<String> {
     }
 }
 
-fn state_directory(environment: &[(OsString, OsString)]) -> Option<PathBuf> {
-    if let Some(state) = variable(environment, "XDG_STATE_HOME") {
+fn state_directory(environment: &Environment) -> Option<PathBuf> {
+    if let Some(state) = environment.value("XDG_STATE_HOME") {
         return Some(PathBuf::from(state));
     }
-    if let Some(home) = variable(environment, "HOME") {
+    if let Some(home) = environment.value("HOME") {
         return Some(Path::new(home).join(".local").join("state"));
     }
-    variable(environment, "LOCALAPPDATA").map(PathBuf::from)
+    environment.value("LOCALAPPDATA").map(PathBuf::from)
 }
 
 fn record_of(holder: &Holder) -> String {
@@ -1103,16 +1415,12 @@ fn record_of(holder: &Holder) -> String {
 }
 
 fn describe(record: &Path) -> String {
-    let text = match std::fs::read_to_string(record) {
-        Ok(text) => text,
+    let bytes = match std::fs::read(record) {
+        Ok(bytes) => bytes,
         Err(_unwritten) => return "a run that has not written its record yet".to_owned(),
     };
-    let field = |name: &str| {
-        text.lines()
-            .find_map(|line| line.strip_prefix(name)?.strip_prefix('='))
-            .unwrap_or("?")
-            .to_owned()
-    };
+    let written = Record::read(&bytes);
+    let field = |name: &str| written.field(name).unwrap_or("?").to_owned();
     let held_for = match field("since").parse::<u64>() {
         Ok(since) => span(now().saturating_sub(since)),
         Err(_unreadable) => "?".to_owned(),
@@ -1161,6 +1469,33 @@ fn replace(path: &Path, text: &str) -> std::io::Result<()> {
     let written = path.with_extension("next");
     std::fs::write(&written, text)?;
     std::fs::rename(&written, path)
+}
+
+/// Appends `line` to the record at `path` in one write under the record's lock, first ending with the torn mark any line a writer was killed before finishing, so the two are never read as one.
+fn append(path: &Path, line: &str) -> std::io::Result<()> {
+    use std::io::{Read as _, Seek as _, SeekFrom};
+
+    let mut record = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .append(true)
+        .open(path)?;
+    record.lock()?;
+    let unfinished = if record.metadata()?.len() == 0 {
+        false
+    } else {
+        record.seek(SeekFrom::End(-1))?;
+        let mut last = [0_u8; 1];
+        record.read_exact(&mut last)?;
+        last != *b"\n"
+    };
+    let mut entry = Vec::with_capacity(line.len().saturating_add(3));
+    if unfinished {
+        entry.extend_from_slice(&[TORN, b'\n']);
+    }
+    entry.extend_from_slice(line.as_bytes());
+    entry.push(b'\n');
+    record.write_all(&entry)
 }
 
 fn say(progress: &mut dyn Write, line: &str) -> Result<(), LaneError> {

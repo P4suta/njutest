@@ -30,7 +30,7 @@ src/lib.rs:7:61 return-default killed
 src/lib.rs:7:64 condition-to-false survived
 src/lib.rs:7:64 condition-to-true killed
 src/lib.rs:7:64 negate-condition killed
-src/lib.rs:7:67 gt-to-ge not_run
+src/lib.rs:7:67 gt-to-ge survived
 src/lib.rs:7:74 return-default unreached
 src/lib.rs:7:86 return-default killed
 src/lib.rs:11:5 return-default unreached

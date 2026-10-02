@@ -17,6 +17,7 @@ autotests = false
 surface = "test-support"
 
 [dependencies]
+njutest-fixture-tree = { workspace = true }
 cargo_metadata = { workspace = true }
 hex = { workspace = true }
 serde = { workspace = true }

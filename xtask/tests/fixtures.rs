@@ -181,6 +181,22 @@ fn a_readme_that_states_no_fates_is_a_fixture_a_change_can_quietly_re_decide() {
 }
 
 #[test]
+fn an_unreadable_fixture_document_is_not_reported_as_missing() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    xtask::repository::init(dir.path()).expect("a repository to read the tree as git lists it");
+    for name in ["README.md", "Cargo.toml"] {
+        good_fixture(dir.path());
+        let unreadable = dir.path().join(name);
+        fs::write(&unreadable, [0xff]).expect("non-UTF-8 document");
+        assert!(matches!(
+            check_fixture(dir.path()),
+            Err(xtask::fixtures::CheckError::Read { path, source })
+                if path == unreadable && source.kind() == std::io::ErrorKind::InvalidData
+        ));
+    }
+}
+
+#[test]
 fn an_interposer_requires_its_seam_ledger_and_an_unreadable_config_never_hides_it() {
     let dir = tempfile::tempdir().expect("tempdir");
     xtask::repository::init(dir.path()).expect("a repository to read the tree as git lists it");
@@ -274,5 +290,38 @@ fn the_gate_and_the_suite_find_the_same_fixtures() {
         "cargo xtask fixtures checks one set and the fate suite drives another; a fixture \
          only one of them sees is one whose conventions are held and whose fates are not, \
          or the other way round"
+    );
+}
+
+#[test]
+fn a_group_cannot_hide_a_file_where_only_fixtures_belong() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    xtask::repository::init(dir.path()).expect("a repository to read the tree as git lists it");
+    write(dir.path(), "group/README.md", "not a fixture\n");
+    let error = xtask::fixtures::discover(dir.path()).expect_err("a group holds only fixtures");
+    assert!(error.to_string().contains("not a fixture"), "{error}");
+}
+
+#[test]
+fn nested_groups_are_enumerated_and_a_file_in_any_group_is_refused() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    xtask::repository::init(dir.path()).expect("a repository to read the tree as git lists it");
+    let fixtures = dir.path().join("fixtures");
+    write(&fixtures, "deep/more/fixture-a/Cargo.toml", "[workspace]\n");
+    write(&fixtures, "deep/fixture-b/Cargo.toml", "[workspace]\n");
+    let gated = xtask::fixtures::discover(&fixtures).expect("nested fixture groups");
+    assert_eq!(gated, ["deep/fixture-b", "deep/more/fixture-a"]);
+    assert_eq!(
+        gated,
+        njutest_devkit::fixture::names_in(&fixtures).expect("the fate suite's fixture set")
+    );
+
+    write(&fixtures, "deep/more/stray.txt", "not a fixture\n");
+    let error = xtask::fixtures::discover(&fixtures)
+        .expect_err("a nested group must not hide a file outside every fixture");
+    assert!(error.to_string().contains("stray.txt"), "{error}");
+    assert!(
+        njutest_devkit::fixture::names_in(&fixtures).is_err(),
+        "the fate suite must refuse the same stray file"
     );
 }

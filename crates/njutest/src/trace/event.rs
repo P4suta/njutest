@@ -73,6 +73,11 @@ pub enum Payload {
         /// The record.
         mutant: MutantExecRecord,
     },
+    /// One sealed execution a mutation's verdict rests on.
+    SealedExec {
+        /// The record.
+        sealed: SealedExecRecord,
+    },
     /// One fault put to one target, which no reader of mutant executions ever sees.
     FaultExec {
         /// The record.
@@ -83,6 +88,11 @@ pub enum Payload {
         /// The record.
         route: FaultRouteRecord,
     },
+    /// What one target's faulted baseline reached, which every fault route's reaching is held to.
+    FaultBaseline {
+        /// The record.
+        baseline: FaultBaselineRecord,
+    },
     /// A fault the compiler refused, so it was never put.
     FaultRejected {
         /// The record.
@@ -92,6 +102,16 @@ pub enum Payload {
     FaultAttribution {
         /// The record.
         attribution: FaultAttributionRecord,
+    },
+    /// The paths the tree had written before the first fault and after the last, which every unattributed write rests on.
+    FaultWrites {
+        /// The record.
+        writes: FaultWritesRecord,
+    },
+    /// One fault every reaching test passed, run again on one of them with its runtime recording what became of the failures it made.
+    FaultFate {
+        /// The record.
+        fate: FaultFateRecord,
     },
     /// What the original code did on the target a fault's detection is confirmed against.
     FaultControl {
@@ -208,10 +228,14 @@ impl Payload {
             Self::Artifact { .. } => "artifact",
             Self::Route { .. } => "route",
             Self::MutantExec { .. } => "mutant-exec",
+            Self::SealedExec { .. } => "sealed-exec",
             Self::FaultExec { .. } => "fault-exec",
             Self::FaultControl { .. } => "fault-control",
             Self::FaultAttribution { .. } => "fault-attribution",
+            Self::FaultWrites { .. } => "fault-writes",
+            Self::FaultFate { .. } => "fault-fate",
             Self::FaultRoute { .. } => "fault-route",
+            Self::FaultBaseline { .. } => "fault-baseline",
             Self::FaultRejected { .. } => "fault-rejected",
             Self::Fault { .. } => "fault",
             Self::Beside { .. } => "beside",
@@ -506,6 +530,20 @@ pub struct MutantExecRecord {
     pub alone: bool,
 }
 
+/// One sealed execution a mutation's verdict rests on: the test, the target whose sealed module ran it, and what it came to (ADR 0046).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SealedExecRecord {
+    /// The mutant a person types.
+    pub mutant: String,
+    /// The target whose sealed module ran.
+    pub target: String,
+    /// The test it ran.
+    pub test: String,
+    /// What it came to, as the report's evidence spells it.
+    pub came_to: String,
+}
+
 /// Which execution of a fault one record is, so a detection can be held to the confirmation it needs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -539,6 +577,31 @@ pub struct FaultAttributionRecord {
     pub unfaulted: Unfaulted,
 }
 
+/// The paths the tree had written before the first fault and after the last.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FaultWritesRecord {
+    /// Every path the tree had written before the first fault was put, relative to the workspace root.
+    pub before: Vec<String>,
+    /// Every path the tree had written after the last fault was judged, which is what every attribution question rests on.
+    pub after: Vec<String>,
+}
+
+/// One fault run again on one target that reached it, and what its runtime recorded became of the failures it made (ADR 0032 decision 5).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FaultFateRecord {
+    /// The fault a person types.
+    pub fault: String,
+    /// The target it was run on.
+    pub target: String,
+    /// What the execution established, as the engine names outcomes.
+    pub outcome: String,
+    /// What the record counted, or nothing where there was no record or it could not be read.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub fate: Option<rust_mutants::fate::Fate>,
+}
+
 /// What a target run alone without a fault did to a path its faulted run wrote.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -559,6 +622,18 @@ pub struct FaultRouteRecord {
     pub fault: String,
     /// Every target whose baseline reached the site, which is empty where nothing did.
     pub reaching: Vec<String>,
+}
+
+/// What one target's faulted baseline reached.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FaultBaselineRecord {
+    /// The target.
+    pub target: String,
+    /// Whether the target is a documentation one, which a route puts at every fault of its package whatever its own guards said.
+    pub doc: bool,
+    /// Every fault site its baseline reached, by the fault catalog's index, which is what a route's reaching rests on.
+    pub reached: Vec<u32>,
 }
 
 /// A fault the compiler refused.
@@ -615,9 +690,12 @@ pub struct CrashExecRecord {
     pub test: String,
     /// Which run it was: `crash`, stopped at the call; `next`, over what a crash left; or `fresh`, in a scratch of its own.
     pub stage: String,
-    /// The exit status, which is how a stop at the call is told from a test that failed.
-    pub exit_code: i64,
-    /// What the engine made of it.
+    /// Whether the run was a sealed instance rather than a process (ADR 0046): a sealed crash is decided in one round, and has no `fresh` run.
+    pub sealed: bool,
+    /// The process's exit status, which is how a native stop at the call is told from a test that failed; nothing for a sealed instance, whose ending is its `outcome`.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub exit_code: Option<i64>,
+    /// What the engine made of it: a native run's outcome, or for a sealed instance `halted`, where the host stopped it at the notice, or what it came to judged against the test's control.
     pub outcome: String,
     /// Whether the runtime published the notice that it stopped at the call, which is what makes the exit status a stop rather than a status the test chose.
     pub noticed: bool,
@@ -626,6 +704,9 @@ pub struct CrashExecRecord {
     pub issued: Option<CrashNoticeRecord>,
     /// The files a stopped run left in its scratch, on a `crash` run that stopped; empty otherwise.
     pub left: Vec<String>,
+    /// The entry a stopped run left whose name is not text, spelled without loss, where it left one: what it left then cannot be named, `left` is empty, and the crash is undecided; nothing otherwise.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub unnamed: Option<String>,
     /// The tests a `next` or `fresh` run failed.
     pub failed: Vec<String>,
 }
@@ -790,8 +871,23 @@ pub struct RepairRecord {
     pub was: String,
     /// The outcome it has now: what the run decided, or what it had where the run did not reach the site.
     pub now: String,
-    /// Whether the run's own record shows the mutation's site reached.
+    /// Whether the run's own record shows the mutation's site reached: for a sealed repair, whether a sealed execution of the target was put.
     pub reached: SiteReached,
+    /// What ran it again: a native execution, or the sealed bench and what it established.
+    pub by: RepairedBy,
+}
+
+/// What ran a disposition resting on a moved target again (ADR 0036 decision 1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum RepairedBy {
+    /// A lead: a native execution against the target, with its reach recorded.
+    Native,
+    /// A sealed verdict: the mutation put again on the sealed bench with the moved targets counted among those reaching it natively, and what that put established.
+    Sealed {
+        /// The sealed executions that re-established the verdict, or every reason none did, which makes the disposition a lead the native run then judges.
+        evidence: rust_mutants::sealed::record::Evidence,
+    },
 }
 
 /// Whether a run's own record shows the site of the mutation it ran reached.

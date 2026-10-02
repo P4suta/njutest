@@ -93,6 +93,7 @@ pub const TALLY_EVERY: u32 = 10;
 struct Tally {
     killed: u32,
     survived: u32,
+    unproven: u32,
     step_limit_reached: u32,
     waited: u32,
     inconclusive: u32,
@@ -101,28 +102,34 @@ struct Tally {
 }
 
 impl Tally {
-    /// Puts one judgement in its column.
-    ///
-    /// Named rather than defaulted: an outcome added later and left to a `_` arm would be counted as a harness failure, which is a tally telling somebody their machine is broken about a thing the run established perfectly well (ADR 0023).
+    /// Puts one judgement in its column: the column the run's own accounting puts it in, so the line and the report never disagree.
     const fn count(&mut self, judged: &Judged) {
-        let slot = match judged.outcome {
-            rust_mutants::outcome::Outcome::Killed => &mut self.killed,
-            rust_mutants::outcome::Outcome::Survived => &mut self.survived,
-            rust_mutants::outcome::Outcome::StepLimitReached => &mut self.step_limit_reached,
-            rust_mutants::outcome::Outcome::Waited => &mut self.waited,
-            rust_mutants::outcome::Outcome::Inconclusive => &mut self.inconclusive,
-            rust_mutants::outcome::Outcome::NotRun => &mut self.not_run,
-            rust_mutants::outcome::Outcome::Errored => &mut self.errored,
+        use rust_mutants::run::Column;
+        let slot = match Column::of(rust_mutants::run::RowVerdict {
+            outcome: judged.outcome,
+            not_run_reason: judged.not_run_reason,
+            expected: judged.expected,
+            evidence: judged.evidence.class(),
+        }) {
+            Column::Killed => &mut self.killed,
+            Column::Survived => &mut self.survived,
+            Column::Unproven => &mut self.unproven,
+            Column::StepLimitReached => &mut self.step_limit_reached,
+            Column::Waited => &mut self.waited,
+            Column::Inconclusive => &mut self.inconclusive,
+            Column::Errored => &mut self.errored,
+            Column::NotRun => &mut self.not_run,
         };
         *slot = slot.saturating_add(1);
     }
 
     fn line(&self, elapsed: Duration, remaining: Option<Duration>) -> String {
         let mut text = format!(
-            "          killed {}  survived {}  step_limit_reached {}  waited {}  inconclusive {}  \
-             errored {}  not_run {}   elapsed {}",
+            "          killed {}  survived {}  unproven {}  step_limit_reached {}  waited {}  \
+             inconclusive {}  errored {}  not_run {}   elapsed {}",
             self.killed,
             self.survived,
+            self.unproven,
             self.step_limit_reached,
             self.waited,
             self.inconclusive,
@@ -246,7 +253,10 @@ impl Observer for Display<'_> {
         }
         line.push('\n');
         if completed.is_multiple_of(TALLY_EVERY) {
-            let elapsed = self.started.map(|at| at.elapsed()).unwrap_or_default();
+            let elapsed = match self.started {
+                Some(at) => at.elapsed(),
+                None => Duration::ZERO,
+            };
             line.push_str(&self.tally.line(elapsed, self.eta(completed)));
         }
         self.say(&line);
@@ -271,14 +281,14 @@ fn beside(judged: &Judged) -> Option<&str> {
 pub fn phase_line(event: &Event) -> Option<String> {
     match &event.payload {
         Payload::PhaseStart { phase } => Some(format!("{:<12}{:>28}\n", phase.name, "started")),
-        Payload::PhaseEnd { phase } => {
-            let milliseconds = phase.duration_ms.unwrap_or_default();
-            Some(format!(
+        Payload::PhaseEnd { phase } => match phase.duration_ms {
+            Some(milliseconds) => Some(format!(
                 "{:<12}{:>28}\n",
                 phase.name,
                 format!("{}.{:02}s", milliseconds / 1000, milliseconds % 1000 / 10)
-            ))
-        }
+            )),
+            None => Some(format!("{:<12}{:>28}\n", phase.name, "ended, untimed")),
+        },
         Payload::RunStart { .. }
         | Payload::Open { .. }
         | Payload::Snapshot { .. }
@@ -300,6 +310,8 @@ pub fn phase_line(event: &Event) -> Option<String> {
         | Payload::Identical { .. }
         | Payload::Evidence { .. }
         | Payload::MutantExec { .. }
+        | Payload::SealedControl { .. }
+        | Payload::SealedExec { .. }
         | Payload::Note { .. }
         | Payload::RunEnd { .. } => None,
     }

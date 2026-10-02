@@ -511,6 +511,9 @@ pub struct Switches {
     /// Skip the run of every target with nothing active.
     #[arg(long)]
     pub no_verify: bool,
+    /// Build nothing for the sealed target, so that every answer is a native lead and the run is unproven.
+    #[arg(long)]
+    pub no_seal: bool,
     /// Measure once which target reached what, and run a mutant only against the targets that reached it.
     #[arg(long)]
     pub coverage: bool,
@@ -543,6 +546,8 @@ pub enum TierArg {
     Strong,
     /// Every operator, statement deletion included.
     All,
+    /// All operators, plus const item initializers compiled one mutant at a time.
+    Compiled,
 }
 
 impl TierArg {
@@ -553,6 +558,7 @@ impl TierArg {
             Self::Balanced => rust_mutants::rule::Tier::Balanced,
             Self::Strong => rust_mutants::rule::Tier::Strong,
             Self::All => rust_mutants::rule::Tier::All,
+            Self::Compiled => rust_mutants::rule::Tier::Compiled,
         }
     }
 }

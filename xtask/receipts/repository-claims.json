@@ -1,0 +1,378 @@
+{
+  "schema": "njutest-mutation-receipt-v1",
+  "decision": "repository-claims",
+  "package": "rust-mutants-decision",
+  "module": "crates/rust-mutants-decision/src/claim.rs",
+  "source_sha256": "e31c4e235b7842090e47a006457d8a8c343e29559cdd9998b5f2732ef8c989b3",
+  "mutants": [
+    {
+      "display_id": "4cfe6a016bdd59377e9a",
+      "position": "36:9",
+      "rule": "and-to-or",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "claim::tests::a_locator_names_an_edit_only_where_every_field_it_gives_is_the_edits",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "250b5fd1a5810836c2f7",
+      "position": "36:9",
+      "rule": "and-to-or",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "claim::tests::a_locator_names_an_edit_only_where_every_field_it_gives_is_the_edits",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "fa382df4e243d7affdd2",
+      "position": "36:9",
+      "rule": "return-true",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "claim::tests::a_locator_names_an_edit_only_where_every_field_it_gives_is_the_edits",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "e86082422904a730b246",
+      "position": "36:19",
+      "rule": "eq-to-neq",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "claim::tests::a_locator_names_an_edit_only_where_every_field_it_gives_is_the_edits",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "f3ef3702a27f14ab6b36",
+      "position": "37:26",
+      "rule": "eq-to-neq",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "claim::tests::a_locator_names_an_edit_only_where_every_field_it_gives_is_the_edits",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "35a61f48b616d8ce7754",
+      "position": "38:17",
+      "rule": "negate-bool-method",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "claim::tests::a_locator_names_an_edit_only_where_every_field_it_gives_is_the_edits",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "d16f1d6eec175d696973",
+      "position": "38:42",
+      "rule": "or-to-and",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "claim::tests::a_locator_names_an_edit_only_where_every_field_it_gives_is_the_edits",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "8e2fa3075b7cbaeb75c8",
+      "position": "38:59",
+      "rule": "eq-to-neq",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "claim::tests::a_locator_names_an_edit_only_where_every_field_it_gives_is_the_edits",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "365fea82af54f502c422",
+      "position": "39:13",
+      "rule": "and-to-or",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "claim::tests::a_locator_names_an_edit_only_where_every_field_it_gives_is_the_edits",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "167ce8b767f83e17b3f3",
+      "position": "39:16",
+      "rule": "negate-bool-method",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "claim::tests::a_locator_names_an_edit_only_where_every_field_it_gives_is_the_edits",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "36baba7858de427abe00",
+      "position": "46:5",
+      "rule": "return-true",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "claim::tests::a_locator_names_an_edit_only_where_every_field_it_gives_is_the_edits",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "8e1f77694e75601fe0e1",
+      "position": "46:10",
+      "rule": "eq-to-neq",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "claim::tests::a_locator_names_an_edit_only_where_every_field_it_gives_is_the_edits",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "f1bd0f334f1ccaa3b08b",
+      "position": "47:9",
+      "rule": "or-to-and",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "claim::tests::a_locator_names_an_edit_only_where_every_field_it_gives_is_the_edits",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "85d846a83e70964d3dce",
+      "position": "47:12",
+      "rule": "negate-bool-method",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "claim::tests::a_locator_names_an_edit_only_where_every_field_it_gives_is_the_edits",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "c4de508e2e3ad7ccc727",
+      "position": "49:33",
+      "rule": "negate-bool-method",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "claim::tests::a_locator_names_an_edit_only_where_every_field_it_gives_is_the_edits",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "9a5300a32c0ecb967f83",
+      "position": "49:48",
+      "rule": "string-to-empty",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "claim::tests::a_locator_names_an_edit_only_where_every_field_it_gives_is_the_edits",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "claim::tests::an_item_is_named_by_itself_or_by_its_last_whole_segments",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "7f0b600d050fc2051cde",
+      "position": "55:5",
+      "rule": "return-true",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "claim::tests::only_a_line_given_among_several_narrows_what_a_locator_names",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "a5e5e9c008fc39fafd76",
+      "position": "55:14",
+      "rule": "gt-to-ge",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "claim::tests::only_a_line_given_among_several_narrows_what_a_locator_names",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "72528b875f41771e6010",
+      "position": "55:16",
+      "rule": "int-increment",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "claim::tests::only_a_line_given_among_several_narrows_what_a_locator_names",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "c4d69306b3570c6d9513",
+      "position": "55:16",
+      "rule": "int-decrement",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "claim::tests::only_a_line_given_among_several_narrows_what_a_locator_names",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "22cb4a5f297c6b66eb3c",
+      "position": "79:33",
+      "rule": "negate-bool-method",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "claim::tests::every_number_of_matches_comes_to_what_the_rules_say_under_every_stated_count",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "6004be847b7c6e84d4fa",
+      "position": "79:33",
+      "rule": "remove-match-guard",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "claim::tests::every_number_of_matches_comes_to_what_the_rules_say_under_every_stated_count",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "a115b0b6aed25ff7f1d3",
+      "position": "79:81",
+      "rule": "eq-to-neq",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "claim::tests::every_number_of_matches_comes_to_what_the_rules_say_under_every_stated_count",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "f791ea3f5f02faea05e4",
+      "position": "91:5",
+      "rule": "return-default",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "claim::tests::a_claim_moved_only_where_it_holds_a_line_the_first_it_names_is_not_on",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "a4292697dd735e482ab7",
+      "position": "91:5",
+      "rule": "return-some-default",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "claim::tests::a_claim_moved_only_where_it_holds_a_line_the_first_it_names_is_not_on",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "aa0809a6173d9fb3a4eb",
+      "position": "91:46",
+      "rule": "neq-to-eq",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "claim::tests::a_claim_moved_only_where_it_holds_a_line_the_first_it_names_is_not_on",
+          "came_to": "panicked"
+        }
+      ]
+    }
+  ]
+}

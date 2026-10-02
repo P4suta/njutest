@@ -273,10 +273,16 @@ fn every_place_passed_over_is_counted_under_the_outermost_reason() {
     assert_eq!(
         render(&d),
         [
+            "return-default@4:29 \"x + 1\"=>\"Default::default()\" E[\"x + 1\"]",
+            "add-to-sub@4:31 \"+\"=>\"-\" E[\"x + 1\"]",
+            "int-increment@4:33 \"1\"=>\"2\" E[\"1\"]",
+            "int-decrement@4:33 \"1\"=>\"0\" E[\"1\"]",
             "int-increment@15:14 \"0u8\"=>\"1u8\" E[\"0u8\"]",
             "return-default@16:5 \"a.len() as i32 * x\"=>\"Default::default()\" E[\"a.len() as i32 * x\"]",
             "mul-to-div@16:20 \"*\"=>\"/\" E[\"a.len() as i32 * x\"]",
-        ]
+        ],
+        "the body of a const fn is proposed like any other, since only the compiler can say \
+         whether anything evaluates it before the program runs (ADR 0047)"
     );
     assert_eq!(
         skips(&d),
@@ -285,15 +291,59 @@ fn every_place_passed_over_is_counted_under_the_outermost_reason() {
             ("macro-invocation", 1),
             ("cfg-attribute", 4),
             ("test-code", 8),
-            ("const-fn-body", 4),
         ],
-        "the body of a const fn is its own reason: what the compiler may evaluate at a call is \
-         not what it evaluates in an initializer"
+        "an initializer the compiler evaluates is passed over whatever function it sits in"
     );
     for skip in &d.skips {
         assert_eq!(skip.path, "src/lib.rs");
         assert!(!skip.reason.explanation().is_empty());
     }
+}
+
+#[test]
+fn a_site_names_the_const_fn_whose_body_is_the_innermost_around_it_and_no_other() {
+    let src = "pub struct S;\nimpl S {\n    pub const fn wide(a: u8) -> u8 {\n        let f = |b: u8| b + 1;\n        fn inner(c: u8) -> u8 { c - 1 }\n        a * 2\n    }\n}\npub const fn free(d: u8) -> u8 { d / 2 }\npub fn plain(e: u8) -> u8 { e % 2 }\n";
+    let d = discover(src);
+    assert_coherent(src, &d);
+    let named = |rule: &str| -> Option<(String, Option<String>, String)> {
+        let found = d
+            .candidates
+            .iter()
+            .find(|found| found.candidate.rule.name == rule)
+            .expect("the rule proposes a candidate here");
+        found.hint.const_fn.as_ref().map(|function| {
+            (
+                function.name.clone(),
+                function.owner.clone(),
+                src.get(function.keyword.start as usize..function.keyword.end as usize)
+                    .expect("the keyword is a range of the source")
+                    .to_owned(),
+            )
+        })
+    };
+    assert_eq!(
+        named("mul-to-div"),
+        Some(("wide".to_owned(), Some("S".to_owned()), "const".to_owned())),
+        "a site in a method's body names the method, the type the compiler calls it by, and \
+         the keyword the instrumented tree takes away"
+    );
+    assert_eq!(
+        named("div-to-mul"),
+        Some(("free".to_owned(), None, "const".to_owned())),
+        "a free function has no type to be called by"
+    );
+    assert_eq!(
+        named("add-to-sub"),
+        None,
+        "a closure's body is its own, and the compiler does not ask it to be const whatever \
+         function it was written in"
+    );
+    assert_eq!(
+        named("sub-to-add"),
+        None,
+        "neither is a function's that is not const itself"
+    );
+    assert_eq!(named("rem-to-mul"), None, "nor a plain function's");
 }
 
 #[test]
@@ -313,7 +363,8 @@ fn skip_reasons_are_named_explained_and_ranked() {
             "included-expression",
             "generated-outside-workspace",
             "forbidden-lints",
-            "const-fn-body",
+            "evaluated-before-run",
+            "unvalidated-const-use",
             "let-condition",
             "open-range",
             "unstated-return-type",
@@ -549,6 +600,102 @@ fn the_families_input_exercises_every_rule_and_matches_the_golden() {
     let mut text = lines.join("\n");
     text.push('\n');
     njutest_devkit::golden::golden(&root.join("families.golden"), text.as_bytes()).expect("golden");
+}
+
+#[test]
+fn a_fault_is_asked_only_where_a_runtime_can_be_called() {
+    let source = "macro_rules! fail {\n    () => { std::fs::read_to_string(\"m\")? };\n}\npub fn plain(path: &str) -> std::io::Result<String> {\n    let text = std::fs::read_to_string(path)?;\n    fail!();\n    const PRELUDE: std::io::Result<()> = { std::fs::read_to_string(\"p\")?; Ok(()) };\n    let held = const { std::fs::read_to_string(\"c\")? };\n    let bytes = [0u8; { std::fs::read_to_string(\"a\")?.len() }];\n    let _ = (PRELUDE, held, bytes);\n    Ok(text)\n}\npub const fn sized() -> std::io::Result<u32> {\n    Ok(std::fs::read_to_string(\"f\")?.len() as u32)\n}\n";
+    let found = discover_every_rule(source);
+    assert_coherent(source, &found);
+    let asked: Vec<&str> = found
+        .candidates
+        .iter()
+        .filter(|one| one.candidate.rule.name == "inject-error")
+        .map(|one| {
+            std::str::from_utf8(&one.candidate.original).expect("the fixture is exact UTF-8")
+        })
+        .collect();
+    assert_eq!(
+        asked,
+        [
+            "std::fs::read_to_string(path)",
+            "std::fs::read_to_string(\"f\")",
+        ],
+        "a fault is asked only where a runtime can be called: not in an initializer the \
+         compiler evaluates, not in a const block, not in an array length, not from a macro, \
+         and in the body of a const fn like any other body (ADR 0047): {}",
+        render(&found).join("\n")
+    );
+    let reasons: Vec<&str> = skips(&found)
+        .into_iter()
+        .map(|(reason, _)| reason)
+        .collect();
+    for reason in ["const-context", "macro-invocation"] {
+        assert!(
+            reasons.contains(&reason),
+            "the places passed over are counted under the reason the walker's general rules \
+             give, and {reason} is among them: {reasons:?}"
+        );
+    }
+    let in_const_fn = found
+        .candidates
+        .iter()
+        .find(|one| {
+            one.candidate.rule.name == "inject-error"
+                && std::str::from_utf8(&one.candidate.original)
+                    .is_ok_and(|text| text.contains("\"f\""))
+        })
+        .expect("the const fn body's call is a site");
+    assert!(
+        in_const_fn.hint.const_fn.is_some(),
+        "the site names the const fn whose keyword the instrumented tree takes away, so the \
+         fault's guard is written into a body nothing evaluates before the program runs"
+    );
+}
+
+#[test]
+fn every_call_that_writes_is_a_place_a_crash_is_put() {
+    let source = "pub fn keep(path: &std::path::Path, file: &mut std::fs::File) -> std::io::Result<()> {\n\
+                  \x20   std::fs::write(path, \"kept\")?;\n\
+                  \x20   std::fs::rename(path, path)?;\n\
+                  \x20   std::fs::copy(path, path)?;\n\
+                  \x20   std::fs::remove_file(path)?;\n\
+                  \x20   std::fs::create_dir_all(path)?;\n\
+                  \x20   std::fs::File::create(path)?;\n\
+                  \x20   std::io::Write::write_all(file, b\"kept\")?;\n\
+                  \x20   file.write_all(b\"kept\")?;\n\
+                  \x20   file.sync_all()?;\n\
+                  \x20   file.sync_data()?;\n\
+                  \x20   file.set_len(0)?;\n\
+                  \x20   file.flush()?;\n\
+                  \x20   Ok(())\n\
+                  }\n";
+    let found = discover_every_rule(source);
+    let crashed: Vec<&[u8]> = found
+        .candidates
+        .iter()
+        .filter(|one| one.candidate.rule.name == "crash-after-write")
+        .map(|one| one.candidate.original.as_slice())
+        .collect();
+    for call in [
+        "std::fs::write(path, \"kept\")",
+        "std::fs::rename(path, path)",
+        "std::fs::copy(path, path)",
+        "std::fs::remove_file(path)",
+        "std::fs::create_dir_all(path)",
+        "std::fs::File::create(path)",
+        "file.write_all(b\"kept\")",
+        "file.sync_all()",
+        "file.sync_data()",
+        "file.set_len(0)",
+        "file.flush()",
+    ] {
+        assert!(
+            crashed.contains(&call.as_bytes()),
+            "{call} writes a file a later run can read, so a crash is put just after it: {}",
+            render(&found).join("\n")
+        );
+    }
 }
 
 #[test]
@@ -1024,5 +1171,64 @@ fn a_loop_is_not_asked_to_run_forever() {
         "`while true` does not answer a question about the tests: it hangs, the run bounds it, \
          and the bound is recorded as a kill that nobody learned anything from. The cost is the \
          whole timeout and the signal is zero: {rendered:?}"
+    );
+}
+
+#[test]
+fn const_item_initializers_are_build_mutants_only_when_the_compiled_tier_is_selected() {
+    let source = "const VALUE: u32 = 40 + 2;\nconst FLAG: bool = true;\nstruct Limits;\nimpl Limits { const VALUE: u8 = 7; }\ntrait Defaults { const FLAG: bool = false; }\n";
+    let tier = Tier::Compiled;
+    let selection = Selection::tier(registry(), tier);
+    let all = discover_file("src/lib.rs", source.as_bytes(), &selection).expect("discover");
+    assert_eq!(
+        all.candidates.len(),
+        9,
+        "const item initializers are compiled one mutant at a time"
+    );
+    assert_coherent(source, &all);
+    for found in &all.candidates {
+        assert_eq!(found.hint.form.letter(), "B");
+        assert!(found.hint.const_fn.is_none());
+        assert!(found.branch.is_none() && found.comparable.is_none() && found.probe.is_none());
+    }
+    for tier in [Tier::Balanced, Tier::Strong, Tier::All] {
+        let selection = Selection::tier(registry(), tier);
+        let discovered =
+            discover_file("src/lib.rs", source.as_bytes(), &selection).expect("discover");
+        assert!(
+            discovered.candidates.is_empty(),
+            "{tier} retains the const-context skip"
+        );
+    }
+}
+
+#[test]
+fn an_explicit_compiled_operator_retains_other_constant_skips_and_no_function_owner() {
+    let source = "const A: u32 = 1; static B: u32 = 9; pub const fn f() -> u32 { const LOCAL: u32 = 8; let _ = [0; 2]; const { 3 } }";
+    let selection = Selection::rules(registry(), &["int-increment"])
+        .expect("one operator")
+        .compiling_items(true);
+    let found = discover_file("src/lib.rs", source.as_bytes(), &selection).expect("discover");
+    let built: Vec<_> = found
+        .candidates
+        .iter()
+        .filter(|found| found.hint.form == Form::B)
+        .collect();
+    assert_eq!(built.len(), 2);
+    assert!(built.iter().all(|found| found.hint.const_fn.is_none()
+        && found.branch.is_none()
+        && found.probe.is_none()));
+    assert!(
+        built
+            .iter()
+            .all(|found| found.candidate.rule.name == "int-increment")
+    );
+    assert_eq!(
+        found
+            .skips
+            .iter()
+            .find(|skip| skip.reason == SkipReason::ConstContext)
+            .map(|skip| skip.count),
+        Some(3)
     );
 }

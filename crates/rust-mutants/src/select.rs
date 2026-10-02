@@ -370,10 +370,10 @@ impl Measurement {
                     let standing = if parts.reading.contains(target) {
                         Standing::ReadsTree
                     } else {
-                        parts
-                            .standing
-                            .get(target)
-                            .map_or(Standing::Uncompared, Standing::of)
+                        match parts.standing.get(target) {
+                            Some(steadiness) => Standing::of(steadiness),
+                            None => Standing::Uncompared,
+                        }
                     };
                     (
                         target.clone(),
@@ -512,12 +512,18 @@ impl Shadows {
                     }
                 }
                 "macro_use" if text(at.saturating_sub(1)) == Some("[") => {
-                    let rest = leaves.get(at.saturating_add(1)..).unwrap_or_default();
+                    let rest = match leaves.get(at.saturating_add(1)..) {
+                        Some(following) => following,
+                        None => &[],
+                    };
                     if rest.iter().take(3).any(|one| one.text == "extern") {
                         self.all = true;
                     }
                 }
-                "use" => self.imported(leaves.get(at.saturating_add(1)..).unwrap_or_default()),
+                "use" => self.imported(match leaves.get(at.saturating_add(1)..) {
+                    Some(following) => following,
+                    None => &[],
+                }),
                 _ => {}
             }
         }
@@ -579,7 +585,10 @@ fn lexed(text: &str) -> Option<Vec<Leaf>> {
 /// Whether `path` is a file whose change can change what every target compiles to or how it is run, whatever items it holds.
 #[must_use]
 pub fn builds_everything(path: &str) -> bool {
-    let name = path.rsplit('/').next().unwrap_or(path);
+    let name = match path.rsplit_once('/') {
+        Some((_directory, file)) => file,
+        None => path,
+    };
     matches!(
         name,
         "Cargo.toml"
@@ -743,7 +752,10 @@ fn read(
     for leaf in leaves {
         while let Some((start, end)) = opened.next_if(|(start, _)| *start <= leaf.offset) {
             skeleton.push(body_marker(*start));
-            let index = last.map_or(0, |(index, _, _)| index.saturating_add(1));
+            let index = match last {
+                Some((previous, _, _)) => previous.saturating_add(1),
+                None => 0,
+            };
             last = Some((index, *start, *end));
         }
         match last.filter(|(_, start, end)| (*start..*end).contains(&leaf.offset)) {
@@ -804,7 +816,10 @@ fn escaping(leaves: &[Leaf], shadows: &Shadows) -> Option<String> {
         }
         if leaf.text == "use" {
             let mut local = Shadows::default();
-            local.imported(leaves.get(at.saturating_add(1)..).unwrap_or_default());
+            local.imported(match leaves.get(at.saturating_add(1)..) {
+                Some(following) => following,
+                None => &[],
+            });
             if local != Shadows::default() {
                 return Some("use".to_owned());
             }
@@ -1011,12 +1026,13 @@ fn side(path: &str, text: &str, items: &[(String, Span, bool)]) -> Result<Read, 
             .map(|(_, body, measurable)| (*body, *measurable)),
     )
     .into_iter()
-    .map(|at| {
-        items
-            .get(at)
-            .map_or(Span { start: 0, end: 0 }, |(_, body, _)| *body)
+    .map(|at| match items.get(at) {
+        Some((_, body, _)) => Ok(*body),
+        None => Err(Everything::Unparsed {
+            path: path.to_owned(),
+        }),
     })
-    .collect();
+    .collect::<Result<_, _>>()?;
     let unmeasurable: Vec<Span> = items
         .iter()
         .filter(|(_, _, measurable)| !measurable)
@@ -1038,7 +1054,12 @@ fn same_skeleton(
         .zip(&is)
         .find(|(was, is)| was.0.text != is.0.text)
         .map(|(was, _)| was.0.line)
-        .or_else(|| (was.len() != is.len()).then(|| was.last().map_or(1, |last| last.0.line)))
+        .or_else(|| {
+            (was.len() != is.len()).then(|| match was.last() {
+                Some(last) => last.0.line,
+                None => 1,
+            })
+        })
     {
         return Err(Everything::Skeleton {
             path: path.to_owned(),
@@ -1070,10 +1091,13 @@ fn revised(measured: &Measurement, revision: &Revision<'_>) -> Result<BTreeSet<u
         names: BTreeSet::new(),
         all: true,
     };
-    let shadows = cataloged
+    let shadows = match cataloged
         .first()
         .and_then(|item| measured.shadows.get(&item.package))
-        .unwrap_or(&hidden);
+    {
+        Some(read) => read,
+        None => &hidden,
+    };
     let before: Vec<(String, Span, bool)> = cataloged
         .iter()
         .map(|item| (item.name.clone(), item.body, item.measurable))

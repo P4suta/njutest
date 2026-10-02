@@ -38,6 +38,7 @@ pub(crate) fn main() -> ExitCode {
         }
     };
     let environment = njutest::cli::Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         working_directory,
         temp_directory: std::env::temp_dir(),
         program,

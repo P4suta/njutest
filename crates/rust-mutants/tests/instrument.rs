@@ -60,6 +60,7 @@ fn instrumented_file(
         path: "src/lib.rs",
         source: source.as_bytes(),
         placements: &placements,
+        carriers: &[],
         markers: &[],
         comparable: &offered(&discovery, &catalog),
         probed: &BTreeMap::default(),
@@ -104,7 +105,7 @@ fn reads_through(text: &str) {
     }
 }
 
-/// Instruments `<name>.input` and compares the result with `<name>.golden`.
+/// Instruments `<name>.input` and compares what a build for any target but a sealed host's reads of the result with `<name>.golden`.
 fn golden_case(name: &str) {
     let input = std::fs::read(golden_path(&format!("{name}.input"))).expect("input");
     let source = String::from_utf8(input).expect("utf-8");
@@ -117,8 +118,46 @@ fn golden_case(name: &str) {
         count_lines(source.as_bytes()),
         "{name}: the body kept its line count"
     );
-    njutest_devkit::golden::golden(&golden_path(&format!("{name}.golden")), text.as_bytes())
-        .expect("golden");
+    njutest_devkit::golden::golden(
+        &golden_path(&format!("{name}.golden")),
+        unsealed(&text).as_bytes(),
+    )
+    .expect("golden");
+}
+
+/// The attribute that leaves the runtime every other target compiles out of a build for a sealed host.
+const UNSEALED_ONLY: &str = "#[cfg(not(target_os = \"wasi\"))]\n";
+
+/// The attribute that leaves the runtime a sealed host runs out of a build for every other target.
+const SEALED_ONLY: &str = "#[cfg(target_os = \"wasi\")]\n";
+
+/// What a build for any target but a sealed host's reads of an instrumented `text`: the file without the attribute on its runtime and without the sealed runtime appended after it.
+fn unsealed(text: &str) -> String {
+    let (body, runtime) = split_runtime(text);
+    let head = format!(
+        "#[doc(hidden)]\n{}\n",
+        rust_mutants::instrument::GENERATED_MODULE_ALLOW_ATTRIBUTE
+    );
+    let Some(native) = runtime.strip_prefix(&format!("{head}{UNSEALED_ONLY}")) else {
+        panic!(
+            "the runtime every other target compiles is the one a sealed build leaves out:\n\
+             {runtime}"
+        );
+    };
+    let Some(at) = native.find(&format!("\n{head}{SEALED_ONLY}mod ")) else {
+        panic!("the runtime a sealed host runs is appended after the other one:\n{runtime}");
+    };
+    let (native, sealed) = native.split_at(at + 1);
+    let items =
+        rust_mutants::parsing::apart(|parsing| parsing.file(sealed).map(|file| file.items.len()))
+            .expect("a thread to read on")
+            .expect("the sealed runtime reads as Rust");
+    assert_eq!(
+        items, 1,
+        "the sealed runtime is one module, and nothing a build for another target reads follows \
+         it: {sealed}"
+    );
+    format!("{body}{head}{native}")
 }
 
 /// Splits an instrumented file into the rewritten body and the appended runtime module.
@@ -186,6 +225,7 @@ fn a_guard_the_compiler_vouched_for_answers_what_it_replaces_and_says_where_the_
         path: "src/lib.rs",
         source: source.as_bytes(),
         placements: &placements,
+        carriers: &[],
         markers: &[],
         comparable: &compared,
         probed: &BTreeMap::default(),
@@ -204,6 +244,7 @@ fn a_guard_the_compiler_vouched_for_answers_what_it_replaces_and_says_where_the_
         path: "src/lib.rs",
         source: source.as_bytes(),
         placements: &placements,
+        carriers: &[],
         markers: &[],
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
@@ -239,6 +280,7 @@ fn a_site_whose_form_cannot_compare_reports_no_comparison_however_it_is_offered(
         path: "src/lib.rs",
         source: source.as_bytes(),
         placements: &placements,
+        carriers: &[],
         markers: &[],
         comparable: &every,
         probed: &BTreeMap::default(),
@@ -283,6 +325,7 @@ fn instrumented_with_markers(
         path: "src/lib.rs",
         source: source.as_bytes(),
         placements: &placements,
+        carriers: &[],
         markers,
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
@@ -464,6 +507,7 @@ fn a_file_without_a_mutant_still_carries_the_process_wide_checkpoint_runtime() {
         path: "src/lib.rs",
         source: source.as_bytes(),
         placements: &placements,
+        carriers: &[],
         markers: &[],
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
@@ -500,50 +544,59 @@ fn a_checkpoint_inside_a_mutant_edit_stays_in_the_original_branch() {
 }
 
 #[test]
-fn only_the_private_generated_module_carries_the_exact_lint_exception() {
+fn only_the_private_generated_modules_carry_the_exact_lint_exception() {
     let text = instrument(
         "pub fn f(a: i32, b: i32) -> i32 {\n    a + b\n}\n\npub fn g(a: i32) -> i32 {\n    fn inner(x: i32) -> i32 { x * 2 }\n    inner(a) - 1\n}\n",
     );
-    assert_eq!(
-        text.matches("#[allow(").count(),
-        1,
-        "user functions never inherit a generated-code exception: {text}"
-    );
-    let parsed = syn::parse_file(&text).expect("instrumented source parses");
-    let module = parsed
+    let parsed = njutest_devkit::lexed::file(&text).expect("instrumented source parses");
+    let modules: Vec<&syn::ItemMod> = parsed
         .items
         .iter()
-        .find_map(|item| match item {
+        .filter_map(|item| match item {
             syn::Item::Mod(module) if module.ident == "__rm" => Some(module),
             _ => None,
         })
-        .expect("the generated support module");
-    assert!(
-        matches!(module.vis, syn::Visibility::Inherited),
-        "the lint exception is confined to a private module: {:?}",
-        module.vis
-    );
-    let attributes: Vec<&syn::Attribute> = module
-        .attrs
-        .iter()
-        .filter(|attribute| attribute.path().is_ident("allow"))
         .collect();
-    assert_eq!(attributes.len(), 1, "{text}");
-    let names = attributes
-        .first()
-        .expect("the one generated allow attribute")
-        .parse_args_with(syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated)
-        .expect("the generated allow is a literal lint list")
-        .iter()
-        .map(|path| {
-            path.segments
-                .iter()
-                .map(|segment| segment.ident.to_string())
-                .collect::<Vec<_>>()
-                .join("::")
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(names, ["dead_code", "unused_qualifications"]);
+    assert_eq!(
+        modules.len(),
+        2,
+        "the runtime a sealed host runs and the one every other target compiles: {text}"
+    );
+    assert_eq!(
+        text.matches("#[allow(").count(),
+        modules.len(),
+        "user functions never inherit a generated-code exception: {text}"
+    );
+    for module in modules {
+        assert!(
+            matches!(module.vis, syn::Visibility::Inherited),
+            "the lint exception is confined to a private module: {:?}",
+            module.vis
+        );
+        let attributes: Vec<&syn::Attribute> = module
+            .attrs
+            .iter()
+            .filter(|attribute| attribute.path().is_ident("allow"))
+            .collect();
+        assert_eq!(attributes.len(), 1, "{text}");
+        let names = attributes
+            .first()
+            .expect("the one generated allow attribute")
+            .parse_args_with(
+                syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated,
+            )
+            .expect("the generated allow is a literal lint list")
+            .iter()
+            .map(|path| {
+                path.segments
+                    .iter()
+                    .map(|segment| segment.ident.to_string())
+                    .collect::<Vec<_>>()
+                    .join("::")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["dead_code", "unused_qualifications"]);
+    }
     assert!(!text.contains("allow(warnings"), "{text}");
 }
 
@@ -661,6 +714,7 @@ fn a_source_that_is_not_the_one_the_candidates_came_from_is_refused() {
         path: "src/lib.rs",
         source: other,
         placements: &placements,
+        carriers: &[],
         markers: &[],
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
@@ -738,6 +792,7 @@ fn every_alternative_reports_where_its_own_text_landed() {
         path: "src/lib.rs",
         source: source.as_bytes(),
         placements: &placements,
+        carriers: &[],
         markers: &[],
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
@@ -1034,6 +1089,7 @@ fn instrumented(path: &str, source: &str) -> Option<(String, Catalog)> {
         path,
         source: source.as_bytes(),
         placements: &placements,
+        carriers: &[],
         markers: &[],
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
@@ -1051,7 +1107,7 @@ fn instrumented(path: &str, source: &str) -> Option<(String, Catalog)> {
 fn read_share(files: &[(String, String)]) -> (usize, Vec<String>) {
     let parsing: Vec<&(String, String)> = files
         .iter()
-        .filter(|(_, source)| syn::parse_file(source).is_ok())
+        .filter(|(_, source)| njutest_devkit::lexed::file(source).is_ok())
         .collect();
     let apart: Vec<String> = parsing
         .iter()
@@ -1107,6 +1163,7 @@ fn instrument_probing(source: &str) -> String {
         path: "src/lib.rs",
         source: source.as_bytes(),
         placements: &placements,
+        carriers: &[],
         markers: &[],
         comparable: &offered(&discovery, &catalog),
         probed: &probeable(&discovery, &catalog),
@@ -1181,6 +1238,7 @@ fn a_tree_holds_the_call_for_a_probe_only_where_the_compiler_vouched_for_one() {
         path: "src/lib.rs",
         source: source.as_bytes(),
         placements: &placements,
+        carriers: &[],
         markers: &[],
         comparable: &BTreeSet::default(),
         probed: &BTreeMap::default(),
@@ -1230,6 +1288,7 @@ fn a_form_that_cannot_hold_the_call_writes_no_probe_however_many_it_was_offered(
         path: "src/lib.rs",
         source: source.as_bytes(),
         placements: &placements,
+        carriers: &[],
         markers: &[],
         comparable: &BTreeSet::default(),
         probed: &statements,
@@ -1294,6 +1353,7 @@ fn a_probe_around_the_original_leaves_every_nested_branch_where_it_says_it_is() 
         path: "src/lib.rs",
         source: source.as_bytes(),
         placements: &placements,
+        carriers: &[],
         markers: &[],
         comparable: &offered(&discovery, &catalog),
         probed: &probes,
@@ -1397,13 +1457,30 @@ fn the_instrumenter_records_exactly_the_pairs_whose_fault_it_carried() {
         "pub fn g(p: &str) -> Result<(), std::num::ParseIntError> {\n    p.parse::<u8>()?;\n    Ok(())\n}\n",
         &selection,
     );
+    assert_eq!(
+        rules(&statement, &catalog),
+        vec![
+            ("question-to-unwrap".to_owned(), "inject-error".to_owned()),
+            (
+                "ignore-question-statement".to_owned(),
+                "inject-error".to_owned()
+            ),
+        ],
+        "both rewrites preserve the failed call, so both carry exactly its fault"
+    );
+    let ignored = catalog
+        .mutants()
+        .iter()
+        .find(|mutant| mutant.candidate.rule.name == "ignore-question-statement")
+        .expect("the statement mutant");
+    let branch = statement
+        .branches
+        .iter()
+        .find(|branch| branch.index == ignored.index)
+        .expect("its recorded alternative");
     assert!(
-        !rules(&statement, &catalog)
-            .iter()
-            .any(|(mutant, _)| mutant == "ignore-question-statement"),
-        "a statement's rewrite sits above the `?` node, so the call's fault is not its child and \
-         is not carried; no pair is recorded that the tree does not hold: {:?}",
-        rules(&statement, &catalog)
+        statement.text[branch.span.start as usize..branch.span.end as usize].contains("injected()"),
+        "the recorded pair is backed by a fault guard inside the statement alternative"
     );
 }
 
@@ -1416,7 +1493,7 @@ fn a_guard_that_breaks_inside_an_identity_macro_is_seen_where_a_plain_parse_is_b
     ];
     for text in planted {
         assert!(
-            syn::parse_file(text).is_ok(),
+            njutest_devkit::lexed::file(text).is_ok(),
             "a plain parse never opens the identity macro, which is how a broken guard inside one \
              went unseen: {text}"
         );
@@ -1430,4 +1507,182 @@ fn a_guard_that_breaks_inside_an_identity_macro_is_seen_where_a_plain_parse_is_b
              names where: {read:?} for {text}"
         );
     }
+}
+
+/// The source the const fn cases are about: one function holding guards, one the tests keep with its `const`, and a plain one.
+const CONST_FNS: &str = "pub const fn holds(a: u32) -> u32 {\n    a + 1\n}\n\npub const fn keeps(b: u32) -> u32 {\n    b\n}\n\npub fn runs(c: u32) -> u32 {\n    loop {\n        return c * 2;\n    }\n}\n";
+
+/// What instrumenting [`CONST_FNS`] came to, with the placements it was given.
+type ConstFnsInstrumented = (
+    Result<rust_mutants::instrument::FileOutput, rust_mutants::instrument::InstrumentError>,
+    Vec<rust_mutants::instrument::Placement>,
+);
+
+/// Instruments [`CONST_FNS`] with only the placements `keep` chooses, and `carriers` written without their `const` besides.
+fn instrumented_const_fns(
+    keep: impl Fn(&rust_mutants::instrument::Placement) -> bool,
+    carriers: &[rust_mutants::span::Span],
+) -> ConstFnsInstrumented {
+    let selection = Selection::tier(&REGISTRY, Tier::All);
+    let discovery =
+        discover_file("src/lib.rs", CONST_FNS.as_bytes(), &selection).expect("discover");
+    let mut builder = Builder::new();
+    for found in &discovery.candidates {
+        builder.add(found.candidate.clone()).expect("add");
+    }
+    let catalog = builder.build().expect("catalog");
+    let placements: Vec<rust_mutants::instrument::Placement> =
+        plan_file(&catalog, "src/lib.rs", &discovery.candidates)
+            .expect("plan")
+            .into_iter()
+            .filter(|placement| keep(placement))
+            .collect();
+    let file = instrument_file(&Instrumenting {
+        path: "src/lib.rs",
+        source: CONST_FNS.as_bytes(),
+        placements: &placements,
+        carriers,
+        markers: &[],
+        comparable: &BTreeSet::default(),
+        probed: &BTreeMap::default(),
+        catalog_digest: catalog.digest(),
+        first_item: 0,
+        watched: "/watched",
+    });
+    (file, placements)
+}
+
+/// Whether a placement's guard sits in the `const fn` named `name`.
+fn in_const_fn(placement: &rust_mutants::instrument::Placement, name: &str) -> bool {
+    placement
+        .hint
+        .const_fn
+        .as_ref()
+        .is_some_and(|function| function.name == name)
+}
+
+/// The bytes `span` covers in `text`.
+fn covered(text: &str, span: rust_mutants::span::Span) -> &str {
+    &text[span.start as usize..span.end as usize]
+}
+
+/// Where `const` is written before `name` in the pristine [`CONST_FNS`].
+fn const_of(name: &str) -> rust_mutants::span::Span {
+    let at = u32::try_from(
+        CONST_FNS
+            .find(&format!("const fn {name}"))
+            .expect("the function is const"),
+    )
+    .expect("a small source");
+    rust_mutants::span::Span {
+        start: at,
+        end: at + 5,
+    }
+}
+
+#[test]
+fn a_const_fn_holding_a_guard_loses_its_const_and_nothing_else() {
+    let (file, placements) =
+        instrumented_const_fns(|placement| !in_const_fn(placement, "keeps"), &[]);
+    let file = file.expect("instrument");
+    assert_eq!(
+        count_lines(
+            file.text
+                .as_bytes()
+                .get(..file.runtime_at)
+                .expect("the rewritten body")
+        ),
+        count_lines(CONST_FNS.as_bytes()),
+        "taking a keyword away moves no line"
+    );
+    assert!(
+        file.text.contains("pub       fn holds(") && file.text.contains("pub const fn keeps("),
+        "only the function holding a guard is written without its const, as wide as the keyword \
+         was, so nothing after it moves: {}",
+        file.text
+    );
+    let holds = &file.text
+        [file.text.find("fn holds").expect("holds")..file.text.find("fn keeps").expect("keeps")];
+    assert!(
+        !holds.contains("::checkpoint()") && !holds.contains("::item("),
+        "a const fn takes no checkpoint and no entry marker, and losing its const for a guard \
+         does not give it one: what the steps count and what an item's reach names are what the \
+         pristine file says, whichever functions a round writes without their const: {holds}"
+    );
+    let runs = &file.text[file.text.find("fn runs").expect("runs")..file.runtime_at];
+    assert!(
+        runs.contains("::checkpoint()") && runs.contains("::item("),
+        "a plain function still takes both: {runs}"
+    );
+    let held: Vec<u32> = placements
+        .iter()
+        .filter(|placement| in_const_fn(placement, "holds"))
+        .map(|placement| placement.index)
+        .collect();
+    assert!(!held.is_empty(), "the function holds guards");
+    assert_eq!(file.deconst.len(), 1, "{:?}", file.deconst);
+    let deconst = file
+        .deconst
+        .first()
+        .expect("one function without its const");
+    assert_eq!(
+        (
+            deconst.name.as_str(),
+            deconst.owner.as_deref(),
+            deconst.origin,
+            &deconst.mutants
+        ),
+        ("holds", None, const_of("holds"), &held),
+        "the function written without its const is named as the compiler names it, where it is \
+         in the pristine file, and with every mutant whose guard it holds"
+    );
+    assert_eq!(
+        covered(&file.text, deconst.keyword),
+        "     ",
+        "and its keyword lands on the blanks a diagnostic's definition span covers"
+    );
+    assert_eq!(file.constant.len(), 1, "{:?}", file.constant);
+    let constant = file.constant.first().expect("one function with its const");
+    assert_eq!(
+        (constant.name.as_str(), constant.origin),
+        ("keeps", const_of("keeps")),
+        "the function that keeps its const is named too"
+    );
+    assert_eq!(
+        covered(&file.text, constant.body),
+        "{\n    b\n}",
+        "with its body where the instrumented text holds it, which is where the compiler points \
+         at a call it refuses there"
+    );
+}
+
+#[test]
+fn a_carrier_loses_its_const_with_no_guard_of_its_own_and_one_the_file_lacks_is_refused() {
+    let (file, _) = instrumented_const_fns(|_| false, &[const_of("keeps")]);
+    let file = file.expect("instrument");
+    assert!(
+        file.text.contains("pub       fn keeps(") && file.text.contains("pub const fn holds("),
+        "a carrier goes without its const although it holds no guard, and a function that is \
+         neither keeps it: {}",
+        file.text
+    );
+    assert_eq!(
+        file.deconst
+            .iter()
+            .map(|one| (one.name.as_str(), one.mutants.len()))
+            .collect::<Vec<_>>(),
+        [("keeps", 0)]
+    );
+    let stray = rust_mutants::span::Span { start: 0, end: 3 };
+    let (refused, _) = instrumented_const_fns(|_| false, &[stray]);
+    let kind = match refused {
+        Ok(file) => panic!("a stray carrier was written: {}", file.text),
+        Err(error) => error.kind(),
+    };
+    assert_eq!(
+        kind,
+        InstrumentErrorKind::SourceMismatch,
+        "a carrier the file holds no const fn at was read from another tree, and writing the file \
+         as though it held one would be a guess"
+    );
 }

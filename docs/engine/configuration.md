@@ -30,12 +30,13 @@ jobs = 0                       # cargo compilation jobs; 0 = cargo decides
 debug = false                  # write debug information; off, because nothing here reads a backtrace
 
 [mutation]
-tier = "balanced"              # balanced | strong | all
+tier = "balanced"              # balanced | strong | all | compiled
 operators = []                 # exactly these rules; empty = the tier
 timeout = "auto"               # auto = 5x the target's own baseline, never below 30s
 steps = 50_000_000             # guard takes one mutant may spend; 0 = no step limit
 build_timeout = ""             # empty = no bound
 verify = true                  # run the instrumented baseline first
+seal = true                    # decide each mutant from its sealed executions; false makes every answer a lead
 coverage = false               # build once with LLVM coverage and route by its regions as well
 touch = true                   # ask the guards which tests reached them, and run only those
 
@@ -75,7 +76,7 @@ A mutation a bound expires on is `waited`, and `waited` establishes nothing —
 neither that the tests noticed nor that they did not.
 
 `steps` is a process-wide count of instrumented workspace boundaries after the selected guard first activates: non-const function entries, loop bodies, async blocks, and every closure invocation, including expression-body closures called back repeatedly by an iterator.
-Re-evaluating the same guard activates the count only once; later boundaries spend it, whichever instrumented source file contains them.
+Re-evaluating the same guard activates the count only once; later boundaries spend it, whichever instrumented source file contains them, a test's own among them.
 The number is the same on every machine at every job count under every load.
 Spending the allowance is `step_limit_reached`: an exact execution fact, but not proof that the program would never have ended.
 A long finite computation can cross the same number.
@@ -251,6 +252,8 @@ Without it, a locator that names more than one mutation is `unmatched`, because 
 an item, a rule and the bytes it replaces.
 With it, two things have to hold at once: the catalog holds exactly that many, so a mutation added or removed at the same place stops the claim instead of joining it, and **every one of them** came to the declared outcome, so a claim covering three stops holding the moment a test kills one of the three.
 With `line` as well, the count is of the mutations on that line: two `?` on one line are `line = 176` with `count = 2`.
+What a locator names, where its line narrows that, and what the count comes to are decided in one place, `rust_mutants_decision::claim`, which a run and `list --claims` both ask.
+What the claim then comes to — named, moved, judged where another build reads it, or unmatched — is decided by `rust_mutants_adapt::claim::Resolution::named` and `Resolution::unnamed`.
 What covered that one is the test,
 and the claim would otherwise go on exempting the other two on its strength.
 
@@ -279,16 +282,17 @@ A skip that quietly stops meaning anything when the code under it moves is worse
 
 ## Reserved environment
 
-A run composes `RUST_MUTANTS_ACTIVE`, `RUST_MUTANTS_FAULT`, `RUST_MUTANTS_CATALOG`, `RUST_MUTANTS_TOUCH`, `RUST_MUTANTS_TOUCH_ITEMS`, `RUST_MUTANTS_DELAY`, `RUST_MUTANTS_STEPS`, `RUST_MUTANTS_STEP_NOTICE`, and `RUST_MUTANTS_STEP_NONCE`, `RUST_MUTANTS_STEP_STATE`, `RUST_MUTANTS_STEP_BEAT`, `RUST_MUTANTS_CRASH_NOTICE` and `RUST_MUTANTS_CRASH_NONCE` for every test process it starts.
+A run composes `RUST_MUTANTS_ACTIVE`, `RUST_MUTANTS_FAULT`, `RUST_MUTANTS_FAULT_FATE`, `RUST_MUTANTS_CATALOG`, `RUST_MUTANTS_TOUCH`, `RUST_MUTANTS_TOUCH_ITEMS`, `RUST_MUTANTS_DELAY`, `RUST_MUTANTS_STEPS`, `RUST_MUTANTS_STEP_NOTICE`, and `RUST_MUTANTS_STEP_NONCE`, `RUST_MUTANTS_STEP_STATE`, `RUST_MUTANTS_STEP_BEAT`, `RUST_MUTANTS_CRASH_NOTICE` and `RUST_MUTANTS_CRASH_NONCE` for every test process it starts.
 `RUST_MUTANTS_FAULT` names a fault to activate beside the active mutation, and only a fault whose guard the instrumentation carried into that mutation's branch can be; it is set only with `RUST_MUTANTS_ACTIVE` ([ADR 0032](../adr/0032-a-fault-is-a-failed-call-the-suite-is-asked-about.md)).
+`RUST_MUTANTS_FAULT_FATE` names a file, apart from the scratch the test sees, that the runtime appends one line to for each thing that became of a failure the active fault made as an `std::io::Error` — `rust-mutants-fate-v1`, the catalog, and `made`, `read` where something formatted it, or `dropped` — and a line it cannot write stops the process with status 94; an error of any other type records nothing, and a run of the sealed module records nothing ([ADR 0032](../adr/0032-a-fault-is-a-failed-call-the-suite-is-asked-about.md)).
 `RUST_MUTANTS_TOUCH_ITEMS`, set to `1` beside `RUST_MUTANTS_TOUCH`, asks a mutant execution to record only the items it entered, which is what a run that keeps its answers in the store records about each one.
 Finding any of them already set normally ends the command with `RM0006`: nothing a test process said under an unrelated activation would be about this run, and a touch log another run owns is not one this run may append to.
 
 `RUST_MUTANTS_DELAY` is `<index>@<ms>`, set only on a control with nothing active: each operating-system thread of the test process sleeps `<ms>` the first time it reaches the guard of `<index>`, and never again.
 The flag is per thread, so a thread a pool or the harness reuses across tests pauses only for the first test that reaches the guard on it, and a thread spawned after another paused gets its own pause.
 
-`RUST_MUTANTS_STEPS` is how many times the active mutant's guard may be taken.
-At the first take past it, the runtime atomically publishes a notice carrying the fresh nonce, catalog, mutant, allowance and exact `N + 1` count, then parks.
+`RUST_MUTANTS_STEPS` is how many boundaries of the instrumented workspace, test code included, an execution may pass once the active mutant's guard has been taken.
+At the first boundary past it, the runtime atomically publishes a notice carrying the fresh nonce, catalog, mutant, allowance and exact `N + 1` count, then parks.
 The supervisor stops its declared platform process set and accepts `step_limit_reached` only when every field matches this execution.
 A missing,
 malformed, mismatched or replayed notice fails closed as a protocol error.
@@ -298,7 +302,13 @@ Unset, or `0`, counts nothing and leaves the clock as the only bound.
 `RUST_MUTANTS_STEP_BEAT` is `<ms>@<path>`, set by the runner that watches a counted execution for quiet: a process spending a reservation of its allowance rewrites the file at most `<ms>` apart, a quarter of the window, since the state only changes when a reservation is taken ([ADR 0039](../adr/0039-a-step-is-spent-in-memory.md)).
 Anything but canonical milliseconds above zero and a path is a protocol failure.
 
+A tree built for `wasm32-wasip1`, which a sealed host runs, compiles the runtime's sealed module in place of the one these variables describe.
+The host's fuel is its bound and one thread runs one test, so that module keeps no allowance, no beat, no delay and no orphan watch.
+A process asked for one anyway — `RUST_MUTANTS_STEPS` set to anything but `0`, `RUST_MUTANTS_STEP_BEAT` set at all, or `RUST_MUTANTS_DELAY` set and nonempty — stops with status 94 and a stop line naming `sealed: an allowance`, `sealed: a beat`, or `sealed: a delay`, rather than run as though it were kept.
+Selection, faults, the crash notice, the stale-catalog stop and recording are what they are elsewhere, except that each record is written the first time its index is seen, as one whole line in one write, under `-`: the host names the one test an instance ran.
+
 Every stop the generated runtime makes first writes one line to standard error — `rust-mutants-stop-v1`, the status, the check that failed, and the operating system's code, tab-separated — and the run records that check on the errored mutant and in its trace.
+The run decides that line again apart from its reading of it, by writing the line the named check would have been; where the two disagree it names no check, and the stop is recorded as `unconfirmed`.
 A copy of the runtime built from another catalog stops as a stale catalog wherever it meets the run, at its first boundary as at its first guard.
 A step-protocol status with no such line comes from a runtime this release did not generate, which is a stale build linked into the tree, and the run says so.
 

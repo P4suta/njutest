@@ -463,70 +463,8 @@ pub fn listed() -> Option<Vec<Listed>> {
     Some(processes)
 }
 
-/// What stopping a group reached.
 #[cfg(unix)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Stopped {
-    /// Every process of the group was signalled, or none besides its unreaped leader was left.
-    Group,
-    /// The kernel refused the group whole and only its leader was signalled.
-    LeaderOnly,
-}
-
-/// What the kernel answered one signal with.
-#[cfg(unix)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
-pub enum Delivered {
-    /// It was sent.
-    Sent,
-    /// Nothing by that id was left to send it to.
-    Gone,
-    /// Sending it is beyond this process's authority for some process it names.
-    Refused,
-    /// Any other failure.
-    Failed,
-}
-
-/// Who besides its leader a group was seen to hold.
-#[cfg(unix)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
-pub enum Others {
-    /// Nobody.
-    Nobody,
-    /// Somebody still running.
-    Somebody,
-    /// The group could not be looked at.
-    Unseen,
-}
-
-/// What a group stop comes to.
-#[cfg(unix)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StopDecision {
-    /// It reached this much.
-    Reached(Stopped),
-    /// It failed.
-    Failed,
-}
-
-/// What a group stop comes to, decided by the table the engine's runner is held to as well, `crates/rust-mutants/tests/testdata/group-stop.tsv`.
-#[cfg(unix)]
-#[must_use]
-pub const fn decide_stop(group: Delivered, leader: Delivered, others: Others) -> StopDecision {
-    match group {
-        Delivered::Sent | Delivered::Gone => StopDecision::Reached(Stopped::Group),
-        Delivered::Failed => StopDecision::Failed,
-        Delivered::Refused => match (leader, others) {
-            (Delivered::Refused | Delivered::Failed, _) => StopDecision::Failed,
-            (Delivered::Sent | Delivered::Gone, Others::Nobody) => {
-                StopDecision::Reached(Stopped::Group)
-            }
-            (Delivered::Sent | Delivered::Gone, Others::Somebody | Others::Unseen) => {
-                StopDecision::Reached(Stopped::LeaderOnly)
-            }
-        },
-    }
-}
+pub use rust_mutants_decision::group::{Delivered, Others, StopDecision, Stopped, decide_stop};
 
 #[cfg(not(unix))]
 fn signal(child: &mut Child, sent: Sent) -> Result<(), WorkError> {

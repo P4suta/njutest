@@ -1,0 +1,201 @@
+{
+  "schema": "njutest-mutation-receipt-v1",
+  "decision": "sealed-judgement",
+  "package": "rust-mutants-decision",
+  "module": "crates/rust-mutants-decision/src/judgement.rs",
+  "source_sha256": "f815d8d07bca5bda7ee0b5b8336c7ca1f10fd515ba6372f1474cb432e126122f",
+  "mutants": [
+    {
+      "display_id": "5165c1c9ecd26d14e42d",
+      "position": "77:8",
+      "rule": "negate-condition",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "judgement::tests::a_judgement_that_reads_a_should_panic_doctest_as_any_other_is_caught_by_the_table",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "judgement::tests::a_judgement_that_reads_an_early_exit_as_a_pass_is_caught_by_the_table",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "judgement::tests::every_observation_is_judged_as_the_table_in_sealed_md_says",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "82463d6a83d9b4052368",
+      "position": "77:8",
+      "rule": "condition-to-true",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "judgement::tests::a_judgement_that_reads_a_should_panic_doctest_as_any_other_is_caught_by_the_table",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "judgement::tests::a_judgement_that_reads_an_early_exit_as_a_pass_is_caught_by_the_table",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "judgement::tests::every_observation_is_judged_as_the_table_in_sealed_md_says",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "a0292a8c816a24e9cb8f",
+      "position": "77:8",
+      "rule": "condition-to-false",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "judgement::tests::a_judgement_that_reads_a_should_panic_doctest_as_any_other_is_caught_by_the_table",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "judgement::tests::a_judgement_that_reads_an_early_exit_as_a_pass_is_caught_by_the_table",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "judgement::tests::every_observation_is_judged_as_the_table_in_sealed_md_says",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "1c88647c8e90f2aa7a5a",
+      "position": "80:8",
+      "rule": "remove-not",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "judgement::tests::a_judgement_that_reads_a_should_panic_doctest_as_any_other_is_caught_by_the_table",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "judgement::tests::a_judgement_that_reads_an_early_exit_as_a_pass_is_caught_by_the_table",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "judgement::tests::every_observation_is_judged_as_the_table_in_sealed_md_says",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "117d8f12938549864334",
+      "position": "80:8",
+      "rule": "negate-condition",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "judgement::tests::a_judgement_that_reads_a_should_panic_doctest_as_any_other_is_caught_by_the_table",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "judgement::tests::a_judgement_that_reads_an_early_exit_as_a_pass_is_caught_by_the_table",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "judgement::tests::every_observation_is_judged_as_the_table_in_sealed_md_says",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "7ccca31742abb6ea3c6e",
+      "position": "80:8",
+      "rule": "condition-to-true",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "judgement::tests::a_judgement_that_reads_a_should_panic_doctest_as_any_other_is_caught_by_the_table",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "judgement::tests::a_judgement_that_reads_an_early_exit_as_a_pass_is_caught_by_the_table",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "judgement::tests::every_observation_is_judged_as_the_table_in_sealed_md_says",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "e1e54db9955deb7c0178",
+      "position": "80:8",
+      "rule": "condition-to-false",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "judgement::tests::a_judgement_that_reads_a_should_panic_doctest_as_any_other_is_caught_by_the_table",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "judgement::tests::a_judgement_that_reads_an_early_exit_as_a_pass_is_caught_by_the_table",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "judgement::tests::every_observation_is_judged_as_the_table_in_sealed_md_says",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "eabb6957a8397e67a1d6",
+      "position": "81:9",
+      "rule": "and-to-or",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "judgement::tests::a_judgement_that_reads_a_should_panic_doctest_as_any_other_is_caught_by_the_table",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "judgement::tests::a_judgement_that_reads_an_early_exit_as_a_pass_is_caught_by_the_table",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "judgement::tests::every_observation_is_judged_as_the_table_in_sealed_md_says",
+          "came_to": "panicked"
+        }
+      ]
+    }
+  ]
+}

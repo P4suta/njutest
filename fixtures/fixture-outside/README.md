@@ -27,7 +27,7 @@ What one run of this fixture establishes for every mutation of it, and for every
 The run is `rust-mutants run --tier all --offline --locked`; `cargo test -p rust-mutants-cli --test toolchain_fates` does it again and refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 
 ```fates
-src/lib.rs:11:16 int-decrement step_limit_reached
+src/lib.rs:11:16 int-decrement killed
 src/lib.rs:11:16 int-increment killed
 src/lib.rs:12:5 return-default killed
 src/spin.rs:9:18 int-increment survived
@@ -36,7 +36,7 @@ src/spin.rs:11:11 negate-loop-condition killed
 src/spin.rs:11:14 lt-to-le killed
 src/spin.rs:12:9 delete-compound-assignment killed
 src/spin.rs:12:15 add-assign-to-sub-assign killed
-src/spin.rs:13:9 delete-compound-assignment step_limit_reached
+src/spin.rs:13:9 delete-compound-assignment killed
 src/spin.rs:13:12 add-assign-to-sub-assign killed
 src/spin.rs:15:5 return-default killed
 ```

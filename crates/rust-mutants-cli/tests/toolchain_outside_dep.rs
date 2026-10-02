@@ -36,7 +36,7 @@ fn a_path_dependency_outside_the_root_is_named_before_any_build() {
     let output = run(&fixture, &[]);
     assert_eq!(
         output.status.code(),
-        Some(2),
+        Some(i32::from(rust_mutants::run::EXIT_FAILED)),
         "a tree a copy of which cannot build is refused rather than measured"
     );
     let said = njutest_devkit::process::strict_utf8(&output.stderr);
@@ -85,6 +85,7 @@ fn an_allowed_sibling_is_copied_beside_the_tree_and_the_run_measures() {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: njutest_devkit::paths::environment_for_a_run()
             .into_iter()
             .collect(),

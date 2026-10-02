@@ -119,6 +119,86 @@ pub fn text(path: &Path) -> Result<Observed<String>, SourceReadError> {
     }
 }
 
+/// What reading at most a bound of one file came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Bounded {
+    /// It is a regular file no longer than the bound, and these are its bytes.
+    Present(Vec<u8>),
+    /// Nothing is there.
+    Absent,
+    /// Something is there that is no regular file, a link included, or that could not be read.
+    Unreadable,
+    /// It is a regular file longer than the bound, which was read no further.
+    Oversized,
+}
+
+/// The bytes of the regular file at `path`, opened without following a link, read no further than `limit` bytes past which it is [`Bounded::Oversized`].
+///
+/// # Errors
+/// [`SourceReadError::Exhausted`] where the process ran out of descriptors or memory while reading.
+pub fn bytes_within(path: &Path, limit: u64) -> Result<Bounded, SourceReadError> {
+    let file = match open_without_following(path) {
+        Ok(file) => file,
+        Err(source) => {
+            return Ok(match failed::<()>(path, source)? {
+                Observed::Absent => Bounded::Absent,
+                Observed::Present(()) | Observed::Unreadable => Bounded::Unreadable,
+            });
+        }
+    };
+    match file.metadata() {
+        Ok(metadata) if metadata.is_file() => {}
+        Ok(_not_regular) => return Ok(Bounded::Unreadable),
+        Err(source) => {
+            exhausted(path, source)?;
+            return Ok(Bounded::Unreadable);
+        }
+    }
+    let Some(past) = limit.checked_add(1) else {
+        return Ok(Bounded::Oversized);
+    };
+    let mut bytes = Vec::new();
+    if let Err(source) =
+        std::io::Read::read_to_end(&mut std::io::Read::take(file, past), &mut bytes)
+    {
+        exhausted(path, source)?;
+        return Ok(Bounded::Unreadable);
+    }
+    match u64::try_from(bytes.len()) {
+        Ok(read) if read <= limit => Ok(Bounded::Present(bytes)),
+        Ok(_past_the_bound) => Ok(Bounded::Oversized),
+        Err(_beyond_a_count) => Ok(Bounded::Oversized),
+    }
+}
+
+/// `path` opened for reading where it is not a link, and never through one.
+#[cfg(unix)]
+fn open_without_following(path: &Path) -> std::io::Result<std::fs::File> {
+    let descriptor = rustix::fs::open(
+        path,
+        rustix::fs::OFlags::RDONLY
+            | rustix::fs::OFlags::CLOEXEC
+            | rustix::fs::OFlags::NOFOLLOW
+            | rustix::fs::OFlags::NONBLOCK,
+        rustix::fs::Mode::empty(),
+    )
+    .map_err(std::io::Error::from)?;
+    Ok(std::fs::File::from(descriptor))
+}
+
+/// `path` opened for reading where it is not a link, and never through one.
+#[cfg(windows)]
+fn open_without_following(path: &Path) -> std::io::Result<std::fs::File> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "a link is not followed",
+        )),
+        Ok(_not_a_link) => std::fs::File::open(path),
+        Err(source) => Err(source),
+    }
+}
+
 /// What a failure to look at `path` says: nothing there, or something there that could not be looked at, unless the process ran out.
 ///
 /// # Errors

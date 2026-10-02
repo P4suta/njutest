@@ -2,10 +2,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What `njutest trace` reads out of a recording: which proof made a run shorter, which command made it long, and what moved between two runs.
-//!
-//! Every test here needs a published report, and `Store::keep` answers `NJ6004` on Windows because publication is rooted at a POSIX directory capability. `docs/limitations.md` says so; these say it by not existing there.
 
-#![cfg(unix)]
 #![expect(
     clippy::expect_used,
     clippy::indexing_slicing,
@@ -381,6 +378,7 @@ fn asked(root: &std::path::Path, args: &[&str]) -> (u8, String, String) {
     let scratch = root.join("scratch");
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
     let environment = njutest::cli::Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: root.join("cache"),
         working_directory: root.to_path_buf(),
         temp_directory: scratch,

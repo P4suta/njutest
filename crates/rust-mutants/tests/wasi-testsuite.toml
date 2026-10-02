@@ -1,0 +1,383 @@
+# SPDX-FileCopyrightText: 2026 njutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+repository = "https://github.com/WebAssembly/wasi-testsuite"
+commit = "609c446139956ff30239f87cb18af1dc6128bed2"
+
+[[test]]
+name = "assemblyscript/args_get-multiple-arguments"
+result = "pass"
+refused = []
+
+[[test]]
+name = "assemblyscript/args_sizes_get-multiple-arguments"
+result = "pass"
+refused = []
+
+[[test]]
+name = "assemblyscript/args_sizes_get-no-arguments"
+result = "pass"
+refused = []
+
+[[test]]
+name = "assemblyscript/environ_get-multiple-variables"
+result = "pass"
+refused = []
+
+[[test]]
+name = "assemblyscript/environ_sizes_get-multiple-variables"
+result = "pass"
+refused = []
+
+[[test]]
+name = "assemblyscript/environ_sizes_get-no-variables"
+result = "pass"
+refused = []
+
+[[test]]
+name = "assemblyscript/fd_write-to-invalid-fd"
+result = "pass"
+refused = []
+
+[[test]]
+name = "assemblyscript/fd_write-to-stdout"
+result = "pass"
+refused = []
+
+[[test]]
+name = "assemblyscript/proc_exit-failure"
+result = "pass"
+refused = []
+
+[[test]]
+name = "assemblyscript/proc_exit-success"
+result = "pass"
+refused = []
+
+[[test]]
+name = "assemblyscript/random_get-non-zero-length"
+result = "pass"
+refused = []
+
+[[test]]
+name = "assemblyscript/random_get-zero-length"
+result = "pass"
+refused = []
+
+[[test]]
+name = "c/clock_getres-monotonic"
+result = "pass"
+refused = []
+
+[[test]]
+name = "c/clock_getres-realtime"
+result = "pass"
+refused = []
+
+[[test]]
+name = "c/clock_gettime-monotonic"
+result = "pass"
+refused = []
+
+[[test]]
+name = "c/clock_gettime-realtime"
+result = "pass"
+refused = []
+
+[[test]]
+name = "c/fdopendir-with-access"
+result = "pass"
+refused = []
+
+[[test]]
+name = "c/fopen-with-access"
+result = "pass"
+refused = []
+
+[[test]]
+name = "c/fopen-with-no-access"
+result = "pass"
+refused = []
+
+[[test]]
+name = "c/lseek"
+result = "pass"
+refused = []
+
+[[test]]
+name = "c/pread-with-access"
+result = "pass"
+refused = []
+
+[[test]]
+name = "c/pwrite-with-access"
+result = "pass"
+refused = []
+
+[[test]]
+name = "c/pwrite-with-append"
+result = "pass"
+refused = []
+
+[[test]]
+name = "c/sock_shutdown-invalid_fd"
+result = "refused"
+refused = ["sock_shutdown: network"]
+ends = "trapped unreachable"
+row = "sock_accept, sock_recv, sock_send, sock_shutdown"
+
+[[test]]
+name = "c/sock_shutdown-not_sock"
+result = "refused"
+refused = ["sock_shutdown: network"]
+ends = "trapped unreachable"
+row = "sock_accept, sock_recv, sock_send, sock_shutdown"
+
+[[test]]
+name = "c/stat-dev-ino"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/big_random_buf"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/clock_time_get"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/close_preopen"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/dangling_fd"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/dangling_symlink"
+result = "pass"
+refused = ["path_symlink: link"]
+
+[[test]]
+name = "rust/dir_fd_op_failures"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/directory_seek"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/fd_advise"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/fd_fdstat_set_rights"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/fd_filestat_set"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/fd_flags_set"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/fd_readdir"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/file_allocate"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/file_pread_pwrite"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/file_seek_tell"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/file_truncation"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/file_unbuffered_write"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/fstflags_validate"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/interesting_paths"
+result = "pass"
+refused = ["path_open: escape"]
+
+[[test]]
+name = "rust/isatty"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/nofollow_errors"
+result = "refused"
+refused = ["path_symlink: link"]
+ends = "trapped unreachable"
+row = "path_link, path_symlink"
+
+[[test]]
+name = "rust/overwrite_preopen"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/path_exists"
+result = "refused"
+refused = ["path_symlink: link"]
+ends = "trapped unreachable"
+row = "path_link, path_symlink"
+
+[[test]]
+name = "rust/path_filestat"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/path_link"
+result = "refused"
+refused = ["path_link: link"]
+ends = "trapped unreachable"
+row = "path_link, path_symlink"
+
+[[test]]
+name = "rust/path_open_create_existing"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/path_open_dirfd_not_dir"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/path_open_missing"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/path_open_nonblock"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/path_open_preopen"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/path_open_read_write"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/path_rename"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/path_rename_dir_trailing_slashes"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/path_symlink_trailing_slashes"
+result = "refused"
+refused = ["path_symlink: link"]
+ends = "trapped unreachable"
+row = "path_link, path_symlink"
+
+[[test]]
+name = "rust/poll_oneoff_stdio"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/readlink"
+result = "refused"
+refused = ["path_symlink: link"]
+ends = "trapped unreachable"
+row = "path_link, path_symlink"
+
+[[test]]
+name = "rust/remove_directory_trailing_slashes"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/remove_nonempty_directory"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/renumber"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/sched_yield"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/stdio"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/symlink_create"
+result = "refused"
+refused = ["path_symlink: link"]
+ends = "trapped unreachable"
+row = "path_link, path_symlink"
+
+[[test]]
+name = "rust/symlink_filestat"
+result = "refused"
+refused = ["path_symlink: link"]
+ends = "trapped unreachable"
+row = "path_link, path_symlink"
+
+[[test]]
+name = "rust/symlink_loop"
+result = "pass"
+refused = ["path_symlink: link"]
+
+[[test]]
+name = "rust/truncation_rights"
+result = "pass"
+refused = []
+
+[[test]]
+name = "rust/unlink_file_trailing_slashes"
+result = "pass"
+refused = []

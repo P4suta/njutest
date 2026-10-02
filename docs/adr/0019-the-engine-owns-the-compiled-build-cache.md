@@ -23,6 +23,7 @@ Two programs collecting the same class of state cannot agree about liveness from
 
 1. rust-mutants' stable target directory is the only persistent compiled build cache used by a verification.
    Its lifecycle, locking, and collection belong to the engine.
+   Native builds are keyed to the source root; sealed builds are keyed to the tree's content, so linker object paths, preopens and environment values stay identical across source roots ([sealed execution](../engine/sealed.md#remembering-what-one-execution-established)).
 2. njutest owns no persistent compiled layer.
    Its `[cache]` table controls only outcome answers: `max_bytes`, `ttl`, export, and import.
 3. Cargo started from a test process remains isolated with `CARGO_TARGET_DIR` under that run's `Scratch`.
@@ -58,9 +59,12 @@ The fixture reproduction is two runs of `fixture-witness-downstream` sharing a t
    That moment is older than every unit built from those bytes, since the member's older units were removed at it, and newer than every unit built from any others.
    So a file's time says what cargo needs to know whoever wrote it, and bytes the engine writes again the same, as instrumenting an unchanged tree does, compile nothing.
 4. `CompileOptions` names its target directory as a `BuildDir`, which carries the members, so no build into a shared directory can skip the settling.
-5. A directory inside another that keeps its own record, such as `witness`, `coverage` or `pristine`, is another target directory; settling the outer one passes over it.
-   The copy as it was written is checked in `pristine`, apart from the instrumented builds, because one directory given the two trees in turn would compile each of them every run.
-6. A record that cannot be read, or that is not one this release writes, is `RM1022`, rather than a record the run trusts or silently replaces.
+ 5. A directory inside another that keeps its own record, such as `witness`, `coverage` or `pristine`, is another target directory; settling the outer one passes over it.
+    The copy as it was written is checked in `pristine`, apart from the instrumented builds, because one directory given the two trees in turn would compile each of them every run.
+ 6. Since 2026-09-29 the record is `rust-mutants-built-v2`, and a member's files are also every file of the copy outside its directory its units read, which a `#[path]` can name: after each build the record keeps, from the dep-info of that build, every such file each member's units read, and the digest settling compares takes them in with the member's own.
+    A file no member's directory holds therefore moves the member that reads it, where before it moved nothing, and only a clock that disagreed with its time kept cargo from reusing what it built.
+    A `rust-mutants-built-v1` record kept no such file, so it is read as no record: every member is compiled again once, and the next build writes the record this release reads.
+ 7. A record that cannot be read, or that is not one this release writes, is `RM1022`, rather than a record the run trusts or silently replaces.
 
 ### Consequences
 
@@ -71,3 +75,36 @@ The fixture reproduction is two runs of `fixture-witness-downstream` sharing a t
 - A file no member's directory holds keeps the time it was written, which only a person changes, and cargo reads that time as it always has.
 - The pristine check moved into `pristine`, so a path under the target directory that a unit's dep-info names now begins `$target/pristine/`, and outcome keys that name one change once.
 - Documentation examples run through `cargo test --doc` against the tree the last settled build compiled; nothing writes the tree between that build and them.
+
+## Amendment, 2026-10-01: identical fixture copies share compiled content
+
+An explicit `NJUTEST_FIXTURE_BUILD_CACHE` root allows copied fixtures to claim an engine-owned build slot addressed by the complete snapshot digest, toolchain identity and build environment.
+The source snapshot is recreated for each claim, and every member still passes through the existing content-settling protocol before Cargo may judge its units fresh.
+The final copied graph is loaded once, and build scripts and procedural macros require the full environment in the target directory identity; ordinary graphs rely on Cargo's dep-info for compile-time environment dependencies while diagnostic and scratch names do not fragment the pool.
+The engine's owner lock holds the slot through execution, cleanup and the lifetime of every shared set of sealed modules.
+Every invocation keeps its own scratch, runtime records and verdict state.
+No target directory is copied.
+
+Wasmtime's built-in cache separately shares compiled host modules by bytes, engine configuration and Wasmtime version.
+It is an engine-owned compilation layer, independent of the outcome and transcript stores.
+Count diagnostics distinguish module-cache hits from transcript-cache answers.
+
+## Amendment, 2026-10-02: a verified build hit starts no Cargo
+
+The engine's compiler facade records eligible locked builds by their complete source, graph, configuration, toolchain, selection, flag and environment content identity.
+The record lives under the engine-owned target directory and includes digests for every returned artifact and dep-info file.
+Reuse reconstructs the compilation only after verifying that inventory and its Cargo messages; doubt returns to Cargo.
+Opaque build scripts and procedural macros cannot establish this record because they may read undeclared inputs.
+Flag variables are classified under the argument protocol cargo actually splits them by: the encoded forms on the unit separator alone, the plain ones on whitespace, with every attached and separate `-C` form read alike.
+The sealed target admits the engine's exact deterministic linker switches and its WebAssembly platform object, bound by content beside the toolchain-owned linker.
+The object must be a valid core WebAssembly module with known linking metadata and the engine's `platform.o` filename.
+That format carries symbols and relocations in its own bytes, rather than response arguments or filesystem members.
+Only established scalar codegen options and configuration arguments are admitted otherwise.
+Response files, archives, dynamic or unknown object metadata, other object formats, file-bearing compiler options, unknown switches and unsupported separate values fall back to Cargo with their exact cause.
+The bound file inputs also add a content fingerprint to the actual compiler flags before the key is computed.
+Cargo therefore recompiles when an object's bytes change at the same path, even when its dep-info omits that object.
+The fingerprint also changes for corrupt object bytes before their format refusal, so fallback Cargo cannot publish an old fresh output for that change.
+Cargo's absent uplifted library dep-info is tolerated only when the remaining compiler unit inventory still proves the complete input set.
+A native target's link arguments remain refused, because its system linker is no toolchain input.
+This layer applies to users' repeated runs as well as leased fixture slots, and its hit/miss notes always identify the key.
+The suite count gate budgets unique bound build keys plus uncacheable requests per binary, rather than allowing a warm cache to hide new build requests.

@@ -1,0 +1,79 @@
+{
+  "schema": "njutest-mutation-receipt-v1",
+  "decision": "test-decline",
+  "package": "rust-mutants-decision",
+  "module": "crates/rust-mutants-decision/src/decline.rs",
+  "source_sha256": "5eafacd717a324b712b5614004bf95fa4555c347b8b3252f72c4a8b90dc408c5",
+  "mutants": [
+    {
+      "display_id": "367dc7f30888fed781fd",
+      "position": "21:38",
+      "rule": "remove-not",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "decline::tests::a_process_every_test_of_which_declined_as_its_baseline_did_measured_nothing",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "2bed3d41a61dbf1d9670",
+      "position": "55:27",
+      "rule": "remove-not",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "decline::tests::a_process_every_test_of_which_declined_as_its_baseline_did_measured_nothing",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "4cba42990dca73beb070",
+      "position": "55:27",
+      "rule": "remove-match-guard",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "decline::tests::a_process_every_test_of_which_declined_as_its_baseline_did_measured_nothing",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "5a5d17f6b216880b5715",
+      "position": "55:48",
+      "rule": "and-to-or",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "decline::tests::a_process_every_test_of_which_declined_as_its_baseline_did_measured_nothing",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "aade284b2cd5e8953972",
+      "position": "55:66",
+      "rule": "eq-to-neq",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "decline::tests::a_process_every_test_of_which_declined_as_its_baseline_did_measured_nothing",
+          "came_to": "panicked"
+        }
+      ]
+    }
+  ]
+}

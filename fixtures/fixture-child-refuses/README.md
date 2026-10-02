@@ -16,5 +16,5 @@ A refusal is the process's own only when the process exits with the refusal's co
 | `src/lib.rs` | lib | `handed_on`: its return |
 
 ```fates
-src/lib.rs:9:5 return-default killed
+src/lib.rs:9:5 return-default unproven
 ```

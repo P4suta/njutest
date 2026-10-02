@@ -54,6 +54,152 @@ fn verify(fixture: &Fixture, extra: &[&str]) -> Output {
     asked(&of(&fixture.root, &[]), &args)
 }
 
+#[cfg(unix)]
+#[test]
+fn repeated_runs_over_one_pool_reuse_verified_builds_except_doctest_capture() {
+    let fixture = fixture("fixture-simple");
+    let mut environment = of(&fixture.root, &[]);
+    let pool = tempfile::Builder::new()
+        .prefix("njutest-verify-pool-")
+        .tempdir()
+        .expect("a pool directory no other test shares");
+    environment
+        .vars
+        .set("NJUTEST_FIXTURE_BUILD_CACHE", pool.path());
+    environment.vars.set("RUSTC_WRAPPER", "");
+    for repetition in 0..2 {
+        let output = asked(
+            &environment,
+            &["verify", "--locked", "--offline", "--no-cache", "--trace"],
+        );
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "repetition {repetition} keeps its verdict: {output:?}"
+        );
+    }
+    let report = document(&fixture);
+    let path = fixture
+        .root
+        .join(".njutest/trace")
+        .join(text(&report["run_id"]))
+        .join("builds/0000000000/engine")
+        .join(rust_mutants::trace::FILE_NAME);
+    let events = rust_mutants::trace::read_events(std::io::BufReader::new(
+        std::fs::File::open(&path).expect("the repeated run's build trace"),
+    ))
+    .expect("the engine's trace");
+    let notes: Vec<_> = events
+        .iter()
+        .filter_map(|event| {
+            if let rust_mutants::trace::Payload::Note { note } = &event.payload {
+                Some(note)
+            } else {
+                None
+            }
+        })
+        .collect();
+    let hits = notes
+        .iter()
+        .filter(|note| note.kind == "build-cache-hit")
+        .count();
+    let bound = notes
+        .iter()
+        .filter(|note| note.kind == "build-cache-bound")
+        .count();
+    assert!(
+        hits >= 3 && hits == bound,
+        "the second run reuses every content-bound compilation over the pool this test owns: {notes:?}"
+    );
+    assert!(
+        !notes
+            .iter()
+            .any(|note| note.kind == "fixture-build-uncacheable" && note.detail.contains("linker")),
+        "the sealed build's own linked flags bind its platform object by content, so no flag class refuses it: {notes:?}"
+    );
+    assert!(
+        notes.iter().any(|note| note.kind == "fixture-build-request"
+            && note.detail.contains("the doctests' capture build")),
+        "the one honest remaining start is attributed: {notes:?}"
+    );
+    let started = notes
+        .iter()
+        .filter(|note| note.kind == "fixture-cargo-build")
+        .count();
+    assert_eq!(
+        started, 1,
+        "only the doctests' capture build, which no content record answers, starts Cargo: {notes:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn an_explicit_outside_dependency_is_verified_and_its_bytes_bind_every_cached_answer() {
+    let fixture = fixture("fixture-outside-dep");
+    let sibling = fixture
+        .root
+        .parent()
+        .expect("the shared ancestor")
+        .join("fixture-outside-dep-lib");
+    copy_tree(
+        &njutest_devkit::paths::fixtures_dir().join("fixture-outside-dep-lib"),
+        &sibling,
+    );
+    let config = fixture.root.join(".njutest.toml");
+    std::fs::write(&config, "version = 1\ncontract = \"standard-v1\"\n")
+        .expect("no outside source is allowed by default");
+    let denied = verify(&fixture, &["--trace"]);
+    assert_eq!(denied.status.code(), Some(3));
+    assert!(
+        njutest_devkit::process::strict_utf8(&denied.stderr).contains("RM1017"),
+        "{}",
+        njutest_devkit::process::strict_utf8(&denied.stderr)
+    );
+    std::fs::write(
+        &config,
+        "version = 1\ncontract = \"standard-v1\"\n[project]\nallow_outside = [\"../fixture-outside-dep-lib\"]\n",
+    )
+    .expect("the explicitly allowed dependency");
+    let first = verify(&fixture, &["--trace"]);
+    assert_eq!(
+        first.status.code(),
+        Some(0),
+        "an explicitly allowed sibling is part of the verified program: {}",
+        njutest_devkit::process::strict_utf8(&first.stderr)
+    );
+    let established = document(&fixture);
+    audited(&fixture, &text(&established["run_id"]));
+    let repeated = verify(&fixture, &["--trace"]);
+    assert_eq!(repeated.status.code(), Some(0));
+    let reused = document(&fixture);
+    assert_eq!(reused["provenance"]["cached"], true, "{reused}");
+    audited(&fixture, &text(&reused["run_id"]));
+    let source = sibling.join("src/lib.rs");
+    let original = std::fs::read_to_string(&source).expect("the dependency's source");
+    let modified = std::fs::metadata(&source)
+        .expect("the dependency's metadata")
+        .modified()
+        .expect("the dependency's file time");
+    std::fs::write(&source, original.replace("n * 3", "n * 4"))
+        .expect("a dependency that breaks the baseline");
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&source)
+        .expect("the dependency is writable")
+        .set_times(std::fs::FileTimes::new().set_modified(modified))
+        .expect("the original file time");
+    let changed = verify(&fixture, &["--trace"]);
+    assert_eq!(changed.status.code(), Some(1));
+    let changed = document(&fixture);
+    assert_ne!(
+        changed["provenance"]["identity"], established["provenance"]["identity"],
+        "the whole-report cache binds the dependency's actual bytes"
+    );
+    assert_eq!(changed["provenance"]["cached"], false, "{changed}");
+    assert_eq!(parsed(&fixture).verdict(), Verdict::Defect);
+    audited(&fixture, &text(&changed["run_id"]));
+}
+
 /// One command, driven in this process against an environment a test composed.
 fn asked(environment: &Environment, args: &[&str]) -> Output {
     let (mut out, mut err) = (Vec::new(), Vec::new());
@@ -78,6 +224,7 @@ fn environment(root: &Path, cache: &Path, named: &[(&str, &str)]) -> Environment
         vars.set(*name, *value);
     }
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: cache.to_path_buf(),
         working_directory: root.to_path_buf(),
         temp_directory: njutest_devkit::paths::temp_beside(root).expect("a temporary directory"),
@@ -224,11 +371,32 @@ fn findings_of(fixture: &Fixture, kind: &str) -> Vec<serde_json::Value> {
     .collect()
 }
 
+/// Whether a file named `name` is anywhere below `directory`.
+#[cfg(unix)]
+fn filed(directory: &Path, name: &str) -> bool {
+    let entries = match std::fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) => panic!("{}: {error}", directory.display()),
+    };
+    for entry in entries {
+        let path = match entry {
+            Ok(entry) => entry.path(),
+            Err(error) => panic!("{}: {error}", directory.display()),
+        };
+        if path.file_name().is_some_and(|file| file == name)
+            || (path.is_dir() && filed(&path, name))
+        {
+            return true;
+        }
+    }
+    false
+}
+
 #[cfg(unix)]
 #[test]
 fn a_target_whose_reach_moved_has_every_disposition_resting_on_it_run_again() {
     let fixture = fixture("fixture-drifts");
-    let output = verify(&fixture, &[]);
+    let output = verify(&fixture, &["--no-seal"]);
     let stderr = njutest_devkit::process::strict_utf8(&output.stderr);
     let document = document(&fixture);
     let target = "fixture-drifts/lib/fixture_drifts";
@@ -247,6 +415,47 @@ fn a_target_whose_reach_moved_has_every_disposition_resting_on_it_run_again() {
         "the mutations of `return_visit` were `unreached` only on the word of a baseline the \
          control contradicted, so each was run against the moved target and decided by that \
          execution instead: {unreached:?}\n{stderr}"
+    );
+    let stale: Vec<&serde_json::Value> = part["mutants"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the part lists its mutants: {document}"))
+        .iter()
+        .filter(|mutant| {
+            mutant["routing"]["reaching"]
+                .as_array()
+                .is_some_and(|reaching| reaching.iter().any(|one| one == target))
+        })
+        .filter(|mutant| {
+            mutant["routing"]["granularity"] == "unreached"
+                || mutant["routing"]["discharged"]
+                    .as_array()
+                    .is_some_and(|removed| removed.iter().any(|one| one["target"] == target))
+        })
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "a disposition decided again by a run against the moved target is routed to that \
+         target, and the route the proof decided on the baseline, which said no target reached \
+         it, is not the one it now stands on: {stale:?}"
+    );
+    let cache = njutest_devkit::paths::cache_beside(&fixture.root).expect("the cache");
+    let unfiled: Vec<&str> = part["mutants"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the part lists its mutants: {document}"))
+        .iter()
+        .filter(|mutant| {
+            mutant["decision"]["outcome"] == "survived"
+                && mutant["routing"]["reaching"]
+                    .as_array()
+                    .is_some_and(|reaching| reaching.iter().any(|one| one == target))
+        })
+        .filter_map(|mutant| mutant["id"].as_str())
+        .filter(|id| !filed(&cache, &format!("{id}.json")))
+        .collect();
+    assert!(
+        unfiled.is_empty(),
+        "the evidence store keeps what the run established after the repair, as the report \
+         does, rather than what the moved record said before it: {unfiled:?}"
     );
     assert!(
         findings_of(&fixture, "unstable-baseline").is_empty(),
@@ -273,8 +482,136 @@ fn a_target_whose_reach_moved_has_every_disposition_resting_on_it_run_again() {
     assert_eq!(
         output.status.code(),
         Some(2),
-        "`return_visit` is called but not asserted on, so its mutations survive the run \
-         against the target, and a survivor is a gap: {stderr}"
+        "a run that seals nothing establishes nothing, so each disposition run again is a lead: \
+         {stderr}"
+    );
+}
+
+/// Every repair record of the one recording `verify --trace` left in `fixture`.
+#[cfg(unix)]
+fn repairs(fixture: &Fixture) -> Vec<njutest::trace::RepairRecord> {
+    let traces = fixture.root.join(".njutest/trace");
+    let recording = std::fs::read_dir(&traces)
+        .expect("the trace directory")
+        .map(|entry| entry.expect("every trace entry is readable"))
+        .map(|entry| entry.path())
+        .next()
+        .expect("one recording");
+    njutest::trace::read_events(std::io::BufReader::new(
+        std::fs::File::open(recording.join(njutest::trace::FILE_NAME)).expect("the stream"),
+    ))
+    .expect("the events read back")
+    .into_iter()
+    .filter_map(|event| {
+        let njutest::trace::Payload::Repair { repair } = event.payload else {
+            return None;
+        };
+        Some(repair)
+    })
+    .collect()
+}
+
+#[cfg(unix)]
+#[test]
+fn a_sealed_verdict_resting_on_a_moved_target_is_put_again_on_the_sealed_bench() {
+    let fixture = fixture("fixture-drifts");
+    let output = verify(&fixture, &["--trace"]);
+    let stderr = njutest_devkit::process::strict_utf8(&output.stderr);
+    let document = document(&fixture);
+    let target = "fixture-drifts/lib/fixture_drifts";
+    let sealed: Vec<njutest::trace::RepairRecord> = repairs(&fixture)
+        .into_iter()
+        .filter(|repair| matches!(repair.by, njutest::trace::RepairedBy::Sealed { .. }))
+        .collect();
+    assert_eq!(
+        sealed.len(),
+        2,
+        "the two mutations of `return_visit` were sealed `unreached` on the word of a baseline \
+         the control contradicted, so each is put again on the sealed bench with the moved \
+         target counted among those reaching it (ADR 0036 decision 1): {sealed:?}\n{stderr}"
+    );
+    assert!(
+        sealed.iter().all(|repair| repair.target == target
+            && repair.now == "unreached"
+            && matches!(
+                &repair.by,
+                njutest::trace::RepairedBy::Sealed {
+                    evidence: rust_mutants::sealed::record::Evidence::Sealed { .. }
+                }
+            )),
+        "the moved target's own test seals, since `TMPDIR` names the instance's own temporary \
+         directory, which lies in no run scratch, so its control takes the first path and never \
+         reaches `return_visit`: each disposition is put again with the target counted among \
+         those reaching it, and stays `unreached` on the sealed controls' word rather than a \
+         lead: {sealed:?}"
+    );
+    assert!(
+        findings_of(&fixture, "unstable-baseline").is_empty(),
+        "each lead is then run natively against the moved target and reaches the site, so \
+         nothing rests on the moved record any more: {document}"
+    );
+    let part = &document["builds"][0]["parts"][0];
+    assert_eq!(
+        part["repaired"],
+        serde_json::json!([{ "target": target, "again": 2 }]),
+        "the part counts each disposition it ran again once, however many runs of it there \
+         were: {document}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_verdict_the_sealed_bench_establishes_again_replaces_the_one_resting_on_a_moved_target() {
+    let fixture = fixture("fixture-drifts-sealed");
+    let output = verify(&fixture, &["--trace"]);
+    let stderr = njutest_devkit::process::strict_utf8(&output.stderr);
+    let document = document(&fixture);
+    let target = "fixture-drifts-sealed/lib/fixture_drifts_sealed";
+    let part = &document["builds"][0]["parts"][0];
+    assert_eq!(part["drift"][0]["state"], "moved", "{document}\n{stderr}");
+    let sealed: Vec<njutest::trace::RepairRecord> = repairs(&fixture)
+        .into_iter()
+        .filter(|repair| {
+            matches!(
+                &repair.by,
+                njutest::trace::RepairedBy::Sealed {
+                    evidence: rust_mutants::sealed::record::Evidence::Sealed { .. }
+                }
+            )
+        })
+        .collect();
+    assert_eq!(
+        sealed.len(),
+        2,
+        "the two sealed `unreached` claims of `return_visit` rested on the moved record, and \
+         each, put again with the moved target counted among those reaching it, is established \
+         again by the sealed bench (ADR 0036 decision 1): {sealed:?}\n{stderr}"
+    );
+    let resting: Vec<&serde_json::Value> = part["mutants"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the part lists its mutants: {document}"))
+        .iter()
+        .filter(|mutant| mutant["decision"]["outcome"] == "unreached")
+        .filter(|mutant| {
+            mutant["evidence"]["kind"] != "sealed"
+                || !mutant["routing"]["reaching"]
+                    .as_array()
+                    .is_some_and(|reaching| reaching.iter().any(|one| one == target))
+        })
+        .collect();
+    assert!(
+        resting.is_empty(),
+        "each `unreached` claim rests on sealed executions again, with the moved target in its \
+         route: {resting:?}"
+    );
+    assert!(
+        findings_of(&fixture, "unstable-baseline").is_empty(),
+        "nothing rests on the moved record any more: {document}"
+    );
+    assert_eq!(
+        part["repaired"],
+        serde_json::json!([{ "target": target, "again": 2 }]),
+        "{document}"
     );
 }
 
@@ -967,9 +1304,28 @@ fn a_second_run_of_the_same_work_reads_the_first_run_back_rather_than_doing_it_a
     );
     assert_ne!(reused["run_id"], established["run_id"]);
     assert_eq!(parsed(&fixture).verdict(), established_verdict);
+    let mut restated = reused["builds"][0]["parts"][0]["accounting"].clone();
+    for column in ["reused_killed", "reused_survived"] {
+        restated["mutants"][column] =
+            established["builds"][0]["parts"][0]["accounting"]["mutants"][column].clone();
+    }
     assert_eq!(
-        reused["builds"][0]["parts"][0]["accounting"],
-        established["builds"][0]["parts"][0]["accounting"]
+        restated, established["builds"][0]["parts"][0]["accounting"],
+        "a report that restates a stored answer keeps every counter the first run kept, apart \
+         from naming each restated verdict's source in the reuse columns"
+    );
+    assert_eq!(
+        reused["builds"][0]["parts"][0]["mutants"]
+            .as_array()
+            .expect("rows")
+            .iter()
+            .filter(|row| row["reuse"]["reused"] == serde_json::Value::Bool(true))
+            .count(),
+        established["builds"][0]["parts"][0]["mutants"]
+            .as_array()
+            .expect("rows")
+            .len(),
+        "every verdict the first run established is marked as read back from it"
     );
 
     let afresh = verify(&fixture, &["--no-cache"]);
@@ -979,6 +1335,356 @@ fn a_second_run_of_the_same_work_reads_the_first_run_back_rather_than_doing_it_a
         false,
         "a run told to establish everything afresh does"
     );
+}
+
+/// One sealed execution as a report's evidence and a trace's `sealed-exec` both name it: the mutant a person types, the target, the test, and what it came to.
+#[cfg(unix)]
+type SealedExecution = (String, String, String, String);
+
+/// The text a report or a recording holds at `value`.
+#[cfg(unix)]
+fn text(value: &serde_json::Value) -> String {
+    value
+        .as_str()
+        .unwrap_or_else(|| panic!("text, not {value}"))
+        .to_owned()
+}
+
+/// Every sealed execution `report` rests on, row by row in catalog order and each row's in the order they ran.
+#[cfg(unix)]
+fn sealed_executions(report: &serde_json::Value) -> Vec<SealedExecution> {
+    let mut executions = Vec::new();
+    for build in report["builds"].as_array().expect("builds") {
+        for part in build["parts"].as_array().expect("parts") {
+            for row in part["mutants"].as_array().expect("mutation rows") {
+                if row["evidence"]["kind"] != "sealed" {
+                    continue;
+                }
+                for execution in row["evidence"]["executions"]
+                    .as_array()
+                    .expect("sealed executions")
+                {
+                    executions.push((
+                        text(&row["display_id"]),
+                        text(&execution["target"]),
+                        text(&execution["test"]),
+                        text(&execution["came_to"]),
+                    ));
+                }
+            }
+        }
+    }
+    executions
+}
+
+/// The runner's recording of the run named `run`, read back.
+#[cfg(unix)]
+fn recording_of(fixture: &Fixture, run: &str) -> Vec<njutest::trace::Event> {
+    let stream = fixture
+        .root
+        .join(".njutest/trace")
+        .join(run)
+        .join(njutest::trace::FILE_NAME);
+    njutest::trace::read_events(std::io::BufReader::new(
+        std::fs::File::open(&stream)
+            .unwrap_or_else(|error| panic!("{}: {error}", stream.display())),
+    ))
+    .unwrap_or_else(|error| panic!("{}: {error}", stream.display()))
+}
+
+/// Every phase a recording began, in the order it began them.
+#[cfg(unix)]
+fn phases_of(events: &[njutest::trace::Event]) -> Vec<&str> {
+    events
+        .iter()
+        .filter_map(|event| {
+            njutest::testkit::payload::of(&event.payload)
+                .phase_start()
+                .map(|phase| phase.name.as_str())
+        })
+        .collect()
+}
+
+#[cfg(unix)]
+#[test]
+fn a_stored_answer_is_reissued_once_every_sealed_execution_it_rests_on_ran_again_the_same() {
+    let fixture = fixture("fixture-assured");
+    let first = verify(&fixture, &[]);
+    assert_eq!(
+        first.status.code(),
+        Some(0),
+        "{}",
+        njutest_devkit::process::strict_utf8(&first.stderr)
+    );
+    let stored = sealed_executions(&document(&fixture));
+    assert!(
+        !stored.is_empty(),
+        "every mutation of the fixture rests on a sealed execution"
+    );
+
+    let second = verify(&fixture, &["--trace"]);
+    let stderr = njutest_devkit::process::strict_utf8(&second.stderr);
+    assert_eq!(second.status.code(), Some(0), "{stderr}");
+    let reissued = document(&fixture);
+    assert_eq!(
+        reissued["provenance"]["cached"], true,
+        "{reissued}\n{stderr}"
+    );
+    let events = recording_of(&fixture, &text(&reissued["run_id"]));
+    let phases = phases_of(&events);
+    assert!(
+        phases.contains(&"rerun"),
+        "a run that reissues a stored answer runs the sealed executions it rests on again first, \
+         and its recording says so: {phases:?}"
+    );
+    let reran: Vec<SealedExecution> = events
+        .iter()
+        .filter_map(|event| njutest::testkit::payload::of(&event.payload).sealed_exec())
+        .map(|sealed| {
+            (
+                sealed.mutant.clone(),
+                sealed.target.clone(),
+                sealed.test.clone(),
+                sealed.came_to.clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        reran, stored,
+        "every sealed execution the stored answer rests on ran again, in the order it first ran, \
+         and came to what it came to then"
+    );
+    let problems = njutest::trace::check(&events);
+    assert!(
+        problems.is_empty(),
+        "a recording begins with its run and ends with it, whatever the run answered from: \
+         {problems:?}"
+    );
+    audited(&fixture, &text(&reissued["run_id"]));
+}
+
+/// Runs the proof audit over the run named `run` of `fixture`, from its report and its recording, and holds it to nothing violated.
+#[cfg(unix)]
+fn audited(fixture: &Fixture, run: &str) -> String {
+    let reports = fixture
+        .root
+        .join(njutest::config::DEFAULT_REPORTS_DIRECTORY)
+        .join("runs")
+        .join(run);
+    let audited = njutest_devkit::paths::command(&njutest_devkit::paths::cargo_binary())
+        .args(["xtask", "proofaudit"])
+        .arg(&reports)
+        .arg("--trace")
+        .arg(fixture.root.join(".njutest/trace").join(run))
+        .arg("--root")
+        .arg(&fixture.root)
+        .current_dir(njutest_devkit::paths::workspace_root())
+        .output()
+        .expect("the audit starts");
+    let audit = njutest_devkit::process::strict_utf8(&audited.stdout);
+    assert!(
+        audited
+            .status
+            .code()
+            .is_some_and(|code| code == 0 || code == 3)
+            && audit.contains("; 0 violations"),
+        "the audit ran to its own end over the reissued report: {audit}\n{}",
+        njutest_devkit::process::strict_utf8(&audited.stderr)
+    );
+    assert!(
+        !audit.contains("violation:"),
+        "a report reissued from the store is re-decided from what the reissuing run recorded: \
+         {audit}"
+    );
+    audit.into_owned()
+}
+
+#[cfg(unix)]
+#[test]
+fn a_stored_answer_resting_on_no_sealed_execution_is_reissued_with_nothing_run_again() {
+    let fixture = fixture("fixture-assured");
+    let first = verify(&fixture, &["--no-seal"]);
+    let stderr = njutest_devkit::process::strict_utf8(&first.stderr);
+    assert_eq!(
+        first.status.code(),
+        Some(2),
+        "a run that seals nothing answers with leads: {stderr}"
+    );
+    assert_eq!(
+        sealed_executions(&document(&fixture)),
+        Vec::new(),
+        "and rests on no sealed execution"
+    );
+
+    let second = verify(&fixture, &["--no-seal", "--trace"]);
+    let stderr = njutest_devkit::process::strict_utf8(&second.stderr);
+    assert_eq!(second.status.code(), Some(2), "{stderr}");
+    let reissued = document(&fixture);
+    assert_eq!(
+        reissued["provenance"]["cached"], true,
+        "an answer that affirms nothing sealed is reissued as it is: {reissued}\n{stderr}"
+    );
+    let events = recording_of(&fixture, &text(&reissued["run_id"]));
+    assert_eq!(
+        phases_of(&events),
+        Vec::<&str>::new(),
+        "nothing sealed is there to run again, so nothing runs"
+    );
+    let problems = njutest::trace::check(&events);
+    assert!(
+        problems.is_empty(),
+        "a recording begins with its run and ends with it, whatever the run answered from: \
+         {problems:?}"
+    );
+    audited(&fixture, &text(&reissued["run_id"]));
+}
+
+/// The one sealed execution a test contradicted in a stored answer, and what it came to when it ran.
+#[cfg(unix)]
+struct Flipped {
+    mutant: String,
+    target: String,
+    test: String,
+    came_to: String,
+}
+
+/// The count at `cell`, moved by `by`.
+#[cfg(unix)]
+fn moved(cell: &mut serde_json::Value, by: i64) {
+    let now = cell
+        .as_i64()
+        .and_then(|count| count.checked_add(by))
+        .unwrap_or_else(|| panic!("a count that moves by {by}, not {cell}"));
+    *cell = serde_json::json!(now);
+}
+
+/// Flips the first kill of the answer the store holds for `fixture` to a survivor its one sealed execution passed, with every count and finding the audit derives from that row made to agree, and puts it back through the store's own door, which audits it as it audits every answer it keeps.
+#[cfg(unix)]
+fn contradicted(fixture: &Fixture) -> Flipped {
+    let identity = rust_mutants::id::HexDigest::try_from(
+        text(&document(fixture)["provenance"]["identity"]).as_str(),
+    )
+    .expect("a canonical identity");
+    let store = njutest::cache::store::Store::new(
+        &njutest_devkit::paths::cache_beside(&fixture.root).expect("a cache directory"),
+        u64::MAX,
+        std::time::Duration::from_hours(1),
+    );
+    let entry = store.entry(&identity);
+    let mut stored: serde_json::Value = njutest_devkit::strictjson::decode_str(
+        &std::fs::read_to_string(&entry)
+            .unwrap_or_else(|error| panic!("{}: {error}", entry.display())),
+    )
+    .expect("the stored answer is JSON");
+    let part = &mut stored["report"]["builds"][0]["parts"][0];
+    let run = part["run_id"].clone();
+    let rows = part["mutants"].as_array_mut().expect("mutation rows");
+    let row = rows
+        .iter_mut()
+        .find(|row| row["decision"]["outcome"] == "killed")
+        .expect("the fixture kills every mutation");
+    let mutant = text(&row["display_id"]);
+    let executions = row["evidence"]["executions"]
+        .as_array_mut()
+        .expect("sealed executions");
+    assert_eq!(
+        executions.len(),
+        1,
+        "a kill by the first test it was put to"
+    );
+    let execution = &mut executions[0];
+    let flipped = Flipped {
+        mutant,
+        target: text(&execution["target"]),
+        test: text(&execution["test"]),
+        came_to: text(&execution["came_to"]),
+    };
+    execution["came_to"] = serde_json::json!("passed");
+    row["decision"] =
+        serde_json::json!({"outcome": "survived", "killed_by": null, "step_boundary": null});
+    row["routing"]["answered"] =
+        serde_json::json!([{"target": flipped.target, "outcome": "survived"}]);
+    let finding = serde_json::json!({
+        "kind": "surviving-mutant",
+        "subject": flipped.mutant,
+        "detail": format!("no test noticed {} at {}", text(&row["rule"]), text(&row["path"])),
+        "origin": {"scope": "source", "build": "default", "run_id": run, "part": {"kind": "whole"}},
+        "path": row["path"],
+        "position": row["position"],
+    });
+    part["findings"]
+        .as_array_mut()
+        .expect("findings")
+        .push(finding);
+    let counts = &mut part["accounting"]["mutants"];
+    moved(&mut counts["killed"], -1);
+    moved(&mut counts["survived"], 1);
+    moved(&mut counts["observers"]["tests"], -1);
+    moved(&mut counts["observers"]["unnoticed"], 1);
+    let report = njutest::report::json::parse(
+        &serde_json::to_string(&stored).expect("the flipped answer renders"),
+    )
+    .expect("the flipped answer is still an assurance report this release reads");
+    store.put(&report).unwrap_or_else(|error| {
+        panic!("the store takes the flipped answer, which its own audit finds coherent: {error}")
+    });
+    assert!(
+        store
+            .get(&identity)
+            .expect("the store reads the flipped answer back as the answer it claims to be")
+            .is_some(),
+        "the flipped answer is the one the store holds for this identity"
+    );
+    flipped
+}
+
+#[cfg(unix)]
+#[test]
+fn a_stored_answer_one_of_its_sealed_executions_contradicts_is_established_again_and_named() {
+    let fixture = fixture("fixture-assured");
+    let first = verify(&fixture, &[]);
+    assert_eq!(
+        first.status.code(),
+        Some(0),
+        "{}",
+        njutest_devkit::process::strict_utf8(&first.stderr)
+    );
+    let flipped = contradicted(&fixture);
+
+    let second = verify(&fixture, &[]);
+    let stderr = njutest_devkit::process::strict_utf8(&second.stderr);
+    let answered = document(&fixture);
+    assert_eq!(
+        answered["provenance"]["cached"],
+        false,
+        "a stored answer one of whose sealed executions comes to something else when it runs \
+         again is not believed, so the run establishes everything again; this one exited {:?} \
+         with {} after saying {stderr:?}",
+        second.status.code(),
+        answered["builds"][0]["parts"][0]["accounting"]["mutants"]
+    );
+    assert_eq!(
+        second.status.code(),
+        Some(0),
+        "and what it establishes is what the fixture is: every mutation killed: {stderr}"
+    );
+    let said = stderr
+        .lines()
+        .find(|line| line.contains("NJ8006"))
+        .unwrap_or_else(|| panic!("the run says why it did not believe the store: {stderr}"));
+    for named in [
+        flipped.mutant.as_str(),
+        flipped.target.as_str(),
+        flipped.test.as_str(),
+        "passed",
+        flipped.came_to.as_str(),
+    ] {
+        assert!(
+            said.contains(named),
+            "the run names the execution that differed, what the store said it came to, and \
+             what it came to now; {named} is missing: {said}"
+        );
+    }
 }
 
 #[cfg(unix)]
@@ -1401,7 +2107,7 @@ fn what_changed_outside_a_package_does_not_make_its_own_evidence_stale() {
 #[test]
 fn a_kill_njutest_measures_ends_at_the_first_failing_test_rather_than_at_the_clock() {
     let fixture = fixture("fixture-balanced-fails-then-hangs");
-    let output = verify(&fixture, &["--trace"]);
+    let output = verify(&fixture, &["--trace", "--no-seal"]);
     let said = njutest_devkit::process::strict_utf8(&output.stderr);
     assert!(
         matches!(output.status.code(), Some(0..=2)),
@@ -1557,7 +2263,7 @@ fn a_library_that_documents_no_example_is_not_a_target_that_ran_nothing() {
 #[test]
 fn a_mutation_only_another_process_reaches_is_settled_by_the_suite_that_reaches_it() {
     let fixture = fixture("fixture-subprocess");
-    verify(&fixture, &[]);
+    verify(&fixture, &["--no-seal"]);
     let report = document(&fixture);
 
     let mutants = report["builds"][0]["parts"][0]["mutants"]
@@ -1581,8 +2287,7 @@ fn a_mutation_only_another_process_reaches_is_settled_by_the_suite_that_reaches_
     assert_eq!(
         parsed(&fixture).verdict(),
         Verdict::Insufficient,
-        "one mutation nothing noticed is a gap in the suite, and neither of the other \
-         two is a test that fails on the original code"
+        "what a native run says is a lead, and a lead establishes nothing"
     );
 
     let killers: Vec<&str> = mutants
@@ -1735,8 +2440,8 @@ fn two_parts_of_one_catalog_judge_every_mutant_between_them_and_none_twice() {
     let first = verify(&fixture, &["--shard", "1/2"]);
     assert_eq!(
         first.status.code(),
-        Some(0),
-        "{}",
+        Some(i32::from(njutest::cli::EXIT_INSUFFICIENT)),
+        "a part assures nothing on its own: {}",
         njutest_devkit::process::strict_utf8(&first.stderr)
     );
     let one = judged(&fixture);
@@ -1744,8 +2449,8 @@ fn two_parts_of_one_catalog_judge_every_mutant_between_them_and_none_twice() {
     let second = verify(&fixture, &["--shard", "2/2"]);
     assert_eq!(
         second.status.code(),
-        Some(0),
-        "{}",
+        Some(i32::from(njutest::cli::EXIT_INSUFFICIENT)),
+        "a part assures nothing on its own: {}",
         njutest_devkit::process::strict_utf8(&second.stderr)
     );
     let two = judged(&fixture);
@@ -1771,7 +2476,12 @@ fn a_part_of_a_catalog_does_not_claim_what_the_whole_would() {
     assert_eq!(verify(&fixture, &[]).status.code(), Some(0));
     assert_eq!(parsed(&fixture).verdict(), Verdict::Assured);
 
-    assert_eq!(verify(&fixture, &["--shard", "1/2"]).status.code(), Some(0));
+    assert_eq!(
+        verify(&fixture, &["--shard", "1/2"]).status.code(),
+        Some(i32::from(njutest::cli::EXIT_INSUFFICIENT)),
+        "a part exits as a run that established too little to conclude, so a job that runs one \
+         does not pass on it"
+    );
     let part = document(&fixture);
     assert_eq!(
         parsed(&fixture).verdict(),
@@ -1808,9 +2518,10 @@ fn a_part_that_is_not_a_part_of_anything_is_refused_before_anything_is_built() {
 #[test]
 fn the_parts_of_one_catalog_merge_into_the_verdict_neither_of_them_could_say() {
     let fixture = fixture("fixture-assured");
-    assert_eq!(verify(&fixture, &["--shard", "1/2"]).status.code(), Some(0));
+    let partial = Some(i32::from(njutest::cli::EXIT_INSUFFICIENT));
+    assert_eq!(verify(&fixture, &["--shard", "1/2"]).status.code(), partial);
     let one = latest(&fixture);
-    assert_eq!(verify(&fixture, &["--shard", "2/2"]).status.code(), Some(0));
+    assert_eq!(verify(&fixture, &["--shard", "2/2"]).status.code(), partial);
     let two = latest(&fixture);
     assert_ne!(one, two, "two runs, two reports");
 
@@ -1859,6 +2570,97 @@ fn the_parts_of_one_catalog_merge_into_the_verdict_neither_of_them_could_say() {
                 .unwrap_or_default())
             .sum::<u64>(),
         4
+    );
+}
+
+/// `report` with the first sealed execution that detected its mutation said to have detected it another way, which a run again of it cannot come to.
+#[cfg(unix)]
+fn detected_otherwise(report: &Path, into: &Path) {
+    let text = std::fs::read_to_string(report).expect("the shard's report");
+    let mut document: serde_json::Value =
+        njutest_devkit::strictjson::decode_str(&text).expect("the shard's report is JSON");
+    let rows = document["report"]["builds"][0]["source"]["mutants"]
+        .as_array_mut()
+        .expect("the shard's rows");
+    let ending = rows
+        .iter_mut()
+        .filter(|row| row["evidence"]["kind"] == "sealed")
+        .flat_map(|row| {
+            row["evidence"]["executions"]
+                .as_array_mut()
+                .expect("a sealed row names its executions")
+                .iter_mut()
+        })
+        .map(|execution| &mut execution["came_to"])
+        .find(|came_to| *came_to == "panicked" || *came_to == "failed")
+        .expect("a sealed execution that detected its mutation");
+    *ending = if *ending == "panicked" {
+        serde_json::json!("failed")
+    } else {
+        serde_json::json!("panicked")
+    };
+    std::fs::write(into, document.to_string()).expect("the altered shard");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_merge_asked_to_run_again_writes_the_whole_only_where_each_execution_came_out_the_same() {
+    let fixture = fixture("fixture-assured");
+    let partial = Some(i32::from(njutest::cli::EXIT_INSUFFICIENT));
+    assert_eq!(verify(&fixture, &["--shard", "1/2"]).status.code(), partial);
+    let one = latest(&fixture);
+    assert_eq!(verify(&fixture, &["--shard", "2/2"]).status.code(), partial);
+    let two = latest(&fixture);
+    let root = fixture
+        .root
+        .to_str()
+        .expect("test protocol paths are UTF-8");
+    let merge = |second: &Path| {
+        asked(
+            &of(&fixture.root, &[]),
+            &[
+                "merge",
+                "--rerun",
+                "--directory",
+                root,
+                "--offline",
+                "--locked",
+                one.to_str().expect("test protocol paths are UTF-8"),
+                second.to_str().expect("test protocol paths are UTF-8"),
+            ],
+        )
+    };
+
+    let reproduced = merge(&two);
+    let said = njutest_devkit::process::strict_utf8(&reproduced.stderr);
+    assert_eq!(reproduced.status.code(), Some(0), "{said}");
+    assert!(
+        said.contains("came out the same on this machine"),
+        "a merge runs nothing of its own, and asked to, it runs what its parts rest on: {said}"
+    );
+    assert!(
+        njutest::report::json::parse(&njutest_devkit::process::strict_utf8(&reproduced.stdout))
+            .is_ok(),
+        "and writes the whole once they came out the same"
+    );
+
+    let altered = fixture.root.join("altered-shard.json");
+    detected_otherwise(&two, &altered);
+    let refused = merge(&altered);
+    let said = njutest_devkit::process::strict_utf8(&refused.stderr);
+    assert_eq!(
+        refused.status.code(),
+        Some(i32::from(njutest::cli::EXIT_ERROR)),
+        "{said}"
+    );
+    assert!(
+        said.contains("NJ8006"),
+        "a part whose sealed execution comes to something else on this bench is not \
+         believed (ADR 0046, decision 7): {said}"
+    );
+    assert!(
+        refused.stdout.is_empty(),
+        "and the whole it would have affirmed is not written"
     );
 }
 
@@ -2032,7 +2834,7 @@ fn concluded_from(text: &str) -> (Verdict, Vec<(String, String)>, Vec<String>) {
     let mut limitations: Vec<String> = conclusion
         .limitations
         .iter()
-        .map(|limitation| limitation.name.clone())
+        .map(|limitation| limitation.name().to_owned())
         .collect();
     limitations.sort();
     (conclusion.verdict, findings, limitations)
@@ -2138,11 +2940,11 @@ fn a_catalog_measured_in_shards_and_merged_concludes_what_it_concludes_measured_
 #[test]
 fn every_kill_a_run_reports_rests_on_a_confirmation_it_recorded() {
     let fixture = fixture("fixture-assured");
-    let output = verify(&fixture, &["--no-cache", "--trace"]);
+    let output = verify(&fixture, &["--no-cache", "--trace", "--no-seal"]);
     assert_eq!(
         output.status.code(),
-        Some(0),
-        "{}",
+        Some(i32::from(njutest::cli::EXIT_INSUFFICIENT)),
+        "a native kill is a lead, and a lead establishes nothing: {}",
         njutest_devkit::process::strict_utf8(&output.stderr)
     );
     let recording = std::fs::read_dir(fixture.root.join(".njutest/trace"))
@@ -2292,7 +3094,7 @@ fn concluded_json(
     render(&conclusion).as_array().cloned().unwrap_or_default()
 }
 
-/// Leaves the state a run interrupted after its kills would leave, carrying every kill `established` recorded.
+/// Leaves the state a run interrupted after its kills would leave, carrying every kill `established` recorded on sealed executions, which is every kill a checkpoint holds.
 #[cfg(unix)]
 fn interrupted_after_its_kills(fixture: &Fixture, established: &serde_json::Value) {
     let identity = established["provenance"]["identity"]
@@ -2304,7 +3106,7 @@ fn interrupted_after_its_kills(fixture: &Fixture, established: &serde_json::Valu
         .as_array()
         .expect("mutants")
         .iter()
-        .filter(|row| row["decision"]["outcome"] == "killed")
+        .filter(|row| row["decision"]["outcome"] == "killed" && row["evidence"]["kind"] == "sealed")
         .map(|row| {
             serde_json::json!({
                 "id": row["id"],
@@ -2318,6 +3120,7 @@ fn interrupted_after_its_kills(fixture: &Fixture, established: &serde_json::Valu
                         .take_while(|one| one["target"] != row["decision"]["killed_by"])
                         .collect::<Vec<_>>(),
                 },
+                "evidence": row["evidence"],
                 "duration_ms": 1,
             })
         })
@@ -2492,7 +3295,7 @@ fn rows_by_place(report: &serde_json::Value) -> BTreeMap<Place, serde_json::Valu
 #[test]
 fn an_answer_carries_across_an_edit_no_execution_of_it_entered() {
     let fixture = fixture("fixture-two-bodies");
-    let first = verify(&fixture, &[]);
+    let first = verify(&fixture, &["--no-seal"]);
     assert!(
         first.status.code().is_some_and(|code| code < 3),
         "{}",
@@ -2502,7 +3305,7 @@ fn an_answer_carries_across_an_edit_no_execution_of_it_entered() {
     let text = std::fs::read_to_string(&source).expect("the library");
     std::fs::write(&source, text.replace("left + right", "right + left"))
         .expect("edit inside the body of `total` alone");
-    let carried = verify(&fixture, &[]);
+    let carried = verify(&fixture, &["--no-seal", "--trace"]);
     assert!(
         carried.status.code().is_some_and(|code| code < 3),
         "{}",
@@ -2516,7 +3319,7 @@ fn an_answer_carries_across_an_edit_no_execution_of_it_entered() {
         "the mutations of `over` were answered by executions that never entered `total`, so an \
          edit inside `total` alone leaves those answers standing: {with_carry:#?}"
     );
-    let fresh = verify(&fixture, &["--no-cache"]);
+    let fresh = verify(&fixture, &["--no-cache", "--no-seal"]);
     assert!(fresh.status.code().is_some_and(|code| code < 3));
     let without = rows_by_place(&document(&fixture));
     for (place, row) in &with_carry {
@@ -2528,6 +3331,172 @@ fn an_answer_carries_across_an_edit_no_execution_of_it_entered() {
             "a carried answer is the answer running it gives: {place:?}"
         );
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn an_untraced_run_carries_nothing_since_it_keeps_nothing_an_audit_could_hold_it_to() {
+    let fixture = fixture("fixture-two-bodies");
+    let first = verify(&fixture, &["--no-seal"]);
+    assert!(
+        first.status.code().is_some_and(|code| code < 3),
+        "{}",
+        njutest_devkit::process::strict_utf8(&first.stderr)
+    );
+    let source = fixture.root.join("src/lib.rs");
+    let text = std::fs::read_to_string(&source).expect("the library");
+    std::fs::write(&source, text.replace("left + right", "right + left"))
+        .expect("edit inside the body of `total` alone");
+    let untraced = verify(&fixture, &["--no-seal"]);
+    assert!(
+        untraced.status.code().is_some_and(|code| code < 3),
+        "{}",
+        njutest_devkit::process::strict_utf8(&untraced.stderr)
+    );
+    let rows = rows_by_place(&document(&fixture));
+    let carried: Vec<&Place> = rows
+        .iter()
+        .filter(|(_, row)| row["reuse"]["reused"] == true)
+        .map(|(place, _)| place)
+        .collect();
+    assert!(
+        carried.is_empty(),
+        "an untraced run keeps no carried record, skeleton or reach beside a recording, so an \
+         answer it carried would rest on nothing an audit can read again: every mutation is run \
+         again instead, and none of {carried:?} may be read back"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_traced_run_keeps_what_every_answer_it_carried_rests_on_beside_the_engine_recording() {
+    let fixture = fixture("fixture-two-bodies");
+    let first = verify(&fixture, &["--no-seal"]);
+    assert!(
+        first.status.code().is_some_and(|code| code < 3),
+        "{}",
+        njutest_devkit::process::strict_utf8(&first.stderr)
+    );
+    let source = fixture.root.join("src/lib.rs");
+    let text = std::fs::read_to_string(&source).expect("the library");
+    std::fs::write(&source, text.replace("left + right", "right + left"))
+        .expect("edit inside the body of `total` alone");
+    let trace = fixture
+        .root
+        .parent()
+        .expect("the fixture's own directory")
+        .join("carried-trace");
+    let flag = format!("--trace={}", trace.display());
+    let carried = verify(&fixture, &["--no-seal", &flag]);
+    assert!(
+        carried.status.code().is_some_and(|code| code < 3),
+        "{}",
+        njutest_devkit::process::strict_utf8(&carried.stderr)
+    );
+    let reused: BTreeSet<String> = rows_by_place(&document(&fixture))
+        .values()
+        .filter(|row| row["reuse"]["reused"] == true)
+        .map(|row| row["id"].as_str().expect("an identity").to_owned())
+        .collect();
+    assert!(
+        !reused.is_empty(),
+        "the mutations of `over` are carried across an edit inside `total`"
+    );
+    let engine = trace.join("builds").join("0000000000").join("engine");
+    let believed: serde_json::Value = njutest_devkit::strictjson::decode_str(
+        &std::fs::read_to_string(engine.join("carried-v1.json"))
+            .expect("the carried records the build believed"),
+    )
+    .expect("a carried document");
+    let records: BTreeSet<String> = believed["records"]
+        .as_array()
+        .expect("the records")
+        .iter()
+        .map(|record| record["mutant"].as_str().expect("a mutant").to_owned())
+        .collect();
+    assert_eq!(
+        records, reused,
+        "every answer the build carried is one whose record it keeps beside its recording, which \
+         is what an audit holds to ADR 0041 again"
+    );
+    for kept in ["skeletons-v1.json", "touched-v1.json", "catalog-v1.json"] {
+        assert!(
+            engine.join(kept).is_file(),
+            "and {kept}, which the records are read against"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_native_whole_contract_carries_only_what_its_source_and_trace_can_audit() {
+    let fixture = fixture("fixture-two-bodies");
+    std::fs::write(
+        fixture.root.join(".njutest.toml"),
+        "version = 1\ncontract = \"whole-v1\"\n[execution]\ntest_binary_args = [\"--test-threads=1\"]\n",
+    )
+    .expect("the whole contract");
+    let source = fixture.root.join("src/lib.rs");
+    let text = std::fs::read_to_string(&source).expect("the library");
+    let text = format!(
+        "{text}\n\
+         /// ```\n\
+         /// const EARLY: u32 = fixture_two_bodies::evaluated_later(3);\n\
+         /// assert_eq!(EARLY, 5);\n\
+         /// ```\n\
+         pub const fn evaluated_later(value: u32) -> u32 {{ value + 2 }}\n\
+         #[cfg(any())]\n\
+         const DISABLED: u32 = evaluated_later(7);\n"
+    );
+    std::fs::write(&source, &text).expect("uses outside the validation build");
+    let first = verify(&fixture, &["--no-seal", "--trace"]);
+    assert!(
+        first.status.code().is_some_and(|code| code < 3),
+        "a doctest keeps the const it evaluates: {}",
+        njutest_devkit::process::strict_utf8(&first.stderr)
+    );
+    assert_eq!(
+        document(&fixture)["builds"][0]["parts"][0]["accounting"]["targets"]["failed"],
+        0,
+        "a const use in the doctest must keep its baseline passing"
+    );
+    std::fs::write(&source, text.replace("left + right", "right + left"))
+        .expect("an edit inside total alone");
+    let carried = verify(&fixture, &["--no-seal", "--trace"]);
+    assert!(
+        carried.status.code().is_some_and(|code| code < 3),
+        "{}",
+        njutest_devkit::process::strict_utf8(&carried.stderr)
+    );
+    let report = document(&fixture);
+    assert_eq!(report["contract"], "whole-v1", "{report}");
+    let rows = rows_by_place(&report);
+    assert!(
+        rows.values().any(|row| row["reuse"]["reused"] == true),
+        "the unchanged over body carries at least one answer: {report}"
+    );
+    assert!(
+        report.to_string().contains("skipped-unvalidated-const-use"),
+        "the source gate states why the const body stays unchanged: {report}"
+    );
+    let audit = audited(
+        &fixture,
+        report["run_id"].as_str().expect("the carried run identity"),
+    );
+    assert!(
+        audit.contains("layer: reuse:"),
+        "the audit re-decides the carried answers of a real whole-v1 run: {audit}"
+    );
+    let unmeasured: Vec<&str> = audit
+        .lines()
+        .filter(|line| line.starts_with("unaudited:"))
+        .collect();
+    assert!(
+        unmeasured.len() == 1
+            && unmeasured[0].starts_with("unaudited: concurrency:")
+            && unmeasured[0].contains("a scan of every package they link"),
+        "the carry and source premises are all audited; the concurrency source scan is stated: {audit}"
+    );
 }
 
 /// The answers every row of the latest run's first part was given, by where and what it mutates.
@@ -2559,7 +3528,7 @@ fn answers_by_place(report: &serde_json::Value) -> BTreeMap<Place, Vec<(String, 
 #[test]
 fn a_run_asks_first_the_target_that_killed_the_mutant_last_time() {
     let fixture = fixture("fixture-killer-last");
-    let first = verify(&fixture, &[]);
+    let first = verify(&fixture, &["--no-seal"]);
     assert!(
         first.status.code().is_some_and(|code| code < 3),
         "{}",
@@ -2588,7 +3557,7 @@ fn a_run_asks_first_the_target_that_killed_the_mutant_last_time() {
         format!("{text}\n/// One more item.\npub const MORE: u32 = 1;\n"),
     )
     .expect("an edit no mutant of `double` is in");
-    let second = verify(&fixture, &[]);
+    let second = verify(&fixture, &["--no-seal"]);
     assert!(
         second.status.code().is_some_and(|code| code < 3),
         "{}",
@@ -2608,6 +3577,365 @@ fn a_run_asks_first_the_target_that_killed_the_mutant_last_time() {
             "the store no longer answers, but it still says which target killed the mutation, so \
              this run asks that one first and the library's test is never run for it: \
              {place:?} {answered:?}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_kept_sealed_answer_about_one_mutation_is_believed_only_once_its_executions_come_out_the_same()
+{
+    use rust_mutants::sealed::record::{Came, Evidence};
+    let fixture = fixture("fixture-assured");
+    let first = verify(&fixture, &[]);
+    assert_eq!(
+        first.status.code(),
+        Some(0),
+        "{}",
+        njutest_devkit::process::strict_utf8(&first.stderr)
+    );
+    let established = document(&fixture);
+    let store = njutest::cache::store::Store::new(
+        &njutest_devkit::paths::cache_beside(&fixture.root).expect("a cache directory"),
+        u64::MAX,
+        std::time::Duration::from_hours(1),
+    );
+    let identity = rust_mutants::id::HexDigest::try_from(
+        text(&established["provenance"]["identity"]).as_str(),
+    )
+    .expect("a canonical identity");
+    std::fs::remove_file(store.entry(&identity))
+        .expect("the whole answer is forgotten, so the next run asks the store of mutations");
+    let row = established["builds"][0]["parts"][0]["mutants"]
+        .as_array()
+        .expect("mutation rows")
+        .iter()
+        .find(|row| row["decision"]["outcome"] == "killed" && row["evidence"]["kind"] == "sealed")
+        .expect("the fixture kills a mutation with a sealed execution")
+        .clone();
+    let mutant = rust_mutants::id::HexDigest::try_from(text(&row["id"]).as_str())
+        .expect("a canonical mutant identity");
+    let mut record = njutest::evidence::store::read(store.root(), &mutant)
+        .expect("the store of mutations reads")
+        .expect("the run kept what it established about the mutation");
+    let Evidence::Sealed { executions } = &mut record.evidence else {
+        panic!("a sealed kill is kept with its sealed executions: {record:?}");
+    };
+    let killing = executions
+        .last_mut()
+        .expect("a sealed kill rests on the execution that detected it");
+    let came_to = killing.came_to;
+    killing.came_to = if came_to == Came::Failed {
+        Came::Panicked
+    } else {
+        Came::Failed
+    };
+    let (target, test, stored) = (
+        killing.target.clone(),
+        killing.test.clone(),
+        killing.came_to,
+    );
+    njutest::evidence::store::write(store.root(), &record)
+        .expect("the store of mutations takes the record");
+    assert_eq!(
+        njutest::evidence::store::read(store.root(), &mutant)
+            .expect("the store of mutations reads the record back")
+            .as_ref(),
+        Some(&record),
+        "the record passes every check the store makes of what it reads"
+    );
+
+    let second = verify(&fixture, &["--trace"]);
+    let stderr = njutest_devkit::process::strict_utf8(&second.stderr);
+    assert_eq!(second.status.code(), Some(0), "{stderr}");
+    let answered = document(&fixture);
+    assert_eq!(answered["provenance"]["cached"], false, "{stderr}");
+    let now = answered["builds"][0]["parts"][0]["mutants"]
+        .as_array()
+        .expect("mutation rows")
+        .iter()
+        .find(|one| one["id"] == row["id"])
+        .expect("the mutation is still in the catalog")
+        .clone();
+    assert_eq!(
+        now["reuse"]["reused"], false,
+        "a kept sealed answer one of whose executions comes to something else when it is put \
+         again is not believed, and the run establishes the mutation afresh: {now}"
+    );
+    assert_eq!(
+        now["evidence"]["executions"]
+            .as_array()
+            .and_then(|executions| executions.last())
+            .map(|execution| execution["came_to"].clone()),
+        Some(serde_json::json!(came_to.name())),
+        "what the run established is what the execution comes to: {now}"
+    );
+    let events = recording_of(&fixture, &text(&answered["run_id"]));
+    let said: Vec<String> = events
+        .iter()
+        .filter_map(|event| njutest::testkit::payload::of(&event.payload).note())
+        .filter(|note| note.kind == "unreproduced")
+        .map(|note| note.detail.clone())
+        .collect();
+    let display = text(&row["display_id"]);
+    let note = said
+        .iter()
+        .find(|detail| detail.contains(&display))
+        .unwrap_or_else(|| panic!("the recording names the answer it did not believe: {said:?}"));
+    for named in [
+        target.as_str(),
+        test.as_str(),
+        stored.name(),
+        came_to.name(),
+    ] {
+        assert!(
+            note.contains(named),
+            "the note names the execution that differed, what the store said it came to, and \
+             what it came to now; {named} is missing: {note}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_kill_a_checkpoint_kept_is_inherited_only_once_its_executions_come_out_the_same() {
+    use rust_mutants::sealed::record::{Came, Evidence};
+    let fixture = fixture("fixture-assured");
+    let first = verify(&fixture, &[]);
+    assert_eq!(
+        first.status.code(),
+        Some(0),
+        "{}",
+        njutest_devkit::process::strict_utf8(&first.stderr)
+    );
+    let established = document(&fixture);
+    let njutest::report::ReportDocument::Complete(report) = parsed(&fixture) else {
+        panic!("a run of the whole catalog writes a complete report");
+    };
+    let build = report.builds().next().expect("the run made one build");
+    let store = njutest::cache::store::Store::new(
+        &njutest_devkit::paths::cache_beside(&fixture.root).expect("a cache directory"),
+        u64::MAX,
+        std::time::Duration::from_hours(1),
+    );
+    let whole = text(&established["provenance"]["identity"]);
+    let identity =
+        rust_mutants::id::HexDigest::try_from(whole.as_str()).expect("a canonical identity");
+    std::fs::remove_file(store.entry(&identity))
+        .expect("the whole answer is forgotten, so the next run resumes where the checkpoint says");
+    let row = established["builds"][0]["parts"][0]["mutants"]
+        .as_array()
+        .expect("mutation rows")
+        .iter()
+        .find(|row| row["decision"]["outcome"] == "killed" && row["evidence"]["kind"] == "sealed")
+        .expect("the fixture kills a mutation with a sealed execution")
+        .clone();
+    let mutant = rust_mutants::id::HexDigest::try_from(text(&row["id"]).as_str())
+        .expect("a canonical mutant identity");
+    let mut evidence = njutest::evidence::store::read(store.root(), &mutant)
+        .expect("the store of mutations reads")
+        .expect("the run kept what it established about the mutation")
+        .evidence;
+    let Evidence::Sealed { executions } = &mut evidence else {
+        panic!("a sealed kill rests on its sealed executions: {evidence:?}");
+    };
+    let killing = executions
+        .last_mut()
+        .expect("a sealed kill rests on the execution that detected it");
+    let came_to = killing.came_to;
+    killing.came_to = if came_to == Came::Failed {
+        Came::Panicked
+    } else {
+        Came::Failed
+    };
+    let (target, test, stored) = (
+        killing.target.clone(),
+        killing.test.clone(),
+        killing.came_to,
+    );
+    let continuation = njutest::evidence::key::continuation_identity(&whole, build.selection());
+    let mut state = njutest::checkpoint::State::new(&continuation);
+    state.attempts = 1;
+    state.record_mutant(njutest::checkpoint::SavedMutant {
+        id: text(&row["id"]),
+        disposition: njutest::checkpoint::SavedDisposition::Killed {
+            by: text(&row["decision"]["killed_by"]),
+            before: Vec::new(),
+        },
+        evidence,
+        duration_ms: 0,
+    });
+    let checkpoints = store.root().join(njutest::app::verify::CHECKPOINTS);
+    njutest::checkpoint::write(&checkpoints, &state).expect("the checkpoint takes the state");
+    assert_eq!(
+        njutest::checkpoint::read(&checkpoints, &continuation)
+            .expect("the checkpoint reads the state back")
+            .as_ref(),
+        Some(&state),
+        "the state passes every check the checkpoint makes of what it reads"
+    );
+
+    let second = verify(&fixture, &["--trace"]);
+    let stderr = njutest_devkit::process::strict_utf8(&second.stderr);
+    assert_eq!(second.status.code(), Some(0), "{stderr}");
+    let answered = document(&fixture);
+    assert!(
+        answered["builds"][0]["parts"][0]["limitations"]
+            .as_array()
+            .expect("limitations")
+            .iter()
+            .any(|one| one["name"] == "resumed-from-checkpoint"),
+        "the run resumed from the checkpoint: {answered}"
+    );
+    let now = answered["builds"][0]["parts"][0]["mutants"]
+        .as_array()
+        .expect("mutation rows")
+        .iter()
+        .find(|one| one["id"] == row["id"])
+        .expect("the mutation is still in the catalog")
+        .clone();
+    assert_eq!(
+        now["evidence"]["executions"]
+            .as_array()
+            .and_then(|executions| executions.last())
+            .map(|execution| execution["came_to"].clone()),
+        Some(serde_json::json!(came_to.name())),
+        "a kill a checkpoint kept one of whose executions comes to something else when it is \
+         put again is not inherited, and the run establishes the mutation afresh: {now}"
+    );
+    let events = recording_of(&fixture, &text(&answered["run_id"]));
+    let said: Vec<String> = events
+        .iter()
+        .filter_map(|event| njutest::testkit::payload::of(&event.payload).note())
+        .filter(|note| note.kind == "unreproduced")
+        .map(|note| note.detail.clone())
+        .collect();
+    let display = text(&row["display_id"]);
+    let note = said
+        .iter()
+        .find(|detail| detail.contains(&display))
+        .unwrap_or_else(|| panic!("the recording names the kill it did not inherit: {said:?}"));
+    for named in [
+        target.as_str(),
+        test.as_str(),
+        stored.name(),
+        came_to.name(),
+    ] {
+        assert!(
+            note.contains(named),
+            "the note names the execution that differed, what the checkpoint said it came to, \
+             and what it came to now; {named} is missing: {note}"
+        );
+    }
+    let refused: Vec<Option<String>> = events
+        .iter()
+        .filter_map(|event| njutest::testkit::payload::of(&event.payload).route())
+        .filter(|route| route.mutant == display)
+        .map(|route| route.refused.clone())
+        .collect();
+    assert_eq!(
+        refused,
+        vec![Some("unreproduced".to_owned())],
+        "the mutation the run established afresh has the one route every mutation it decides \
+         has, and the route says why the checkpoint's kill was not inherited"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_kept_answer_its_own_sealed_executions_contradict_is_established_again() {
+    let fixture = fixture("fixture-assured");
+    let first = verify(&fixture, &[]);
+    assert_eq!(
+        first.status.code(),
+        Some(0),
+        "{}",
+        njutest_devkit::process::strict_utf8(&first.stderr)
+    );
+    let established = document(&fixture);
+    let store = njutest::cache::store::Store::new(
+        &njutest_devkit::paths::cache_beside(&fixture.root).expect("a cache directory"),
+        u64::MAX,
+        std::time::Duration::from_hours(1),
+    );
+    let identity = rust_mutants::id::HexDigest::try_from(
+        text(&established["provenance"]["identity"]).as_str(),
+    )
+    .expect("a canonical identity");
+    std::fs::remove_file(store.entry(&identity))
+        .expect("the whole answer is forgotten, so the next run asks the store of mutations");
+    let row = established["builds"][0]["parts"][0]["mutants"]
+        .as_array()
+        .expect("mutation rows")
+        .iter()
+        .find(|row| {
+            row["decision"]["outcome"] == "killed"
+                && row["evidence"]["kind"] == "sealed"
+                && row["routing"]["reaching"].as_array().map(Vec::len) == Some(1)
+        })
+        .expect("the fixture kills a mutation one target reaches with a sealed execution")
+        .clone();
+    let mutant = rust_mutants::id::HexDigest::try_from(text(&row["id"]).as_str())
+        .expect("a canonical mutant identity");
+    let mut record = njutest::evidence::store::read(store.root(), &mutant)
+        .expect("the store of mutations reads")
+        .expect("the run kept what it established about the mutation");
+    let njutest::evidence::store::Outcome::Killed { target, key, .. } = record.outcome.clone()
+    else {
+        panic!("the run kept a kill: {record:?}");
+    };
+    record.outcome = njutest::evidence::store::Outcome::Survived {
+        targets: BTreeMap::from([(target, key)]),
+    };
+    njutest::evidence::store::write(store.root(), &record)
+        .expect("the store of mutations takes the record");
+    assert_eq!(
+        njutest::evidence::store::read(store.root(), &mutant)
+            .expect("the store of mutations reads the record back")
+            .as_ref(),
+        Some(&record),
+        "the record passes every check the store makes of what it reads"
+    );
+
+    let second = verify(&fixture, &["--trace"]);
+    let stderr = njutest_devkit::process::strict_utf8(&second.stderr);
+    assert_eq!(
+        second.status.code(),
+        Some(0),
+        "a kept answer its own sealed executions contradict is not believed, so the run \
+         establishes the mutation afresh and finds what the fixture is, every mutation killed: \
+         {stderr}"
+    );
+    let answered = document(&fixture);
+    let now = answered["builds"][0]["parts"][0]["mutants"]
+        .as_array()
+        .expect("mutation rows")
+        .iter()
+        .find(|one| one["id"] == row["id"])
+        .expect("the mutation is still in the catalog")
+        .clone();
+    assert_eq!(now["decision"]["outcome"], "killed", "{now}");
+    assert_eq!(
+        now["reuse"]["reused"], false,
+        "the answer the run established is its own: {now}"
+    );
+    let events = recording_of(&fixture, &text(&answered["run_id"]));
+    let said: Vec<String> = events
+        .iter()
+        .filter_map(|event| njutest::testkit::payload::of(&event.payload).note())
+        .filter(|note| note.kind == "unreproduced")
+        .map(|note| note.detail.clone())
+        .collect();
+    let display = text(&row["display_id"]);
+    let note = said
+        .iter()
+        .find(|detail| detail.contains(&display))
+        .unwrap_or_else(|| panic!("the recording names the answer it did not believe: {said:?}"));
+    for named in ["survived", "killed"] {
+        assert!(
+            note.contains(named),
+            "the note names the verdict the store kept and the one its executions establish; \
+             {named} is missing: {note}"
         );
     }
 }

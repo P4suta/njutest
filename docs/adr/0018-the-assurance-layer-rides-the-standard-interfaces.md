@@ -9,6 +9,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 Accepted, 2026-09-09 (user decision).
 Bounds every milestone after M14.
+Amended by [ADR 0046](0046-a-verdict-is-what-a-sealed-run-observed.md): the engine's WASI host joins the two standard interfaces, sealing asks for the `wasm32-wasip1` target as coverage asks for `llvm-tools`, and one instance per test replaces one process per routed set.
 
 ## Context
 

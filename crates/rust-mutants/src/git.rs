@@ -167,8 +167,12 @@ impl Within {
 }
 
 /// The lines a change set left in the files under the root, as the new side of each file counts them.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Lines {
+    /// The revision the lines were asked against.
+    pub base: String,
+    /// The commit that revision and `HEAD` share, which the lines are counted from, or none where git named none and they are counted from the revision itself, which counts what it changed since as changed too.
+    pub merge_base: Option<String>,
     /// Every file with a changed line, relative to the root, and which of its lines changed.
     pub files: BTreeMap<String, Touched>,
 }
@@ -205,7 +209,19 @@ pub fn lines<W: Watch>(asking: &Asking<'_, W>, base: &str) -> Option<Lines> {
         Shape::Trimmed,
         &["merge-base", base, "HEAD"],
     );
-    let against = merge_base.as_deref().unwrap_or(base);
+    let against = match merge_base.as_deref() {
+        Some(fork_point) => fork_point,
+        None => {
+            asking.watch.note(
+                "change-set",
+                &format!(
+                    "git named no commit {base} and HEAD share, so the changed lines are read \
+                     against {base} itself, which counts what it changed since as changed too"
+                ),
+            );
+            base
+        }
+    };
     let diff = ask_up_to(
         asking,
         (Empty::Accept, Shape::Verbatim, DIFF_LIMIT),
@@ -233,7 +249,11 @@ pub fn lines<W: Watch>(asking: &Asking<'_, W>, base: &str) -> Option<Lines> {
         files.insert(path.to_owned(), Touched::Whole);
     }
     files.retain(|path, _touched| !is_under(path, asking.excluded));
-    Some(Lines { files })
+    Some(Lines {
+        base: base.to_owned(),
+        merge_base,
+        files,
+    })
 }
 
 /// Where a `--unified=0` diff is: in a file's header, or in its hunks, where a line that looks like a header is content.
@@ -403,6 +423,14 @@ const REDIRECTING: [&str; 10] = [
 /// A run names the repository it verified.
 /// `GIT_DIR` in the environment it happened to be started with — which is what a git hook sets, and what any wrapper may — makes git answer about that one instead, and the report then names another repository's commit as the thing it established something about.
 /// That is a conclusion drawn from how the run was invoked rather than from what it looked at, so the invocation is not allowed to reach the question.
+/// What every question to git says first: no file-system monitor and no untracked cache answers for the tree, since each is a daemon's or an earlier reading's say-so about it, and a monitor that missed a write hides it.
+const READ_THE_TREE: [&str; 4] = [
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "core.untrackedCache=false",
+];
+
 fn about_the_tree(env: &crate::vars::Variables) -> crate::vars::Variables {
     let mut env = env.clone();
     for pointed in REDIRECTING {
@@ -427,6 +455,7 @@ fn ask_up_to<W: Watch>(
     arguments: &[&str],
 ) -> Option<String> {
     let mut argv: Vec<OsString> = vec![OsString::from("git")];
+    argv.extend(READ_THE_TREE.iter().map(OsString::from));
     argv.extend(arguments.iter().map(OsString::from));
     let mut spec = Spec::new(argv, Bound::After(crate::runner::PROBE));
     spec.dir = Some(asking.root.to_path_buf());

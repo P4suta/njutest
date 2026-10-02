@@ -82,6 +82,9 @@ A kill is existential and is reused when the recorded killer still reaches the m
 A survival is universal and is reused only when every target that reaches the mutant now is one the recording run ran against it under the same key.
 A timeout keeps its finding.
 See [ADR 0007](adr/0007-survived-evidence-is-universal.md).
+A verdict sealed executions established is believed only once they, put again on the run's own bench, come out the same, and is established afresh where they do not ([sealed execution](engine/sealed.md#reproducing-a-sealed-verdict)).
+
+A whole report is kept too, under the identity of everything it was about, and `verify` reissues it only once every sealed execution it rests on has run again and come out the same; the preparation that runs them again starts no test natively ([sealed execution](engine/sealed.md#reproducing-a-sealed-verdict)).
 
 ## Everything a run writes
 

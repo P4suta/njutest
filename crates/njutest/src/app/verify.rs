@@ -304,17 +304,26 @@ fn run_initialized(
         ControlFlow::Break(code) => return Ok(code),
     };
     let store = store_of(environment, &config);
+    let establishing = Establishing {
+        arguments,
+        environment,
+        root: &root,
+        config,
+        configuration: &configuration,
+        reports: &reports,
+        identity: &identity,
+        started,
+        evidence: &evidence,
+        changed: &changed,
+        store: &store,
+        trace: &trace,
+        watch,
+    };
     let lease = match establishment(
         &Asking {
-            store: &store,
-            reports: &reports,
             identity: cache_identity.as_ref(),
-            run_id: &identity,
-            root: &root,
-            environment,
+            establishing: &establishing,
         },
-        arguments,
-        &cancel,
         Streams {
             out: stdout,
             err: stderr,
@@ -324,21 +333,7 @@ fn run_initialized(
         ControlFlow::Continue(lease) => lease,
     };
     let code = establish(
-        &Establishing {
-            arguments,
-            environment,
-            root: &root,
-            config,
-            configuration: &configuration,
-            reports: &reports,
-            identity: &identity,
-            started,
-            evidence: &evidence,
-            changed: &changed,
-            store: &store,
-            trace: &trace,
-            watch,
-        },
+        &establishing,
         Streams {
             out: stdout,
             err: stderr,
@@ -862,6 +857,7 @@ fn every_build(
             selection,
             binding,
             trace: engine_trace,
+            carried_evidence,
         } = configured;
         let ordinal = binding.ordinal();
         let name = binding.name().to_owned();
@@ -869,6 +865,7 @@ fn every_build(
             build,
             run_id: binding.internal_run_id().clone(),
             engine_trace: engine_trace.start(),
+            carried_evidence,
             ..request.clone()
         };
         asked.evidence = request.evidence.for_build(&asked.build);
@@ -942,11 +939,13 @@ fn asking(establishing: &Establishing<'_>, shard: Option<rust_mutants::run::Shar
         run_id: identity.clone(),
         started,
         engine_trace: rust_mutants::trace::Recorder::disabled(),
+        carried_evidence: None,
         evidence: evidence.clone(),
         changed: establishing.changed.clone(),
         checkpoints: (!arguments.no_cache).then(|| store.root().join(CHECKPOINTS)),
         evidence_store: (!arguments.no_cache).then(|| store.root().to_path_buf()),
         shard,
+        trace: arguments.trace.clone(),
     }
 }
 
@@ -1133,7 +1132,7 @@ fn evidence_of(
             env: Some(environment.vars.clone()),
         },
         root,
-        cancel,
+        &rust_mutants::runner::Watched::new(cancel, &rust_mutants::trace::Recorder::disabled()),
     )?;
     let mode = mode_of(arguments, config, changed);
     let machine = identity::Machine {
@@ -1158,7 +1157,7 @@ fn evidence_of(
             arguments.shard.clone(),
         )?
         .environment,
-        contract: format!("{:?}", config.contract).to_lowercase(),
+        contract: config.contract,
         test_args: harness_args(arguments, config),
         build: config.execution.build().selection(),
         timeout_ms: u64::try_from(config.execution.timeout.as_millis()).map_err(|_overflow| {
@@ -1188,19 +1187,16 @@ fn store_of(environment: &Environment, config: &Config) -> Store {
 
 /// Waits for whatever run is already establishing this identity, so the same work is not done twice at once.
 /// A claim that cannot be taken is not a reason to refuse: the run does the work again rather than not at all.
-fn claim(
-    asking: &Asking<'_>,
-    arguments: &Verify,
-    cancel: &rust_mutants::runner::Cancel,
-    stderr: &mut dyn Write,
-) -> Result<Option<Lease>, std::io::Error> {
+fn claim(asking: &Asking<'_>, stderr: &mut dyn Write) -> Result<Option<Lease>, std::io::Error> {
     let Some(identity) = asking.identity else {
         return Ok(None);
     };
-    let path = asking.store.lease(identity);
+    let establishing = asking.establishing;
+    let path = establishing.store.lease(identity);
+    let cancel = establishing.watch.cancel;
     let mut waited = false;
     let taken = lock::claim(&path, LEASE_TIMEOUT, cancel, &mut || waited = true);
-    let mut notes = ui::Notes::of(arguments.ui, stderr);
+    let mut notes = ui::Notes::of(establishing.arguments.ui, stderr);
     if waited {
         notes.note("waiting", "another run of the same inputs is under way")?;
     }
@@ -1379,90 +1375,70 @@ enum Settled {
 
 fn establishment(
     asking: &Asking<'_>,
-    arguments: &Verify,
-    cancel: &rust_mutants::runner::Cancel,
     streams: Streams<'_>,
 ) -> std::io::Result<ControlFlow<u8, Option<Lease>>> {
-    match already_answered(asking, arguments, cancel, streams)? {
+    match already_answered(asking, streams)? {
         Settled::Answered(code) => Ok(ControlFlow::Break(code)),
         Settled::Establish(lease) => Ok(ControlFlow::Continue(lease)),
     }
 }
 
 /// Whether the store already answers, unless the run was told to establish everything afresh or the tree could not be measured.
-fn already_answered(
-    asking: &Asking<'_>,
-    arguments: &Verify,
-    cancel: &rust_mutants::runner::Cancel,
-    streams: Streams<'_>,
-) -> Result<Settled, std::io::Error> {
-    if arguments.no_cache || asking.identity.is_none() {
+fn already_answered(asking: &Asking<'_>, streams: Streams<'_>) -> Result<Settled, std::io::Error> {
+    if asking.establishing.arguments.no_cache || asking.identity.is_none() {
         return Ok(Settled::Establish(None));
     }
-    settled(asking, arguments, cancel, streams)
+    settled(asking, streams)
 }
 
-/// Asks the store, waits for whoever is already establishing this identity, and asks again.
-fn settled(
-    asking: &Asking<'_>,
-    arguments: &Verify,
-    cancel: &rust_mutants::runner::Cancel,
-    streams: Streams<'_>,
-) -> Result<Settled, std::io::Error> {
+/// Asks the store, waits for whoever is already establishing this identity, and asks again, unless the answer it found first was rejected.
+fn settled(asking: &Asking<'_>, streams: Streams<'_>) -> Result<Settled, std::io::Error> {
     let Streams {
         out: stdout,
         err: stderr,
     } = streams;
-    if let Reuse::Answered(code) = reuse(asking, arguments.format, stdout, stderr)? {
-        return Ok(Settled::Answered(code));
-    }
-    let lease = claim(asking, arguments, cancel, stderr)?;
+    let rejected = match reuse(asking, stdout, stderr)? {
+        Reuse::Answered(code) => return Ok(Settled::Answered(code)),
+        Reuse::Establish => false,
+        Reuse::Rejected => true,
+    };
+    let lease = claim(asking, stderr)?;
     if lease.is_some()
-        && let Reuse::Answered(code) = reuse(asking, arguments.format, stdout, stderr)?
+        && !rejected
+        && let Reuse::Answered(code) = reuse(asking, stdout, stderr)?
     {
         return Ok(Settled::Answered(code));
     }
     Ok(Settled::Establish(lease))
 }
 
-/// What a run needs to ask the store of earlier answers.
+/// What a run needs to ask the store of earlier answers, and to run a stored answer's sealed executions again before it reissues one.
 struct Asking<'a> {
-    store: &'a Store,
-    reports: &'a reports::Store,
     identity: Option<&'a HexDigest>,
-    run_id: &'a RunId,
-    root: &'a Path,
-    /// Where the answer is going, so a run that reads one back says it the way a run that established one would.
-    environment: &'a Environment,
+    establishing: &'a Establishing<'a>,
 }
 
 /// Whether this run has to establish anything at all.
 enum Reuse {
     /// An earlier run of the same inputs answered, and this is the exit code.
     Answered(u8),
-    /// Nothing is stored, or what is stored cannot be believed.
+    /// Nothing is stored, or what is stored cannot be read as an answer.
     Establish,
+    /// A stored answer is not reissued, since its sealed executions did not come out the same when they ran again or it could not be kept, so asking the store again would only find it again.
+    Rejected,
 }
 
-/// Reads back what an earlier run of the same inputs established, and writes it as this run's report.
+/// Reads back what an earlier run of the same inputs established, runs the sealed executions it rests on again, and writes it as this run's report where they came out the same.
 fn reuse(
     asking: &Asking<'_>,
-    asked: Option<Format>,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> std::io::Result<Reuse> {
-    let Asking {
-        store,
-        reports,
-        identity,
-        run_id,
-        root,
-        environment,
-    } = *asking;
-    let Some(identity) = identity else {
+    let establishing = asking.establishing;
+    let Some(identity) = asking.identity else {
         return Ok(Reuse::Establish);
     };
-    let stored = match store.get(identity) {
+    let stored = match establishing.store.get(identity) {
         Ok(Some(stored)) => stored,
         Ok(None) => return Ok(Reuse::Establish),
         Err(error) => {
@@ -1470,7 +1446,7 @@ fn reuse(
             return Ok(Reuse::Establish);
         }
     };
-    let report = match stored.read_back_as(run_id) {
+    let report = match stored.read_back_as(establishing.identity) {
         Ok(report) => report,
         Err(error) => {
             super::diagnose(
@@ -1483,21 +1459,101 @@ fn reuse(
             return Ok(Reuse::Establish);
         }
     };
-    let written = match reports.keep(&report) {
+    if let ControlFlow::Break(instead) = ran_again(establishing, &report, stderr)? {
+        return Ok(instead);
+    }
+    reissue(establishing, &report, stdout, stderr)
+}
+
+/// Runs the sealed executions `report` rests on again, and goes on to reissue it only where every one came out the same or it rests on none; otherwise says why, and what the run does instead.
+fn ran_again(
+    establishing: &Establishing<'_>,
+    report: &crate::report::Report,
+    stderr: &mut dyn Write,
+) -> std::io::Result<ControlFlow<Reuse>> {
+    let request = asking(establishing, None);
+    let watch = establishing.watch;
+    match crate::assure::rerun::rerun(report, &request, establishing.environment, watch) {
+        Ok(
+            crate::assure::rerun::Rerun::NothingSealed | crate::assure::rerun::Rerun::Reproduced,
+        ) => Ok(ControlFlow::Continue(())),
+        Ok(crate::assure::rerun::Rerun::Unreproduced(error)) => {
+            super::complain(stderr, &error, error.code())?;
+            Ok(ControlFlow::Break(Reuse::Rejected))
+        }
+        Err(error) if watch.is_cancelled() => {
+            if let Err(trace_error) =
+                establishing
+                    .trace
+                    .run_end(Verdict::Error, None, Some(error.to_string()))
+            {
+                super::diagnose(
+                    stderr,
+                    &format!("the trace could not be finalized: {trace_error}"),
+                )?;
+            }
+            super::complain(stderr, &error, error.code())?;
+            Ok(ControlFlow::Break(Reuse::Answered(EXIT_ERROR)))
+        }
+        Err(error) => {
+            super::diagnose(
+                stderr,
+                &format!(
+                    "{}: the sealed executions the stored answer rests on could not be run \
+                     again, so it is not reissued and this run establishes everything again: \
+                     {error}",
+                    crate::error::CACHE_UNREPRODUCED.code
+                ),
+            )?;
+            Ok(ControlFlow::Break(Reuse::Rejected))
+        }
+    }
+}
+
+/// Keeps `report`, a stored answer whose sealed executions came out the same, as this run's report, closes the trace with what it concludes, and writes it the way a run that established it would.
+fn reissue(
+    establishing: &Establishing<'_>,
+    report: &crate::report::Report,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> std::io::Result<Reuse> {
+    let Establishing {
+        arguments,
+        environment,
+        root,
+        reports,
+        trace,
+        ..
+    } = *establishing;
+    let written = match reports.keep(report) {
         Ok(written) => written,
         Err(error) => {
             super::complain(stderr, &error, error.code())?;
-            return Ok(Reuse::Establish);
+            return Ok(Reuse::Rejected);
         }
     };
     diagnose_publication_status(stderr, &written.indexes)?;
-    let shape = asked.unwrap_or(if environment.terminal.drawing {
+    let (verdict, accounting) = match report.conclusion() {
+        Ok(conclusion) => (conclusion.verdict, Some(conclusion.accounting)),
+        Err(error) => {
+            super::complain(stderr, &error, crate::error::REPORT_UNSOUND)?;
+            return Ok(Reuse::Answered(EXIT_ERROR));
+        }
+    };
+    if let Err(error) = trace.run_end(verdict, accounting, None) {
+        super::diagnose(
+            stderr,
+            &format!("the trace could not be finalized: {error}"),
+        )?;
+        return Ok(Reuse::Answered(EXIT_ERROR));
+    }
+    let shape = arguments.format.unwrap_or(if environment.terminal.drawing {
         Format::Human
     } else {
         Format::Lines
     });
     let text = match said_complete(
-        &report,
+        report,
         &Saying {
             root,
             said_document: &written.said_document,
@@ -1569,6 +1625,7 @@ fn load(arguments: &Verify, workspace: &reports::WorkspaceRoot) -> Result<Loaded
     let mut loaded = configured(arguments, workspace)?;
     loaded.config.faults.inject |= arguments.faults;
     loaded.config.durability.crash |= arguments.crashes;
+    loaded.config.mutation.seal &= !arguments.no_seal;
     Ok(loaded)
 }
 
@@ -1617,6 +1674,8 @@ struct ConfiguredBuild {
     selection: rust_mutants::cargo::BuildSelection,
     binding: rust_mutants::trace::NjutestBuild,
     trace: EngineTrace,
+    /// Where the engine keeps what its carried answers rest on beside its recording, when the run keeps one.
+    carried_evidence: Option<PathBuf>,
 }
 
 /// The only two pre-execution engine trace states.
@@ -1674,6 +1733,7 @@ fn configured_builds(
             selection,
             binding,
             trace: EngineTrace::Disabled,
+            carried_evidence: None,
         });
     }
 
@@ -1699,6 +1759,7 @@ fn configured_builds(
             source,
         })?;
         let engine = namespace.join(crate::app::trace::ENGINE_DIRECTORY);
+        build.carried_evidence = Some(engine.clone());
         let sink = rust_mutants::trace::DirSink::create(&engine).map_err(|source| {
             TraceSetupError::Engine {
                 ordinal,
@@ -1772,7 +1833,7 @@ mod tests {
             draft.timing.started = "2026-01-01T00:00:00Z".to_owned();
             draft.timing.finished = "2026-01-01T00:00:00Z".to_owned();
             draft.limitations.push(crate::report::Limitation::new(
-                "git-metadata-unavailable",
+                crate::limitation::Limitation::GitMetadataUnavailable,
                 "the fixture has no repository metadata",
             ));
             let measurements = BuildMeasurements::checked(vec![(
@@ -1798,30 +1859,18 @@ mod tests {
             let store =
                 crate::app::reports::Store::read(project.path()).expect("held report store");
             let report = complete_report("20260101t000000z-abacac");
-            match store.keep(&report) {
-                Ok(kept) => {
-                    let document =
-                        std::fs::read(kept.directory.join(crate::app::reports::DOCUMENT_NAME))
-                            .expect(
-                                "the directory a publication names holds the document it wrote",
-                            );
-                    assert!(
-                        !document.is_empty(),
-                        "a published report is the bytes at the directory it says it wrote to: {}",
-                        kept.directory.display()
-                    );
-                }
-                Err(refused) => assert!(
-                    matches!(
-                        refused,
-                        crate::app::reports::StoreError::UnsupportedCapability
-                    ),
-                    "a platform that cannot publish says so rather than failing some other way: {refused:?}"
-                ),
-            }
+            let kept = store
+                .keep(&report)
+                .expect("every platform keeps what it decided");
+            let document = std::fs::read(kept.directory.join(crate::app::reports::DOCUMENT_NAME))
+                .expect("the directory a publication names holds the document it wrote");
+            assert!(
+                !document.is_empty(),
+                "a published report is the bytes at the directory it says it wrote to: {}",
+                kept.directory.display()
+            );
         }
 
-        #[cfg(unix)]
         #[test]
         fn every_path_a_run_says_it_wrote_is_a_file_it_wrote() {
             use crate::app::reports::Surface;
@@ -1856,7 +1905,6 @@ mod tests {
             }
         }
 
-        #[cfg(unix)]
         #[test]
         fn json_output_uses_the_checked_value_after_the_report_path_is_replaced() {
             use super::super::said;
@@ -1883,6 +1931,7 @@ mod tests {
             .expect("replacement document");
 
             let environment = Environment {
+                module_owner: rust_mutants::sealed::ModuleOwner::default(),
                 vars: rust_mutants::vars::Variables::empty(),
                 working_directory: project.path().to_path_buf(),
                 temp_directory: project.path().join("tmp"),

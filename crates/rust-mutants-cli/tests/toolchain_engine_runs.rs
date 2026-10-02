@@ -18,12 +18,18 @@ use rust_mutants::run::Exit;
 /// The variable that records the committed runs again rather than refusing a difference, as `UPDATE_GOLDEN` does for a golden.
 const UPDATE: &str = "UPDATE_ENGINE_RUNS";
 
-/// Each committed run, by the directory it is kept in, and the fixture it is a run of.
-const SAMPLES: [(&str, &str); 4] = [
-    ("engine-run-simple", "fixture-simple"),
-    ("engine-run-rejected", "fixture-rejectable"),
-    ("engine-run-unreached", "fixture-unreached"),
-    ("engine-run-declined", "fixture-declines"),
+/// Each committed run, by the directory it is kept in, the fixture it is a run of, and the rule selection it asks for beyond every tier.
+const SAMPLES: [(&str, &str, &[&str]); 6] = [
+    ("engine-run-simple", "fixture-simple", &[]),
+    ("engine-run-rejected", "fixture-rejectable", &[]),
+    ("engine-run-unreached", "fixture-unreached", &[]),
+    ("engine-run-declined", "fixture-declines", &[]),
+    ("engine-run-doctest", "fixture-doctest", &[]),
+    (
+        "engine-run-faulted",
+        "fixture-faulted",
+        &["--operator", "inject-error"],
+    ),
 ];
 
 /// Every document a run left at the top of `directory`, by name, which is every document a committed run keeps: a list written here would miss the next one the engine learns to write.
@@ -55,8 +61,8 @@ fn committed(name: &str) -> PathBuf {
         .join(name)
 }
 
-/// A run of `fixture` as the committed ones are recorded: every tier, offline, locked, with its recording, under the least of this environment a nested run needs.
-fn recorded(fixture: &Fixture) -> PathBuf {
+/// A run of `fixture` as the committed ones are recorded: every tier, offline, locked, with its recording, under the least of this environment a nested run needs and the toolchain this repository pins, whose sealed target every machine holds where a default toolchain may not, asking for `asking` on top of every tier.
+fn recorded(fixture: &Fixture, asking: &[&str]) -> PathBuf {
     let mut command = njutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
     command.env_clear();
     command.envs(njutest_devkit::paths::environment_for_a_toolchain_run(&[]));
@@ -66,10 +72,11 @@ fn recorded(fixture: &Fixture) -> PathBuf {
     command.arg("run");
     command.args(["--root", njutest_devkit::paths::utf8(fixture.root())]);
     command.args(["--tier", "all", "--offline", "--locked", "--trace"]);
+    command.args(asking);
     let output = command.output().expect("rust-mutants runs");
     let answered = match output.status.code().and_then(Exit::read) {
         Some(Exit::Detected | Exit::Found | Exit::Unestablished) => true,
-        Some(Exit::Interrupted | Exit::Terminated) | None => false,
+        Some(Exit::Failed | Exit::Interrupted | Exit::Terminated) | None => false,
     };
     assert!(
         answered,
@@ -85,6 +92,12 @@ fn recorded(fixture: &Fixture) -> PathBuf {
 
 /// Every path in `value`, each ending in the kind of what is there, with every element of an array at one path.
 fn shape(value: &serde_json::Value, at: &str, into: &mut BTreeSet<String>) {
+    if at == format!("{RECORDING}#exec/payload/exec/timeout_ms")
+        && (value.is_null() || value.is_number())
+    {
+        into.insert(format!("{at}:optional-number"));
+        return;
+    }
     match value {
         serde_json::Value::Object(fields) => {
             into.insert(format!("{at}:object"));
@@ -137,11 +150,29 @@ fn shapes(directory: &Path) -> BTreeSet<String> {
     found
 }
 
+#[test]
+fn an_optional_deadlines_value_can_change_but_its_presence_and_type_cannot() {
+    let at = format!("{RECORDING}#exec/payload/exec");
+    let observed = |value| {
+        let mut found = BTreeSet::new();
+        shape(&value, &at, &mut found);
+        found
+    };
+    let cold = observed(serde_json::json!({"timeout_ms": 30_000}));
+    assert_eq!(cold, observed(serde_json::json!({"timeout_ms": null})));
+    assert_ne!(cold, observed(serde_json::json!({})));
+    assert_ne!(cold, observed(serde_json::json!({"timeout_ms": "unknown"})));
+}
+
 /// Replaces the committed run `name` with the one in `fresh`, its documents and its recording, and none of the output it kept; a document the engine no longer writes goes.
 fn rewrite(name: &str, fresh: &Path) {
     let into = committed(name);
     let written = documents(fresh);
-    for gone in documents(&into).difference(&written) {
+    let held = match std::fs::read_dir(&into) {
+        Ok(_already_committed) => documents(&into),
+        Err(_a_sample_recorded_for_the_first_time) => BTreeSet::new(),
+    };
+    for gone in held.difference(&written) {
         std::fs::remove_file(into.join(gone)).expect("a document the engine no longer writes");
     }
     for document in written.iter().map(String::as_str).chain([RECORDING]) {
@@ -155,9 +186,9 @@ fn rewrite(name: &str, fresh: &Path) {
 fn every_committed_engine_run_has_the_shape_todays_engine_records() {
     let updating = std::env::var_os(UPDATE).is_some();
     let mut stale = Vec::new();
-    for (name, fixture) in SAMPLES {
+    for (name, fixture, asking) in SAMPLES {
         let fixture = Fixture::copy(fixture);
-        let fresh = recorded(&fixture);
+        let fresh = recorded(&fixture, asking);
         if updating {
             rewrite(name, &fresh);
             continue;
@@ -195,7 +226,10 @@ fn every_committed_engine_run_is_one_this_test_records_again() {
             .filter_map(|name| name.to_str().map(str::to_owned))
             .filter(|name| name.starts_with("engine-run-"))
             .collect();
-    let recorded: BTreeSet<String> = SAMPLES.iter().map(|(name, _)| (*name).to_owned()).collect();
+    let recorded: BTreeSet<String> = SAMPLES
+        .iter()
+        .map(|(name, ..)| (*name).to_owned())
+        .collect();
     assert_eq!(
         kept, recorded,
         "a committed engine run this test does not record again drifts from the engine without \

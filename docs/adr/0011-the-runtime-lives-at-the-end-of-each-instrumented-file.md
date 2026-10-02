@@ -31,6 +31,7 @@ The runtime compares the catalog digest it was generated with against `RUST_MUTA
 The same module is also what measures reach.
 When `RUST_MUTANTS_TOUCH` names a file, every guard records the thread that reached it, and libtest names each test's thread after the test, so the record is per test rather than per target.
 It buffers per thread and appends on the thread's way out; a thread nothing can name a test after — the main one, one a test spawned — writes `-`, and everything under that name has to reach every test of its target.
+[ADR 0027](0027-an-item-is-entered-where-its-body-starts.md) took the buffering back: every first sighting is written when it happens, and nothing waits for a thread's way out.
 The process exits 96 rather than running on when it cannot record, because silence is what licenses a run to skip a test.
 
 ## Consequences
@@ -48,3 +49,7 @@ The process exits 96 rather than running on when it cannot record, because silen
   What stays a `no-std-crate` skip is a crate the host cannot lend `std` to: one with a `#[panic_handler]` or a `#[global_allocator]` of its own, or `#![no_main]`,
   each of which `std` also supplies and only one of which may exist.
   Edition 2015 stays skipped because `extern crate` resolves differently there.
+- A build for `wasm32-wasip1`, which a sealed host runs one test per instance, compiles a second module of the same name in place of this one.
+  The two are appended together, one under `cfg(not(target_os = "wasi"))` and one under `cfg(target_os = "wasi")`, so no target compiles both, and every other target compiles byte for byte the module this record describes.
+  The sealed one keeps no step allowance, beat, orphan watch, schedule delay, lock, thread, clock or destructor, because the host's fuel bounds an instance and names the test it ran, and it writes each record whole, in one write, the first time its index is seen.
+  Every item the two share is the same item, which the laws of `instrument::runtime` hold, so a change to the contract with the engine is a change to both.

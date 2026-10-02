@@ -39,11 +39,11 @@ src/lib.rs:21:5 return-default killed
 src/lib.rs:21:8 condition-to-false survived
 src/lib.rs:21:8 condition-to-true killed
 src/lib.rs:21:8 negate-condition killed
-src/lib.rs:21:10 gt-to-ge not_run
+src/lib.rs:21:10 gt-to-ge survived
 src/lib.rs:21:16 return-default unreached
 src/lib.rs:21:27 return-default killed
-src/lib.rs:27:5 return-default killed
-src/lib.rs:27:7 add-to-sub killed
-src/lib.rs:27:9 int-decrement killed
-src/lib.rs:27:9 int-increment killed
+src/lib.rs:27:5 return-default unproven
+src/lib.rs:27:7 add-to-sub unproven
+src/lib.rs:27:9 int-decrement unproven
+src/lib.rs:27:9 int-increment unproven
 ```

@@ -51,7 +51,7 @@ fn common() -> Common {
         platform: "x86_64-unknown-linux-gnu".to_owned(),
         engine: "engine".to_owned(),
         environment: Vec::new(),
-        contract: "standard-v1".to_owned(),
+        contract: njutest::config::Contract::StandardV1,
         test_args: Vec::new(),
         build: rust_mutants::cargo::BuildConfig::default().selection(),
         timeout_ms: 1,

@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::drift::Touched;
 use crate::knobs::{Derived, Knob, Perturbations, Perturbed};
 
-use super::{Audit, Decided, Engine, Layer, Notes, Recording, field, named, rows};
+use super::{Audit, Decided, Engine, Layer, Notes, Recording, field, limitation_targets};
 
 /// The finding a report raises about a target a knob broke.
 const ENVIRONMENT_DEPENDENT: &str = "environment-dependent";
@@ -55,7 +55,7 @@ pub(super) fn audited(recording: &Recording<'_>, engines: &[Engine], audit: &mut
         owed_every_knob(recording, &mut notes);
     }
     let mut recorded: Vec<Row<'_>> = Vec::new();
-    for row in rows(recording.document, "knobs") {
+    for row in recording.part.knobs {
         match row_of(row) {
             Some(one) => recorded.push(one),
             None => notes.violated(
@@ -78,7 +78,11 @@ pub(super) fn audited(recording: &Recording<'_>, engines: &[Engine], audit: &mut
             );
             return notes.looked();
         }
-        [Engine { touched, perturbed }] => (touched, perturbed),
+        [
+            Engine {
+                touched, perturbed, ..
+            },
+        ] => (touched, perturbed),
         several => {
             notes.unaudited(
                 "knobs",
@@ -337,11 +341,10 @@ fn held_to_limitations(
             "the report says a knob asked for was not put on it",
         ),
     ] {
-        let stated: BTreeSet<&str> = rows(recording.document, "limitations")
+        let listed = limitation_targets(recording, limitation, notes);
+        let stated: BTreeSet<&str> = listed
             .iter()
-            .filter(|row| field(row, "name").as_deref() == Some(limitation))
-            .filter_map(|row| row.get("detail").and_then(serde_json::Value::as_str))
-            .flat_map(named)
+            .flat_map(|targets| targets.iter().map(String::as_str))
             .collect();
         for target in owed.difference(&stated) {
             notes.violated(
@@ -361,26 +364,25 @@ fn held_to_limitations(
     }
 }
 
-/// Holds a whole run to a row for every knob on every target whose baseline passed, since the contract puts every one of them.
+/// Holds a whole run to a row for every knob on every target whose baseline passed, since the contract puts every one of them; a knob record that does not read is one [`audited`] refuses, and puts nothing here.
 fn owed_every_knob(recording: &Recording<'_>, notes: &mut Notes<'_>) {
-    let put: BTreeSet<(String, String)> = rows(recording.document, "knobs")
+    let put: BTreeSet<(String, String)> = recording
+        .part
+        .knobs
         .iter()
-        .map(|row| {
-            (
-                field(row, "target").unwrap_or_default(),
-                field(row, "knob").unwrap_or_default(),
-            )
-        })
+        .filter_map(row_of)
+        .map(|row| (row.target, row.knob))
         .collect();
-    for target in rows(recording.document, "targets")
+    for target in recording
+        .targets
         .iter()
-        .filter(|target| field(target, "status").as_deref() == Some("passed"))
-        .filter_map(|target| field(target, "name"))
+        .filter(|target| target.status == "passed")
+        .map(|target| &target.name)
     {
         for knob in Knob::ALL {
             if !put.contains(&(target.clone(), knob.name().to_owned())) {
                 notes.violated(
-                    &target,
+                    target,
                     format!(
                         "whole-v1 puts every knob on every target whose baseline passed, and \
                          {} has no row for {target}",

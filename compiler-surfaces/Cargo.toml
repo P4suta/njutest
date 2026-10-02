@@ -39,21 +39,26 @@ doc = false
 [dependencies]
 cargo_metadata = { workspace = true }
 clap = { workspace = true }
+flate2 = { workspace = true }
 hex = { workspace = true }
 getrandom = { workspace = true }
 jiff = { workspace = true, features = ["serde"] }
 jsonschema = { workspace = true }
+njutest-fixture-tree = { workspace = true }
 njutest-macros = { workspace = true }
 proc-macro2 = { workspace = true }
 proptest = { workspace = true }
 ratatui = { workspace = true }
+regex = "1.13"
 rust-mutants = { workspace = true, features = ["testkit"] }
+rust-mutants-decision = { workspace = true }
 rustix = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 signal-hook = { workspace = true }
 syn = { workspace = true }
+tar = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
 toml = { workspace = true }

@@ -11,6 +11,9 @@ Under measurement every execution's `HOME` is a directory inside its own scratch
 `toolchain_cli_contract`'s `a_write_a_test_makes_under_its_home_lands_in_its_execution` runs this fixture with a home of its own and finds it untouched afterwards.
 The same test adds a test that reads a setting only the given home holds, which passes only with the given home, and finds that target reported `unconfined-target` and measured with it.
 
+Sealed, the instance's `HOME` is an empty directory of its own too.
+The standard library of `wasm32-wasip1` answers `std::env::home_dir` with no home at all, and compiles that answer into each crate that calls it; the sealed build rewrites every such copy to answer through a function that reads `HOME`, as the standard library of a POSIX system does, so the test passes its control sealed and every fate below is a sealed verdict, where before each was unproven.
+
 ## Fates
 
 What one run of this fixture establishes for every mutation of it, and for every candidate the compiler refused.

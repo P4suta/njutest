@@ -74,7 +74,7 @@ fn is_error(ident: &syn::Ident, attrs: &[syn::Attribute]) -> bool {
 fn uncoded(sources: &[(String, String)]) -> Vec<String> {
     let mut found = Vec::new();
     for (path, text) in sources {
-        let file = syn::parse_file(text).expect("an xtask source parses");
+        let file = njutest_devkit::lexed::file(text).expect("an xtask source parses");
         let mut declared = Declared::default();
         syn::visit::Visit::visit_file(&mut declared, &file);
         found.extend(

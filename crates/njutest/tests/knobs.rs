@@ -10,7 +10,7 @@ use njutest::report::knobs::{
     Knob, KnobRecord, NotPut, Reach, Standing, Unsettled, found, limited,
 };
 use njutest::report::{Decided, FindingKind, MutantRecord, Outcome};
-use njutest::testkit::reports::{routed, row};
+use njutest::testkit::reports::{asked, routed, row};
 
 const ZONED: &str = "pkg/test/zoned";
 const OTHER: &str = "pkg/test/other";
@@ -31,14 +31,17 @@ fn rows(reaching: &[&str]) -> Vec<MutantRecord> {
         ("gt-to-ge", ">", ">="),
         Decided::Survived,
     );
-    routed_survivor.routing = Some(routed(
-        reaching,
-        &[],
-        &reaching
-            .iter()
-            .map(|one| (*one, Outcome::Survived))
-            .collect::<Vec<_>>(),
-    ));
+    asked(
+        &mut routed_survivor,
+        routed(
+            reaching,
+            &[],
+            &reaching
+                .iter()
+                .map(|one| (*one, Outcome::Survived))
+                .collect::<Vec<_>>(),
+        ),
+    );
     vec![
         routed_survivor,
         row(
@@ -171,7 +174,7 @@ fn a_knob_asked_for_and_not_put_or_compared_is_a_limitation_that_says_why() {
     let limitations = limited(&knobs);
     let named: Vec<(&str, &str)> = limitations
         .iter()
-        .map(|one| (one.name.as_str(), one.detail.as_str()))
+        .map(|one| (one.name(), one.detail.as_str()))
         .collect();
     assert!(
         named.iter().any(|(name, detail)| *name == "knob-not-put"

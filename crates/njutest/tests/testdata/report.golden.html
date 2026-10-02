@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Insufficient — fixture-workspace</title>
+<style>body{font-family:system-ui,sans-serif;margin:2rem auto;max-width:60rem;line-height:1.5}h1{margin:0}h1.assured{color:#0a6}h1.not-assured{color:#a30}.identity{color:#666;margin-top:0}table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:.25rem .5rem;border-bottom:1px solid #ddd;vertical-align:top}code{font-family:ui-monospace,monospace}td.survived,td.failed,td.missing{color:#a30}td.killed,td.passed{color:#0a6}p.none{color:#666}</style>
+</head>
+<body>
+<h1 class="not-assured">Insufficient</h1>
+<p class="identity">fixture-workspace · 20260905t081500z-abcdef</p>
+<h2>Findings</h2>
+<table>
+<tr><th>Kind</th><th>Subject</th><th>Detail</th><th>At</th></tr>
+<tr><td>surviving-mutant</td><td><code>cccccccccccccccccccc</code></td><td>no test noticed the edit at crates/core/src/lib.rs:12</td><td></td></tr>
+</table>
+<h2>Accounting</h2>
+<table>
+<tr><th>What</th><th>How many</th></tr>
+<tr><td>targets selected</td><td>2</td></tr>
+<tr><td>targets passed</td><td>1</td></tr>
+<tr><td>targets failed</td><td>1</td></tr>
+<tr><td>targets skipped</td><td>0</td></tr>
+<tr><td>targets missing</td><td>0</td></tr>
+<tr><td>mutants cataloged</td><td>1</td></tr>
+<tr><td>mutants rejected</td><td>0</td></tr>
+<tr><td>mutants executed</td><td>1</td></tr>
+<tr><td>mutants killed</td><td>0</td></tr>
+<tr><td>mutants survived</td><td>1</td></tr>
+<tr><td>mutants unreached</td><td>0</td></tr>
+<tr><td>mutants accepted</td><td>0</td></tr>
+</table>
+<h2>Targets</h2>
+<table>
+<tr><th>Status</th><th>Target</th><th>Took</th><th>Said</th></tr>
+<tr><td class="failed">failed</td><td><code>core/lib/adds::works</code></td><td>40 ms</td><td>assertion failed: left == right</td></tr>
+<tr><td class="passed">passed</td><td><code>core/lib/adds::rounds</code></td><td>12 ms</td><td></td></tr>
+</table>
+<h2>Mutants</h2>
+<table>
+<tr><th>Outcome</th><th>Mutant</th><th>Where</th><th>Rule</th><th>Noticed by</th></tr>
+<tr><td class="unnoticed">unnoticed</td><td><code>cccccccccccccccccccc</code></td><td><code>crates/core/src/lib.rs:12</code></td><td>lt-to-le@1</td><td></td></tr>
+</table>
+<h2>Evidence under a fault</h2>
+<table>
+<tr><th>Survivor</th><th>Fault</th><th>Told apart by</th><th>Which run failed</th></tr>
+<tr><td><code>cccccccccccccccccccc</code></td><td><code>8c841811e491fadad887</code></td><td><code>core/lib/adds::rounds</code></td><td>failed alone</td></tr>
+</table>
+<h2>Limitations</h2>
+<table>
+<tr><th>Name</th><th>What is not claimed</th></tr>
+<tr><td><code>git-metadata-unavailable</code></td><td>the stream fixture is not a git repository</td></tr>
+</table>
+<h2>Identity</h2>
+<table>
+<tr><th>What</th><th>Value</th></tr>
+<tr><td>commit</td><td><code>unavailable</code></td></tr>
+<tr><td>branch</td><td><code>unavailable</code></td></tr>
+<tr><td>dirty</td><td><code>false</code></td></tr>
+<tr><td>started</td><td><code>2026-09-05T08:15:00Z</code></td></tr>
+<tr><td>compute total</td><td><code>72000 ms</code></td></tr>
+<tr><td>configuration</td><td><code>unavailable</code></td></tr>
+<tr><td>build</td><td><code>default</code></td></tr>
+<tr><td>rustc</td><td><code>unavailable</code></td></tr>
+<tr><td>target</td><td><code>unavailable</code></td></tr>
+</table>
+</body>
+</html>

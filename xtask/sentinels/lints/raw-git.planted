@@ -1,0 +1,16 @@
+=== command source crates/app/src/lib.rs
+fn ask() -> std::process::Command { std::process::Command::new("git") }
+=== imported-command source crates/app/tests/it.rs
+use std::process::Command; fn ask() -> Command { Command::new("git") }
+=== argv source crates/app/src/lib.rs
+fn argv() -> Vec<std::ffi::OsString> { vec![std::ffi::OsString::from("git")] }
+=== os-str source crates/app/src/lib.rs
+fn program() -> &'static std::ffi::OsStr { std::ffi::OsStr::new("git") }
+=== spec-array source crates/app/tests/runner.rs
+fn ask() -> Spec { Spec::new(["git", "status"], Bound::Unbounded) }
+=== spec-vec source xtask/src/gate.rs
+fn ask() -> Spec { Spec::new(vec!["git", "status"], Bound::Unbounded) }
+=== through-a-helper source xtask/src/gate.rs
+fn start(program: &str) -> std::process::Command { std::process::Command::new(program) } fn ask() -> std::process::Command { start("git") }
+=== through-a-method source xtask/src/gate.rs
+struct Tools; impl Tools { fn command(self, program: &str) -> std::process::Command { std::process::Command::new(program) } fn ask(self) -> std::process::Command { self.command("git") } }

@@ -88,6 +88,7 @@ fn environment(root: &Path, cache: &Path, named: &[(&str, &str)]) -> Environment
         vars.set(*name, *value);
     }
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: cache.to_path_buf(),
         working_directory: root.to_path_buf(),
         temp_directory: njutest_devkit::paths::temp_beside(root).expect("a temporary directory"),

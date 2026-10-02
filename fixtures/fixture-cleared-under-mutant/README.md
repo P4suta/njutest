@@ -22,7 +22,7 @@ Executions run side by side, and the child `return-true` starts is charged only 
 ```fates
 src/bin/child.rs:8:14 int-decrement unreached
 src/bin/child.rs:8:14 int-increment unreached
-src/lib.rs:9:5 return-true inconclusive
+src/lib.rs:9:5 return-true unproven
 src/lib.rs:9:7 gt-to-ge survived
 src/lib.rs:9:9 int-decrement survived
 src/lib.rs:9:9 int-increment survived

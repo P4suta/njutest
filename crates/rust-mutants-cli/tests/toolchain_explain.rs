@@ -39,6 +39,7 @@ fn against(fixture: &Fixture, args: &[&str]) -> Output {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: njutest_devkit::paths::environment_for_a_run()
             .into_iter()
             .collect(),
@@ -82,7 +83,9 @@ fn explain_reads_the_stored_run_and_says_what_it_established() {
         "MUTANT",
         "RULE      gt-to-ge@1 (comparison)",
         "WHERE     src/lib.rs:11:10",
-        "OUTCOME   not_run",
+        "OUTCOME   survived",
+        "EVIDENCE  sealed",
+        "tests::max_picks_the_larger in fixture-simple/lib/fixture_simple: passed",
         "ROUTE     discharged",
         "PROVED    fixture-simple/lib/fixture_simple: never-infected",
         "REPRODUCE rust-mutants run --mutant src/lib.rs:max:gt-to-ge@11",
@@ -142,7 +145,11 @@ fn a_prefix_that_names_more_than_one_says_what_it_could_have_meant() {
     let fixture = Fixture::copy("fixture-simple");
     measured(&fixture);
     let output = against(&fixture, &["explain", ""]);
-    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_FAILED)),
+        "{output:?}"
+    );
     let complaint = njutest_devkit::process::strict_utf8(&output.stderr);
     assert!(complaint.contains("13 mutants"), "{complaint}");
 }
@@ -439,7 +446,7 @@ fn explain_reads_the_run_it_is_told_to_and_refuses_a_name_nobody_stored() {
     let wrong = against(&fixture, &["explain", "f0d2", "--run", "tuesday"]);
     assert_eq!(
         wrong.status.code(),
-        Some(2),
+        Some(i32::from(rust_mutants::run::EXIT_FAILED)),
         "and a name nobody stored is refused rather than answered from another run: {}",
         njutest_devkit::process::strict_utf8(&wrong.stdout)
     );
@@ -487,6 +494,7 @@ fn a_catalog_and_a_report_that_disagree_about_a_mutant_are_said_to_rather_than_o
             code: Some("E0308".to_owned()),
             diagnostic: "error[E0308]: mismatched types at another mutant's line".to_owned(),
             isolated: false,
+            reason: rust_mutants::validate::Condemnation::CompilerRefused,
         });
     std::fs::write(
         &path,

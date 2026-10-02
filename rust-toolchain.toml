@@ -6,4 +6,9 @@ channel = "1.98.0"
 # llvm-tools: `llvm-profdata` and `llvm-cov` are how njutest reads coverage,
 # and how CI measures its own.
 components = ["rustfmt", "clippy", "llvm-tools"]
+# wasm32-wasip1: what a sealed host runs a suite as; the instrumented tree and the host's own test guests are built for it.
+targets = ["wasm32-wasip1"]
 profile = "minimal"
+
+[njutest]
+nightly = "nightly-2026-07-02"

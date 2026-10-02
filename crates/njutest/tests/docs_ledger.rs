@@ -14,7 +14,7 @@
 
 use njutest::config::Config;
 use njutest::report::{Decision, FindingKind};
-use njutest_devkit::docs::{TraceSpecimen, table_count, trace_field_ledger};
+use njutest_devkit::docs::{TraceSpecimen, named_set_ledger, table_count, trace_field_ledger};
 
 fn page(relative: &str) -> String {
     let path = njutest_devkit::paths::workspace_root().join(relative);
@@ -50,26 +50,57 @@ fn a_count_a_page_states_is_read_from_the_paragraph_that_states_it() {
     );
 }
 
+fn routing_ledger(text: &str) -> Result<(), njutest_devkit::docs::LedgerError> {
+    let granularities: Vec<&str> = rust_mutants::session::Granularity::ALL
+        .iter()
+        .map(|one| one.name())
+        .collect();
+    let proofs: Vec<&str> = rust_mutants::session::Proof::ALL
+        .iter()
+        .map(|one| one.name())
+        .collect();
+    let fallbacks: Vec<&str> = rust_mutants::session::Fallback::ALL
+        .iter()
+        .map(|one| one.name())
+        .collect();
+    named_set_ledger(
+        text,
+        ("## Routing", "| field | what it says |"),
+        Some(1),
+        &[
+            ("granularity", &granularities),
+            ("reaching", &[]),
+            ("discharged", &proofs),
+            ("fallback", &fallbacks),
+            ("answered", &[]),
+        ],
+    )
+}
+
 #[test]
 fn every_way_a_run_can_choose_and_every_reason_it_widened_is_on_the_report_page() {
     let text = page("docs/report-v1.md");
-    let missing: Vec<&str> = rust_mutants::session::Granularity::ALL
-        .iter()
-        .map(|one| one.name())
-        .chain(
-            rust_mutants::session::Fallback::ALL
-                .iter()
-                .map(|one| one.name()),
-        )
-        .filter(|word| !text.contains(&format!("`{word}`")))
-        .collect();
-    assert!(
-        missing.is_empty(),
-        "a survivor is a claim about the targets a run chose, so the page names \
-         every way it can choose and every reason it gave up narrowing. A word the \
-         page does not carry is one a reader finds in a record and cannot look up: \
-         {missing:?}"
+    assert_eq!(
+        routing_ledger(&text).map_err(|error| error.to_string()),
+        Ok(())
     );
+}
+
+#[test]
+fn a_report_page_with_a_missing_or_extra_routing_row_is_refused() {
+    let text = page("docs/report-v1.md");
+    let fallback = text
+        .lines()
+        .find(|line| line.starts_with("| `fallback` |"))
+        .expect("the routing table has a fallback row");
+    let missing = text.replace(fallback, "");
+    let extra = text.replace(fallback, &format!("{fallback}\n| `invented` | `made-up` |"));
+    for changed in [missing, extra] {
+        assert!(
+            routing_ledger(&changed).is_err(),
+            "the page may name exactly the rows the route records: {changed}"
+        );
+    }
 }
 
 #[test]
@@ -118,16 +149,31 @@ fn the_ways_the_page_says_a_mutation_is_decided_are_the_ways_there_are() {
         })
         .collect();
     paged.sort();
-    let mut ours: Vec<(String, String)> = njutest::report::Outcome::ALL
+    let ours: Vec<(String, String)> = njutest::report::Outcome::ALL
         .iter()
-        .map(|one| (one.name().to_owned(), one.decision().name().to_owned()))
+        .flat_map(|outcome| {
+            njutest::report::Resting::ALL.into_iter().map(|resting| {
+                (
+                    outcome.name().to_owned(),
+                    njutest::report::RowVerdict {
+                        outcome: *outcome,
+                        accepted: false,
+                        resting,
+                    }
+                    .decision()
+                    .name()
+                    .to_owned(),
+                )
+            })
+        })
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
         .collect();
-    ours.sort();
     assert_eq!(
         paged, ours,
-        "and every outcome a report can record is on exactly one row of it: an \
-         outcome the page forgets is one a reader cannot tell the standing of, and \
-         one it puts on two rows is one they would count twice"
+        "and every outcome a report can record is on exactly the rows what it rests on puts \
+         it on: an outcome the page forgets is one a reader cannot tell the standing of, and \
+         one it puts on a row nothing puts it on is one they would count twice"
     );
 }
 
@@ -576,7 +622,14 @@ fn every_closed_set_the_schema_declares_is_one_this_release_produces() {
             "/$defs/mutant/allOf/0/then/properties/decision/properties/outcome",
             Outcome::ALL
                 .into_iter()
-                .filter(|one| one.review_answerable())
+                .filter(|one| {
+                    njutest::report::RowVerdict {
+                        outcome: *one,
+                        accepted: false,
+                        resting: njutest::report::Resting::Sealed,
+                    }
+                    .acceptable()
+                })
                 .map(|one| wire(&one))
                 .collect(),
         ),
@@ -647,6 +700,19 @@ fn every_closed_set_the_schema_declares_is_one_this_release_produces() {
     ));
     rows.push(("/$defs/knob", names(&njutest::report::knobs::Knob::ALL)));
     rows.push((
+        "/$defs/limitation/properties/name",
+        njutest::limitation::ALL
+            .into_iter()
+            .chain(rust_mutants::limitation::ALL)
+            .map(ToOwned::to_owned)
+            .chain(
+                rust_mutants::syntax::SkipReason::ALL
+                    .into_iter()
+                    .map(|reason| format!("skipped-{}", reason.name())),
+            )
+            .collect(),
+    ));
+    rows.push((
         "/$defs/knobStanding/oneOf/4/properties/why",
         names(&njutest::report::drift::Unmeasured::ALL),
     ));
@@ -665,6 +731,14 @@ fn every_closed_set_the_schema_declares_is_one_this_release_produces() {
     rows.push((
         "/$defs/concurrencyExploration/oneOf/0/properties/why",
         names(&njutest::report::concurrency::Unexplored::ALL),
+    ));
+    rows.push((
+        "/$defs/evidence/oneOf/0/properties/executions/items/properties/came_to",
+        names(&rust_mutants::sealed::record::Came::ALL),
+    ));
+    rows.push((
+        "/$defs/evidence/oneOf/1/properties/reasons/items",
+        names(&rust_mutants::sealed::record::Doubt::ALL),
     ));
     let borrowed: Vec<(&str, Vec<&str>)> = rows
         .iter()
@@ -784,7 +858,16 @@ fn the_sections_the_contract_says_a_specification_lists_are_the_ones_it_draws() 
                     njutest::presentation::spec::heading(section).to_owned(),
                     njutest::report::Outcome::ALL
                         .into_iter()
-                        .filter(|outcome| njutest::spec::Section::of(outcome.decision()) == section)
+                        .filter(|outcome| {
+                            njutest::spec::Section::of(
+                                njutest::report::RowVerdict {
+                                    outcome: *outcome,
+                                    accepted: false,
+                                    resting: njutest::report::Resting::Sealed,
+                                }
+                                .decision(),
+                            ) == section
+                        })
                         .map(|outcome| outcome.name().to_owned())
                         .collect(),
                 )
@@ -846,13 +929,16 @@ fn every_fault_decision_is_one_the_schema_publishes_and_the_page_documents() {
         "the schema and the set it publishes are one list"
     );
     let text = page("docs/report-v1.md");
-    let undocumented: Vec<&&str> = produced
-        .iter()
-        .filter(|name| !text.contains(&format!("| `{name}` |")))
-        .collect();
-    assert!(
-        undocumented.is_empty(),
-        "docs/report-v1.md has no row for {undocumented:?}"
+    let rows: Vec<(&str, &[&str])> = produced.iter().map(|name| (*name, &[][..])).collect();
+    assert_eq!(
+        named_set_ledger(
+            &text,
+            ("## Faults", "| `decision` | what it says | carries |"),
+            None,
+            &rows,
+        )
+        .map_err(|error| error.to_string()),
+        Ok(())
     );
     for decision in &every {
         let wire = serde_json::to_value(decision).expect("a decision serialises");
@@ -887,13 +973,16 @@ fn every_crash_decision_is_one_the_schema_publishes_and_the_page_documents() {
         "the schema and the set it publishes are one list"
     );
     let text = page("docs/report-v1.md");
-    let undocumented: Vec<&&str> = produced
-        .iter()
-        .filter(|name| !text.contains(&format!("| `{name}` |")))
-        .collect();
-    assert!(
-        undocumented.is_empty(),
-        "docs/report-v1.md has no row for {undocumented:?}"
+    let rows: Vec<(&str, &[&str])> = produced.iter().map(|name| (*name, &[][..])).collect();
+    assert_eq!(
+        named_set_ledger(
+            &text,
+            ("## Crashes", "| `decision` | what it says | carries |"),
+            None,
+            &rows,
+        )
+        .map_err(|error| error.to_string()),
+        Ok(())
     );
     for decision in &every {
         let wire = serde_json::to_value(decision).expect("a decision serialises");

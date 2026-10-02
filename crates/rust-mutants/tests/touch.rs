@@ -73,6 +73,85 @@ fn a_report_nothing_could_attribute_is_one_every_test_made() {
 }
 
 #[test]
+fn a_record_from_a_thread_that_names_nothing_is_one_no_test_made() {
+    let crash = include_bytes!(
+        "../../../fuzz/regressions/touch_log/crash-f04441d1062802181c8a1d66bbcdb4172eca3b33"
+    );
+    let text = std::str::from_utf8(crash).unwrap_or_else(|error| panic!("the crash: {error}"));
+    let bounds = touch::Bounds {
+        mutants: 4096,
+        items: 4096,
+    };
+    let read = touch::read(text, &"0".repeat(64), bounds);
+    let Ok(touches) = read else {
+        panic!("a thread named nothing wrote a record like any other: {read:?}");
+    };
+    assert!(
+        !touches.reached.tests.contains_key(""),
+        "what a scheduled fuzz run found: a record attributed to a test with no name, which \
+         is no test at all: {touches:?}"
+    );
+    assert!(
+        touches.reached.loose.contains(&61),
+        "so what it reached is what every test is taken to reach: {touches:?}"
+    );
+    let named = touch::read(&log("t\t\t1\nt\talpha\t2\n"), CATALOG, bounds);
+    let Ok(named) = named else {
+        panic!("a log from a thread named nothing and one named alpha: {named:?}");
+    };
+    assert_eq!(
+        (
+            named
+                .reached
+                .tests
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            named.reached.loose
+        ),
+        (vec!["alpha"], set(&[1])),
+        "which is where a thread the runtime could not name puts it too"
+    );
+}
+
+proptest::proptest! {
+    /// Whatever names a log's threads carry, a record the reader takes is attributed only to a name a test could have.
+    #[test]
+    fn no_record_the_reader_takes_is_attributed_to_a_name_no_test_has(
+        records in proptest::collection::vec(
+            (
+                proptest::sample::select(vec!["t", "b", "i", "e"]),
+                "[a-z:^-]{0,3}",
+                proptest::collection::vec(0u32..4, 1..3),
+            ),
+            0..8,
+        )
+    ) {
+        let mut text = String::new();
+        for (kind, thread, indices) in &records {
+            let indices: Vec<String> = indices.iter().map(u32::to_string).collect();
+            text.push_str(&[*kind, thread.as_str(), &indices.join(",")].join("\t"));
+            text.push('\n');
+        }
+        let bounds = touch::Bounds { mutants: 4, items: 4 };
+        let read = touch::read(&log(&text), CATALOG, bounds);
+        let Ok(touches) = read else {
+            return Err(proptest::test_runner::TestCaseError::fail(format!("{text:?}: {read:?}")));
+        };
+        for seen in [&touches.reached, &touches.bodies, &touches.infected, &touches.entered] {
+            for test in seen.tests.keys() {
+                proptest::prop_assert!(
+                    !test.is_empty() && test != touch::UNATTRIBUTED,
+                    "{:?} is attributed to {:?}",
+                    text,
+                    test
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn the_last_site_the_catalog_holds_is_one_a_record_may_name() {
     let touches = touch::read(
         &log("t\talpha\t3\n"),

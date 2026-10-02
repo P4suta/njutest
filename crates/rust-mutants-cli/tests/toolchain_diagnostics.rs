@@ -19,7 +19,7 @@ use rust_mutants_cli::{Environment, Streams};
 include!("support/metadata.rs");
 include!("support/missing.rs");
 
-const SECRET: &str = "a-value-nobody-meant-to-publish";
+const UNPUBLISHED_FIXTURE_VALUE: &str = "a-value-nobody-meant-to-publish";
 
 /// What one command said, driven in this process.
 #[derive(Debug)]
@@ -33,8 +33,9 @@ fn against(fixture: &Fixture, args: &[&str]) -> Said {
     let mut vars: rust_mutants::vars::Variables = njutest_devkit::paths::environment_for_a_run()
         .into_iter()
         .collect();
-    vars.set("RUST_MUTANTS_NOTHING", SECRET);
+    vars.set("RUST_MUTANTS_NOTHING", UNPUBLISHED_FIXTURE_VALUE);
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars,
         temp_directory: fixture.temp().to_path_buf(),
         program: std::path::PathBuf::from("this test never runs it"),
@@ -164,8 +165,8 @@ fn a_bundle_carries_no_environment_value() {
             std::fs::read(&entry).unwrap_or_else(|error| panic!("{}: {error}", entry.display()));
         assert!(
             !bytes
-                .windows(SECRET.len())
-                .any(|window| window == SECRET.as_bytes()),
+                .windows(UNPUBLISHED_FIXTURE_VALUE.len())
+                .any(|window| window == UNPUBLISHED_FIXTURE_VALUE.as_bytes()),
             "{} carries a value nobody published",
             entry.display()
         );
@@ -206,7 +207,13 @@ fn the_measurement_a_coverage_run_kept_validates_against_the_schema_it_answers_t
 fn a_run_nothing_stored_is_named_rather_than_bundled_empty() {
     let fixture = Fixture::copy("fixture-simple");
     let gathered = against(&fixture, &["diagnostics", "no-such-run"]);
-    assert_eq!(gathered.code, 2, "{}{}", gathered.out, gathered.err);
+    assert_eq!(
+        gathered.code,
+        rust_mutants::run::EXIT_FAILED,
+        "{}{}",
+        gathered.out,
+        gathered.err
+    );
     assert!(gathered.err.contains("no-such-run"), "{}", gathered.err);
 }
 

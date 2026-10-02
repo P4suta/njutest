@@ -1616,11 +1616,6 @@ exit "$FAKE_KANI_EXIT"
         std::fs::set_permissions(path, permissions).expect("fake bundle is executable");
     }
 
-    #[cfg(not(unix))]
-    fn fake_executable(_path: &Path) {
-        panic!("the fake Kani bundle currently requires POSIX permissions");
-    }
-
     #[test]
     fn accepts_only_exit_coherent_affirmative_documents() {
         let proved_fixture = Fixture::new("Success", 0);

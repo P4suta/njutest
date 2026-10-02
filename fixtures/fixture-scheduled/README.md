@@ -23,10 +23,10 @@ The run is `rust-mutants run --tier all --offline --locked`;
 `cargo test -p rust-mutants-cli --test toolchain_fates` does it again and refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 
 ```fates
-src/lib.rs:9:5 return-default killed
-src/lib.rs:9:7 add-to-sub killed
-src/lib.rs:9:9 int-decrement killed
-src/lib.rs:9:9 int-increment killed
+src/lib.rs:9:5 return-default unproven
+src/lib.rs:9:7 add-to-sub unproven
+src/lib.rs:9:9 int-decrement unproven
+src/lib.rs:9:9 int-increment unproven
 src/lib.rs:15:5 return-default unreached
 src/lib.rs:15:7 add-to-sub unreached
 src/lib.rs:15:9 int-decrement unreached

@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::locate::command_failed;
 use super::{CargoError, CargoErrorKind, Driver};
@@ -26,7 +26,7 @@ pub struct MetadataOptions {
 }
 
 /// The metadata document.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Metadata {
     /// The format version, `1`.
     pub version: u32,
@@ -49,7 +49,7 @@ pub struct Metadata {
 }
 
 /// The resolved dependency graph.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Resolve {
     /// One node per package in the graph.
     #[serde(default)]
@@ -62,7 +62,7 @@ pub struct Resolve {
 }
 
 /// One package's edges in the resolved graph.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Node {
     /// The package this node is about.
     pub id: String,
@@ -74,7 +74,7 @@ pub struct Node {
 }
 
 /// One edge of the resolved graph.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct NodeDep {
     /// The package depended on.
     pub pkg: String,
@@ -87,7 +87,7 @@ pub struct NodeDep {
 }
 
 /// One way one package depends on another.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct DepKind {
     /// `null` for a normal dependency, `"dev"` or `"build"` otherwise.
     #[serde(default)]
@@ -103,12 +103,15 @@ impl DepKind {
     /// The kind, with a normal dependency named rather than absent.
     #[must_use]
     pub fn name(&self) -> &str {
-        self.kind.as_deref().unwrap_or(Self::NORMAL)
+        match self.kind.as_deref() {
+            Some(named) => named,
+            None => Self::NORMAL,
+        }
     }
 }
 
 /// One package.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Package {
     /// The package id, as cargo spells it.
     pub id: String,
@@ -117,7 +120,7 @@ pub struct Package {
     /// The package version.
     pub version: String,
     /// The absolute path of its `Cargo.toml`.
-    pub manifest_path: PathBuf,
+    pub manifest_path: ManifestPath,
     /// The edition.
     #[serde(default)]
     pub edition: String,
@@ -159,7 +162,7 @@ pub struct Package {
 }
 
 /// One dependency, as the manifest declares it.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Dependency {
     /// The dependency's name.
     pub name: String,
@@ -177,7 +180,10 @@ impl Dependency {
     /// What kind of edge it is, in the word cargo uses.
     #[must_use]
     pub fn kind(&self) -> &str {
-        self.kind.as_deref().unwrap_or(DepKind::NORMAL)
+        match self.kind.as_deref() {
+            Some(named) => named,
+            None => DepKind::NORMAL,
+        }
     }
 }
 
@@ -185,12 +191,71 @@ impl Package {
     /// The directory holding the manifest.
     #[must_use]
     pub fn manifest_dir(&self) -> &Path {
-        self.manifest_path.parent().unwrap_or(&self.manifest_path)
+        self.manifest_path.directory()
+    }
+}
+
+/// Where a package's manifest is: a file, inside a directory that is the package's root.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManifestPath {
+    path: PathBuf,
+    directory: PathBuf,
+}
+
+/// Why a path is not where a manifest can be.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum ManifestPathError {
+    /// The path is a root, nothing, a bare name, or ends by climbing, so no directory holds a file it names.
+    #[error("{} names no file inside a directory, so no manifest can be there", path.display())]
+    NoFileInADirectory {
+        /// The path as given.
+        path: PathBuf,
+    },
+}
+
+impl ManifestPath {
+    /// The manifest at `path`.
+    ///
+    /// # Errors
+    /// [`ManifestPathError::NoFileInADirectory`] for a root, an empty path, a bare file name, and a path that ends in `..`.
+    pub fn new(path: PathBuf) -> Result<Self, ManifestPathError> {
+        let directory = match path.parent() {
+            Some(directory) if path.file_name().is_some() && !directory.as_os_str().is_empty() => {
+                directory.to_path_buf()
+            }
+            Some(_) | None => return Err(ManifestPathError::NoFileInADirectory { path }),
+        };
+        Ok(Self { path, directory })
+    }
+
+    /// The manifest's own path.
+    #[must_use]
+    pub fn as_path(&self) -> &Path {
+        &self.path
+    }
+
+    /// The directory holding it.
+    #[must_use]
+    pub fn directory(&self) -> &Path {
+        &self.directory
+    }
+}
+
+impl Serialize for ManifestPath {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.path.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ManifestPath {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::new(PathBuf::deserialize(deserializer)?).map_err(serde::de::Error::custom)
     }
 }
 
 /// One target of a package.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Target {
     /// The target name.
     pub name: String,
@@ -210,9 +275,6 @@ pub struct Target {
     /// Whether the target's documentation is tested.
     #[serde(default)]
     pub doctest: bool,
-    /// Whether the target uses the libtest harness.
-    #[serde(default = "yes")]
-    pub harness: bool,
     #[serde(flatten)]
     external_fields: std::collections::BTreeMap<String, serde_json::Value>,
 }
@@ -330,9 +392,20 @@ impl Metadata {
         let mut spec = driver
             .toolchain
             .command(driver.dir, metadata_arguments(options, no_deps));
+        if let Some(env) = spec.env.as_mut() {
+            env.set("CARGO_CACHE_RUSTC_INFO", "0");
+        }
         spec.structured_stdout = Some(METADATA_OUTPUT_LIMIT);
         let result = run(&spec, driver.cancel);
         driver.trace.exec_result(ExecRecord::of(&spec, &result));
+        if result.leader.is_some() {
+            match u64::try_from(result.duration.as_millis()) {
+                Ok(millis) => driver.trace.note("cargo-metadata", &millis.to_string()),
+                Err(_outside_wire) => driver
+                    .trace
+                    .note("cargo-metadata", "duration outside the wire"),
+            }
+        }
         if !result.succeeded() {
             return Err(command_failed(&spec, &result));
         }

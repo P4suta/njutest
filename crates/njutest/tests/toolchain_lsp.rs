@@ -46,7 +46,7 @@ fn verified(root: &std::path::Path) -> String {
         duration_ms: 1,
     };
     source.limitations.push(njutest::report::Limitation::new(
-        "git-metadata-unavailable",
+        njutest::limitation::Limitation::GitMetadataUnavailable,
         "the LSP fixture is not a git repository",
     ));
     source.mutants.push(MutantRecord {
@@ -63,6 +63,7 @@ fn verified(root: &std::path::Path) -> String {
         item: "demo".to_owned(),
         original: ">".to_owned(),
         replacement: String::new(),
+        evidence: njutest::testkit::reports::sealed_as(&njutest::report::Decided::Survived),
         outcome: njutest::report::Decided::Survived,
         accepted: false,
         reuse: njutest::report::Reuse(njutest::report::Established::Here),

@@ -18,7 +18,10 @@ use rust_mutants::rule::{
 
 #[test]
 fn tiers_nest_monotonically_and_round_trip_through_their_names() {
-    assert_eq!(Tier::ALL, [Tier::Balanced, Tier::Strong, Tier::All]);
+    assert_eq!(
+        Tier::ALL,
+        [Tier::Balanced, Tier::Strong, Tier::All, Tier::Compiled]
+    );
     assert!(Tier::Balanced < Tier::Strong && Tier::Strong < Tier::All);
     for (outer, inner, want) in [
         (Tier::All, Tier::Balanced, true),

@@ -64,6 +64,8 @@ const fn relevant_payload(payload: &Payload) -> RelevantPayload<'_> {
         | Payload::Identical { .. }
         | Payload::Evidence { .. }
         | Payload::MutantExec { .. }
+        | Payload::SealedControl { .. }
+        | Payload::SealedExec { .. }
         | Payload::Note { .. }
         | Payload::RunEnd { .. } => RelevantPayload::Other,
     }
@@ -121,6 +123,79 @@ fn the_schema_is_frozen() {
     assert_eq!(OUTPUT_DIRECTORY_NAME, "output");
     assert_eq!(OUTPUT_FILE_LIMIT, 1 << 20);
     assert_eq!(TRUNCATION_MARKER, "...");
+}
+
+#[test]
+fn actual_module_preparation_work_validates_against_the_published_trace_schema() {
+    let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(include_str!(
+        "../../../schema/rust-mutants-trace-v1.json"
+    ))
+    .expect("the published schema is JSON");
+    let sealed = schema["properties"]["payload"]["oneOf"]
+        .as_array()
+        .expect("the payload alternatives")
+        .iter()
+        .find(|alternative| alternative["properties"]["type"]["const"] == "run-end")
+        .map(|end| &end["properties"]["run"]["properties"]["sealed"])
+        .expect("the actual run-end sealed diagnostics");
+    let validator = jsonschema::validator_for(sealed).expect("the published boundary compiles");
+    let directory = njutest_devkit::temporary::CacheDirectory::make("trace-modules-")
+        .expect("the actual producing test process has a parent suite cache owner");
+    let cache = rust_mutants_sealed::CompilationCache::retained(directory.path().to_path_buf())
+        .expect("the parent-owned compilation cache");
+    let modules = rust_mutants_sealed::ModuleOwner::default();
+    let runner = rust_mutants_sealed::SealedRunner::cached(
+        &modules,
+        std::time::Duration::from_secs(60),
+        &cache,
+    )
+    .expect("an actual preparation owner");
+    let command = b"\0asm\x01\0\0\0\x01\x04\x01\x60\0\0\x03\x02\x01\0\x05\x03\x01\0\x01\x07\x13\x02\x06memory\x02\0\x06_start\0\0\x0a\x04\x01\x02\0\x0b";
+    let invocation = rust_mutants_sealed::Invocation {
+        arguments: rust_mutants_sealed::Arguments::new(vec!["command".to_owned()])
+            .expect("valid arguments"),
+        environment: rust_mutants_sealed::Environment::new(Vec::new()).expect("valid environment"),
+        preopens: rust_mutants_sealed::Preopens::new(Vec::new()).expect("valid preopens"),
+        seed: 11,
+        fuel: 1_000_000,
+        limits: rust_mutants_sealed::Limits {
+            memory: 1 << 20,
+            stdout: 1 << 16,
+            stderr: 1 << 16,
+            overlay: 1 << 20,
+        },
+        clock: rust_mutants_sealed::ClockPolicy {
+            realtime_origin: 1_000_000_000_000_000_000,
+            monotonic_origin: 5_000_000_000,
+            nanos_per_fuel: std::num::NonZeroU64::MIN,
+        },
+        halt: None,
+    };
+    for _request in 0..2 {
+        let transcript = runner
+            .prepare(command)
+            .expect("the actual WASI command")
+            .invoke(&invocation, &rust_mutants_sealed::Interrupt::of(Vec::new()))
+            .expect("actual independent host execution");
+        assert_eq!(transcript.stop(), rust_mutants_sealed::SealedStop::Returned);
+        runner
+            .prepare(b"\0asm\x01\0\0\0\x05\x03\x01\0\x01")
+            .expect_err("a compiled core module without the command interface is refused");
+    }
+    let spent = runner.spent().expect("the actual preparation work");
+    let compilation = spent.compilation.expect("measured physical preparations");
+    assert_eq!(spent.failures, Some(2));
+    assert_eq!(
+        (
+            compilation.attempts,
+            compilation.process,
+            compilation.failed_cold,
+            compilation.failed_disk
+        ),
+        (Some(3), Some(1), Some(1), Some(1))
+    );
+    let recorded = serde_json::to_value(spent).expect("the actual diagnostic document");
+    assert!(validator.is_valid(&recorded), "{recorded}");
 }
 
 #[test]
@@ -821,6 +896,22 @@ fn the_v1_reader_distinguishes_an_explicit_null_from_a_missing_field() {
 }
 
 #[test]
+fn the_reader_refuses_an_exec_record_whose_command_line_names_no_program() {
+    let event = rust_mutants::trace::Event {
+        seq: 1,
+        timestamp: "2027-01-15T08:00:00Z".to_owned(),
+        elapsed_ms: 0,
+        payload: Payload::Exec { exec: exec(&[]) },
+    };
+    let text = serde_json::to_string(&event).expect("the malformed event");
+    let error = read_events(text.as_bytes()).expect_err(
+        "a command line names at least its program, which is what the schema's minItems says, \
+         so an empty one is no record a recorder writes rather than a program named nothing",
+    );
+    assert_eq!(error.line(), 1, "{error}");
+}
+
+#[test]
 fn check_reports_sequence_gaps_a_missing_run_end_and_drops() {
     let recorder = memory_recorder();
     recorder.note("a", "1");
@@ -916,6 +1007,7 @@ fn one_of_each_preparation(recorder: &Recorder) {
             code: Some("E0308".to_owned()),
             said: "mismatched types".to_owned(),
         }],
+        carried: Vec::new(),
         unattributed: vec!["error: something else".to_owned()],
     });
     recorder.bisect(rust_mutants::trace::BisectRecord {
@@ -1036,6 +1128,20 @@ fn one_of_each_execution(recorder: &Recorder) {
         step_notice: None,
         declined: Vec::new(),
     });
+    recorder.sealed_control(rust_mutants::trace::SealedControlRecord {
+        target: "demo/lib/demo".to_owned(),
+        test: "demo::tests::le_bound".to_owned(),
+        standing: "controlled".to_owned(),
+        reached: vec![0, 1],
+    });
+    recorder.sealed_exec(rust_mutants::trace::SealedExecRecord {
+        mutant: "b".repeat(20),
+        index: 1,
+        target: "demo/lib/demo".to_owned(),
+        test: "demo::tests::le_bound".to_owned(),
+        came_to: "panicked".to_owned(),
+        transcript: Some("d".repeat(64)),
+    });
     recorder.cache(rust_mutants::trace::CacheRecord {
         mutant: "b".repeat(20),
         key: "d".repeat(64),
@@ -1082,6 +1188,11 @@ fn every_event_type_has_one_golden_line_and_validates_against_the_schema() {
     one_of_each_preparation(&recorder);
     one_of_each_measurement(&recorder);
     phase.end();
+    let counted = recorder.sealed_counts();
+    counted.assembled();
+    counted.compiled().expect("the count fits");
+    counted.instantiated().expect("the count fits");
+    counted.answered().expect("the count fits");
     recorder
         .run_end(rust_mutants::trace::RunOutcome::Detected, None)
         .expect("trace closes");
@@ -1226,6 +1337,7 @@ fn a_phase_that_never_ended_is_a_problem_a_reader_is_told_about() {
                     error: Some("killed".to_owned()),
                     events_emitted: 3,
                     events_dropped: 0,
+                    sealed: None,
                 },
             },
         ),
@@ -1277,6 +1389,7 @@ fn a_phase_that_began_and_ended_is_no_problem() {
                     error: None,
                     events_emitted: 6,
                     events_dropped: 0,
+                    sealed: None,
                 },
             },
         ),
@@ -1490,6 +1603,36 @@ fn the_schema_names_every_granularity_and_every_fallback_a_route_can_carry() {
             .map(|one| one.name().to_owned())
             .collect::<BTreeSet<String>>(),
         "and so is every reason it can give for widening"
+    );
+}
+
+#[test]
+fn every_word_a_carry_refusal_has_is_one_the_published_schema_allows() {
+    let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(include_str!(
+        "../../../schema/rust-mutants-trace-v1.json"
+    ))
+    .expect("the schema is JSON");
+    let refused = schema["properties"]["payload"]["oneOf"]
+        .as_array()
+        .expect("the payload alternatives")
+        .iter()
+        .find(|alternative| alternative["properties"]["type"]["const"] == "cache")
+        .map(|cache| cache["properties"]["cache"]["properties"]["refused"]["enum"].clone())
+        .expect("a cache record");
+    let published: Vec<Option<&str>> = refused
+        .as_array()
+        .expect("a closed list")
+        .iter()
+        .map(serde_json::Value::as_str)
+        .collect();
+    let mut written: Vec<Option<&str>> = rust_mutants::carry::Refusal::ALL
+        .iter()
+        .map(|refusal| Some(refusal.name()))
+        .collect();
+    written.push(None);
+    assert_eq!(
+        published, written,
+        "a carried lookup's cache record names the premise that failed, so the schema lists each"
     );
 }
 

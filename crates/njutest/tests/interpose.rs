@@ -164,14 +164,18 @@ fn passing_baseline() -> Vec<njutest::wire::settle::Answered> {
 }
 
 fn ask(address: std::net::SocketAddr, path: &str) -> String {
-    let mut stream = TcpStream::connect(address).expect("the interposer is listening");
     let request = format!("GET {path} HTTP/1.1\r\nHost: test\r\n\r\n");
-    stream.write_all(request.as_bytes()).expect("the request");
+    String::from_utf8(ask_bytes(address, request.as_bytes())).expect("the answer is UTF-8")
+}
+
+fn ask_bytes(address: std::net::SocketAddr, request: &[u8]) -> Vec<u8> {
+    let mut stream = TcpStream::connect(address).expect("the interposer is listening");
+    stream.write_all(request).expect("the request");
     stream.flush().expect("the request");
-    let mut answer = String::new();
+    let mut answer = Vec::new();
     stream
-        .read_to_string(&mut answer)
-        .expect("the complete answer is readable");
+        .read_to_end(&mut answer)
+        .expect("the answer is readable");
     answer
 }
 
@@ -240,6 +244,70 @@ fn a_test_dials_the_interposer_and_gets_what_the_upstream_said() {
         "how much came back is what a derivation truncates, so it is recorded \
          even where nothing parsed the body"
     );
+}
+
+#[test]
+fn unreadable_http_is_forwarded_without_http_faults() {
+    let cases: [(&[u8], Answer); 9] = [
+        (
+            b"GET /orders HTTP/1.1\r\nHost: test\r\n\r\n",
+            Answer::Same("NOT HTTP", "payload"),
+        ),
+        (
+            b"GET /orders HTTP/1.1\r\nHost: test\r\n\r\n",
+            Answer::Same("GARBAGE 200 OK", "payload"),
+        ),
+        (
+            b"GET /orders HTTP/1.1\r\nHost: test\r\n\r\n",
+            Answer::Same("HTTP/123.456 200 OK", "payload"),
+        ),
+        (
+            b"GET /orders HTTP/1.1\r\nHost: test\r\n\r\n",
+            Answer::Same("HTTP/1.1 999 Invalid", "payload"),
+        ),
+        (
+            b"GET /orders HTTP/1.1\r\nHost: test\r\n\r\n",
+            Answer::Same("HTTP/1.1 200 OK\nBAD", "payload"),
+        ),
+        (b"\xff\r\n\r\n", Answer::Same(OK, "payload")),
+        (b"GET /orders GARBAGE\r\n\r\n", Answer::Same(OK, "payload")),
+        (b"GET /orders HTTP/1.1", Answer::Same(OK, "payload")),
+        (
+            b"GET /orders HTTP/1.1\nBAD\r\n\r\n",
+            Answer::Same(OK, "payload"),
+        ),
+    ];
+    for (request, answer) in cases {
+        let expected = answer.to(0).into_bytes();
+        let up = Upstream::answering(answer);
+        let interposer = Interposer::start(&Interposing {
+            capability: "api".to_owned(),
+            upstream: up.address(),
+            wire: Wire::Http,
+            injecting: None,
+            held_up: BRIEFLY,
+        })
+        .expect("an interposer");
+
+        let received = ask_bytes(interposer.address(), request);
+        assert_eq!(
+            received, expected,
+            "the upstream answer stays byte-for-byte intact"
+        );
+
+        let recorded = interposer.stop();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(
+            recorded[0].spoken,
+            Spoken::Raw {
+                request_bytes: u64::try_from(request.len()).expect("a bounded request"),
+                response_bytes: u64::try_from(received.len()).expect("a bounded answer"),
+            }
+        );
+        let faults = njutest::wire::derive::derive(&recorded).expect("fault identities");
+        let rules: Vec<_> = faults.iter().map(|fault| fault.rule).collect();
+        assert_eq!(rules, Rule::UNPARSED);
+    }
 }
 
 #[test]
@@ -1089,6 +1157,75 @@ fn what_a_fault_run_drives_through_a_second_seam_is_not_that_seam_s_catalogue() 
     for one in seams.watching {
         let stopped = one.interposer.stop();
         drop(stopped);
+    }
+}
+
+#[test]
+fn a_recording_follows_its_seam_when_the_watchers_are_reordered() {
+    let up = upstream("ok");
+    let mut seams = njutest::assure::wire::Seams {
+        environment: Vec::new(),
+        watching: vec![seam("api", up.address()), seam("ledger", up.address())],
+        unwatched: Vec::new(),
+    };
+    let api = seams.watching[0].interposer.address();
+    let baseline = seams.observing(|| {
+        assert!(ask(api, "/orders").contains("200"));
+        passing_baseline()
+    });
+    seams.watching.swap(0, 1);
+    let held = (
+        rust_mutants::runner::Cancel::new(),
+        njutest::trace::Recorder::disabled(),
+    );
+    let measured = njutest::assure::wire::asking(
+        &seams,
+        &baseline,
+        || {
+            let fault_response = ask(api, "/orders");
+            drop(fault_response);
+            njutest::wire::settle::Asked::Answered(passing_baseline())
+        },
+        njutest::watch::Watch::new(&held.0, &held.1),
+    )
+    .expect("a recorded seam is identified by its capability rather than its position");
+    assert!(measured.executed);
+    assert_eq!(measured.seams.len(), 6);
+    assert!(measured.seams.iter().all(|one| one.capability == "api"));
+
+    for one in seams.watching {
+        let remaining_exchanges = one.interposer.stop();
+        drop(remaining_exchanges);
+    }
+}
+
+#[test]
+fn two_watchers_with_one_name_cannot_share_a_baseline() {
+    let up = upstream("ok");
+    let seams = njutest::assure::wire::Seams {
+        environment: Vec::new(),
+        watching: vec![seam("api", up.address()), seam("api", up.address())],
+        unwatched: Vec::new(),
+    };
+    let baseline = seams.observing(Vec::new);
+    let held = (
+        rust_mutants::runner::Cancel::new(),
+        njutest::trace::Recorder::disabled(),
+    );
+    let measured = njutest::assure::wire::asking(
+        &seams,
+        &baseline,
+        || njutest::wire::settle::Asked::Answered(Vec::new()),
+        njutest::watch::Watch::new(&held.0, &held.1),
+    );
+    assert!(matches!(
+        measured,
+        Err(njutest::wire::derive::DeriveError::NotOneBaseline { .. })
+    ));
+
+    for one in seams.watching {
+        let remaining_exchanges = one.interposer.stop();
+        drop(remaining_exchanges);
     }
 }
 

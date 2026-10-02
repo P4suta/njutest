@@ -73,6 +73,29 @@ fn a_clean_run_is_silent_on_every_layer_it_can_re_decide() {
 }
 
 #[test]
+fn a_mutant_of_a_const_fn_is_measured_by_the_reach_of_its_guards_alone() {
+    let run = run_directory(&base());
+    std::fs::write(
+        run.path().join("touched-v1.json"),
+        sentinel::entered(
+            &serde_json::json!({ "tests": { "larger_works": [] } }),
+            false,
+        )
+        .to_string(),
+    )
+    .expect("the guards' record");
+    let audit = gates::engine_audit(&checkers(), &asked(run.path(), None, None))
+        .expect("a report this audit can read");
+    assert!(
+        violations(&audit, Layer::Entry).is_empty(),
+        "the catalog says nothing records entering the item, because the pristine file makes it \
+         a const fn ([ADR 0047](docs/adr/0047)), so its mutants are neither routed nor audited \
+         by entry: {:?}",
+        violations(&audit, Layer::Entry)
+    );
+}
+
+#[test]
 fn every_layer_says_how_far_it_got_even_with_nothing_to_look_at() {
     let said = audited(&base()).to_string();
     for layer in Layer::ALL {
@@ -193,7 +216,7 @@ fn a_step_limit_is_accounted_for_but_never_counted_as_detected() {
         "selection": { "mutant_steps": 10 },
         "accounting": {
             "killed": 0, "survived": 1, "step_limit_reached": 1, "waited": 0,
-            "inconclusive": 0, "errored": 0
+            "inconclusive": 0, "errored": 0, "unproven": 0, "unproven_killed": 0
         },
         "score": { "detected": 0, "decided": 1, "value": 0.0 },
         "mutants": [{
@@ -222,7 +245,7 @@ fn a_step_limit_notice_must_bind_the_selected_allowance_catalog_and_mutant() {
         "selection": { "mutant_steps": 10 },
         "accounting": {
             "killed": 0, "survived": 1, "step_limit_reached": 1, "waited": 0,
-            "inconclusive": 0, "errored": 0
+            "inconclusive": 0, "errored": 0, "unproven": 0, "unproven_killed": 0
         },
         "score": { "detected": 0, "decided": 1, "value": 0.0 },
         "mutants": [{
@@ -251,7 +274,7 @@ fn a_waited_mutant_is_an_infrastructure_finding_not_a_detection() {
         "run": { "exit_code": 2 },
         "accounting": {
             "killed": 0, "survived": 1, "step_limit_reached": 0, "waited": 1,
-            "inconclusive": 0, "errored": 0
+            "inconclusive": 0, "errored": 0, "unproven": 0, "unproven_killed": 0
         },
         "score": { "detected": 0, "decided": 1, "value": 0.0 },
         "mutants": [
@@ -344,6 +367,61 @@ fn the_parts_of_one_catalog_recount_to_the_whole() {
             .iter()
             .any(|remark| remark.contains("is in two parts")),
         "{audit}"
+    );
+}
+
+/// The Merge layer's violations of `merged`, a report `merge` wrote, audited with `part` as the one part its rows name.
+fn merged_against(merged: &serde_json::Value, part: &serde_json::Value) -> Vec<String> {
+    let run = run_directory(merged);
+    let parts = tempfile::tempdir().expect("a temporary directory");
+    let path = parts.path().join("run-report-v1.json");
+    std::fs::write(&path, part.to_string()).expect("the part");
+    let audit = gates::engine_audit(
+        &checkers(),
+        &gates::EngineRun {
+            run: run.path(),
+            trace: None,
+            shards: &[path],
+            ledger: None,
+            sites: false,
+            root: None,
+        },
+    )
+    .expect("a report this audit can read");
+    violations(&audit, Layer::Merge)
+}
+
+/// The clean report as `merge` writes it of one part, the clean report itself, run by `part_run`.
+fn merged_of(part_run: &str) -> serde_json::Value {
+    let mut merged = base();
+    for row in merged["mutants"].as_array_mut().expect("the rows") {
+        row["part_run_id"] = serde_json::json!(part_run);
+    }
+    merged
+}
+
+#[test]
+fn a_merged_row_is_what_the_part_its_row_names_decided() {
+    let part = base();
+    let part_run = part["run"]["id"]
+        .as_str()
+        .expect("the part's run")
+        .to_owned();
+
+    assert_eq!(
+        merged_against(&merged_of(&part_run), &part),
+        Vec::<String>::new(),
+        "a merge carries what its parts decided, row for row"
+    );
+
+    let mut forged = merged_of(&part_run);
+    forged["mutants"][1]["evidence"]["executions"][0]["test"] = serde_json::json!("another");
+    let found = merged_against(&forged, &part);
+    assert!(
+        found
+            .iter()
+            .any(|remark| remark.contains("decided it otherwise")),
+        "a merged row resting on executions its part's run never ran rests on nothing: {found:?}"
     );
 }
 
@@ -486,6 +564,64 @@ fn condemned_indices_must_be_the_rejections() {
     );
 }
 
+/// `events` numbered again from one, with the count the run says it emitted following them.
+fn renumbered(mut events: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
+    let total = events.len();
+    for (seq, event) in (1_u64..).zip(events.iter_mut()) {
+        event["seq"] = serde_json::json!(seq);
+    }
+    if let Some(last) = events.last_mut() {
+        last["run"]["events_emitted"] = serde_json::json!(total);
+    }
+    events
+}
+
+/// The specimen recording with a bisection naming `offenders` laid in after its validation round.
+fn bisected(offenders: &serde_json::Value) -> Vec<serde_json::Value> {
+    let mut events = recording();
+    events.insert(
+        4,
+        serde_json::json!({"seq":0,"timestamp":"2026-09-06T10:15:00Z","elapsed_ms":25,
+            "type":"bisect","bisect":{"suspects":1,"offenders":offenders,"attempts":1,
+            "diagnosed":1}}),
+    );
+    renumbered(events)
+}
+
+#[test]
+fn a_bisection_whose_offenders_the_audit_cannot_read_is_not_passed() {
+    let read = audited_with(&base(), &bisected(&serde_json::json!([5])));
+    assert!(
+        violations(&read, Layer::Trace)
+            .iter()
+            .any(|remark| remark.contains("does not refuse")),
+        "an offender the report does not refuse is a violation: {read}"
+    );
+    let unread = audited_with(&base(), &bisected(&serde_json::json!([5.0])));
+    assert!(
+        unread.of(Layer::Trace).iter().any(|remark| {
+            remark.standing == Standing::Unaudited && remark.to_string().contains("offenders")
+        }),
+        "an offender written as 5.0 passes the schema's integer and is no index this audit reads, \
+         so what the bisection condemned is not re-derived rather than read as nothing: {unread}"
+    );
+}
+
+#[test]
+fn a_recording_that_holds_no_build_record_leaves_what_was_built_unaudited() {
+    let mut events = recording();
+    let build = events.remove(4);
+    assert_eq!(build["type"], "build", "the fixture removes the build");
+    let audit = audited_with(&base(), &renumbered(events));
+    assert!(
+        audit.of(Layer::Trace).iter().any(|remark| {
+            remark.standing == Standing::Unaudited && remark.to_string().contains("no build record")
+        }),
+        "a recording that never says what the build produced has not said it produced nothing: \
+         {audit}"
+    );
+}
+
 #[test]
 fn a_target_the_build_produced_and_nothing_verified_is_a_violation() {
     let mut events = recording();
@@ -580,6 +716,31 @@ fn a_survivor_the_ledger_does_not_explain_fails_the_dogfood_gate() {
 }
 
 #[test]
+fn a_survivor_finding_that_names_no_mutant_is_said_to_name_none() {
+    let ledger = tempfile::tempdir().expect("a temporary directory");
+    let path = ledger.path().join(".rust-mutants.toml");
+    std::fs::write(&path, "[mutation]\ntier = \"balanced\"\n").expect("the ledger");
+    let document = with(serde_json::json!({
+        "accounting": { "expected": 0 },
+        "mutants": [{}, { "expected": false }],
+        "expectations": [],
+        "run": { "exit_code": 1 },
+        "findings": [{ "kind": "surviving-mutant", "mutant": null, "detail": "no test noticed it" }]
+    }));
+    let run = run_directory(&document);
+    let audit = gates::engine_audit(&checkers(), &asked(run.path(), None, Some(&path)))
+        .expect("a report this audit can read");
+    let found = violations(&audit, Layer::Ledger);
+    assert!(
+        found
+            .iter()
+            .any(|remark| remark.contains("names no mutant, so no acceptance can answer it")),
+        "a survivor finding with no mutant is not a mutation no test noticed; it is a finding \
+         nothing can accept: {found:?}"
+    );
+}
+
+#[test]
 fn a_ledger_that_accepts_what_the_run_does_not_hold_is_a_violation() {
     let ledger = tempfile::tempdir().expect("a temporary directory");
     let path = ledger.path().join(".rust-mutants.toml");
@@ -620,6 +781,242 @@ fn a_ledger_that_explains_every_survivor_is_silent() {
         violations(&audit, Layer::Ledger),
         Vec::<String>::new(),
         "{audit}"
+    );
+}
+
+#[test]
+fn a_met_claim_the_ledger_writes_as_a_locator_is_one_the_audit_finds() {
+    let ledger = tempfile::tempdir().expect("a temporary directory");
+    let path = ledger.path().join(".rust-mutants.toml");
+    std::fs::write(
+        &path,
+        "[[mutation.expect]]\npath = \"src/lib.rs\"\nitem = \"larger\"\nrule = \
+         \"return-default\"\noriginal = \"if a > b { a } else { b }\"\nreason = \"equivalent\"\n",
+    )
+    .expect("the ledger");
+    let run = run_directory(&with(serde_json::json!({
+        "expectations": [{
+            "id": "src/lib.rs larger return-default \"if a > b { a } else { b }\"",
+            "locator": {
+                "path": "src/lib.rs", "item": "larger", "rule": "return-default",
+                "original": "if a > b { a } else { b }", "line": null, "count": null
+            }
+        }]
+    })));
+    let audit = gates::engine_audit(&checkers(), &asked(run.path(), None, Some(&path)))
+        .expect("a report this audit can read");
+    assert_eq!(
+        violations(&audit, Layer::Ledger),
+        Vec::<String>::new(),
+        "every claim this repository's own ledger accepts is written this way: {audit}"
+    );
+}
+
+/// Every form the engine's own `Expect` accepts a survivor in: by identity, or by locator with or without its line and its count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
+enum Form {
+    Identity,
+    Locator,
+    LocatorOnALine,
+    LocatorOfACount,
+    LocatorOnALineOfACount,
+}
+
+impl Form {
+    /// The line and the count this form states, which an identity has neither of.
+    const fn hints(self) -> (Option<u64>, Option<u64>) {
+        match self {
+            Self::Identity | Self::Locator => (None, None),
+            Self::LocatorOnALine => (Some(20), None),
+            Self::LocatorOfACount => (None, Some(1)),
+            Self::LocatorOnALineOfACount => (Some(20), Some(1)),
+        }
+    }
+
+    /// The `[[mutation.expect]]` entry that accepts the specimen's survivor in this form.
+    fn entry(self) -> String {
+        let (line, count) = self.hints();
+        let named = match self {
+            Self::Identity => format!("id = \"{SURVIVED}\"\n"),
+            Self::Locator
+            | Self::LocatorOnALine
+            | Self::LocatorOfACount
+            | Self::LocatorOnALineOfACount => format!(
+                "path = \"src/lib.rs\"\nitem = \"larger\"\nrule = \"return-default\"\n\
+                 original = \"if a > b {{ a }} else {{ b }}\"\n{}{}",
+                line.map_or_else(String::new, |line| format!("line = {line}\n")),
+                count.map_or_else(String::new, |count| format!("count = {count}\n")),
+            ),
+        };
+        format!("[[mutation.expect]]\n{named}reason = \"equivalent\"\n")
+    }
+
+    /// The claim a run held to that entry writes back, which is the form the entry was written in.
+    fn claim(self) -> serde_json::Value {
+        let (line, count) = self.hints();
+        match self {
+            Self::Identity => serde_json::json!({ "id": SURVIVED, "locator": null }),
+            Self::Locator
+            | Self::LocatorOnALine
+            | Self::LocatorOfACount
+            | Self::LocatorOnALineOfACount => serde_json::json!({
+                "id": format!(
+                    "src/lib.rs larger return-default \"if a > b {{ a }} else {{ b }}\"{}",
+                    line.map_or_else(String::new, |line| format!(" @{line}"))
+                ),
+                "locator": {
+                    "path": "src/lib.rs", "item": "larger", "rule": "return-default",
+                    "original": "if a > b { a } else { b }", "line": line, "count": count
+                }
+            }),
+        }
+    }
+}
+
+/// What the ledger layer says of the specimen whose one claim is written in `claimed`, against a ledger of `entries`.
+fn ledger_violations(claimed: Form, entries: &str) -> Vec<String> {
+    let ledger = tempfile::tempdir().expect("a temporary directory");
+    let path = ledger.path().join(".rust-mutants.toml");
+    std::fs::write(&path, entries).expect("the ledger");
+    let run = run_directory(&with(
+        serde_json::json!({ "expectations": [claimed.claim()] }),
+    ));
+    let audit = gates::engine_audit(&checkers(), &asked(run.path(), None, Some(&path)))
+        .expect("a report this audit can read");
+    violations(&audit, Layer::Ledger)
+}
+
+#[test]
+fn a_claim_in_every_form_the_engine_accepts_is_one_the_ledger_audit_finds() {
+    for form in Form::ALL {
+        assert_eq!(
+            ledger_violations(form, &form.entry()),
+            Vec::<String>::new(),
+            "{form:?}"
+        );
+    }
+}
+
+#[test]
+fn a_claim_is_carried_only_by_an_acceptance_in_the_form_it_was_made_in() {
+    for claimed in Form::ALL {
+        for accepted in Form::ALL
+            .into_iter()
+            .filter(|accepted| *accepted != claimed)
+        {
+            let found = ledger_violations(claimed, &accepted.entry());
+            assert_eq!(
+                found.len(),
+                2,
+                "{claimed:?} against {accepted:?}: {found:?}"
+            );
+            assert!(
+                found
+                    .iter()
+                    .any(|remark| remark.contains("the run does not hold it"))
+                    && found
+                        .iter()
+                        .any(|remark| remark.contains("the ledger does not carry")),
+                "a run held to one ledger writes back what that ledger said, so a claim in \
+                 another form is one the run was not held to: {claimed:?} against \
+                 {accepted:?}: {found:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_acceptance_the_engine_would_refuse_is_a_ledger_this_audit_cannot_read() {
+    let run = run_directory(&base());
+    let ledger = tempfile::tempdir().expect("a temporary directory");
+    for (text, why) in [
+        (
+            format!(
+                "[[mutation.expect]]\nid = \"{SURVIVED}\"\npath = \"src/lib.rs\"\nreason = \"r\"\n"
+            ),
+            "one that names its mutant twice",
+        ),
+        (
+            "[[mutation.expect]]\nreason = \"r\"\n".to_owned(),
+            "one that names none",
+        ),
+        (
+            "[[mutation.expect]]\npath = \"src/lib.rs\"\nitem = \"larger\"\nrule = \"x\"\n\
+             reason = \"r\"\n"
+                .to_owned(),
+            "a locator without the bytes it replaces",
+        ),
+        (
+            format!("[[mutation.expect]]\nid = \"{SURVIVED}\"\nspan = 3\nreason = \"r\"\n"),
+            "one in a form this audit has not been taught",
+        ),
+        (
+            format!("[[mutation.expect]]\nid = \"{SURVIVED}\"\nline = 20\nreason = \"r\"\n"),
+            "an identity with a line, which the engine reads as naming it twice",
+        ),
+        ("mutation = 1\n".to_owned(), "a mutation that is no table"),
+        (
+            "[mutation]\nexpect = 1\n".to_owned(),
+            "acceptances that are no list",
+        ),
+    ] {
+        let path = ledger.path().join("ledger.toml");
+        std::fs::write(&path, &text).expect("the ledger");
+        let refused =
+            gates::engine_audit(&checkers(), &asked(run.path(), None, Some(&path))).expect_err(why);
+        assert!(
+            matches!(refused, AuditError::MalformedLedger { .. }),
+            "{why}: {refused}"
+        );
+    }
+}
+
+#[test]
+fn every_acceptance_this_repository_writes_is_one_the_audit_reads() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../.rust-mutants.toml");
+    let text = std::fs::read_to_string(&path).expect("this repository's ledger");
+    let document = text.parse::<toml::Table>().expect("the ledger is TOML");
+    let written = document
+        .get("mutation")
+        .and_then(|mutation| mutation.get("expect"))
+        .and_then(toml::Value::as_array)
+        .map_or(0, Vec::len);
+    assert!(
+        written > 0,
+        "the repository accepts survivors, and says why"
+    );
+    let run = run_directory(&base());
+    let audit = gates::engine_audit(&checkers(), &asked(run.path(), None, Some(&path)))
+        .expect("the audit reads this repository's own ledger");
+    let unheld = violations(&audit, Layer::Ledger)
+        .into_iter()
+        .filter(|remark| remark.contains("the run does not hold it"))
+        .count();
+    assert_eq!(
+        unheld, written,
+        "the specimen holds none of this repository's acceptances, so every one the audit read \
+         is one it says the run does not hold, and one it dropped is one it could not have \
+         held a dogfood run to: {audit}"
+    );
+}
+
+#[test]
+fn the_ledger_audit_reads_an_acceptance_by_every_field_the_engine_reads_it_by() {
+    let fields = |relative: &str, name: &str| -> std::collections::BTreeSet<String> {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join(relative);
+        let text = std::fs::read_to_string(&path).expect(relative);
+        njutest_devkit::rust_source::serde_field_names(&text, name)
+            .expect(name)
+            .into_iter()
+            .collect()
+    };
+    assert_eq!(
+        fields("xtask/src/engineaudit/ledger.rs", "Entry"),
+        fields("crates/rust-mutants-cli/src/config.rs", "Expect"),
+        "an entry the engine reads by a field the audit does not know is refused by the audit, \
+         and a form the audit does not know is one a dogfood run cannot be held to"
     );
 }
 
@@ -896,6 +1293,9 @@ fn layers_of(name: &str) -> &'static [Layer] {
         | "a route narrowed by guards that kept no record"
         | "a test the guards say reached a mutation and the route dropped" => &[Layer::Trace],
         "a route that says a target ran that no execution ran" => &[Layer::Work],
+        "a row no sealed test reaches whose guard a sealed control reached" => {
+            &[Layer::Accounting, Layer::Findings, Layer::Proofs]
+        }
         "a body digest its bytes do not hash to, in the file the run measured"
         | "an item placed where its body does not start, in the file the run measured" => {
             &[Layer::Identity]
@@ -905,7 +1305,8 @@ fn layers_of(name: &str) -> &'static [Layer] {
         | "a survival carried though the route runs a target no recorded execution ran"
         | "a kill carried across a skeleton that has changed since"
         | "a kill carried by an execution whose record omits what it entered"
-        | "a kill carried through a target whose control reached other than its baseline" => {
+        | "a kill carried through a target whose control reached other than its baseline"
+        | "a carried answer resting on a body no unit of the run read" => {
             &[Layer::Identity, Layer::Work, Layer::Entry]
         }
         _ => &[],
@@ -953,12 +1354,14 @@ fn every_layer_is_silent_on_the_clean_run_and_loud_on_the_perturbations_that_are
     assert!(wrong.is_empty(), "{}", wrong.join("\n\n"));
 }
 
-/// The runs of three fixtures, recorded by the engine and committed beside this test.
-const SAMPLES: [(&str, usize, usize); 4] = [
+/// The runs of six fixtures, recorded by the engine and committed beside this test, the last asking for the fault family by name.
+const SAMPLES: [(&str, usize, usize); 6] = [
     ("engine-run-simple", 13, 0),
     ("engine-run-rejected", 16, 4),
     ("engine-run-unreached", 8, 0),
     ("engine-run-declined", 29, 0),
+    ("engine-run-doctest", 12, 0),
+    ("engine-run-faulted", 6, 2),
 ];
 
 #[test]
@@ -1058,7 +1461,9 @@ fn a_run_the_interruption_stopped_is_not_a_run_that_lost_its_routes() {
             "duration_ms": 0, "tests_run": null, "killed_by": [], "signal": null,
             "step_notice": null, "retried": false, "lingered": false, "not_run_reason": "interrupted", "declined": [],
             "route": null, "identical": "not-measured",
-            "expected": false, "unreached": false, "source_run_id": null
+            "expected": false, "unreached": false, "source_run_id": null,
+            "part_run_id": null,
+            "evidence": { "kind": "unproven", "reasons": ["not-sealed"] }
         }]
     }));
     let audit = audited_with(&document, &recording());
@@ -1078,11 +1483,19 @@ fn a_run_the_interruption_stopped_is_not_a_run_that_lost_its_routes() {
     );
 }
 
+/// `document` with the row at `at` resting on nothing sealed, which is what a row a native proof or run decided rests on.
+fn native_lead(mut document: serde_json::Value, at: usize) -> serde_json::Value {
+    document["mutants"][at]["evidence"] =
+        serde_json::json!({ "kind": "unproven", "reasons": ["test-absent"] });
+    document
+}
+
 /// One run whose measurement discharged a target from one mutant.
 fn discharging() -> (serde_json::Value, serde_json::Value, serde_json::Value) {
     let report = with(serde_json::json!({
-        "accounting": { "killed": 1, "survived": 0, "not_run": 1, "executed": 1, "discharged": 1 },
-        "score": { "detected": 1, "decided": 1, "value": 1.0 },
+        "accounting": { "killed": 0, "survived": 0, "unproven": 2, "not_run": 0, "executed": 2,
+                        "expected": 0, "unproven_discharged": 1 },
+        "score": null,
         "mutants": [
             {},
             {
@@ -1098,9 +1511,10 @@ fn discharging() -> (serde_json::Value, serde_json::Value, serde_json::Value) {
                 }
             }
         ],
-        "findings": [{ "kind": "discharged-mutant", "mutant": SURVIVED, "detail": "d" }],
+        "findings": [{}, { "kind": "unproven-mutant", "mutant": SURVIVED, "detail": "d" }],
         "expectations": []
     }));
+    let report = native_lead(report, 1);
     let reached = serde_json::json!({
         "targets": { TARGET: [{ "file": "src/lib.rs", "start": { "line": 3, "column": 1 },
                                 "end": { "line": 3, "column": 9 } }] },
@@ -1185,7 +1599,7 @@ fn a_branch_discharge_without_the_evidence_it_rests_on_is_unaudited() {
 fn the_discharged_column_equals_the_records() {
     let (report, reached, catalog) = discharging();
     let mut miscounted = report;
-    miscounted["accounting"]["discharged"] = serde_json::json!(3);
+    miscounted["accounting"]["unproven_discharged"] = serde_json::json!(3);
     let audit = audited_with_evidence(&miscounted, &reached, &catalog);
     assert!(
         violations(&audit, Layer::Proofs)
@@ -1474,8 +1888,8 @@ fn a_target_the_route_keeps_that_the_record_says_reached_nothing_is_a_violation(
     let mut document = routed_by_test();
     let other = "demo/test/parity";
     document["targets"] = serde_json::json!([
-        {"id": TARGET, "kind": "lib", "harness": true, "tests": 2, "limitations": []},
-        {"id": other, "kind": "test", "harness": true, "tests": 1, "limitations": []}
+        {"id": TARGET, "kind": "lib", "harness": true, "tests": 2, "limitations": [], "sealed": {"state": "sealed", "remedy": null, "uncontrolled": []}},
+        {"id": other, "kind": "test", "harness": true, "tests": 1, "limitations": [], "sealed": {"state": "sealed", "remedy": null, "uncontrolled": []}}
     ]);
     document["mutants"][0]["route"]["reaching"] = serde_json::json!([TARGET, other]);
     let mut recorded = touched();
@@ -1493,9 +1907,9 @@ fn a_target_the_route_keeps_that_the_record_says_reached_nothing_is_a_violation(
 fn a_target_the_run_built_that_the_record_neither_names_nor_excuses_is_a_violation() {
     let mut document = routed_by_test();
     document["targets"] = serde_json::json!([
-        {"id": TARGET, "kind": "lib", "harness": true, "tests": 2, "limitations": []},
+        {"id": TARGET, "kind": "lib", "harness": true, "tests": 2, "limitations": [], "sealed": {"state": "sealed", "remedy": null, "uncontrolled": []}},
         {"id": "demo/test/parity", "kind": "test", "harness": true, "tests": 1,
-         "limitations": []}
+         "limitations": [], "sealed": {"state": "sealed", "remedy": null, "uncontrolled": []}}
     ]);
     let audit = with_record(&document, &touched());
     let said = violations(&audit, Layer::Touch);
@@ -1510,9 +1924,9 @@ fn a_target_the_run_built_that_the_record_neither_names_nor_excuses_is_a_violati
 fn a_target_the_record_excuses_is_accounted_for_rather_than_unnamed() {
     let mut document = routed_by_test();
     document["targets"] = serde_json::json!([
-        {"id": TARGET, "kind": "lib", "harness": true, "tests": 2, "limitations": []},
+        {"id": TARGET, "kind": "lib", "harness": true, "tests": 2, "limitations": [], "sealed": {"state": "sealed", "remedy": null, "uncontrolled": []}},
         {"id": "demo/doc/demo", "kind": "doc", "harness": true, "tests": 1,
-         "limitations": []}
+         "limitations": [], "sealed": {"state": "sealed", "remedy": null, "uncontrolled": []}}
     ]);
     let mut recorded = touched();
     recorded["limitations"] = serde_json::json!(["touch-not-recorded:demo/doc/demo"]);
@@ -1544,9 +1958,10 @@ fn a_run_that_narrowed_by_nothing_the_guards_said_has_nothing_of_theirs_to_re_de
 
 /// A run whose guards discharged the second mutant from the target, by the proof named.
 fn discharged_by_the_guards(proof: &str) -> serde_json::Value {
-    with(serde_json::json!({
-        "accounting": { "killed": 1, "survived": 0, "not_run": 1, "executed": 1, "discharged": 1 },
-        "score": { "detected": 1, "decided": 1, "value": 1.0 },
+    let document = with(serde_json::json!({
+        "accounting": { "killed": 0, "survived": 0, "unproven": 2, "not_run": 0, "executed": 2,
+                        "expected": 0, "unproven_discharged": 1 },
+        "score": null,
         "mutants": [
             {},
             {
@@ -1562,9 +1977,10 @@ fn discharged_by_the_guards(proof: &str) -> serde_json::Value {
                 }
             }
         ],
-        "findings": [{ "kind": "discharged-mutant", "mutant": SURVIVED, "detail": "d" }],
+        "findings": [{}, { "kind": "unproven-mutant", "mutant": SURVIVED, "detail": "d" }],
         "expectations": []
-    }))
+    }));
+    native_lead(document, 1)
 }
 
 /// The record those guards left: one test reached both mutations and saw only the first one's branches part.
@@ -1676,6 +2092,74 @@ fn a_branch_discharge_the_guards_contradict_is_a_violation() {
     );
 }
 
+/// `record` with the target's record of `kind` taken out, as a record that never kept it.
+fn without_kind(mut record: serde_json::Value, kind: &str) -> serde_json::Value {
+    let removed = record["targets"][TARGET]
+        .as_object_mut()
+        .expect("the target's record")
+        .remove(kind);
+    assert!(removed.is_some(), "the record kept {kind} to take out");
+    record
+}
+
+#[test]
+fn a_discharge_is_not_passed_by_a_record_that_never_kept_what_it_rests_on() {
+    for (proof, record, kind) in [
+        ("branch-never-taken", record_of_a_body(&[1]), "bodies"),
+        (
+            "never-infected",
+            record_of_a_comparison(&[0, 1]),
+            "infected",
+        ),
+    ] {
+        let audit = with_record(
+            &discharged_by_the_guards(proof),
+            &without_kind(record, kind),
+        );
+        assert!(
+            audit
+                .of(Layer::Proofs)
+                .iter()
+                .any(|remark| remark.to_string().contains(&format!("{proof}:"))),
+            "a record that keeps no {kind} for the target says nothing of what it entered or saw \
+             part, so the {proof} discharge is not passed as one it supports: {audit}"
+        );
+    }
+}
+
+#[test]
+fn a_route_is_not_passed_by_a_record_that_never_kept_what_reached() {
+    let mut document = routed_by_test();
+    document["mutants"][0]["route"]["reaching"] = serde_json::json!([]);
+    document["mutants"][0]["route"]["tests"] = serde_json::json!({});
+    let audit = with_record(&document, &without_kind(touched(), "reached"));
+    assert!(
+        audit.of(Layer::Touch).iter().any(|remark| {
+            remark.standing == Standing::Unaudited
+                && remark.subject == short(KILLED)
+                && remark.to_string().contains("reached")
+        }),
+        "a route that left the target out is not re-decided by a record that keeps nothing of \
+         what reached it: {audit}"
+    );
+}
+
+#[test]
+fn a_route_that_narrows_a_target_to_no_test_is_not_one_that_asks_every_test() {
+    let mut document = routed_by_test();
+    document["mutants"][0]["route"]["tests"][TARGET] = serde_json::json!([]);
+    let mut record = touched();
+    record["targets"][TARGET]["reached"]["loose"] = serde_json::json!([0]);
+    let audit = with_record(&document, &record);
+    assert!(
+        violations(&audit, Layer::Touch)
+            .iter()
+            .any(|said| said.contains("no test")),
+        "an absent entry asks every test, and an empty one asks none, which the record of a \
+         mutation every test reached contradicts: {audit}"
+    );
+}
+
 /// The same record with a third test, so a mutation two of them reached is a route through a filter rather than the whole target.
 fn record_of_three() -> serde_json::Value {
     let mut recorded = touched();
@@ -1699,7 +2183,7 @@ fn record_of_three() -> serde_json::Value {
 fn a_route_the_guards_narrowed_by_a_comparison_is_re_decided_from_it() {
     let mut document = routed_by_test();
     document["targets"] = serde_json::json!([{ "id": TARGET, "kind": "lib", "harness": true, "tests": 3,
-                             "limitations": [] }]);
+                             "limitations": [], "sealed": {"state": "sealed", "remedy": null, "uncontrolled": []} }]);
     document["mutants"][1]["route"]["tests"][TARGET] =
         serde_json::json!(["tests::max_picks_the_larger"]);
     let recorded = record_of_three();
@@ -1745,7 +2229,7 @@ fn a_target_every_test_of_which_reached_a_mutation_is_asked_whole_rather_than_na
 }
 
 #[test]
-fn a_mutant_a_proof_removed_is_a_finding_of_its_own_and_not_one_nobody_ran() {
+fn a_mutant_a_native_proof_removed_is_a_lead_and_not_one_nobody_ran() {
     let audit = with_record(
         &discharged_by_the_guards("never-infected"),
         &record_of_a_comparison(&[0]),
@@ -1757,12 +2241,13 @@ fn a_mutant_a_proof_removed_is_a_finding_of_its_own_and_not_one_nobody_ran() {
     );
 
     let mut document = discharged_by_the_guards("never-infected");
-    document["findings"][0]["kind"] = serde_json::json!("not-run-mutant");
+    document["findings"][1]["kind"] = serde_json::json!("not-run-mutant");
     let audit = with_record(&document, &record_of_a_comparison(&[0]));
     let said = violations(&audit, Layer::Findings);
     assert!(
-        said.iter().any(|one| one.contains("discharged-mutant")),
-        "a proof that removed it is not the same hole as a mutant nothing ran: {said:?}"
+        said.iter().any(|one| one.contains("unproven-mutant")),
+        "a proof over what a native run recorded is a lead, not the same hole as a mutant \
+         nothing ran: {said:?}"
     );
     assert!(
         said.iter().any(|one| one.contains("not-run-mutant")),
@@ -1773,13 +2258,17 @@ fn a_mutant_a_proof_removed_is_a_finding_of_its_own_and_not_one_nobody_ran() {
 #[test]
 fn a_mutant_a_filter_left_out_is_accounted_for_rather_than_reported_as_a_hole() {
     let mut document = discharged_by_the_guards("never-infected");
-    document["accounting"]["discharged"] = serde_json::json!(0);
+    document["accounting"]["unproven"] = serde_json::json!(1);
+    document["accounting"]["unproven_discharged"] = serde_json::json!(0);
+    document["accounting"]["not_run"] = serde_json::json!(1);
+    document["accounting"]["executed"] = serde_json::json!(1);
     document["mutants"][1]["not_run_reason"] = serde_json::json!("unselected");
     document["mutants"][1]["route"] = serde_json::json!({
         "granularity": "all", "fallback": null, "reaching": [], "discharged": [],
         "executed": [], "tests": {}
     });
-    document["findings"] = serde_json::json!([]);
+    document["findings"] = serde_json::json!([{ "kind": "unproven-mutant", "mutant": KILLED,
+                                                  "detail": "d" }]);
     let audit = with_record(&document, &record_of_a_comparison(&[0]));
     assert!(
         violations(&audit, Layer::Findings).is_empty(),
@@ -1793,11 +2282,14 @@ fn a_filter_decision_needs_a_select_record_and_no_route_for_an_unvalidated_mutan
     let mut document = base();
     document["accounting"] = serde_json::json!({
         "cataloged": 2, "refused": 1, "skipped": 0, "executed": 1,
-        "killed": 1, "survived": 0, "step_limit_reached": 0, "waited": 0,
-        "inconclusive": 0, "errored": 0, "not_run": 1, "unreached": 0, "discharged": 0, "declined": 0,
-        "expected": 0
+        "killed": 0, "survived": 0, "unproven": 1, "step_limit_reached": 0, "waited": 0,
+        "inconclusive": 0, "errored": 0, "not_run": 1, "unreached": 0, "declined": 0,
+        "expected": 0, "unproven_killed": 1, "unproven_survived": 0, "unproven_unreached": 0,
+        "unproven_discharged": 0
     });
-    document["score"] = serde_json::json!({"detected": 1, "decided": 1, "value": 1.0});
+    document["score"] = serde_json::Value::Null;
+    document["mutants"][1]["evidence"] =
+        serde_json::json!({ "kind": "unproven", "reasons": ["not-sealed"] });
     document["mutants"][1]["outcome"] = serde_json::json!("not_run");
     document["mutants"][1]["target"] = serde_json::json!("");
     document["mutants"][1]["exit_code"] = serde_json::json!(0);

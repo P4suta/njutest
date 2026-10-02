@@ -16,6 +16,7 @@ use rust_mutants::cargo::{
 };
 use rust_mutants::instrument::COMPILED_CATALOG_ENV;
 use rust_mutants::runner::Cancel;
+use rust_mutants::runner::Watched;
 use rust_mutants::session::PrepareOptions;
 use rust_mutants::trace::Recorder;
 use rust_mutants::workspace::{OpenOptions, Workspace};
@@ -131,7 +132,7 @@ fn a_session_embeds_its_complete_catalog_in_the_binary_it_builds() {
                 branch_proofs: false,
                 touch: false,
                 doctests: false,
-                ..PrepareOptions::default()
+                ..PrepareOptions::new(rust_mutants::rule::Tier::Balanced)
             },
             &Cancel::new(),
         )
@@ -139,7 +140,7 @@ fn a_session_embeds_its_complete_catalog_in_the_binary_it_builds() {
     let target = session
         .targets()
         .iter()
-        .find(|target| target.id == "compiled-catalog-fixture/lib/compiled_catalog_fixture")
+        .find(|target| target.id() == "compiled-catalog-fixture/lib/compiled_catalog_fixture")
         .expect("the library test target");
     let embedded = capture(
         &target.executable,
@@ -167,7 +168,7 @@ fn cargo_rebuilds_an_unchanged_binary_when_the_embedded_catalog_changes() {
             ..LocateOptions::default()
         },
         &project.root,
-        &cancel,
+        &Watched::new(&cancel, &Recorder::disabled()),
     )
     .expect("a toolchain");
     let driver = Driver {
@@ -181,17 +182,16 @@ fn cargo_rebuilds_an_unchanged_binary_when_the_embedded_catalog_changes() {
             &driver,
             &CompileOptions {
                 kind: CompileKind::Tests,
-                target_dir: Some(rust_mutants::cargo::BuildDir::new(
-                    target.clone(),
-                    Vec::new(),
-                )),
                 locked: true,
                 offline: true,
                 env: rust_mutants::vars::Variables::of([(
                     OsString::from(COMPILED_CATALOG_ENV),
                     OsString::from(catalog),
                 )]),
-                ..CompileOptions::default()
+                ..CompileOptions::new(rust_mutants::cargo::BuildDir::new(
+                    target.clone(),
+                    Vec::new(),
+                ))
             },
         )
         .expect("compile")

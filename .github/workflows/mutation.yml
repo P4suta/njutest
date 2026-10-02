@@ -22,35 +22,30 @@ defaults:
     shell: bash
 
 jobs:
-  cargo-mutants:
-    name: cargo-mutants (${{ matrix.package }})
+  whole:
+    name: cargo-mutants (whole workspace)
     runs-on: ubuntu-24.04
-    timeout-minutes: 240
-    strategy:
-      fail-fast: false
-      max-parallel: 3
-      matrix:
-        package: [rust-mutants, rust-mutants-cli, njutest, njutest-macros, njutest-devkit]
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: ./.github/actions/setup-rust
         with:
           tools: cargo-mutants@27.1.0
       - name: Fetch the locked dependency graph
         run: cargo fetch --locked
-      - name: Run every mutant of the package
-        env:
-          PACKAGE: ${{ matrix.package }}
+      - name: Run every mutant of the workspace
         run: >-
           cargo mutants --config .cargo/mutants.toml
-          --package "$PACKAGE"
-          --output "mutants.out-$PACKAGE"
+          --workspace
+          --copy-vcs=true
+          --output mutants.out
       - name: Upload the mutation evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: mutants-${{ matrix.package }}
-          path: mutants.out-${{ matrix.package }}
+          name: mutants-whole
+          path: mutants.out
           if-no-files-found: error

@@ -52,6 +52,7 @@ fn row(index: u32, outcome: Decided, discharged: bool) -> MutantRecord {
         item: "demo".to_owned(),
         original: ">".to_owned(),
         replacement: ">=".to_owned(),
+        evidence: njutest::testkit::reports::sealed_as(&outcome),
         outcome,
         accepted: false,
         blind_in: Vec::new(),
@@ -79,6 +80,38 @@ fn row(index: u32, outcome: Decided, discharged: bool) -> MutantRecord {
         }),
         reuse: Reuse(njutest::report::Established::Here),
     }
+}
+
+/// One row no test reached, as a route that reached nothing and removed nothing decides it.
+fn unreached(index: u32) -> MutantRecord {
+    let mut record = row(index, Decided::Unreached, false);
+    record.routing = Some(Routing {
+        granularity: rust_mutants::session::Granularity::Unreached,
+        reaching: Vec::new(),
+        discharged: Vec::new(),
+        fallback: None,
+        answered: Vec::new(),
+    });
+    record
+}
+
+#[test]
+fn an_unreached_claim_a_sealed_put_again_counted_the_moved_target_in_rests_on_it_no_longer() {
+    let mut resealed = unreached(0);
+    if let Some(routing) = resealed.routing.as_mut() {
+        routing.granularity = rust_mutants::session::Granularity::Block;
+        routing.reaching = vec![TARGET.to_owned()];
+    }
+    assert_eq!(
+        (
+            drift::resting(&[unreached(0)], TARGET),
+            drift::resting(&[resealed], TARGET)
+        ),
+        ((0, 1), (0, 0)),
+        "an unreached claim rests on the moved target while its route leaves the target out; \
+         a sealed verdict put again with the target counted among those reaching it names it in \
+         its route and no longer rests on its baseline (ADR 0036 decision 1)"
+    );
 }
 
 #[test]
@@ -124,7 +157,7 @@ fn a_measured_target_no_control_compared_is_not_measured_and_says_why() {
     else {
         panic!("a target nothing compared is stated");
     };
-    assert_eq!(limitation.name, njutest::limitation::DRIFT_NOT_MEASURED);
+    assert_eq!(limitation.name(), njutest::limitation::DRIFT_NOT_MEASURED);
     assert!(
         limitation.detail.ends_with("(pkg/test/it)") && limitation.detail.contains("1 target"),
         "{}",
@@ -148,7 +181,7 @@ fn the_finding_counts_what_a_proof_decided_on_the_moved_record_and_nothing_a_kil
             },
             true,
         ),
-        row(2, Decided::Unreached, false),
+        unreached(2),
         row(3, Decided::Survived, false),
     ];
     let found = drift::found(&[moved(), held()], &rows);
@@ -255,5 +288,68 @@ fn a_survivor_this_run_decided_no_route_for_rests_on_the_moved_target() {
         "a survival carried in from an interrupted run was routed on that run's baseline, which \
          this run cannot vouch for, so it is counted rather than presumed independent: {}",
         finding.detail
+    );
+}
+
+#[test]
+fn a_moved_target_nothing_rests_on_is_concluded_as_the_published_verdict_concludes_it() {
+    let rows = vec![njutest::testkit::reports::row(
+        0,
+        ("src/lib.rs", "settle", 4),
+        ("gt-to-ge", "n > 0", "n >= 0"),
+        Decided::Killed {
+            by: TARGET.to_owned(),
+        },
+    )];
+    let kind = njutest::report::RunKind::Full;
+    let whole = njutest::testkit::reports::completed_with_drift(
+        "the-run",
+        kind,
+        vec![("default", rows.clone(), vec![moved()])],
+    )
+    .expect("a report of one killed row and one moved target");
+    let part = njutest::testkit::reports::measured_with_drift(
+        "the-run-0",
+        kind,
+        (rows, vec![moved()]),
+        &["default".to_owned()],
+    )
+    .expect("the one build's report");
+    assert_eq!(
+        (part.verdict, part.findings.len()),
+        (whole.verdict(), 0),
+        "nothing rests on the moved target, so it raises no finding and is a limitation \
+         (ADR 0036 decision 3); the verdict a run concludes of its build and the one its \
+         report publishes are one function of the same evidence, and they agree"
+    );
+}
+
+#[test]
+fn a_moved_target_whose_repair_left_a_hole_says_it_was_run_again_and_not_decided() {
+    let rows = [row(
+        0,
+        Decided::Errored {
+            on: TARGET.to_owned(),
+        },
+        false,
+    )];
+    let counted = [drift::Repaired {
+        target: TARGET.to_owned(),
+        again: 1,
+    }];
+    let stated =
+        drift::repaired(&[moved()], &rows, &counted).expect("one count fits the report's counter");
+    let [limitation] = stated.as_slice() else {
+        panic!("nothing rests on the moved target, so it is named in reach-moved: {stated:?}");
+    };
+    assert!(
+        limitation
+            .detail
+            .contains("1 disposition that rested on its baseline was run again")
+            && !limitation.detail.contains("decided"),
+        "the repair ran the one resting disposition again and it errored, a hole and no answer, \
+         so the limitation counts what was run again and calls none of it decided (ADR 0036 \
+         decision 3): {}",
+        limitation.detail
     );
 }

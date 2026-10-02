@@ -130,6 +130,42 @@ fn lint_tree(app_source: &str) -> Result<tempfile::TempDir, TestError> {
     Ok(root)
 }
 
+include!("support/asked.rs");
+
+#[test]
+fn the_lint_scan_lists_the_tree_once_and_reads_each_graph_once() -> Result<(), TestError> {
+    let root = lint_tree("")?;
+    let asked = Asked::new();
+    let report = gates::lints_scanned_with(root.path(), &asked)?;
+    require(report.starts_with("lints: "), report)?;
+    let questions = asked.questions();
+    let tree = asked::canonical(root.path());
+    let listings = questions
+        .iter()
+        .filter(|question| matches!(question, Question::Listed(at) if *at == tree))
+        .count();
+    let readings = |manifest: &str| {
+        let manifest = tree.join(manifest);
+        questions
+            .iter()
+            .filter(|question| matches!(question, Question::Read(at, _depth) if *at == manifest))
+            .count()
+    };
+    let counted = [
+        listings,
+        readings("Cargo.toml"),
+        readings("fuzz/Cargo.toml"),
+    ];
+    require(
+        counted == [1, 1, 1] && questions.len() == 3,
+        format!(
+            "the scan lists the tree once and asks cargo once about each of its two graphs, and \
+             every check after that decides from what those answered; [listings, root readings, \
+             fuzz readings] were {counted:?}: {questions:#?}"
+        ),
+    )
+}
+
 #[test]
 fn only_a_scanned_support_rs_file_may_be_included() -> Result<(), TestError> {
     let root = lint_tree("include!(\"support/ok.rs\");\n")?;
@@ -140,6 +176,26 @@ fn only_a_scanned_support_rs_file_may_be_included() -> Result<(), TestError> {
     )?;
     let report = gates::lints_scanned(root.path())?;
     require(report.starts_with("lints: "), report)
+}
+
+#[test]
+fn an_audit_reader_that_supplies_what_its_input_did_not_give_is_refused() -> Result<(), TestError> {
+    let root = lint_tree("")?;
+    std::fs::create_dir_all(root.path().join("xtask/src"))?;
+    std::fs::write(
+        root.path().join("xtask/src/route.rs"),
+        "//! A reader.\n\nfn read(v: Option<u8>) -> u8 {\n    v.unwrap_or_default()\n}\n",
+    )?;
+    let failure = refused(
+        gates::lints_scanned(root.path()),
+        "an audit reader supplied a value its input never gave, with no ceiling to raise",
+    )?;
+    require(
+        failure
+            .to_string()
+            .contains("xtask/src/route.rs:4: defaulted-absence"),
+        failure.to_string(),
+    )
 }
 
 #[test]
@@ -338,86 +394,245 @@ fn a_fixture_root_that_cannot_be_listed_never_passes_as_empty() -> Result<(), Te
 }
 
 #[test]
-fn a_public_function_only_a_test_names_is_what_the_reach_gate_reports() {
-    let declaring = "pub fn believed_shipped() -> u8 { 0 }\npub fn called() -> u8 { 1 }\n";
-    let ships = "pub fn believed_shipped() -> u8 { 0 }\npub fn called() -> u8 { 1 }\nfn use_it() { let _ = called(); }\n";
-    let tested = "believed_shipped();\ncalled();\npub fn believed_shipped() -> u8 { 0 }\npub fn called() -> u8 { 1 }\n";
-    assert_eq!(
-        gates::only_a_test_reaches(declaring, ships, tested),
-        vec!["believed_shipped".to_owned()],
-        "a capability with a test is a capability somebody believed shipped (ADR 0023), so the \
-         one nothing but a test names is the one to report and the one production calls is not"
-    );
+fn a_public_function_only_a_test_names_is_what_the_reach_gate_reports() -> Result<(), TestError> {
+    let root = reach_tree(
+        "pub fn believed_shipped() -> u8 { 0 }\npub fn called() -> u8 { 1 }\nfn use_it() { let _ = called(); }\n#[cfg(test)] mod tests { fn check() { super::believed_shipped(); super::called(); } }\n",
+    )?;
+    let failure = refused(
+        gates::reached(root.path()),
+        "a function called only by tests passed the reach gate",
+    )?;
+    let said = failure.to_string();
+    require(
+        said.contains("x::believed_shipped") && !said.contains("x::called"),
+        said,
+    )
+}
+
+fn reach_tree(source: &str) -> Result<tempfile::TempDir, TestError> {
+    let root = tempfile::tempdir()?;
+    xtask::repository::init(root.path())?;
+    std::fs::create_dir_all(root.path().join("crates/x/src"))?;
+    std::fs::create_dir_all(root.path().join("xtask"))?;
+    std::fs::write(
+        root.path().join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/x\"]\nresolver = \"3\"\n",
+    )?;
+    std::fs::write(
+        root.path().join("crates/x/Cargo.toml"),
+        "[package]\nname = \"x\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[package.metadata.njutest]\nsurface = \"incidental\"\n",
+    )?;
+    std::fs::write(root.path().join("crates/x/src/lib.rs"), source)?;
+    std::fs::write(root.path().join("xtask/reached_ceiling.txt"), "0\n")?;
+    Ok(root)
+}
+
+fn add_reach_neighbor(root: &std::path::Path, source: &str) -> Result<(), TestError> {
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/x\", \"crates/y\"]\nresolver = \"3\"\n",
+    )?;
+    std::fs::create_dir_all(root.join("crates/y/src"))?;
+    std::fs::write(
+        root.join("crates/y/Cargo.toml"),
+        "[package]\nname = \"y\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[package.metadata.njutest]\nsurface = \"public\"\n",
+    )?;
+    std::fs::write(root.join("crates/y/src/lib.rs"), source)?;
+    Ok(())
 }
 
 #[test]
-fn a_defaulting_call_is_counted_and_a_test_module_is_not() {
-    let source = "fn read(v: Option<u8>) -> u8 { v.unwrap_or(0) + v.map_or(1, |x| x) }\n\
-                  fn all(v: Vec<Option<u8>>) -> Vec<u8> { v.into_iter().map(Option::unwrap_or_default).collect() }\n\
-                  #[cfg(test)] mod tests { fn t(v: Option<u8>) -> u8 { v.unwrap_or_default() } }\n";
-    assert_eq!(
-        xtask::defaulted::defaulted_in(source).expect("the source parses"),
-        3,
-        "a value supplied where the input gave none is counted where the audit runs, and a test \
-         building its own specimen is not the audit"
-    );
+fn production_call_in_another_package_does_not_hide_test_only_reach() -> Result<(), TestError> {
+    let root = reach_tree(
+        "pub fn capability() {}\n#[cfg(test)] mod tests { #[test] fn check() { super::capability(); } }\n",
+    )?;
+    add_reach_neighbor(
+        root.path(),
+        "fn capability() {}\nfn elsewhere() { capability(); }\n",
+    )?;
+    let failure = refused(
+        gates::reached(root.path()),
+        "another package's same-named production call hid test-only reach",
+    )?;
+    require(
+        failure.to_string().contains("x::capability"),
+        failure.to_string(),
+    )
 }
 
 #[test]
-fn a_defaulting_call_inside_a_macro_is_counted_like_one_outside() {
-    let source = "fn say(v: Option<&str>) -> String { format!(\"{}\", v.unwrap_or(\"?\")) }\n\
-                  fn doc(v: Option<u8>) -> serde_json::Value { serde_json::json!({ \"n\": v.map_or(0, u8::from) }) }\n\
-                  fn check(v: Option<u8>) { assert!(v.map(Option::Some).unwrap_or_default().is_some()); }\n\
-                  fn named(unwrap_or: u8) -> String { format!(\"{unwrap_or}\") }\n";
-    assert_eq!(
-        xtask::defaulted::defaulted_in(source).expect("the source parses"),
-        3,
-        "syn leaves a macro's arguments as tokens, so a value supplied inside format!, json! or \
-         assert! went uncounted while the same call outside one was held to the ceiling; a name \
-         that is only a binding is not a call"
-    );
+fn test_call_in_another_package_does_not_create_test_only_reach() -> Result<(), TestError> {
+    let root = reach_tree("pub fn capability() {}\n")?;
+    add_reach_neighbor(
+        root.path(),
+        "fn capability() {}\n#[cfg(test)] mod tests { #[test] fn check() { super::capability(); } }\n",
+    )?;
+    let report = gates::reached(root.path())?;
+    require(report.contains("0 public function"), report)
 }
 
 #[test]
-fn a_reader_is_held_to_exactly_its_ceiling() {
-    let counted: std::collections::BTreeMap<String, usize> =
-        std::iter::once(("xtask/src/wire.rs".to_owned(), 3)).collect();
-    assert_eq!(
-        xtask::defaulted::held(&counted, "3 xtask/src/wire.rs\n"),
-        Ok(3)
-    );
-    let above = xtask::defaulted::held(&counted, "2 xtask/src/wire.rs\n").expect_err("above");
-    assert!(
-        above
-            .iter()
-            .any(|one| one.contains("against a ceiling of 2")),
-        "{above:?}"
-    );
-    let below = xtask::defaulted::held(&counted, "5 xtask/src/wire.rs\n").expect_err("below");
-    assert!(
-        below
-            .iter()
-            .any(|one| one.contains("lower the ceiling to 3")),
-        "a fall is kept by lowering the ceiling to it, or the next change can spend it: {below:?}"
-    );
-    let fallen: std::collections::BTreeMap<String, usize> =
-        std::iter::once(("xtask/src/wire.rs".to_owned(), 0)).collect();
-    let none = xtask::defaulted::held(&fallen, "3 xtask/src/wire.rs\n").expect_err("fallen");
-    assert!(
-        none.iter().any(|one| one.contains("remove its line")),
-        "{none:?}"
-    );
-    let unnamed = xtask::defaulted::held(&counted, "").expect_err("unnamed");
-    assert!(
-        unnamed.iter().any(|one| one.contains("ceiling of 0")),
-        "{unnamed:?}"
-    );
-    let gone = xtask::defaulted::held(&std::collections::BTreeMap::new(), "4 xtask/src/gone.rs\n")
-        .expect_err("a stale line");
-    assert!(
-        gone.iter().any(|one| one.contains("remove the line")),
-        "{gone:?}"
-    );
+fn words_in_comments_and_literals_do_not_prove_production_reach() -> Result<(), TestError> {
+    let root = reach_tree(
+        "pub fn capability() {}\nfn words() { let _ = \"capability\"; /* capability(); */ }\n#[cfg(test)] mod tests { #[test] fn test() { super::capability(); } }\n",
+    )?;
+    let failure = refused(
+        gates::reached(root.path()),
+        "comments and string literals counted as production references",
+    )?;
+    require(
+        failure.to_string().contains("x::capability"),
+        failure.to_string(),
+    )
+}
+
+#[test]
+fn cfg_not_test_with_space_is_production_reach() -> Result<(), TestError> {
+    let root = reach_tree(
+        "pub fn capability() {}\n#[cfg(not (test))]\nfn production() { capability(); }\n#[cfg(test)] mod tests { #[test] fn test() { super::capability(); } }\n",
+    )?;
+    let report = gates::reached(root.path())?;
+    require(report.contains("0 public function"), report)
+}
+
+#[test]
+fn cfg_conjunction_excluding_testkit_does_not_prove_production_reach() -> Result<(), TestError> {
+    let root = reach_tree(
+        "pub fn capability() {}\n#[cfg(all(not(test), feature = \"testkit\"))]\nfn testkit_only() { capability(); }\n#[cfg(test)] mod tests { #[test] fn test() { super::capability(); } }\n",
+    )?;
+    let failure = refused(
+        gates::reached(root.path()),
+        "a cfg conjunction counted a testkit-only reference as production reach",
+    )?;
+    require(
+        failure.to_string().contains("x::capability"),
+        failure.to_string(),
+    )
+}
+
+#[test]
+fn cfg_any_of_test_and_testkit_does_not_prove_production_reach() -> Result<(), TestError> {
+    let root = reach_tree(
+        "pub fn capability() {}\n#[cfg(any(test, feature = \"testkit\"))] fn test_only() { capability(); }\n#[cfg(test)] mod tests { fn check() { super::capability(); } }\n",
+    )?;
+    let failure = refused(
+        gates::reached(root.path()),
+        "test and testkit branches counted as production reach",
+    )?;
+    require(
+        failure.to_string().contains("x::capability"),
+        failure.to_string(),
+    )
+}
+
+#[test]
+fn cfg_any_with_a_production_branch_is_production_reach() -> Result<(), TestError> {
+    let root = reach_tree(
+        "pub fn capability() {}\n#[cfg(any(test, not(unix)))]\nfn production() { capability(); }\n#[cfg(test)] mod tests { #[test] fn test() { super::capability(); } }\n",
+    )?;
+    let report = gates::reached(root.path())?;
+    require(report.contains("0 public function"), report)
+}
+
+#[test]
+fn contradictory_cfg_atoms_do_not_prove_production_reach() -> Result<(), TestError> {
+    for (case, source) in [
+        (
+            "item attributes",
+            "pub fn capability() {}\n#[cfg(unix)] #[cfg(not(unix))] fn production() { capability(); }\n#[cfg(test)] mod tests { fn check() { super::capability(); } }\n",
+        ),
+        (
+            "all predicate",
+            "pub fn capability() {}\n#[cfg(all(unix, not(unix)))] fn production() { capability(); }\n#[cfg(test)] mod tests { fn check() { super::capability(); } }\n",
+        ),
+        (
+            "parent and child",
+            "pub fn capability() {}\n#[cfg(unix)] mod platform { #[cfg(not(unix))] fn production() { super::capability(); } }\n#[cfg(test)] mod tests { fn check() { super::capability(); } }\n",
+        ),
+        (
+            "any predicate",
+            "pub fn capability() {}\n#[cfg(any(unix, windows))] #[cfg(not(any(unix, windows)))] fn production() { capability(); }\n#[cfg(test)] mod tests { fn check() { super::capability(); } }\n",
+        ),
+        (
+            "conditional cfg_attr",
+            "pub fn capability() {}\n#[cfg(unix)] #[cfg_attr(unix, cfg(not(unix)))] fn production() { capability(); }\n#[cfg(test)] mod tests { fn check() { super::capability(); } }\n",
+        ),
+        (
+            "nested cfg_attr",
+            "pub fn capability() {}\n#[cfg(unix)] #[cfg_attr(unix, cfg_attr(unix, cfg(not(unix))))] fn production() { capability(); }\n#[cfg(test)] mod tests { fn check() { super::capability(); } }\n",
+        ),
+        (
+            "conditional parent and child",
+            "pub fn capability() {}\n#[cfg(unix)] mod platform { #[cfg_attr(unix, cfg(not(unix)))] fn production() { super::capability(); } }\n#[cfg(test)] mod tests { fn check() { super::capability(); } }\n",
+        ),
+        (
+            "file inner attribute",
+            "#![cfg(unix)]\npub fn capability() {}\n#[cfg(not(unix))] fn production() { capability(); }\n#[cfg(test)] mod tests { fn check() { super::capability(); } }\n",
+        ),
+    ] {
+        let root = reach_tree(source)?;
+        let failure = refused(
+            gates::reached(root.path()),
+            "contradictory cfg atoms proved production reach",
+        )?;
+        require(failure.to_string().contains("x::capability"), case)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_possible_cfg_atom_still_proves_production_reach() -> Result<(), TestError> {
+    let root = reach_tree(
+        "pub fn capability() {}\n#[cfg(unix)] fn production() { capability(); }\n#[cfg(test)] mod tests { fn check() { super::capability(); } }\n",
+    )?;
+    let report = gates::reached(root.path())?;
+    require(report.contains("0 public function"), report)
+}
+
+#[test]
+fn a_possible_guarded_cfg_attr_still_proves_production_reach() -> Result<(), TestError> {
+    for source in [
+        "pub fn capability() {}\n#[cfg(not(unix))] #[cfg_attr(unix, cfg(not(unix)))] fn production() { capability(); }\n#[cfg(test)] mod tests { fn check() { super::capability(); } }\n",
+        "pub fn capability() {}\n#[cfg(unix)] #[cfg_attr(test, cfg(not(unix)))] fn production() { capability(); }\n#[cfg(test)] mod tests { fn check() { super::capability(); } }\n",
+    ] {
+        let root = reach_tree(source)?;
+        let report = gates::reached(root.path())?;
+        require(report.contains("0 public function"), report)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn evaluated_macro_arguments_prove_production_reach() -> Result<(), TestError> {
+    let root = reach_tree(
+        "pub fn capability() {}\nfn production() { let _ = vec![capability()]; }\n#[cfg(test)] mod tests { #[test] fn test() { super::capability(); } }\n",
+    )?;
+    let report = gates::reached(root.path())?;
+    require(report.contains("0 public function"), report)
+}
+
+#[test]
+fn a_clap_command_attribute_expression_proves_production_reach() -> Result<(), TestError> {
+    let root = reach_tree(
+        "pub fn capability() -> String { String::new() }\n#[command(after_help = capability())] struct Command;\n#[cfg(test)] mod tests { #[test] fn test() { super::capability(); } }\n",
+    )?;
+    let report = gates::reached(root.path())?;
+    require(report.contains("0 public function"), report)
+}
+
+#[test]
+fn stringify_does_not_prove_production_reach() -> Result<(), TestError> {
+    let root = reach_tree(
+        "pub fn capability() {}\nfn production() { let _ = stringify!(capability()); }\n#[cfg(test)] mod tests { #[test] fn test() { super::capability(); } }\n",
+    )?;
+    let failure = refused(
+        gates::reached(root.path()),
+        "stringify syntax counted as a production reference",
+    )?;
+    require(
+        failure.to_string().contains("x::capability"),
+        failure.to_string(),
+    )
 }
 
 /// A one-package workspace whose `.rust-mutants.toml` skips `skipped`, with a library and one integration test.
@@ -463,9 +678,8 @@ fn a_gate_reads_what_the_repository_holds_and_never_what_a_build_left_in_it()
 -> Result<(), TestError> {
     let root = tempfile::tempdir()?;
     xtask::repository::init(root.path())?;
-    let initialised = std::process::Command::new("git")
+    let initialised = xtask::repository::git(root.path())
         .args(["init", "--quiet"])
-        .current_dir(root.path())
         .status()?;
     require(initialised.success(), "git init")?;
     std::fs::write(root.path().join(".gitignore"), "target/\n")?;
@@ -495,4 +709,49 @@ fn a_gate_reads_what_the_repository_holds_and_never_what_a_build_left_in_it()
             .any(|path| path.ends_with("crates/app/src/lib.rs")),
         format!("the committed source is read: {production:?}"),
     )
+}
+
+#[cfg(unix)]
+#[test]
+fn a_gate_lists_the_tree_itself_rather_than_asking_a_file_system_monitor() -> Result<(), TestError>
+{
+    use std::os::unix::fs::PermissionsExt as _;
+    let root = tempfile::tempdir()?;
+    xtask::repository::init(root.path())?;
+    let asked = root.path().join(".git/monitor-asked");
+    let monitor = root.path().join(".git/monitor");
+    std::fs::write(
+        &monitor,
+        format!(
+            "#!{}\nprintf '%s\\n' \"$*\" >> '{}'\nexit 1\n",
+            njutest_devkit::paths::posix_sh().display(),
+            asked.display()
+        ),
+    )?;
+    std::fs::set_permissions(&monitor, std::fs::Permissions::from_mode(0o755))?;
+    let configured = xtask::repository::git(root.path())
+        .args(["config", "core.fsmonitor"])
+        .arg(&monitor)
+        .status()?;
+    require(configured.success(), "git config core.fsmonitor")?;
+    std::fs::create_dir_all(root.path().join("crates/app/src"))?;
+    std::fs::write(root.path().join("crates/app/src/lib.rs"), "pub fn f() {}\n")?;
+
+    let listed = xtask::repository::files(root.path()).map_err(gates::GateError::from)?;
+    require(
+        listed == ["crates/app/src/lib.rs"],
+        format!("the listing reads the tree: {listed:?}"),
+    )?;
+    let tracked = gates::tracked(root.path())?;
+    require(tracked.starts_with("tracked: "), tracked)?;
+    match std::fs::read_to_string(&asked) {
+        Err(absent) if absent.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Ok(said) => Err(TestError::Contract(format!(
+            "a gate's listing asked the file-system monitor the repository names, which answers \
+             nothing a listing needs, is a daemon each fresh repository starts and leaves running \
+             when it is git's own, and on this machine made each listing wait a second; it was \
+             asked: {said}"
+        ))),
+        Err(unread) => Err(unread.into()),
+    }
 }

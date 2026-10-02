@@ -21,9 +21,10 @@
 # `mise run` re-applies this table inside the task, so a job that cleared the variable in its own environment would have it put back; deferring here is what makes the clear survive.
 # An empty value is a value: cargo treats an empty `RUSTC_WRAPPER` as no wrapper at all, which is how CI asks for the compiler it already caches through `Swatinem/rust-cache` rather than one more program to install.
 RUSTC_WRAPPER = "{{ env.RUSTC_WRAPPER | default(value='sccache') }}"
+NJUTEST_NIGHTLY = "{{ read_file(path=config_root ~ '/rust-toolchain.toml') | split(pat='nightly = \"') | last | split(pat='\"') | first }}"
 
 [tools]
-rust = "1.98.0"
+rust = "{{ read_file(path=config_root ~ '/rust-toolchain.toml') | split(pat='channel = \"') | last | split(pat='\"') | first }}"
 actionlint = "1.7.12"
 taplo = "0.10.0"
 typos = "1.50.1"
@@ -94,6 +95,26 @@ run = "cargo doc --locked --workspace --no-deps --document-private-items"
 description = "Run the repository gates: seam ratchet, dependency direction, fixture conventions, release consistency"
 run = "cargo xtask all"
 
+[tasks."security:local"]
+description = "Refuse unbounded OS record pointers and unprotected sensitive names across every platform's source, after finding the planted regressions"
+run = "cargo xtask lints"
+
+[tasks."security:codeql"]
+description = "Run the unfiltered Rust security-extended CodeQL suite offline with a preinstalled official CLI bundle"
+shell = "bash -c"
+env = { CARGO_NET_OFFLINE = "true" }
+run = "bash scripts/codeql.sh check"
+
+[tasks."setup:codeql"]
+description = "Download and verify the pinned official CodeQL CLI, extractors and query packs once, before offline checks"
+run = "bash scripts/codeql.sh setup"
+
+[tasks."security:miri"]
+description = "Interpret the platform-independent OS record regressions with the installed nightly Miri"
+env = { RUSTC_WRAPPER = "" }
+run = 'cargo +"${NJUTEST_NIGHTLY}" miri test --locked -p rust-mutants --lib capdir::records::tests::'
+shell = "bash -c"
+
 [tasks.lint]
 description = "Run formatting, clippy, rustdoc, the repository gates, the fuzz targets under the same Clippy policy, spelling, TOML, and workflow linters"
 depends = ["fmt:check", "clippy", "doc", "gates", "fuzz:clippy", "committed:range"]
@@ -117,7 +138,8 @@ committed "${base_ref}..${head_ref}"
 # It is clippy and not a type check: batch 10 type-checked clean for Windows and failed CI's Windows job on `missing_const_for_fn`, a function the Unix branch of a cfg split had made const on Windows alone.
 [tasks."setup:windows-target"]
 description = "Install the pinned Windows standard library used by the cross-target lint"
-run = "rustup target add --toolchain 1.98.0 x86_64-pc-windows-msvc"
+run = "rustup target add --toolchain $RUSTUP_TOOLCHAIN x86_64-pc-windows-msvc"
+run_windows = "rustup target add --toolchain %RUSTUP_TOOLCHAIN% x86_64-pc-windows-msvc"
 
 [tasks."lint:windows"]
 description = "Lint every non-benchmark target with every non-benchmark feature for Windows, where CI reads the cfgs this machine does not compile; real Windows CI covers feature-complete benchmarks"
@@ -127,14 +149,23 @@ run = "cargo clippy --locked --workspace --all-targets --features njutest/testki
 # CI's Linux runners are where a `cfg` this machine never compiles is first read, and `-D warnings` turns each one into a failed job rather than a note.
 # Three arrived at once the first time CI got far enough to run clippy: a function that is const once the macOS branch is gone, a placeholder binding with nothing to bind, and a widening conversion that is the identity where `st_mode` is already a u32.
 # Benchmarks stay out for the same reason they stay out of the Windows check: criterion's build script wants a C cross-compiler, and the lints being looked for are not in a bench.
+# The sealed host stays out of the Linux read alone, for the same want: wasmtime's build script compiles C helpers for every Unix target and for no Windows one.
+# It holds no Linux-only code, and CI's Linux job lints it natively.
 [tasks."setup:linux-target"]
 description = "Install the pinned Linux standard library used by the cross-target lint"
-run = "rustup target add --toolchain 1.98.0 x86_64-unknown-linux-gnu"
+run = "rustup target add --toolchain $RUSTUP_TOOLCHAIN x86_64-unknown-linux-gnu"
 
 [tasks."lint:linux"]
 description = "Lint every non-benchmark target for Linux, where CI reads the cfgs this machine does not compile"
 depends = ["setup:linux-target"]
-run = "cargo clippy --locked --workspace --all-targets --features njutest/testkit,rust-mutants-cli/testkit,rust-mutants/testkit,xtask/testkit --target x86_64-unknown-linux-gnu -- -D warnings"
+run = """
+if [ "$(uname -s)" = Darwin ]; then
+  export CC_x86_64_unknown_linux_gnu=clang
+  export AR_x86_64_unknown_linux_gnu="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin/llvm-ar"
+  export CFLAGS_x86_64_unknown_linux_gnu="--target=x86_64-unknown-linux-gnu -I$(xcrun --show-sdk-path)/usr/include"
+fi
+cargo clippy --locked --workspace --all-targets --features njutest/testkit,rust-mutants-cli/testkit,rust-mutants/testkit,xtask/testkit --target x86_64-unknown-linux-gnu -- -D warnings
+"""
 
 [tasks."build:examples"]
 description = "Build the scripted cargo the suite drives, which no test build produces"
@@ -168,25 +199,33 @@ run_windows = 'cargo xtask tidy -- cargo nextest run --locked --workspace --all-
 description = "Run the doctests, which nextest does not"
 run = "cargo test --locked --workspace --all-features --doc"
 
+[tasks."test:ci"]
+depends = ["build:examples"]
+run = "cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level pass --test-threads 3 --profile ci"
+
+[tasks."test:cost"]
+description = "Run the complete suite and gate fixture compile/build counts"
+depends = ["build:examples"]
+run = "python3 scripts/run-suite-cost.py"
+run_windows = "python scripts/run-suite-cost.py"
+
 [tasks.test]
 description = "Run the complete suite: every target through nextest, then the doctests"
-run = ["mise run test:fast", "mise run test:slow", "mise run test:doc"]
+run = ["mise run test:cost", "mise run test:doc"]
 
 [tasks."kani:verified"]
 description = "Run the generated-harness and strict-result protocol suite with the pinned Kani 0.68 installation"
 depends = ["kani:laws"]
 run = "env -u RUSTFLAGS NJUTEST_REAL_KANI=1 cargo test --locked --workspace --all-features --lib real_kani_068 -- --test-threads=1"
 
+[tasks.wasi-testsuite]
+description = "Run every preview1 test of WebAssembly/wasi-testsuite on the sealed host, the pinned commit fetched once into the user cache, each held to the result crates/rust-mutants/tests/wasi-testsuite.toml names"
+run = 'cargo xtask wasi-testsuite --cache "${XDG_CACHE_HOME:-$HOME/.cache}/njutest/wasi-testsuite"'
+
 [tasks."kani:laws"]
 description = "Prove and independently audit the production laws with the pinned Kani 0.68 installation, reading back the proof of identical inputs"
 run = 'cargo xtask kani-laws --cache "${XDG_CACHE_HOME:-$HOME/.cache}/njutest/kani-laws"'
 
-# The floors are the ones .github/workflows/ci.yml enforces, in the same order
-# and with the same scoping. Never lower one; raise one when its suite earns it,
-# in both places at once. The collection is that job's as well, down to the
-# environment it exports and the two runs it splits the suite into: a gate that
-# measured a different way is a gate that answers a different question, and the
-# one that job asks is the one that has to be green.
 [tasks.coverage]
 description = "Measure region coverage with the ratchet CI enforces (never lower a floor)"
 depends = ["exec-tax", "build:examples"]
@@ -197,22 +236,15 @@ cargo clean
 cargo llvm-cov clean --workspace
 eval "$(cargo llvm-cov show-env --export-prefix)"
 cargo build --locked --examples --workspace --all-features --profile test
-cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail -E 'not binary(/^toolchain_/)'
-cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail --test-threads 2 -E 'binary(/^toolchain_/)'
-cargo llvm-cov report --summary-only --fail-under-regions 80 \
-  --ignore-filename-regex 'compiler-surfaces/'
-cargo llvm-cov report --summary-only --fail-under-regions 87 \
-  --ignore-filename-regex 'crates/(rust-mutants-cli|njutest|njutest-macros|njutest-devkit)/|xtask/|fuzz/|compiler-surfaces/'
-cargo llvm-cov report --summary-only --fail-under-regions 83 \
-  --ignore-filename-regex 'crates/(rust-mutants|njutest|njutest-macros|njutest-devkit)/|xtask/|fuzz/|compiler-surfaces/'
-cargo llvm-cov report --summary-only --fail-under-regions 81 \
-  --ignore-filename-regex 'crates/(rust-mutants|rust-mutants-cli|njutest-macros|njutest-devkit)/|xtask/|fuzz/|compiler-surfaces/'
-cargo llvm-cov report --summary-only --fail-under-regions 80 \
-  --ignore-filename-regex 'crates/|fuzz/|compiler-surfaces/'
+cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --fail-fast --status-level fail --test-threads 2
+cargo xtask coverage-ratchet
 """
 
+# The archive is built for `NJUTEST_BUNDLE_TARGET`, which CI sets to the target its row of the matrix is, and for this machine's own target where nothing sets it.
+# `cargo install` takes the same target so it reuses the build the archive was made from, and each platform compiles both products once.
+# What runs from the archive runs in a copy of a fixture pinned to this repository's toolchain, with a temporary directory of its own, so the task leaves nothing behind.
 [tasks.package]
-description = "Package every publishable member, install both CLIs, and write what a release would say it is made of"
+description = "Package every publishable member, install both CLIs, build the release archive for this platform and run what it unpacks to, and write what a release would say it is made of"
 shell = "bash -c"
 run = """
 set -euo pipefail
@@ -220,13 +252,30 @@ install_root="$(mktemp -d "${TMPDIR:-/tmp}/njutest-package-install.XXXXXX")"
 cleanup() { rm -rf -- "$install_root"; }
 trap cleanup EXIT HUP INT TERM
 export CARGO_TARGET_DIR="$install_root/target"
+target="${NJUTEST_BUNDLE_TARGET:-$(rustc --print host-tuple)}"
 cargo package --locked --workspace --no-verify --allow-dirty --exclude-lockfile
-cargo install --locked --path crates/njutest --root "$install_root"
-cargo install --locked --path crates/rust-mutants-cli --root "$install_root"
+cargo xtask bundle --target "${target}" --out "$install_root/dist"
+cargo install --locked --path crates/njutest --root "$install_root" --target "${target}"
+cargo install --locked --path crates/rust-mutants-cli --root "$install_root" --target "${target}"
 "$install_root/bin/njutest" --version
 "$install_root/bin/rust-mutants" --version
 PATH="$install_root/bin:$PATH" cargo njutest --version
 PATH="$install_root/bin:$PATH" cargo rust-mutants --version
+mkdir "$install_root/unpacked"
+tar -xzf "$install_root/dist/"*.tar.gz -C "$install_root/unpacked"
+set -- "$install_root"/unpacked/*/
+[ "$#" -eq 1 ] || { echo "package: the archive unpacked into $# directories, not one" >&2; exit 1; }
+bundle="${1%/}"
+for program in "$bundle"/*; do
+  [ -x "$program" ] || continue
+  "$program" --version
+done
+cp -R fixtures/fixture-assured "$install_root/assured"
+cp rust-toolchain.toml "$install_root/assured/"
+mkdir "$install_root/tmp"
+export TMPDIR="$install_root/tmp" TMP="$install_root/tmp" TEMP="$install_root/tmp"
+"$bundle/rust-mutants" run --root "$install_root/assured" --offline --locked --no-cache
+"$bundle/njutest" verify --directory "$install_root/assured" --offline --locked --no-cache --ui=plain
 cargo xtask sbom --output "$install_root/njutest.cdx.json"
 """
 
@@ -246,7 +295,7 @@ db="${CARGO_TARGET_DIR:-target}/advisory-db"
 fetched=false
 for attempt in 1 2 3 4 5; do
   if [ -d "${db}/.git" ]; then
-    git -C "${db}" fetch --quiet --depth 1 origin main && git -C "${db}" reset --quiet --hard FETCH_HEAD && fetched=true
+    git -C "${db}" fetch --quiet --depth 1 origin main && git -C "${db}" switch --detach --quiet FETCH_HEAD && fetched=true
   else
     rm -rf "${db}"
     git clone --quiet --depth 1 https://github.com/RustSec/advisory-db.git "${db}" && fetched=true
@@ -275,7 +324,7 @@ run = "cargo xtask fuzz-clippy"
 [tasks."fuzz:build"]
 description = "Build every cargo-fuzz target (nightly, sanitizer) without running one"
 dir = "fuzz"
-run = "cargo +nightly fuzz build"
+run = "cargo +$NJUTEST_NIGHTLY fuzz build"
 
 [tasks."fuzz:smoke"]
 description = "Seed and run every cargo-fuzz target briefly, the same entry path as weekly CI"
@@ -283,10 +332,10 @@ dir = "fuzz"
 shell = "bash -c"
 run = """
 set -euo pipefail
-for target in $(cargo +nightly fuzz list); do
+for target in $(cargo +"$NJUTEST_NIGHTLY" fuzz list); do
   echo "== $target"
   bash ../scripts/seed-fuzz-corpus.sh "$target"
-  cargo +nightly fuzz run "$target" -- -runs=2000 -max_len=1024
+  cargo +"$NJUTEST_NIGHTLY" fuzz run "$target" -- -runs=2000 -max_len=1024
 done
 """
 
@@ -325,6 +374,8 @@ run = """
 set -uo pipefail
 step() { "$@" || { status=$?; echo "check: '$*' failed with exit ${status}" >&2; exit "${status}"; }; }
 step mise run fmt:check
+step mise run security:local
+step mise run security:codeql
 step mise run lint
 step mise run test:fast
 step mise run test:doc
@@ -357,6 +408,7 @@ run = [
   "mise run check:cross",
   "mise run check:release",
   "mise run test:slow",
+  "mise run wasi-testsuite",
 ]
 
 [tasks.bench]
@@ -417,7 +469,7 @@ if [ -z "${run}" ] || [ ! -f "${run}run-report-v1.json" ]; then
 fi
 echo "re-deciding ${run} from its own recording"
 ./target/release/rust-mutants trace check --dir "${run}trace"
-./target/release/xtask engine-audit "${run%/}" --trace "${run}trace" --sites --ledger .rust-mutants.toml
+./target/release/xtask engine-audit "${run%/}" --trace "${run}trace" --sites --root . --ledger .rust-mutants.toml
 """
 
 [tasks."engine-audit"]

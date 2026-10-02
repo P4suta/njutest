@@ -3,7 +3,7 @@
 
 //! The documentation-ledger assertion reads exactly one paragraph and fails closed.
 
-use njutest_devkit::docs::{TraceSpecimen, table_count, trace_field_ledger};
+use njutest_devkit::docs::{TraceSpecimen, named_set_ledger, table_count, trace_field_ledger};
 use njutest_devkit::result::{ResultState, result_state};
 use serde::Serialize;
 
@@ -80,6 +80,44 @@ fn only_the_paragraph_immediately_above_the_table_can_answer_for_it() {
 #[test]
 fn a_missing_marker_is_an_error() {
     assert!(table_count("eleven kinds", "| `kind` |", 11, "kinds").is_err());
+}
+
+#[test]
+fn a_named_set_table_refuses_missing_and_extra_rows_and_members() {
+    let page = "## Routing\n\n\
+                | field | names |\n\
+                | --- | --- |\n\
+                | `granularity` | `all`, `block` |\n\
+                | `fallback` | `not-measured` |\n";
+    let expected: &[(&str, &[&str])] = &[
+        ("granularity", &["all", "block"]),
+        ("fallback", &["not-measured"]),
+    ];
+    assert_eq!(
+        named_set_ledger(page, ("## Routing", "| field | names |"), Some(1), expected)
+            .map_err(|error| error.to_string()),
+        Ok(())
+    );
+    for changed in [
+        page.replace("| `fallback` | `not-measured` |\n", ""),
+        page.replace(
+            "| `fallback` | `not-measured` |\n",
+            "| `fallback` | `not-measured` |\n| `invented` | `new` |\n",
+        ),
+        page.replace("`all`, `block`", "`all`"),
+        page.replace("`all`, `block`", "`all`, `block`, `invented`"),
+    ] {
+        assert!(
+            named_set_ledger(
+                &changed,
+                ("## Routing", "| field | names |"),
+                Some(1),
+                expected
+            )
+            .is_err(),
+            "a missing or extra name must be refused: {changed}"
+        );
+    }
 }
 
 #[test]

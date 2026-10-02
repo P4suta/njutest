@@ -182,6 +182,8 @@ pub enum Fallback {
     CoverageIncomplete,
     /// A target ran and its guards recorded nothing this run can route by, so what it reached is unknown.
     TouchIncomplete,
+    /// A compile-time value has no runtime reach marker, so every test is asked.
+    CompileTime,
 }
 
 impl Fallback {
@@ -194,6 +196,7 @@ impl Fallback {
             Self::OutsideBlocks => "outside-blocks",
             Self::CoverageIncomplete => "coverage-incomplete",
             Self::TouchIncomplete => "touch-incomplete",
+            Self::CompileTime => "compile-time",
         }
     }
 }
@@ -315,8 +318,12 @@ impl Route {
             .copied()
             .filter(|target| {
                 !reached.targets.contains_key(*target)
-                    || reached.limitations.iter().any(|limitation| {
-                        limitation == &format!("{}:{target}", crate::reach::UNMEASURED)
+                    || reached.limitations.iter().any(|limited| {
+                        limited.limitation == crate::limitation::Limitation::CoverageNotMeasured
+                            && limited
+                                .target
+                                .as_ref()
+                                .is_some_and(|id| id.as_str() == *target)
                     })
             })
             .collect();
@@ -402,7 +409,10 @@ impl Route {
     /// The tests of `target` this route names, or nothing when every test of it runs.
     #[must_use]
     pub fn tests_of(&self, target: &str) -> &[String] {
-        self.keeps(target).map_or(&[], |one| one.tests.named())
+        match self.keeps(target) {
+            Some(one) => one.tests.named(),
+            None => &[],
+        }
     }
 
     /// What this route keeps `target` for, or nothing when it does not keep it.
@@ -576,6 +586,57 @@ impl Route {
         match self {
             Self::Block { discharged, .. } | Self::Discharged { discharged } => discharged,
             Self::All { .. } | Self::Unreached { .. } => &[],
+        }
+    }
+
+    /// This route with `target` put to the mutation with every test and no proof's removal of it standing, which is what a run of the mutation against `target` that reached its site makes of a route decided on a baseline the target's reach contradicted (ADR 0036 decision 1).
+    #[must_use]
+    pub fn reached_by(&self, target: &str) -> Self {
+        let put = Reaches {
+            target: target.to_owned(),
+            tests: Asked::Every,
+        };
+        let kept = |discharged: &[Discharge]| -> Vec<Discharge> {
+            discharged
+                .iter()
+                .filter(|one| one.target != target)
+                .cloned()
+                .collect()
+        };
+        match self {
+            Self::All { reaching, fallback } => Self::All {
+                reaching: reaching
+                    .iter()
+                    .filter(|one| *one != target)
+                    .cloned()
+                    .chain(std::iter::once(target.to_owned()))
+                    .collect(),
+                fallback: *fallback,
+            },
+            Self::Block {
+                reaching,
+                discharged,
+                fallback,
+            } => Self::Block {
+                reaching: reaching
+                    .iter()
+                    .filter(|one| one.target != target)
+                    .cloned()
+                    .chain(std::iter::once(put))
+                    .collect(),
+                discharged: kept(discharged),
+                fallback: *fallback,
+            },
+            Self::Discharged { discharged } => Self::Block {
+                reaching: vec![put],
+                discharged: kept(discharged),
+                fallback: None,
+            },
+            Self::Unreached { .. } => Self::Block {
+                reaching: vec![put],
+                discharged: Vec::new(),
+                fallback: None,
+            },
         }
     }
 

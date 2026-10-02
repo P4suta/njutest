@@ -110,7 +110,7 @@ fn attempt_once() -> Option<(Fixture, serde_json::Value, Vec<Seam>, Vec<Seam>)> 
         lost.join("\n"),
         njutest_devkit::process::strict_utf8(&output.stderr)
     );
-    let not_green = limitation(&report, njutest::assure::wire::SUITE_NOT_GREEN);
+    let not_green = limitation(&report, njutest::limitation::WIRE_BASELINE_NOT_GREEN);
     assert!(
         not_green.is_none(),
         "the fixture's own suite did not pass without a fault, so no question it licensed \
@@ -138,7 +138,7 @@ fn attempt_once() -> Option<(Fixture, serde_json::Value, Vec<Seam>, Vec<Seam>)> 
 fn only_the_machine_moved(report: &serde_json::Value, found: &[Seam], stated: &[Seam]) -> bool {
     let said = finding(report, njutest::assure::wire::NOT_PUT).is_some()
         || finding(report, njutest::assure::wire::NOT_REPRODUCED).is_some()
-        || limitation(report, njutest::assure::wire::TRANSPORT_FAILED).is_some();
+        || limitation(report, njutest::limitation::WIRE_TRANSPORT_INCOMPLETE).is_some();
     let moved: Vec<String> = found
         .iter()
         .filter(|row| !stated.contains(row))
@@ -249,6 +249,7 @@ fn verify(fixture: &Fixture) -> std::process::Output {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),
         temp_directory: fixture.temp().to_path_buf(),

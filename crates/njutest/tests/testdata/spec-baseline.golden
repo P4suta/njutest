@@ -21,13 +21,11 @@ src/lib.rs  sign
         fixture-baseline/lib/fixture_baseline notices it
   what is left free
     - `>` => `>=`  njutest explain src/lib.rs:sign:gt-to-ge@8
-        never-infected removed every target that reaches it
-          (fixture-baseline/lib/fixture_baseline), so nothing ran it; check the proof, not the tests
+        fixture-baseline/lib/fixture_baseline ran it and did not notice
     - `n < 0` => `true`  njutest explain src/lib.rs:sign:condition-to-true@10
         fixture-baseline/lib/fixture_baseline ran it and did not notice
     - `<` => `<=`  njutest explain src/lib.rs:sign:lt-to-le@10
-        never-infected removed every target that reaches it
-          (fixture-baseline/lib/fixture_baseline), so nothing ran it; check the proof, not the tests
+        fixture-baseline/lib/fixture_baseline ran it and did not notice
     - `"zero"` => `Default::default()`  njutest explain src/lib.rs:sign:return-default@13
         nothing the suite runs executes it
 

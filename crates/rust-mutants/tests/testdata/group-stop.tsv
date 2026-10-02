@@ -1,5 +1,5 @@
 # What a group stop comes to: the group's signal, the leader's when the group was refused, who else the group was seen to hold.
-# The engine's runner and xtask's work decide by this table, each held to it by a law.
+# The engine's runner and xtask's work decide by one classifier, `rust_mutants_decision::group::decide_stop`, held to this table by a law on each side.
 group	leader	others	decision
 sent	sent	nobody	group
 sent	sent	somebody	group

@@ -20,64 +20,86 @@ use njutest::assure::mutation::{Disposition, Judged, Mutation, Unconfirmed};
 use njutest::config::Contract;
 use njutest::evidence::digest::{Inputs, Mode, identity};
 use njutest::report::across::across;
-use njutest::report::{Decision, StepBoundary};
+use njutest::report::{Decision, Outcome as Recorded, StepBoundary, Verdict};
 use proptest::prelude::*;
 use rust_mutants::session::{Fallback, Route};
 
 /// One disposition of each shape, as a run can reach it.
 fn disposition() -> impl Strategy<Value = Disposition> {
+    proptest::sample::select(
+        Recorded::ALL
+            .into_iter()
+            .filter_map(specimen)
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn counted_boundary() -> StepBoundary {
+    StepBoundary::new(10, 11).expect("a first count beyond the allowance")
+}
+
+fn specimen(outcome: Recorded) -> Option<Disposition> {
     let route = || Route::All {
         reaching: vec!["pkg/lib/pkg".to_owned()],
         fallback: Fallback::NotMeasured,
     };
-    let every = [
-        Disposition::Rejected {
+    Some(match outcome {
+        Recorded::CompileRejected => Disposition::Rejected {
             diagnostic: "no".to_owned(),
         },
-        Disposition::Killed {
+        Recorded::Killed => Disposition::Killed {
             by: "pkg/lib/pkg".to_owned(),
         },
-        Disposition::StepLimitReached {
+        Recorded::StepLimitReached => Disposition::StepLimitReached {
             on: "pkg/lib/pkg".to_owned(),
-            boundary: StepBoundary::new(10, 11).expect("a first count beyond the allowance"),
+            boundary: counted_boundary(),
         },
-        Disposition::Waited {
+        Recorded::Waited => Disposition::Waited {
             on: "pkg/lib/pkg".to_owned(),
         },
-        Disposition::Survived { route: route() },
-        Disposition::Unreached,
-        Disposition::Equivalent { route: route() },
-        Disposition::Unconfirmed {
+        Recorded::Survived => Disposition::Survived { route: route() },
+        Recorded::Unreached => Disposition::Unreached,
+        Recorded::Equivalent => Disposition::Equivalent { route: route() },
+        Recorded::Unconfirmed => Disposition::Unconfirmed {
             on: "pkg/lib/pkg".to_owned(),
             why: Unconfirmed::DidNotReproduce,
         },
-        Disposition::Errored {
+        Recorded::Errored => Disposition::Errored {
             on: "pkg/lib/pkg".to_owned(),
             detail: "no binary".to_owned(),
         },
-        Disposition::Declined {
+        Recorded::Declined => Disposition::Declined {
             on: "pkg/lib/pkg".to_owned(),
             tests: vec![rust_mutants::decline::Decline {
                 test: "tests::shares".to_owned(),
                 why: "this machine cannot share blocks".to_owned(),
             }],
         },
-    ];
-    for one in &every {
-        match one {
-            Disposition::Rejected { .. }
-            | Disposition::Killed { .. }
-            | Disposition::StepLimitReached { .. }
-            | Disposition::Waited { .. }
-            | Disposition::Survived { .. }
-            | Disposition::Unreached
-            | Disposition::Equivalent { .. }
-            | Disposition::Unconfirmed { .. }
-            | Disposition::Errored { .. }
-            | Disposition::Declined { .. } => {}
+        Recorded::ModelNoticed | Recorded::ModelProved => return None,
+    })
+}
+
+#[test]
+fn every_mutation_specimen_has_the_outcome_that_selected_it() {
+    for outcome in Recorded::ALL {
+        if let Some(disposition) = specimen(outcome) {
+            assert_eq!(disposition.outcome(), outcome);
         }
     }
-    proptest::sample::select(every.to_vec())
+}
+
+#[test]
+fn only_a_verdict_that_assures_something_exits_as_one() {
+    for verdict in Verdict::ALL {
+        assert_eq!(
+            verdict.exit_code() == njutest::cli::EXIT_ASSURED,
+            verdict.is_assurance(),
+            "{} exits {}: a verdict that assures nothing and ends as one that did lets a job \
+             pass on a run that established too little to conclude",
+            verdict.name(),
+            verdict.exit_code()
+        );
+    }
 }
 
 /// One way a mutation can be decided.
@@ -93,7 +115,7 @@ fn decisions() -> impl Strategy<Value = Vec<Decision>> {
 /// A run that judged these mutations, each under an identity of its own.
 fn judged_from(dispositions: Vec<Disposition>) -> Mutation {
     Mutation {
-        repaired: BTreeMap::new(),
+        repaired: Vec::new(),
         judged: dispositions
             .into_iter()
             .zip(0u32..)
@@ -106,7 +128,12 @@ fn judged_from(dispositions: Vec<Disposition>) -> Mutation {
                 item: "demo".to_owned(),
                 original: ">".to_owned(),
                 replacement: String::new(),
-                position: None,
+                position: njutest::report::Position {
+                    line: 1,
+                    column: 1,
+                    character_column: 1,
+                },
+                evidence: njutest::testkit::reports::sealed_as(&(disposition).decided()),
                 disposition,
                 source_run_id: None,
                 observed: Vec::new(),
@@ -450,7 +477,7 @@ fn reported(findings: Vec<njutest::report::Finding>) -> njutest::report::Report 
     "2026-09-09T00:00:00Z".clone_into(&mut source.timing.started);
     "2026-09-09T00:00:00Z".clone_into(&mut source.timing.finished);
     source.limitations.push(njutest::report::Limitation::new(
-        "git-metadata-unavailable",
+        njutest::limitation::Limitation::GitMetadataUnavailable,
         "this synthetic fixture has no repository process",
     ));
     source.findings = findings;

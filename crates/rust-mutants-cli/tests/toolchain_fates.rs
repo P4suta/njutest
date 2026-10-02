@@ -78,15 +78,24 @@ fn normalized(path: &Path) -> PathBuf {
     parts.iter().collect()
 }
 
-/// What a run of one fixture establishes, in the order a block states it.
-fn recorded(fixture: &Fixture, args: &[String]) -> Vec<Fate> {
+/// What a run of one fixture establishes, in the order a block states it, and what it said on its error stream.
+fn recorded(fixture: &Fixture, args: &[String]) -> (Vec<Fate>, String) {
     let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
     let (mut out, mut err) = (Vec::new(), Vec::new());
+    let tier = if args
+        .iter()
+        .any(|arg| arg == "--tier" || arg.starts_with("--tier="))
+    {
+        Vec::new()
+    } else {
+        vec!["--tier", "all"]
+    };
     let code = rust_mutants_cli::run_from(
         std::iter::once("rust-mutants")
             .chain(["run"])
             .chain(["--root", root.as_str()])
-            .chain(["--tier", "all", "--offline", "--locked"])
+            .chain(tier)
+            .chain(["--offline", "--locked"])
             .chain(args.iter().map(String::as_str))
             .map(OsString::from),
         &environment(fixture),
@@ -98,22 +107,22 @@ fn recorded(fixture: &Fixture, args: &[String]) -> Vec<Fate> {
     );
     let output = njutest_devkit::process::answered(code, out, err);
     let code = output.status.code();
-    let said = njutest_devkit::process::strict_utf8(&output.stderr);
+    let said = njutest_devkit::process::strict_utf8(&output.stderr).into_owned();
     let directory = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
     if !test_directory(&directory) {
         assert_eq!(
             code,
-            Some(2),
+            Some(i32::from(rust_mutants::run::EXIT_FAILED)),
             "a run that wrote no report at all is a run that was refused, and nothing else: \
              {said}"
         );
-        return Vec::new();
+        return (Vec::new(), said);
     }
     assert!(
         code.is_some_and(|code| code <= 2),
         "the run itself failed: {said}"
     );
-    rows(&newest(&directory))
+    (rows(&newest(&directory)), said)
 }
 
 fn newest(directory: &Path) -> PathBuf {
@@ -157,7 +166,9 @@ fn rows(report: &Path) -> Vec<Fate> {
             line: number(row, "line"),
             column: number(row, "column"),
             rule: text(row, "rule"),
-            outcome: if row["unreached"].as_bool().unwrap_or(false) {
+            outcome: if row["evidence"]["kind"] == "unproven" {
+                "unproven".to_owned()
+            } else if row["unreached"].as_bool().unwrap_or(false) {
                 "unreached".to_owned()
             } else {
                 text(row, "outcome")
@@ -173,7 +184,10 @@ fn rows(report: &Path) -> Vec<Fate> {
                     line: 0,
                     column: 0,
                     rule: text(row, "rule"),
-                    outcome: "refused".to_owned(),
+                    outcome: match text(row, "reason").as_str() {
+                        "compiler-refused" => "refused".to_owned(),
+                        other => other.to_owned(),
+                    },
                 }),
         )
         .collect();
@@ -226,7 +240,7 @@ fn holds(name: &str) {
         "{name}: the README states no fates, which `cargo xtask fixtures` refuses"
     );
     let fixture = Fixture::copy_with_siblings(name, &siblings(&stated.args));
-    let found = recorded(&fixture, &resolved(&fixture, &stated.args));
+    let (found, stderr) = recorded(&fixture, &resolved(&fixture, &stated.args));
     if std::env::var_os(UPDATE).is_some() {
         rewrite(&readme(name), &found);
         return;
@@ -237,7 +251,7 @@ fn holds(name: &str) {
         found == stated.rows,
         "{name}: the README and a run of it disagree; read the difference, then rewrite this \
          fixture's block with {UPDATE}=1 if the run is right\n  the README says:\n    {}\n  the run \
-         establishes:\n    {}",
+         establishes:\n    {}\n  and said:\n{stderr}",
         said.join("\n    "),
         is.join("\n    ")
     );
@@ -246,6 +260,11 @@ fn holds(name: &str) {
 #[test]
 fn fixture_2021() {
     holds("fixture-2021");
+}
+
+#[test]
+fn fixture_absolute_path() {
+    holds("fixture-absolute-path");
 }
 
 #[test]
@@ -309,6 +328,11 @@ fn fixture_climbs_dep_lib() {
 }
 
 #[test]
+fn fixture_const_fn() {
+    holds("fixture-const-fn");
+}
+
+#[test]
 fn fixture_coverage() {
     holds("fixture-coverage");
 }
@@ -329,13 +353,48 @@ fn fixture_doctest() {
 }
 
 #[test]
+fn fixture_doctest_alone() {
+    holds("fixture-doctest-alone");
+}
+
+#[test]
+fn fixture_doctest_host_only() {
+    holds("fixture-doctest-host-only");
+}
+
+#[test]
+fn fixture_doctest_refused() {
+    holds("fixture-doctest-refused");
+}
+
+#[test]
+fn fixture_target_tmpdir() {
+    holds("fixture-target-tmpdir");
+}
+
+#[test]
+fn fixture_temporary() {
+    holds("fixture-temporary");
+}
+
+#[test]
 fn fixture_drifts() {
     holds("fixture-drifts");
 }
 
 #[test]
+fn fixture_drifts_sealed() {
+    holds("fixture-drifts-sealed");
+}
+
+#[test]
 fn fixture_durable() {
     holds("fixture-durable");
+}
+
+#[test]
+fn fixture_durable_calls() {
+    holds("fixture-durable-calls");
 }
 
 #[test]
@@ -376,6 +435,11 @@ fn fixture_escapes() {
 #[test]
 fn fixture_faulted() {
     holds("fixture-faulted");
+}
+
+#[test]
+fn fixture_faulted_ignore() {
+    holds("fixture-faulted-ignore");
 }
 
 #[test]
@@ -434,6 +498,11 @@ fn fixture_include() {
 }
 
 #[test]
+fn fixture_integration_bodies() {
+    holds("fixture-integration-bodies");
+}
+
+#[test]
 fn fixture_item_reach() {
     holds("fixture-item-reach");
 }
@@ -456,6 +525,11 @@ fn fixture_macros() {
 #[test]
 fn fixture_modern() {
     holds("fixture-modern");
+}
+
+#[test]
+fn fixture_const_items() {
+    holds("fixture-const-items");
 }
 
 #[test]
@@ -496,6 +570,11 @@ fn fixture_panics() {
 #[test]
 fn fixture_probeable() {
     holds("fixture-probeable");
+}
+
+#[test]
+fn fixture_reads_its_source() {
+    holds("fixture-reads-its-source");
 }
 
 #[test]
@@ -742,6 +821,7 @@ fn walk(base: &Path) -> Vec<PathBuf> {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: njutest_devkit::paths::environment_for_a_run()
             .into_iter()
             .collect(),

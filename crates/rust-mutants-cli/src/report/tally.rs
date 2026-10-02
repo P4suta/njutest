@@ -33,6 +33,7 @@ impl Tally {
             parts: vec![
                 ("killed", counted.killed.count()),
                 ("survived", counted.survived.count()),
+                ("unproven", counted.unproven.count()),
                 ("step_limit_reached", counted.step_limit_reached.count()),
                 ("waited", counted.waited.count()),
                 ("inconclusive", counted.inconclusive.count()),
@@ -41,14 +42,33 @@ impl Tally {
             ],
             within: vec![
                 ("not run", "unreached", counted.unreached.count()),
-                ("not run", "discharged", counted.discharged.count()),
                 ("not run", "declined", counted.declined.count()),
                 ("survived", "expected", counted.expected.count()),
+                (
+                    "unproven",
+                    "killed natively",
+                    counted.unproven_killed.count(),
+                ),
+                (
+                    "unproven",
+                    "survived natively",
+                    counted.unproven_survived.count(),
+                ),
+                (
+                    "unproven",
+                    "unreached natively",
+                    counted.unproven_unreached.count(),
+                ),
+                (
+                    "unproven",
+                    "discharged by a native proof",
+                    counted.unproven_discharged.count(),
+                ),
             ],
             beside: vec![
                 ("executed", counted.executed.count()),
                 ("refused by the compiler", counted.refused.count()),
-                ("places that produced no candidate", counted.skipped.count()),
+                ("places passed over", counted.skipped.count()),
             ],
         }
     }

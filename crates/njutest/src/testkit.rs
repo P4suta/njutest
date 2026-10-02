@@ -183,8 +183,27 @@ pub fn every_failure() -> Vec<RunnerError> {
                 source: std::io::Error::other("no"),
             },
         },
+        RunnerError::CarriedEvidence {
+            source: rust_mutants::report::evidence::EvidenceError::Create {
+                path: nowhere.to_path_buf(),
+                source: std::io::Error::other("no"),
+            },
+        },
         RunnerError::Model {
             message: "model artifact could not be retained".to_owned(),
+        },
+        RunnerError::Unread {
+            doing: "reading a catalogued source to generate its harness",
+            source: failure(
+                rust_mutants::parsing::apart(|parsing| {
+                    let past = rust_mutants::parsing::NESTING.saturating_add(1);
+                    parsing
+                        .tokens(&format!("{}{}", "(".repeat(past), ")".repeat(past)))
+                        .map(|_tokens| ())
+                })
+                .and_then(|read| read),
+                "a nesting past the bound is refused",
+            ),
         },
         RunnerError::Schedule(crate::assure::schedule::ScheduleError::WorkerPanicked {
             worker: "njutest-measure-0".to_owned(),
@@ -240,6 +259,7 @@ pub fn every_failure() -> Vec<RunnerError> {
             | RunnerError::Checkpoint(_)
             | RunnerError::MutationEvidence(_)
             | RunnerError::Carry { .. }
+            | RunnerError::CarriedEvidence { .. }
             | RunnerError::Coverage(_)
             | RunnerError::Provider(_)
             | RunnerError::IdentityEnvironment { .. }
@@ -247,6 +267,7 @@ pub fn every_failure() -> Vec<RunnerError> {
             | RunnerError::MiriMissing { .. }
             | RunnerError::PhaseOutput { .. }
             | RunnerError::Model { .. }
+            | RunnerError::Unread { .. }
             | RunnerError::Schedule(_)
             | RunnerError::Sources(_)
             | RunnerError::Equivalence { .. }
@@ -290,6 +311,8 @@ pub fn every_refusal() -> Vec<crate::evidence::store::Refusal> {
             target: "core/lib/core".to_owned(),
         },
         Refusal::NothingRouted,
+        Refusal::Superseded,
+        Refusal::Unreproduced,
     ];
     for one in &refusals {
         match one {
@@ -300,7 +323,9 @@ pub fn every_refusal() -> Vec<crate::evidence::store::Refusal> {
             | Refusal::KeyChanged { .. }
             | Refusal::NotPassing { .. }
             | Refusal::TargetEntered { .. }
-            | Refusal::NothingRouted => {}
+            | Refusal::NothingRouted
+            | Refusal::Superseded
+            | Refusal::Unreproduced => {}
         }
     }
     refusals
@@ -345,7 +370,9 @@ pub const fn payload_record_key(payload: &crate::trace::Payload) -> &'static str
         Payload::Progress { .. } => "progress",
         Payload::Artifact { .. } => "artifact",
         Payload::Route { .. } | Payload::FaultRoute { .. } => "route",
+        Payload::FaultBaseline { .. } => "baseline",
         Payload::MutantExec { .. } => "mutant",
+        Payload::SealedExec { .. } => "sealed",
         Payload::FaultExec { .. } | Payload::Fault { .. } => "fault",
         Payload::Beside { .. } => "beside",
         Payload::BesideRun { .. } => "pair",
@@ -353,6 +380,8 @@ pub const fn payload_record_key(payload: &crate::trace::Payload) -> &'static str
         Payload::CrashStep { .. } => "step",
         Payload::FaultControl { .. } | Payload::Control { .. } => "control",
         Payload::FaultAttribution { .. } => "attribution",
+        Payload::FaultWrites { .. } => "writes",
+        Payload::FaultFate { .. } => "fate",
         Payload::FaultRejected { .. } => "rejected",
         Payload::ProbeExec { .. } => "probe",
         Payload::WireExchange { .. } => "exchange",
@@ -397,14 +426,22 @@ pub mod payload {
         Route(&'a crate::trace::RouteRecord),
         /// A mutation execution.
         MutantExec(&'a crate::trace::MutantExecRecord),
+        /// A sealed execution a verdict rests on.
+        SealedExec(&'a crate::trace::SealedExecRecord),
         /// A fault execution.
         FaultExec(&'a crate::trace::FaultExecRecord),
         /// A fault confirmation's control.
         FaultControl(&'a crate::trace::FaultControlRecord),
         /// A fault's write attribution.
         FaultAttribution(&'a crate::trace::FaultAttributionRecord),
+        /// The paths written before the first fault and after the last.
+        FaultWrites(&'a crate::trace::FaultWritesRecord),
+        /// What became of the failures a fault made on one target.
+        FaultFate(&'a crate::trace::FaultFateRecord),
         /// A fault's route.
         FaultRoute(&'a crate::trace::FaultRouteRecord),
+        /// What a target's faulted baseline reached.
+        FaultBaseline(&'a crate::trace::FaultBaselineRecord),
         /// A fault the compiler refused.
         FaultRejected(&'a crate::trace::FaultRejectedRecord),
         /// A fault site's decision.
@@ -460,10 +497,14 @@ pub mod payload {
             Payload::Artifact { .. } => Ref::Artifact,
             Payload::Route { route } => Ref::Route(route),
             Payload::MutantExec { mutant } => Ref::MutantExec(mutant),
+            Payload::SealedExec { sealed } => Ref::SealedExec(sealed),
             Payload::FaultExec { fault } => Ref::FaultExec(fault),
             Payload::FaultControl { control } => Ref::FaultControl(control),
             Payload::FaultRoute { route } => Ref::FaultRoute(route),
+            Payload::FaultBaseline { baseline } => Ref::FaultBaseline(baseline),
             Payload::FaultAttribution { attribution } => Ref::FaultAttribution(attribution),
+            Payload::FaultWrites { writes } => Ref::FaultWrites(writes),
+            Payload::FaultFate { fate } => Ref::FaultFate(fate),
             Payload::FaultRejected { rejected } => Ref::FaultRejected(rejected),
             Payload::Fault { fault } => Ref::Fault(fault),
             Payload::Beside { beside } => Ref::Beside(beside),
@@ -541,6 +582,15 @@ pub mod payload {
                 return None;
             };
             Some(mutant)
+        }
+
+        /// The sealed execution record, where this is one.
+        #[must_use]
+        pub const fn sealed_exec(self) -> Option<&'a crate::trace::SealedExecRecord> {
+            let Self::SealedExec(sealed) = self else {
+                return None;
+            };
+            Some(sealed)
         }
 
         /// The probe execution record, where this is one.
@@ -678,10 +728,35 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
                 unfaulted: crate::trace::Unfaulted::DidNotWrite,
             },
         },
+        Payload::FaultFate {
+            fate: crate::trace::FaultFateRecord {
+                fault: "abcdef".to_owned(),
+                target: "demo/test/calls".to_owned(),
+                outcome: "survived".to_owned(),
+                fate: Some(rust_mutants::fate::Fate {
+                    made: 1,
+                    read: 0,
+                    dropped: 1,
+                }),
+            },
+        },
         Payload::FaultRoute {
             route: crate::trace::FaultRouteRecord {
                 fault: "abcdef".to_owned(),
                 reaching: vec!["demo/test/calls".to_owned()],
+            },
+        },
+        Payload::FaultBaseline {
+            baseline: crate::trace::FaultBaselineRecord {
+                target: "demo/test/calls".to_owned(),
+                doc: false,
+                reached: vec![0],
+            },
+        },
+        Payload::FaultWrites {
+            writes: crate::trace::FaultWritesRecord {
+                before: vec![],
+                after: vec!["left.log".to_owned()],
             },
         },
         Payload::FaultRejected {
@@ -699,19 +774,17 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
         },
         Payload::Fault {
             fault: crate::report::faults::FaultRecord {
-                catalog_index: crate::report::CatalogIndex::new(0),
-                id: "a".repeat(64),
-                display_id: "a".repeat(20),
-                path: "src/lib.rs".to_owned(),
-                item: "load".to_owned(),
                 position: Some(crate::report::Position {
                     line: 13,
                     column: 16,
                     character_column: 16,
                 }),
-                decision: crate::report::faults::FaultDecision::Noticed {
-                    by: "demo/test/calls".to_owned(),
-                },
+                ..reports::fault(
+                    0,
+                    crate::report::faults::FaultDecision::Noticed {
+                        by: "demo/test/calls".to_owned(),
+                    },
+                )
             },
         },
         Payload::Beside {
@@ -737,7 +810,8 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
                 target: "demo/test/counter".to_owned(),
                 test: "a_count_goes_up".to_owned(),
                 stage: "crash".to_owned(),
-                exit_code: 93,
+                sealed: false,
+                exit_code: Some(93),
                 outcome: "killed".to_owned(),
                 noticed: true,
                 issued: Some(crate::trace::CrashNoticeRecord {
@@ -752,6 +826,23 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
                     )),
                 }),
                 left: vec!["count".to_owned()],
+                unnamed: None,
+                failed: Vec::new(),
+            },
+        },
+        Payload::CrashExec {
+            crash: crate::trace::CrashExecRecord {
+                crash: "d".repeat(20),
+                target: "demo/test/counter".to_owned(),
+                test: "a_count_goes_up".to_owned(),
+                stage: "next".to_owned(),
+                sealed: true,
+                exit_code: None,
+                outcome: "unstartable".to_owned(),
+                noticed: false,
+                issued: None,
+                left: Vec::new(),
+                unnamed: None,
                 failed: Vec::new(),
             },
         },
@@ -778,6 +869,7 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
                     on: "demo/test/counter::a_count_goes_up".to_owned(),
                     left: vec!["count".to_owned()],
                 },
+                sealed: false,
             },
         },
         Payload::ProbeExec {
@@ -825,6 +917,25 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
                 was: "unreached".to_owned(),
                 now: "survived".to_owned(),
                 reached: crate::trace::SiteReached::Reached,
+                by: crate::trace::RepairedBy::Native,
+            },
+        },
+        Payload::Repair {
+            repair: crate::trace::RepairRecord {
+                mutant: "abcdef".to_owned(),
+                target: "demo/lib/demo".to_owned(),
+                was: "survived".to_owned(),
+                now: "survived".to_owned(),
+                reached: crate::trace::SiteReached::Reached,
+                by: crate::trace::RepairedBy::Sealed {
+                    evidence: rust_mutants::sealed::record::Evidence::Sealed {
+                        executions: vec![rust_mutants::sealed::record::SealedRun {
+                            target: "demo/lib/demo".to_owned(),
+                            test: "tests::works".to_owned(),
+                            came_to: rust_mutants::sealed::record::Came::Passed,
+                        }],
+                    },
+                },
             },
         },
         Payload::Knob {
@@ -934,6 +1045,18 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
                 },
             }),
     );
+    payloads.extend(
+        rust_mutants::sealed::record::Came::ALL
+            .into_iter()
+            .map(|came| Payload::SealedExec {
+                sealed: crate::trace::SealedExecRecord {
+                    mutant: "abcdef".to_owned(),
+                    target: "demo/lib/demo".to_owned(),
+                    test: "tests::adds".to_owned(),
+                    came_to: came.name().to_owned(),
+                },
+            }),
+    );
     for payload in &payloads {
         assert!(
             !payload_record_key(payload).is_empty(),
@@ -1012,6 +1135,7 @@ pub fn documented_specimen() -> crate::config::Config {
             packages: vec!["demo".to_owned()],
             include: vec!["src/**/*.rs".to_owned()],
             exclude: vec!["src/generated/**".to_owned()],
+            allow_outside: Vec::new(),
         },
         execution: Execution {
             features: vec!["slow".to_owned()],
@@ -1030,7 +1154,10 @@ pub fn documented_specimen() -> crate::config::Config {
             max_bytes: 5_368_709_120,
             ttl: Duration::from_hours(24 * 30),
         },
-        mutation: Mutation { equivalence: true },
+        mutation: Mutation {
+            equivalence: true,
+            seal: false,
+        },
         faults: Faults { inject: true },
         durability: crate::config::Durability { crash: true },
         verification: Verification {
@@ -1046,7 +1173,7 @@ pub fn documented_specimen() -> crate::config::Config {
         },
         soundness: Soundness {
             miri_flags: vec!["-Zmiri-strict-provenance".to_owned()],
-            sanitizers: vec!["address".to_owned()],
+            sanitizers: vec![crate::assure::sanitize::Sanitizer::Address],
         },
         fuzz: Fuzz {
             run: true,
@@ -1208,6 +1335,53 @@ pub mod reports {
         },
     }
 
+    /// The fault at catalog `index`, failing `read(path)` in `load` of `src/lib.rs`, decided `decision`, with the identity its own fields mint.
+    ///
+    /// # Panics
+    /// Only where these canonical fields stop minting an identity, which is a change to the engine's identity rules.
+    #[must_use]
+    #[expect(
+        clippy::expect_used,
+        reason = "a fixed canonical identity always mints, and a test reads a failure to as a setup failure"
+    )]
+    pub fn fault(
+        index: u32,
+        decision: crate::report::faults::FaultDecision,
+    ) -> crate::report::faults::FaultRecord {
+        let original = "read(path)";
+        let replacement = rust_mutants::instrument::INJECTED;
+        let start = index.saturating_mul(16);
+        let span = rust_mutants::span::Span::new(start, start.saturating_add(10))
+            .expect("an increasing span");
+        let source_digest = rust_mutants::id::digest(b"pub fn load() {}");
+        let id = rust_mutants::id::Identity {
+            path: "src/lib.rs".to_owned(),
+            rule_name: "inject-error".to_owned(),
+            rule_version: 1,
+            span,
+            source_digest: source_digest.clone(),
+            original_digest: rust_mutants::id::digest(original.as_bytes()),
+            replacement_digest: rust_mutants::id::digest(replacement.as_bytes()),
+        }
+        .id()
+        .expect("a canonical identity");
+        crate::report::faults::FaultRecord {
+            catalog_index: CatalogIndex::new(index),
+            id: id.as_str().to_owned(),
+            display_id: id.display().as_str().to_owned(),
+            path: "src/lib.rs".to_owned(),
+            rule: "inject-error".to_owned(),
+            rule_version: 1,
+            span,
+            source_digest,
+            original: original.to_owned(),
+            replacement: replacement.to_owned(),
+            item: "load".to_owned(),
+            position: None,
+            decision,
+        }
+    }
+
     /// One mutation at `line` of `item` in `path`, where the rule named `rule` made `was` into `now`, decided as `outcome`, with no route, and established by this run.
     #[must_use]
     pub fn row(
@@ -1231,6 +1405,7 @@ pub mod reports {
             item: item.to_owned(),
             original: was.to_owned(),
             replacement: now.to_owned(),
+            evidence: sealed_as(&outcome),
             outcome,
             accepted: false,
             blind_in: Vec::new(),
@@ -1238,6 +1413,50 @@ pub mod reports {
             reuse: Reuse(Established::Here),
         }
     }
+
+    /// What a row decided `decided` rests on where a sealed run decided it: the sealed execution that establishes it, nothing for a mutation the compiler refused, and every reason none did for an outcome no sealed execution establishes.
+    #[must_use]
+    pub fn sealed_as(decided: &Decided) -> Option<rust_mutants::sealed::record::Evidence> {
+        use rust_mutants::sealed::record::{Came, Evidence, SealedRun};
+        let ran = |target: &str, came_to: Came| Evidence::Sealed {
+            executions: vec![SealedRun {
+                target: target.to_owned(),
+                test: "tests::one".to_owned(),
+                came_to,
+            }],
+        };
+        match decided {
+            Decided::CompileRejected => None,
+            Decided::Killed { by } => Some(ran(by, Came::Panicked)),
+            Decided::Survived
+            | Decided::Equivalent
+            | Decided::ModelNoticed
+            | Decided::ModelProved => Some(ran(SEALED_TARGET, Came::Passed)),
+            Decided::Unreached => Some(Evidence::Sealed {
+                executions: Vec::new(),
+            }),
+            Decided::StepLimitReached { .. }
+            | Decided::Waited { .. }
+            | Decided::Unconfirmed { .. }
+            | Decided::Errored { .. }
+            | Decided::Declined { .. } => Some(Evidence::not_sealed()),
+        }
+    }
+
+    /// The sealed execution a kill by `by` rests on, which is what a checkpoint or a stored kill carries.
+    #[must_use]
+    pub fn sealed_kill(by: &str) -> rust_mutants::sealed::record::Evidence {
+        rust_mutants::sealed::record::Evidence::Sealed {
+            executions: vec![rust_mutants::sealed::record::SealedRun {
+                target: by.to_owned(),
+                test: "tests::one".to_owned(),
+                came_to: rust_mutants::sealed::record::Came::Panicked,
+            }],
+        }
+    }
+
+    /// The target a hand-built row's sealed survival names, which is the one target [`measured`] reports.
+    pub const SEALED_TARGET: &str = "pkg/lib/pkg";
 
     /// A route this run decided and asked by: reaching `reaching`, removing `removed` by never-infected, and asking `answered` in order.
     #[must_use]
@@ -1267,6 +1486,84 @@ pub mod reports {
         }
     }
 
+    /// Routes `row` by `routing`, resting it on what a run that asked by it rests on, unless it is a lead a test made one on purpose.
+    pub fn asked(row: &mut MutantRecord, routing: Routing) {
+        if !row.verdict().lead() {
+            row.evidence = rested(&row.outcome, &routing.answered);
+        }
+        row.routing = Some(routing);
+    }
+
+    /// Decides `row` as `outcome`, resting on what a sealed run that decided it and gave its route's answers rests on.
+    pub fn decide(row: &mut MutantRecord, outcome: Decided) {
+        let answered: &[Answered] = match row.routing.as_ref() {
+            Some(routing) => &routing.answered,
+            None => &[],
+        };
+        row.evidence = rested(&outcome, answered);
+        row.outcome = outcome;
+    }
+
+    /// What a row decided `decided`, whose route gave `answered`, rests on where a sealed run decided it: the sealed executions that gave those answers, or the ones [`sealed_as`] names where there are none.
+    #[must_use]
+    pub fn rested(
+        decided: &Decided,
+        answered: &[Answered],
+    ) -> Option<rust_mutants::sealed::record::Evidence> {
+        match decided {
+            Decided::Killed { .. }
+            | Decided::Survived
+            | Decided::Equivalent
+            | Decided::ModelNoticed
+            | Decided::ModelProved
+                if !answered.is_empty() =>
+            {
+                Some(sealed_from(answered))
+            }
+            Decided::CompileRejected
+            | Decided::Killed { .. }
+            | Decided::Survived
+            | Decided::Equivalent
+            | Decided::ModelNoticed
+            | Decided::ModelProved
+            | Decided::Unreached
+            | Decided::StepLimitReached { .. }
+            | Decided::Waited { .. }
+            | Decided::Unconfirmed { .. }
+            | Decided::Errored { .. }
+            | Decided::Declined { .. } => sealed_as(decided),
+        }
+    }
+
+    /// The sealed executions that give `answered`, one of each target in the order it answered.
+    #[must_use]
+    pub fn sealed_from(answered: &[Answered]) -> rust_mutants::sealed::record::Evidence {
+        use rust_mutants::sealed::record::{Came, Evidence, SealedRun};
+        Evidence::Sealed {
+            executions: answered
+                .iter()
+                .map(|one| SealedRun {
+                    target: one.target.clone(),
+                    test: "tests::one".to_owned(),
+                    came_to: match one.outcome {
+                        Outcome::Killed => Came::Panicked,
+                        Outcome::Survived => Came::Passed,
+                        Outcome::CompileRejected
+                        | Outcome::ModelNoticed
+                        | Outcome::ModelProved
+                        | Outcome::StepLimitReached
+                        | Outcome::Waited
+                        | Outcome::Unreached
+                        | Outcome::Equivalent
+                        | Outcome::Unconfirmed
+                        | Outcome::Errored
+                        | Outcome::Declined => Came::Unaccounted,
+                    },
+                })
+                .collect(),
+        }
+    }
+
     /// One build's report holding `rows`, with the counts the model counts from them and the findings and verdict they require.
     fn measured(
         run: &str,
@@ -1280,7 +1577,7 @@ pub mod reports {
         report.timing.duration_ms = 1;
         report.scope.configured_builds = builds.to_vec();
         report.limitations.push(Limitation::new(
-            "git-metadata-unavailable",
+            crate::limitation::Limitation::GitMetadataUnavailable,
             "a report assembled from rows has no repository process",
         ));
         report.targets.push(TargetRecord {
@@ -1296,9 +1593,8 @@ pub mod reports {
         report.findings = rows
             .iter()
             .filter_map(|row| {
-                row.outcome
-                    .outcome()
-                    .required_finding(row.accepted)
+                row.verdict()
+                    .required_finding()
                     .map(|kind| Finding::new(kind, &row.display_id, "a finding its row requires"))
             })
             .collect();
@@ -1328,6 +1624,36 @@ pub mod reports {
         )
     }
 
+    /// One build's report of run `run` holding `rows` and `drift`, among the configured `builds`, with the findings the records raise and the verdict it concludes, as [`completed_with_drift`] makes each.
+    ///
+    /// # Errors
+    /// [`UnmadeReportError`] as [`completed`] refuses.
+    pub fn measured_with_drift(
+        run: &str,
+        kind: RunKind,
+        (rows, drift): (Vec<MutantRecord>, Vec<crate::report::drift::Drift>),
+        builds: &[String],
+    ) -> Result<BuildReport, UnmadeReportError> {
+        let mut report = measured(run, kind, rows, builds)?;
+        report.repaired = drift
+            .iter()
+            .filter_map(|one| match one {
+                crate::report::drift::Drift::Moved { target, .. } => {
+                    Some(crate::report::drift::Repaired {
+                        target: target.clone(),
+                        again: 0,
+                    })
+                }
+                crate::report::drift::Drift::Held { .. }
+                | crate::report::drift::Drift::NotMeasured { .. } => None,
+            })
+            .collect();
+        report.drift = drift;
+        super::raise_what_the_records_decide(&mut report);
+        report.verdict = report.concluded();
+        Ok(report)
+    }
+
     /// The report [`completed`] makes, with each build also recording what its controls established about each target's baseline reach.
     ///
     /// # Errors
@@ -1353,10 +1679,7 @@ pub mod reports {
             .collect();
         let mut measured_builds = Vec::with_capacity(builds.len());
         for (at, (name, rows, drift)) in builds.into_iter().enumerate() {
-            let mut report = measured(&format!("{run}-{at}"), kind, rows, &order)?;
-            report.drift = drift;
-            super::raise_what_the_records_decide(&mut report);
-            report.verdict = report.concluded();
+            let report = measured_with_drift(&format!("{run}-{at}"), kind, (rows, drift), &order)?;
             measured_builds.push((
                 name.to_owned(),
                 rust_mutants::cargo::BuildConfig::default().selection(),

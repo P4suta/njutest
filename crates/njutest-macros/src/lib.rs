@@ -4,6 +4,10 @@
 //! The derive that gives a closed fieldless enum the whole list of its variants.
 
 #![forbid(unsafe_code)]
+#![expect(
+    clippy::disallowed_macros,
+    reason = "a derive is handed the compiler's own tokens and quotes what it expands to, which only this crate may"
+)]
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;

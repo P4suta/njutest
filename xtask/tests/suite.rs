@@ -7,8 +7,12 @@
 
 #[path = "adrs.rs"]
 mod adrs;
+#[path = "bundle.rs"]
+mod bundle;
 #[path = "carry.rs"]
 mod carry;
+#[path = "ci_contracts.rs"]
+mod ci_contracts;
 #[path = "concurrency.rs"]
 mod concurrency;
 #[path = "crashes.rs"]
@@ -54,6 +58,8 @@ mod milestones;
 mod pre_push;
 #[path = "proofaudit.rs"]
 mod proofaudit;
+#[path = "receipt.rs"]
+mod receipt;
 #[path = "release.rs"]
 mod release;
 #[path = "release_binaries.rs"]
@@ -74,6 +80,10 @@ mod shapes;
 mod slot;
 #[path = "specimen_reach.rs"]
 mod specimen_reach;
+#[path = "specimens.rs"]
+mod specimens;
+#[path = "spelling.rs"]
+mod spelling;
 #[path = "suites.rs"]
 mod suites;
 #[path = "surface.rs"]
@@ -84,6 +94,8 @@ mod tasks;
 mod tracked;
 #[path = "waiver_key.rs"]
 mod waiver_key;
+#[path = "wasi_testsuite.rs"]
+mod wasi_testsuite;
 #[path = "wire.rs"]
 mod wire;
 #[path = "workflows.rs"]

@@ -1,0 +1,553 @@
+{
+  "document_type": "rust-mutants/run-report",
+  "schema_version": 5,
+  "tool_version": "0.1.0",
+  "run": {
+    "id": "20261001t091807176z",
+    "started_at": "2026-10-01T09:18:07.176198Z",
+    "finished_at": "2026-10-01T09:18:10.972503Z",
+    "duration_ms": 200,
+    "interrupted": false,
+    "exit_code": 1,
+    "shard": null,
+    "jobs": {
+      "asked": "auto",
+      "used": 4
+    }
+  },
+  "workspace": {
+    "root_name": "fixture-faulted",
+    "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+    "workspace_digest": "8782e308c92ceb47be7a365391d887ad4ea2138aa27be41ae08ef1ae2950f3e5",
+    "catalog_digest": "b9eb2637fbb668ab1274db73374a862f1ebd5a7e91fa3b967dafeb1f714d43d3",
+    "platform": {
+      "os": "darwin",
+      "arch": "aarch64",
+      "target": "aarch64-apple-darwin"
+    }
+  },
+  "selection": {
+    "tier": "all",
+    "operators": [
+      "inject-error"
+    ],
+    "include": [],
+    "exclude": [],
+    "packages": [],
+    "build": [],
+    "mutant_steps": 50000000
+  },
+  "accounting": {
+    "cataloged": 6,
+    "refused": 2,
+    "skipped": 0,
+    "executed": 4,
+    "killed": 2,
+    "survived": 2,
+    "unproven": 0,
+    "step_limit_reached": 0,
+    "waited": 0,
+    "inconclusive": 0,
+    "errored": 0,
+    "not_run": 2,
+    "unreached": 1,
+    "declined": 1,
+    "expected": 0,
+    "unproven_killed": 0,
+    "unproven_survived": 0,
+    "unproven_unreached": 0,
+    "unproven_discharged": 0
+  },
+  "score": {
+    "detected": 2,
+    "decided": 4,
+    "value": 0.5
+  },
+  "targets": [
+    {
+      "id": "fixture-faulted/lib/fixture_faulted",
+      "kind": "lib",
+      "harness": true,
+      "tests": 0,
+      "limitations": [],
+      "sealed": {
+        "state": "sealed",
+        "remedy": null,
+        "uncontrolled": []
+      }
+    },
+    {
+      "id": "fixture-faulted/test/calls",
+      "kind": "test",
+      "harness": true,
+      "tests": 5,
+      "limitations": [],
+      "sealed": {
+        "state": "sealed",
+        "remedy": null,
+        "uncontrolled": []
+      }
+    },
+    {
+      "id": "fixture-faulted/test/declines",
+      "kind": "test",
+      "harness": true,
+      "tests": 1,
+      "limitations": [],
+      "sealed": {
+        "state": "sealed",
+        "remedy": null,
+        "uncontrolled": []
+      }
+    },
+    {
+      "id": "fixture-faulted/test/second",
+      "kind": "test",
+      "harness": true,
+      "tests": 1,
+      "limitations": [],
+      "sealed": {
+        "state": "sealed",
+        "remedy": null,
+        "uncontrolled": []
+      }
+    },
+    {
+      "id": "fixture-faulted/doc/fixture_faulted",
+      "kind": "doc",
+      "harness": true,
+      "tests": 0,
+      "limitations": [
+        "doctests-routed-by-file",
+        "doctests-none"
+      ],
+      "sealed": {
+        "state": "sealed",
+        "remedy": null,
+        "uncontrolled": []
+      }
+    }
+  ],
+  "established_tests": 0,
+  "mutants": [
+    {
+      "index": 0,
+      "id": "509495a290b98b4059ddd6e3355766b93182ee947672e4eb060a74aa3f2b47fb",
+      "display_id": "509495a290b98b4059dd",
+      "path": "src/lib.rs",
+      "package": "fixture-faulted",
+      "family": "fault",
+      "rule": "inject-error",
+      "item": "load",
+      "rule_version": 1,
+      "line": 13,
+      "column": 16,
+      "start_byte": 368,
+      "end_byte": 397,
+      "source_digest": "eb9cc3c324d54ed28c44babfddacaedbcd2d53be282a0a3b4e6272b1c5091d1e",
+      "original": "std::fs::read_to_string(path)",
+      "replacement": "::core::result::Result::Err(rust_mutants::injected())",
+      "outcome": "killed",
+      "step_notice": null,
+      "target": "fixture-faulted/test/calls",
+      "exit_code": -1,
+      "duration_ms": 16,
+      "tests_run": 1,
+      "killed_by": [
+        "the_manifest_loads"
+      ],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-faulted/test/calls",
+          "fixture-faulted/test/second"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {
+          "fixture-faulted/test/calls": [
+            "the_manifest_loads"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-faulted/test/calls",
+            "test": "the_manifest_loads",
+            "came_to": "panicked"
+          }
+        ]
+      }
+    },
+    {
+      "index": 1,
+      "id": "50063b7172f5aa389494af4c9c645eb69092ea59ce88339856d24d627701e4f4",
+      "display_id": "50063b7172f5aa389494",
+      "path": "src/lib.rs",
+      "package": "fixture-faulted",
+      "family": "fault",
+      "rule": "inject-error",
+      "item": "number",
+      "rule_version": 1,
+      "line": 22,
+      "column": 18,
+      "start_byte": 577,
+      "end_byte": 602,
+      "source_digest": "eb9cc3c324d54ed28c44babfddacaedbcd2d53be282a0a3b4e6272b1c5091d1e",
+      "original": "text.trim().parse::<u8>()",
+      "replacement": "::core::result::Result::Err(rust_mutants::injected())",
+      "outcome": "killed",
+      "step_notice": null,
+      "target": "fixture-faulted/test/calls",
+      "exit_code": -1,
+      "duration_ms": 13,
+      "tests_run": 1,
+      "killed_by": [
+        "seven_is_a_number"
+      ],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-faulted/test/calls"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {
+          "fixture-faulted/test/calls": [
+            "seven_is_a_number"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-faulted/test/calls",
+            "test": "seven_is_a_number",
+            "came_to": "panicked"
+          }
+        ]
+      }
+    },
+    {
+      "index": 2,
+      "id": "2a0878a9c9fafede852bca837eb017a7bfd2d8314e072db28d1fbc475b94327a",
+      "display_id": "2a0878a9c9fafede852b",
+      "path": "src/lib.rs",
+      "package": "fixture-faulted",
+      "family": "fault",
+      "rule": "inject-error",
+      "item": "measured",
+      "rule_version": 1,
+      "line": 33,
+      "column": 16,
+      "start_byte": 866,
+      "end_byte": 895,
+      "source_digest": "eb9cc3c324d54ed28c44babfddacaedbcd2d53be282a0a3b4e6272b1c5091d1e",
+      "original": "std::fs::read_to_string(path)",
+      "replacement": "::core::result::Result::Err(rust_mutants::injected())",
+      "outcome": "survived",
+      "step_notice": null,
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 32,
+      "tests_run": 2,
+      "killed_by": [],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-faulted/test/calls",
+          "fixture-faulted/test/second"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {
+          "fixture-faulted/test/calls": [
+            "a_length_is_asked_and_never_checked"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-faulted/test/calls",
+            "test": "a_length_is_asked_and_never_checked",
+            "came_to": "passed"
+          },
+          {
+            "target": "fixture-faulted/test/second",
+            "test": "the_manifest_loads_again",
+            "came_to": "passed"
+          }
+        ]
+      }
+    },
+    {
+      "index": 5,
+      "id": "46faf01aa6fd0ab957111b9398e0d49424ca9d1445bb432673eb3280fbab71e0",
+      "display_id": "46faf01aa6fd0ab95711",
+      "path": "src/lib.rs",
+      "package": "fixture-faulted",
+      "family": "fault",
+      "rule": "inject-error",
+      "item": "spare",
+      "rule_version": 1,
+      "line": 66,
+      "column": 16,
+      "start_byte": 1562,
+      "end_byte": 1591,
+      "source_digest": "eb9cc3c324d54ed28c44babfddacaedbcd2d53be282a0a3b4e6272b1c5091d1e",
+      "original": "std::fs::read_to_string(path)",
+      "replacement": "::core::result::Result::Err(rust_mutants::injected())",
+      "outcome": "not_run",
+      "step_notice": null,
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 28,
+      "tests_run": 0,
+      "killed_by": [],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": "unreached",
+      "declined": [],
+      "route": {
+        "granularity": "unreached",
+        "fallback": null,
+        "reaching": [],
+        "discharged": [],
+        "executed": [],
+        "tests": {}
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": true,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": []
+      }
+    },
+    {
+      "index": 6,
+      "id": "0c45bebe8e3816e2bec2018e9d1b9946a764858f206c17cab027b1cb25c23849",
+      "display_id": "0c45bebe8e3816e2bec2",
+      "path": "src/lib.rs",
+      "package": "fixture-faulted",
+      "family": "fault",
+      "rule": "inject-error",
+      "item": "linger",
+      "rule_version": 1,
+      "line": 75,
+      "column": 16,
+      "start_byte": 1817,
+      "end_byte": 1846,
+      "source_digest": "eb9cc3c324d54ed28c44babfddacaedbcd2d53be282a0a3b4e6272b1c5091d1e",
+      "original": "std::fs::read_to_string(path)",
+      "replacement": "::core::result::Result::Err(rust_mutants::injected())",
+      "outcome": "survived",
+      "step_notice": null,
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 10,
+      "tests_run": 1,
+      "killed_by": [],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": null,
+      "declined": [],
+      "route": {
+        "granularity": "test",
+        "fallback": null,
+        "reaching": [
+          "fixture-faulted/test/calls"
+        ],
+        "discharged": [],
+        "executed": [],
+        "tests": {
+          "fixture-faulted/test/calls": [
+            "a_failed_read_is_waited_out"
+          ]
+        }
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-faulted/test/calls",
+            "test": "a_failed_read_is_waited_out",
+            "came_to": "passed"
+          }
+        ]
+      }
+    },
+    {
+      "index": 7,
+      "id": "151ed0632c142c1f2c162165c30d7d0e80a54addf66639ef88aacff4405898e8",
+      "display_id": "151ed0632c142c1f2c16",
+      "path": "src/lib.rs",
+      "package": "fixture-faulted",
+      "family": "fault",
+      "rule": "inject-error",
+      "item": "refused",
+      "rule_version": 1,
+      "line": 84,
+      "column": 16,
+      "start_byte": 2056,
+      "end_byte": 2085,
+      "source_digest": "eb9cc3c324d54ed28c44babfddacaedbcd2d53be282a0a3b4e6272b1c5091d1e",
+      "original": "std::fs::read_to_string(path)",
+      "replacement": "::core::result::Result::Err(rust_mutants::injected())",
+      "outcome": "not_run",
+      "step_notice": null,
+      "target": "fixture-faulted/test/declines",
+      "exit_code": 0,
+      "duration_ms": 30,
+      "tests_run": 1,
+      "killed_by": [],
+      "signal": null,
+      "retried": false,
+      "lingered": false,
+      "not_run_reason": "declined",
+      "declined": [
+        {
+          "test": "a_failed_read_is_not_measured_here",
+          "why": "this machine does not measure a failed read of the manifest"
+        }
+      ],
+      "route": {
+        "granularity": "block",
+        "fallback": null,
+        "reaching": [
+          "fixture-faulted/test/declines"
+        ],
+        "discharged": [],
+        "executed": [
+          "fixture-faulted/test/declines"
+        ],
+        "tests": {}
+      },
+      "identical": "not-measured",
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "unproven",
+        "reasons": [
+          "declined"
+        ]
+      }
+    }
+  ],
+  "rejections": [
+    {
+      "index": 3,
+      "id": "0f98bccdf068ab298f41ede4485641e2126465ef3e4820da9c0a7a1d27cbf9a1",
+      "display_id": "0f98bccdf068ab298f41",
+      "path": "src/lib.rs",
+      "rule": "inject-error",
+      "code": "E0277",
+      "diagnostic": "error[E0277]: the trait bound `Refused: Injectable` is not satisfied\n   --> src/lib.rs:46:150\n    |\n 46 | ...ctive(3) { ::core::result::Result::Err(__rm_b1a35a68::injected()) } else { inner() })?;\n    |                                           ^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound\n    |\nhelp: the trait `Injectable` is not implemented for `Refused`\n   --> src/lib.rs:39:1\n    |\n 39 | pub struct Refused;\n    | ^^^^^^^^^^^^^^^^^^\n    = help: the following other types implement trait `Injectable`:\n              FromUtf8Error\n              ParseFloatError\n              ParseIntError\n              TryFromIntError\n              Utf8Error\n              std::io::Error\nnote: required by a bound in `injected`\n   --> src/lib.rs:455:31\n    |\n455 |     pub(crate) fn injected<E: Injectable>() -> E {\n    |                               ^^^^^^^^^^ required by this bound in `injected`\n\n",
+      "isolated": true,
+      "reason": "compiler-refused"
+    },
+    {
+      "index": 4,
+      "id": "99f09b1f9f215888215f0e33d609c1d4455e81905b272b9efe28ab6e1e01eb1a",
+      "display_id": "99f09b1f9f215888215f",
+      "path": "src/lib.rs",
+      "rule": "inject-error",
+      "code": "E0308",
+      "diagnostic": "error[E0308]: `if` and `else` have incompatible types\n  --> src/lib.rs:57:187\n   |\n57 | ...ve(4) { ::core::result::Result::Err(__rm_b1a35a68::injected()) } else { value })?;\n   |            ------------------------------------------------------          ^^^^^ expected `Result<_, _>`, found `Option<u8>`\n   |            |\n   |            expected because of this\n   |\n   = note: expected enum `Result<_, _>`\n              found enum `Option<u8>`\nhelp: try wrapping the expression in a variant of `Result`\n   |\n57 |     __rm_b1a35a68::item(6); __rm_b1a35a68::checkpoint(); let inside = __rm_b1a35a68::value!(if __rm_b1a35a68::active(4) { ::core::result::Result::Err(__rm_b1a35a68::injected()) } else { Ok(value) })?;\n   |                                                                                                                                                                                           +++     +\n57 |     __rm_b1a35a68::item(6); __rm_b1a35a68::checkpoint(); let inside = __rm_b1a35a68::value!(if __rm_b1a35a68::active(4) { ::core::result::Result::Err(__rm_b1a35a68::injected()) } else { Err(value) })?;\n   |                                                                                                                                                                                           ++++     +\n\n",
+      "isolated": true,
+      "reason": "compiler-refused"
+    }
+  ],
+  "skips": [],
+  "expectations": [],
+  "findings": [
+    {
+      "kind": "surviving-mutant",
+      "mutant": "2a0878a9c9fafede852bca837eb017a7bfd2d8314e072db28d1fbc475b94327a",
+      "detail": "no test noticed 2a0878a9c9fafede852b; 2 tests ran and passed"
+    },
+    {
+      "kind": "unreached-mutant",
+      "mutant": "46faf01aa6fd0ab957111b9398e0d49424ca9d1445bb432673eb3280fbab71e0",
+      "detail": "no sealed test reaches 46faf01aa6fd0ab95711: the mutation lives in code the tests never execute"
+    },
+    {
+      "kind": "surviving-mutant",
+      "mutant": "0c45bebe8e3816e2bec2018e9d1b9946a764858f206c17cab027b1cb25c23849",
+      "detail": "no test noticed 0c45bebe8e3816e2bec2; 1 test ran and passed"
+    }
+  ],
+  "facts": [
+    "panic=\"unwind\"",
+    "target_abi=\"\"",
+    "target_arch=\"aarch64\"",
+    "target_endian=\"little\"",
+    "target_env=\"\"",
+    "target_family=\"unix\"",
+    "target_has_atomic=\"128\"",
+    "target_has_atomic=\"16\"",
+    "target_has_atomic=\"32\"",
+    "target_has_atomic=\"64\"",
+    "target_has_atomic=\"8\"",
+    "target_has_atomic=\"ptr\"",
+    "target_has_atomic_primitive_alignment=\"128\"",
+    "target_has_atomic_primitive_alignment=\"16\"",
+    "target_has_atomic_primitive_alignment=\"32\"",
+    "target_has_atomic_primitive_alignment=\"64\"",
+    "target_has_atomic_primitive_alignment=\"8\"",
+    "target_has_atomic_primitive_alignment=\"ptr\"",
+    "target_os=\"macos\"",
+    "target_pointer_width=\"64\"",
+    "target_vendor=\"apple\"",
+    "unix"
+  ]
+}

@@ -48,7 +48,7 @@ fn prepared(fixture: &Fixture, env: &[(&str, String)]) -> Session {
                 tier: Tier::All,
                 mutant_timeout: Timeout::Fixed(Duration::from_secs(2)),
                 mutant_steps: Some(10),
-                ..PrepareOptions::default()
+                ..PrepareOptions::new(Tier::Balanced)
             },
             &Cancel::new(),
         )
@@ -316,7 +316,7 @@ fn the_budget_one_execution_gets_is_derived_from_what_that_target_cost() {
     .prepare(
         &PrepareOptions {
             tier: Tier::All,
-            ..PrepareOptions::default()
+            ..PrepareOptions::new(Tier::Balanced)
         },
         &Cancel::new(),
     )
@@ -326,8 +326,8 @@ fn the_budget_one_execution_gets_is_derived_from_what_that_target_cost() {
         .targets()
         .first()
         .expect("a target the run built")
-        .id
-        .clone();
+        .id()
+        .to_owned();
     let measured = session
         .baseline(&target)
         .expect("a target that was verified says what its own baseline took");
@@ -359,4 +359,169 @@ fn the_budget_one_execution_gets_is_derived_from_what_that_target_cost() {
         "and a caller who chose one is a caller who chose one"
     );
     session.close().expect("the session closes");
+}
+
+#[test]
+fn const_initializers_are_built_alone_and_judged_against_the_original_sealed_control() {
+    let fixture = Fixture::copy("fixture-const-items");
+    let cancel = Cancel::new();
+    let tier = Tier::Compiled;
+    let mut options = PrepareOptions::new(tier);
+    options.build.jobs = Some(6);
+    let session = const_workspace(&fixture, &cancel)
+        .prepare(&options, &cancel)
+        .expect("prepare");
+    assert_eq!(
+        session.catalog().mutants().len(),
+        14,
+        "the catalog holds the const initializers"
+    );
+    assert_eq!(
+        session.rejections().len(),
+        2,
+        "the active build refuses overflow and division by zero"
+    );
+    let quiet = Quiet::default();
+    let run = rust_mutants::run::run(
+        &session,
+        &rust_mutants::run::Options {
+            expectations: &[],
+            quiet: &quiet,
+            equivalence: None,
+            jobs: rust_mutants::run::Jobs::count(2).expect("two workers"),
+            args: &[],
+            shard: None,
+            outcomes: None,
+            filter: None,
+            fail_fast: false,
+        },
+        &cancel,
+        &mut Watching::default(),
+    )
+    .expect("the run answers");
+    let tally = run.tally().expect("exact counts");
+    assert_eq!((tally.killed, tally.survived, tally.unproven), (9, 3, 0));
+    const_compiled_again(&session, &run, &quiet, &cancel);
+    let recorded = const_recorded(&run);
+    session.close().expect("the session closes");
+    let rerunnable = rust_mutants::session::Rerunnable::prepared(
+        const_workspace(&fixture, &cancel),
+        &options,
+        &cancel,
+    )
+    .expect("prepare only recorded executions");
+    let reproduced = rerunnable
+        .rerun(&recorded, &cancel)
+        .expect("all compiled mutations run again");
+    assert!(
+        matches!(reproduced, rust_mutants::sealed::rerun::Reproduction::Reproduced(ref made) if made.len() == 12),
+        "{reproduced:?}"
+    );
+    rerunnable.close().expect("the rerun closes");
+}
+
+/// The original fixture copied into an isolated, offline workspace with the pinned toolchain.
+fn const_workspace(fixture: &Fixture, cancel: &Cancel) -> Workspace {
+    Workspace::open(
+        fixture.root(),
+        OpenOptions {
+            cargo: Some(njutest_devkit::paths::cargo_binary()),
+            temp_directory: fixture.temp().to_path_buf(),
+            env: std::env::vars_os().collect(),
+            locked: true,
+            offline: true,
+            ..OpenOptions::default()
+        },
+        cancel,
+    )
+    .expect("open")
+}
+
+#[test]
+fn a_refused_const_selector_cannot_establish_survival_of_the_original_value() {
+    let fixture = Fixture::copy("fixture-const-items");
+    let cancel = Cancel::new();
+    let session = const_workspace(&fixture, &cancel)
+        .prepare(&PrepareOptions::new(Tier::Compiled), &cancel)
+        .expect("prepare");
+    assert_eq!(session.rejections().len(), 2);
+    for rejection in session.rejections() {
+        let mutant = session
+            .catalog()
+            .by_index(rejection.index)
+            .expect("the refused edit");
+        let verdict =
+            rust_mutants::run::sealed_now(&session, mutant, &cancel).expect("ask about a refusal");
+        assert!(
+            verdict
+                .is_none_or(|judged| judged.outcome != Outcome::Survived
+                    && judged.outcome != Outcome::Killed),
+            "a compiler refusal cannot be a sealed verdict about another program"
+        );
+    }
+    session.close().expect("close");
+}
+
+/// Every sealed execution of the constant fixture, retaining the full mutant identity.
+fn const_recorded(run: &rust_mutants::run::Run) -> Vec<rust_mutants::sealed::rerun::Recorded> {
+    let mut recorded = Vec::new();
+    for row in &run.judged {
+        let rust_mutants::sealed::record::Evidence::Sealed { executions } = &row.evidence else {
+            panic!("every accepted constant is sealed: {}", row.display_id);
+        };
+        recorded.extend(
+            executions
+                .iter()
+                .map(|execution| rust_mutants::sealed::rerun::Recorded {
+                    mutant: row.id.clone(),
+                    target: execution.target.clone(),
+                    test: execution.test.clone(),
+                    came_to: execution.came_to,
+                }),
+        );
+    }
+    recorded
+}
+
+/// A compiled kill reproduced sealed and observed natively, always against the original controls.
+fn const_compiled_again(
+    session: &Session,
+    run: &rust_mutants::run::Run,
+    quiet: &Quiet,
+    cancel: &Cancel,
+) {
+    let row = run
+        .judged
+        .iter()
+        .find(|row| row.outcome == Outcome::Killed)
+        .expect("a detection");
+    let rust_mutants::sealed::record::Evidence::Sealed { executions, .. } = &row.evidence else {
+        panic!("a const initializer is detected by a sealed execution");
+    };
+    let mutant = session.catalog().by_index(row.index).expect("the mutation");
+    let runner = rust_mutants::run::sealed_runner(session)
+        .expect("runner")
+        .expect("sealing");
+    let bench = session
+        .bench(&runner, cancel)
+        .expect("the original controls");
+    let again = rust_mutants::run::sealed_again(
+        session,
+        mutant,
+        Some(&bench),
+        (None, row.outcome, executions),
+    )
+    .expect("a compiled mutant runs again");
+    assert!(
+        matches!(again, rust_mutants::run::Again::Reproduced(_)),
+        "{again:?}"
+    );
+    let native = session
+        .judge(&Request::new(mutant.display_id.to_string()), quiet, cancel)
+        .expect("the separately compiled native lead");
+    assert_eq!(native.result().outcome(), Outcome::Killed);
+    assert_eq!(
+        session.route(mutant).fallback(),
+        Some(rust_mutants::session::Fallback::CompileTime)
+    );
 }
