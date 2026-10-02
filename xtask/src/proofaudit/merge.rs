@@ -307,7 +307,15 @@ pub fn merged_with(
     moved(&merged, kept, &mut notes);
     let Decided(()) = notes.looked();
     let whole = shards.len() == sources.len();
-    let closed = ClosedMerge::of(&merged, shards, &audit, whole);
+    combine_scopes(&mut audit, &merged, shards, whole);
+    audit.remarks.sort();
+    audit.remarks.dedup();
+    Ok(audit)
+}
+
+/// Combines only independently complete scope decisions and preserves every other shard remark.
+fn combine_scopes(audit: &mut Audit, merged: &Complete, shards: &[AuditedShard], whole: bool) {
+    let closed = ClosedMerge::of(merged, shards, audit, whole);
     for layer in Layer::ALL
         .into_iter()
         .filter(|layer| *layer != Layer::Merge)
@@ -343,9 +351,6 @@ pub fn merged_with(
                 .insert(layer, Coverage::Absent(absence.reason()));
         }
     }
-    audit.remarks.sort();
-    audit.remarks.dedup();
-    Ok(audit)
 }
 
 /// Only a complete, independently audited merge can discharge a typed shard deferral.
