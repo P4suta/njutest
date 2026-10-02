@@ -10,34 +10,93 @@ use std::path::{Path, PathBuf};
 /// # Errors
 /// The process table could not be read at all; a process that ended or cannot be read while it is listed is not one.
 pub fn working_under(dirs: &[&Path]) -> std::io::Result<Vec<u32>> {
-    let dirs: Vec<PathBuf> = dirs
-        .iter()
-        .filter_map(|dir| match std::fs::canonicalize(dir) {
-            Ok(dir) => Some(dir),
-            Err(_gone) => None,
-        })
-        .collect();
-    if dirs.is_empty() {
-        return Ok(Vec::new());
-    }
+    let roots = roots(dirs)?;
     let mine = std::process::id();
     Ok(working_directories()?
         .into_iter()
-        .filter(|(pid, cwd)| *pid != mine && dirs.iter().any(|dir| cwd.starts_with(dir)))
-        .map(|(pid, _)| pid)
+        .filter(|(pid, cwd)| *pid != mine && roots.iter().any(|root| cwd.starts_with(root)))
+        .map(|(pid, _cwd)| pid)
         .collect())
 }
 
-/// Ends every process other than this one working under one of `dirs`, and says which it ended.
+/// Settles every exact process generation observed under the owned roots before returning its identities.
 ///
 /// # Errors
-/// The process table could not be read, or a process could not be signalled for a reason other than having ended.
+/// Identity, cancellation or complete exit could not be established for any observed producer.
 pub fn end_working_under(dirs: &[&Path]) -> std::io::Result<Vec<u32>> {
-    let found = working_under(dirs)?;
-    for pid in &found {
-        stop(*pid)?;
+    let roots = roots(dirs)?;
+    let deadline = std::time::Instant::now()
+        .checked_add(crate::runner::REAPING_GRACE)
+        .ok_or_else(|| {
+            std::io::Error::other("the escaped-producer completion deadline exceeds the clock")
+        })?;
+    let mut ended = std::collections::BTreeSet::new();
+    loop {
+        let found = working_under(dirs)?;
+        if found.is_empty() {
+            return Ok(ended.into_iter().collect());
+        }
+        let mut failures = Vec::new();
+        for pid in found {
+            match settle(pid, &roots) {
+                Ok(()) => {
+                    ended.insert(pid);
+                }
+                Err(source) => failures.push(format!("process {pid}: {source}")),
+            }
+        }
+        if !failures.is_empty() {
+            return Err(std::io::Error::other(failures.join("; ")));
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "escaped producers kept appearing after actual predecessor exit events",
+            ));
+        }
     }
-    Ok(found)
+}
+
+fn settle(pid: u32, roots: &[PathBuf]) -> std::io::Result<()> {
+    let Some(process) = njutest_process::ForeignProcess::retain(pid)? else {
+        return Err(std::io::Error::other(format!(
+            "observed escaped producer {pid} disappeared before its kernel exit was subscribed"
+        )));
+    };
+    let matches = working_directories()?
+        .into_iter()
+        .any(|(actual, cwd)| actual == pid && roots.iter().any(|root| cwd.starts_with(root)));
+    if !matches {
+        return Err(std::io::Error::other(format!(
+            "retained escaped producer {pid} no longer matches its owned source roots"
+        )));
+    }
+    process.stop()?;
+    Ok(())
+}
+
+fn roots(dirs: &[&Path]) -> std::io::Result<Vec<PathBuf>> {
+    dirs.iter()
+        .map(|dir| match std::fs::canonicalize(dir) {
+            Ok(root) => Ok(root),
+            Err(source)
+                if source.kind() == std::io::ErrorKind::NotFound
+                    && dir.is_absolute()
+                    && dir
+                        .components()
+                        .all(|component| !matches!(component, std::path::Component::ParentDir)) =>
+            {
+                Ok((*dir).to_path_buf())
+            }
+            Err(source) => Err(std::io::Error::new(
+                source.kind(),
+                format!(
+                    "cannot establish the owned producer root {}: {source}",
+                    dir.display()
+                ),
+            )),
+        })
+        .collect()
 }
 
 /// Every process of this user beside the directory it works in, as `/proc` says.
@@ -45,15 +104,30 @@ pub fn end_working_under(dirs: &[&Path]) -> std::io::Result<Vec<u32>> {
 fn working_directories() -> std::io::Result<Vec<(u32, PathBuf)>> {
     let mut found = Vec::new();
     for listed in std::fs::read_dir("/proc")? {
-        let Ok(listed) = listed else {
-            continue;
-        };
+        let listed = listed?;
         let Some(Ok(pid)) = listed.file_name().to_str().map(str::parse::<u32>) else {
             continue;
         };
+        use std::os::unix::fs::MetadataExt as _;
+        let metadata = match listed.metadata() {
+            Ok(metadata) => metadata,
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(source) => return Err(source),
+        };
+        if metadata.uid() != rustix::process::getuid().as_raw() {
+            continue;
+        }
         match std::fs::read_link(listed.path().join("cwd")) {
-            Ok(cwd) => found.push((pid, cwd)),
-            Err(_ended_or_not_ours) => {}
+            Ok(cwd) => {
+                use std::os::unix::ffi::OsStrExt as _;
+                let cwd = match cwd.as_os_str().as_bytes().strip_suffix(b" (deleted)") {
+                    Some(original) => PathBuf::from(std::ffi::OsStr::from_bytes(original)),
+                    None => cwd,
+                };
+                found.push((pid, cwd));
+            }
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => return Err(source),
         }
     }
     Ok(found)
@@ -62,16 +136,19 @@ fn working_directories() -> std::io::Result<Vec<(u32, PathBuf)>> {
 /// Every process of this user beside the directory it works in, as `lsof` says.
 #[cfg(all(unix, not(target_os = "linux")))]
 fn working_directories() -> std::io::Result<Vec<(u32, PathBuf)>> {
+    let user = rustix::process::getuid().as_raw().to_string();
     let mut spec = crate::runner::Spec::new(
-        ["/usr/sbin/lsof", "-a", "-d", "cwd", "-Fpn"],
+        ["/usr/sbin/lsof", "-a", "-u", &user, "-d", "cwd", "-Fpn"],
         crate::runner::Bound::After(crate::runner::PROBE),
     );
     spec.structured_stdout = Some(LISTING_LIMIT);
     let result = crate::runner::run(&spec, &crate::runner::Cancel::new());
-    if result.stdout_truncated || result.stdout.is_empty() {
-        return Err(std::io::Error::other(
-            "lsof did not list every process's working directory",
-        ));
+    if !result.succeeded() || result.stdout_truncated || result.stdout.is_empty() {
+        return Err(std::io::Error::other(format!(
+            "lsof did not establish the owned user's complete working-directory observation: {:?}; stderr: {:?}",
+            result.termination,
+            std::str::from_utf8(&result.output)
+        )));
     }
     let text = std::str::from_utf8(&result.stdout).map_err(std::io::Error::other)?;
     let mut found = Vec::new();
@@ -80,7 +157,7 @@ fn working_directories() -> std::io::Result<Vec<(u32, PathBuf)>> {
         if let Some(pid) = line.strip_prefix('p') {
             current = match pid.parse::<u32>() {
                 Ok(pid) => Some(pid),
-                Err(_not_a_pid) => None,
+                Err(source) => return Err(std::io::Error::other(source)),
             };
         } else if let (Some(pid), Some(cwd)) = (current, line.strip_prefix('n')) {
             found.push((pid, PathBuf::from(cwd)));

@@ -161,6 +161,12 @@ impl Cancel {
         self.own.flag()
     }
 
+    pub(super) fn raw(&self) -> bool {
+        std::iter::once(&self.own)
+            .chain(&self.above)
+            .any(|flag| flag.exposed.load(Ordering::SeqCst))
+    }
+
     /// Subscribes before starting work so cancellation cannot be missed.
     #[must_use]
     pub fn subscribe(&self) -> Cancelled {

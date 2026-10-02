@@ -3305,6 +3305,8 @@ mod tests {
             stdout: Vec::new(),
             stdout_truncated: false,
             leader: None,
+            waits: Vec::new(),
+            reader_waits: Vec::new(),
         }
     }
 
