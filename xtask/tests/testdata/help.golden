@@ -54,6 +54,10 @@ Commands:
                     one reusable tree
   tidy              Runs a command with a temporary directory of its own, and fails naming whatever
                     the command left in it (ADR 0006)
+  tools             Every pinned cargo plugin, selected by mise and answering through Cargo's
+                    complete external-subcommand protocol
+  tool              Runs a mise-selected Cargo plugin through Cargo's complete external-subcommand
+                    protocol
   help              Print this message or the help of the given subcommand(s)
 
 Options:
