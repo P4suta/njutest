@@ -114,6 +114,8 @@ mod table {
         BuildLedgerUnreadable,
         /// A bare `cargo` from the copy a run measures answers as no toolchain the run can put first on the tests' search path.
         TestsToolchainUnreachable,
+        /// A compiler or linker input required to bind a build could not be read.
+        CompilerInputUnreadable,
         /// A dep-info file has no rule to read.
         DepInfoUnreadable,
         /// An artifact's dep-info file could not be read.
@@ -556,6 +558,14 @@ mod table {
                     summary: "a bare `cargo` from the copy a run measures answers as no toolchain the run can put first on the tests' search path",
                     remedy: Some(
                         "run `cargo -vV` from the directory the message names with the environment the run was given: a shim that chooses a toolchain by the directory it runs in has to answer there, or the toolchain rustc names has to hold a cargo",
+                    ),
+                    sealed: Sealed,
+                },
+                Self::CompilerInputUnreadable => ErrorCode {
+                    code: "RM1024",
+                    summary: "a compiler or linker input needed to bind a build could not be read",
+                    remedy: Some(
+                        "read the path the diagnostic names with the build's environment; preserve the operating system's refusal instead of treating an unreadable input as absent",
                     ),
                     sealed: Sealed,
                 },
@@ -1050,6 +1060,8 @@ pub(crate) const CAPDIR_NAME_REFUSED: ErrorCode = RmCode::CapdirNameRefused.erro
 pub(crate) const BUILD_LEDGER_UNREADABLE: ErrorCode = RmCode::BuildLedgerUnreadable.error_code();
 pub(crate) const TESTS_TOOLCHAIN_UNREACHABLE: ErrorCode =
     RmCode::TestsToolchainUnreachable.error_code();
+/// A compiler or linker input required to bind a build could not be read.
+pub const COMPILER_INPUT_UNREADABLE: ErrorCode = RmCode::CompilerInputUnreadable.error_code();
 pub(crate) const DEP_INFO_UNREADABLE: ErrorCode = RmCode::DepInfoUnreadable.error_code();
 pub(crate) const DEP_INFO_MISSING: ErrorCode = RmCode::DepInfoMissing.error_code();
 pub(crate) const DISCOVER_FILE_UNREADABLE: ErrorCode = RmCode::DiscoverFileUnreadable.error_code();
