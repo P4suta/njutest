@@ -1731,7 +1731,12 @@ fn a_transferred_reader_keeps_its_original_subscription_and_queued_completion() 
     observation.signal().publish(Event::Completed);
     std::thread::scope(|scope| {
         let reader = njutest_devkit::thread::ScopedThread::launch(scope, move || {
-            assert!(observation.wait("producer", "completion", None).is_err());
+            let refused = observation.wait("producer", "completion", None);
+            assert_eq!(
+                result_state(&refused),
+                Refused,
+                "a transferred subscription refuses its previous thread: {refused:?}"
+            );
             observation
                 .bind_current_thread()
                 .expect("the exclusive receiver transfers to its actual owner");
