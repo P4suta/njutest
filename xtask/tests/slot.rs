@@ -62,7 +62,7 @@ impl Machine {
     }
 
     fn release(&self) {
-        std::fs::write(self.turns.path().join("go"), "").expect("the holder's release");
+        release_turns(self.turns.path()).expect("the holder's release observation");
     }
 
     fn waiters(&self) -> usize {
@@ -106,6 +106,93 @@ fn finished_within(limit: Duration, child: &mut SupervisedChild) -> Option<ExitS
     None
 }
 
+#[test]
+fn a_turn_wait_registers_its_pipe_before_the_release_is_observed() {
+    let turns = tempfile::tempdir().expect("the owned turn rendezvous");
+    let observed = xtask::observation::Observation::filesystem(turns.path(), false)
+        .expect("subscribe before starting the shell producer");
+    let mut command = Command::new("sh");
+    command
+        .args(["-c", UNTIL_GO])
+        .env("TURNS", turns.path())
+        .stdout(Stdio::piped());
+    let mut child = SupervisedChild::launch(&mut command).expect("the real shell waiter");
+    let deadline = Instant::now()
+        .checked_add(Duration::from_secs(2))
+        .expect("the bounded subscription control");
+    let registered = loop {
+        let endpoints = std::fs::read_dir(turns.path())
+            .expect("the complete turn endpoint inventory")
+            .map(|entry| entry.expect("a readable endpoint").file_name())
+            .filter(|name| name.to_str().expect("a UTF-8 endpoint").starts_with("go."))
+            .count();
+        if endpoints == 1 {
+            break true;
+        }
+        let waited = observed
+            .wait("shell-turn", "release-subscription", Some(deadline))
+            .expect("the actual native observation");
+        eprintln!(
+            "{}",
+            serde_json::to_string(&waited.note).expect("the actual host wait")
+        );
+        match waited.event.expect("a readable producer event") {
+            xtask::observation::Event::Changed => {}
+            xtask::observation::Event::Deadline => break false,
+            xtask::observation::Event::Completed | xtask::observation::Event::Cancelled => {
+                break false;
+            }
+        }
+    };
+    release_turns(turns.path()).expect("publish the actual release to the registered producer");
+    assert!(
+        child
+            .wait()
+            .expect("the released shell completes")
+            .success()
+    );
+    assert!(
+        registered,
+        "a shell turn must register its owned release endpoint before checking the sticky marker"
+    );
+}
+
+#[test]
+fn a_turn_release_is_retained_before_the_shell_subscribes() {
+    let turns = tempfile::tempdir().expect("the owned turn rendezvous");
+    release_turns(turns.path()).expect("a release before registration");
+    let mut command = Command::new("sh");
+    command.args(["-c", UNTIL_GO]).env("TURNS", turns.path());
+    let mut child = SupervisedChild::launch(&mut command).expect("the late subscriber");
+    assert!(
+        child
+            .wait()
+            .expect("the retained release is read")
+            .success()
+    );
+    let names: Vec<_> = std::fs::read_dir(turns.path())
+        .expect("the complete endpoint inventory")
+        .map(|entry| entry.expect("a readable endpoint").file_name())
+        .collect();
+    assert_eq!(names, [std::ffi::OsString::from("go")]);
+}
+
+#[test]
+fn a_turn_release_refuses_an_unowned_endpoint_shape() {
+    let turns = tempfile::tempdir().expect("the owned turn rendezvous");
+    std::fs::write(turns.path().join("go.foreign"), "unowned")
+        .expect("a planted regular-file endpoint");
+    let error = release_turns(turns.path()).expect_err("a regular file is not a release FIFO");
+    assert!(
+        error.to_string().contains("not a producer-owned FIFO"),
+        "{error}"
+    );
+    assert_eq!(
+        std::fs::read(turns.path().join("go.foreign")).expect("unchanged"),
+        b"unowned"
+    );
+}
+
 struct BlockedWriter(Option<rustix::process::Pid>);
 
 impl Drop for BlockedWriter {
@@ -145,7 +232,7 @@ fn completed_work_ends_its_blocked_writer_before_the_parent_disposes_its_cache()
     let writer: i32 = std::fs::read_to_string(turns.path().join("writer"))
         .expect("the exact writer identity")
         .trim()
-        .parse()
+        .parse::<i32>()
         .expect("the writer pid");
     let writer = rustix::process::Pid::from_raw(writer).expect("a positive writer pid");
     let alive = xtask::work::listed()
@@ -156,11 +243,12 @@ fn completed_work_ends_its_blocked_writer_before_the_parent_disposes_its_cache()
                 && Some(one.group) == leader.get()
                 && !one.ended
         });
-    let _cleanup = BlockedWriter(alive.then_some(writer));
+    let cleanup = BlockedWriter(alive.then_some(writer));
     assert!(
         !alive,
         "a successful leader exit must settle its producer group before cache disposal; the gated late writer is still alive"
     );
+    drop(cleanup);
 }
 
 fn text(bytes: &[u8]) -> String {
