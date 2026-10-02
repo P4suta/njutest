@@ -4,7 +4,8 @@
 //! What `cargo xtask remote-check` tells each machine, and what it reads back.
 
 use xtask::remote::{
-    BUNDLE, Fleet, Machine, RemoteError, Shell, base64, failures, fleet, invocation, known, script,
+    BUNDLE, Fleet, Machine, RemoteError, Shell, base64, failures, file_invocation, fleet,
+    invocation, known, script, script_name,
 };
 
 fn posix() -> Machine {
@@ -205,15 +206,56 @@ fn native_checks_dispatch_through_the_owned_domyjob_transport() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn the_native_invocation_executes_exact_script_bytes_and_exit() {
-    let script = "printf '%s' 'native $ input; quoted'\nprintf '%s' 'actual stderr' >&2\nexit 7\n";
-    let invoked = invocation(Shell::Posix, script);
+    let (shell, script) = if cfg!(windows) {
+        (
+            Shell::Powershell,
+            "[Console]::Out.Write('native $ input; quoted'); [Console]::Error.Write('actual stderr'); exit 7",
+        )
+    } else {
+        (
+            Shell::Posix,
+            "printf '%s' 'native $ input; quoted'\nprintf '%s' 'actual stderr' >&2\nexit 7\n",
+        )
+    };
+    let invoked = invocation(shell, script);
     let mut command = std::process::Command::new(invoked.program);
     command.args(invoked.arguments);
     let actual = command.output().expect("the native invocation starts");
     assert_eq!(actual.stdout, b"native $ input; quoted");
     assert_eq!(actual.stderr, b"actual stderr");
     assert_eq!(actual.status.code(), Some(7));
+}
+
+#[test]
+fn a_complete_native_script_larger_than_a_transport_word_is_run_from_its_snapshot() {
+    let directory = tempfile::tempdir().expect("an owned native input snapshot");
+    let value = "actual".repeat(2000);
+    let (shell, script) = if cfg!(windows) {
+        (
+            Shell::Powershell,
+            format!(
+                "[Console]::Out.Write('{value}'); [Console]::Error.Write('actual stderr'); exit 7"
+            ),
+        )
+    } else {
+        (
+            Shell::Posix,
+            format!("printf '%s' '{value}'\nprintf '%s' 'actual stderr' >&2\nexit 7\n"),
+        )
+    };
+    assert!(script.len() > 8192, "the genuine failing per-word shape");
+    std::fs::write(directory.path().join(script_name(shell)), script)
+        .expect("the complete original script bytes");
+    let invoked = file_invocation(shell);
+    assert!(invoked.argv().all(|word| word.len() <= 8192));
+    let output = std::process::Command::new(invoked.program)
+        .args(invoked.arguments)
+        .current_dir(directory.path())
+        .output()
+        .expect("the real file invocation starts");
+    assert_eq!(output.stdout, value.as_bytes());
+    assert_eq!(output.stderr, b"actual stderr");
+    assert_eq!(output.status.code(), Some(7));
 }

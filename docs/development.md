@@ -474,9 +474,10 @@ $ mise run lint:windows
 It is not part of `mise run check`, because a machine without that target installed would fail a gate for the want of a download rather than for anything about the change.
 
 Where the other machines are at hand, `cargo xtask remote-check --machines <file>` asks them rather than the pipeline.
-It puts this commit's whole suite to every machine the file names, all at once, and pushes nothing:
+It puts the configured checks to every machine the file names, all at once:
 each machine is asked which commits its clone already has, sent a bundle of only the rest, and runs the file's command in a worktree kept warm between runs.
-No machine reaches the network, and the script goes over `ssh` encoded, so no shell on either side reinterprets it.
+An immutable domyjob input snapshot carries the exact bundle and complete shell script.
+The finite Bash or PowerShell argument vector names that script file, preserving its bytes independently of the transport's per-argument bound.
 What failed comes back as the failing lines; each machine's whole output stays in `target/remote-check/<commit>/`.
 
 ```toml
@@ -696,7 +697,7 @@ The same actual owned runner observes output, reader failures and host waits on 
 
 Native gate dispatch uses `cargo xtask remote-check --machines <owned-fleet.toml>`.
 The configured command keeps every native target, feature and suite flag.
-The dispatcher queries existing commits through `domyjob on`, transfers one owned Git bundle through a fresh domyjob source landing, and checks out the exact requested commit in the configured private remote worktree.
+The dispatcher queries existing commits through an owned domyjob script snapshot, transfers one owned Git bundle through a fresh domyjob source landing, and checks out the exact requested commit in the configured private remote worktree.
 The local packet owner remains live until dispatch answers, and domyjob retains the remote job independently when its connection is interrupted.
 Set a package-specific remote worktree and target directory; the fleet must never name another worker's target.
 On macOS, `lint:windows` requires `NJUTEST_WINDOWS_MACHINES` naming this supported native route because absent MSVC headers cannot establish a Rust lint result.

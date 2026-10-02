@@ -262,6 +262,36 @@ pub fn invocation(shell: Shell, script: &str) -> Invocation {
     }
 }
 
+/// The complete script's fixed name inside its immutable native input snapshot.
+#[must_use]
+pub const fn script_name(shell: Shell) -> &'static str {
+    match shell {
+        Shell::Posix => "njutest-native-check.sh",
+        Shell::Powershell => "njutest-native-check.ps1",
+    }
+}
+
+/// A finite native file invocation whose words never contain the complete script.
+#[must_use]
+pub fn file_invocation(shell: Shell) -> Invocation {
+    let arguments = match shell {
+        Shell::Posix => vec!["-l".to_owned(), script_name(shell).to_owned()],
+        Shell::Powershell => vec![
+            "-NoProfile".to_owned(),
+            "-NonInteractive".to_owned(),
+            "-File".to_owned(),
+            script_name(shell).to_owned(),
+        ],
+    };
+    Invocation {
+        program: match shell {
+            Shell::Posix => "bash",
+            Shell::Powershell => "pwsh",
+        },
+        arguments,
+    }
+}
+
 /// The base64 digit for the low six bits of `value`.
 fn digit(value: u32) -> char {
     const DIGITS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -412,16 +442,6 @@ fn shared(root: &Path, answer: &[u8]) -> Vec<String> {
 
 fn ask(asked: &Asked) -> Result<Answer, RemoteError> {
     let log = asked.logs.join(format!("{}.log", asked.machine.name));
-    let query = invocation(asked.machine.shell, &known(&asked.machine));
-    let mut query_arguments = vec!["on", &asked.machine.host, "--wait", "--"];
-    query_arguments.extend(query.argv());
-    let queried = run("domyjob", &query_arguments, &asked.root)?;
-    if !queried.status.success() {
-        let mut said = queried.stdout;
-        said.extend_from_slice(&queried.stderr);
-        return answer(asked, log, false, &said);
-    }
-    let assumed = shared(&asked.root, &queried.stdout);
     let packet = tempfile::Builder::new()
         .prefix("njutest-native-input-")
         .tempdir()
@@ -429,6 +449,13 @@ fn ask(asked: &Asked) -> Result<Answer, RemoteError> {
             path: asked.logs.display().to_string(),
             source,
         })?;
+    let queried = dispatch(asked, packet.path(), &known(&asked.machine))?;
+    if !queried.status.success() {
+        let mut said = queried.stdout;
+        said.extend_from_slice(&queried.stderr);
+        return answer(asked, log, false, &said);
+    }
+    let assumed = shared(&asked.root, &queried.stdout);
     let bundle = packet.path().join(BUNDLE);
     let bundle_path = bundle.to_str().ok_or(RemoteError::NotText {
         step: "bundle path",
@@ -439,15 +466,29 @@ fn ask(asked: &Asked) -> Result<Answer, RemoteError> {
         arguments.extend(assumed.iter().map(String::as_str));
     }
     git(&asked.root, "bundle", &arguments)?;
-    let line = invocation(
-        asked.machine.shell,
+    let ran = dispatch(
+        asked,
+        packet.path(),
         &script(&asked.fleet, &asked.machine, &asked.sha),
-    );
+    )?;
+    let mut said = ran.stdout;
+    said.extend_from_slice(&ran.stderr);
+    answer(asked, log, ran.status.success(), &said)
+}
+
+fn dispatch(asked: &Asked, packet: &Path, script: &str) -> Result<Output, RemoteError> {
+    let path = packet.join(script_name(asked.machine.shell));
+    std::fs::write(&path, script).map_err(|source| RemoteError::Log {
+        path: path.display().to_string(),
+        source,
+    })?;
+    let line = file_invocation(asked.machine.shell);
     let mut identity = Sha256::new();
     for part in [
         asked.sha.as_bytes(),
         asked.machine.host.as_bytes(),
-        packet.path().as_os_str().as_encoded_bytes(),
+        packet.as_os_str().as_encoded_bytes(),
+        script.as_bytes(),
     ]
     .into_iter()
     .chain(line.argv().map(str::as_bytes))
@@ -468,10 +509,7 @@ fn ask(asked: &Asked) -> Result<Answer, RemoteError> {
         "--",
     ];
     run_arguments.extend(line.argv());
-    let ran = run("domyjob", &run_arguments, packet.path())?;
-    let mut said = ran.stdout;
-    said.extend_from_slice(&ran.stderr);
-    answer(asked, log, ran.status.success(), &said)
+    run("domyjob", &run_arguments, packet)
 }
 
 fn answer(asked: &Asked, log: PathBuf, passed: bool, said: &[u8]) -> Result<Answer, RemoteError> {
