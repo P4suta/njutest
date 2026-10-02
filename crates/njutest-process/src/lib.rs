@@ -55,7 +55,7 @@ pub enum GroupStop {
 /// The kernel refused complete cancellation or observation of the owned group.
 #[cfg(unix)]
 pub fn stop_group(leader: Leader<'_>, how: GroupStop) -> std::io::Result<Stopped> {
-    sys::stop_group(leader.pid(), how)
+    leader.stop(how)
 }
 
 #[cfg(unix)]

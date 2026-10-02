@@ -45,6 +45,7 @@ pub fn configure_reader(reader: &io::PipeReader) -> io::Result<()> {
 pub(crate) struct Supervisor {
     /// The group id, which is the child's pid: a new group has the child as its leader.
     pgid: Option<Pid>,
+    retained: std::sync::Mutex<Vec<(Member, MemberExit)>>,
 }
 
 /// What a process group would say about the processes it held, which on this platform is nothing: a child names its parent instead.
@@ -70,7 +71,10 @@ impl Supervisor {
     /// # Errors
     /// The operating system refused this owned process transition.
     pub(super) const fn new() -> io::Result<Self> {
-        Ok(Self { pgid: None })
+        Ok(Self {
+            pgid: None,
+            retained: std::sync::Mutex::new(Vec::new()),
+        })
     }
 
     /// Asks the kernel to put the child in a new process group of its own.
@@ -134,7 +138,7 @@ impl Supervisor {
             .ok_or_else(|| {
                 io::Error::other("the process-group completion deadline cannot be represented")
             })?;
-        let mut cancelled = false;
+        let mut cancelled = self.settle_retained(leader, deadline)?;
         loop {
             if Instant::now() >= deadline {
                 return Err(member_timeout());
@@ -143,6 +147,10 @@ impl Supervisor {
             if members.is_empty() {
                 if !cancelled {
                     self.terminate_forcefully(leader_state)?;
+                    if self.settle_retained(leader, deadline)? {
+                        cancelled = true;
+                        continue;
+                    }
                 }
                 return Ok(());
             }
@@ -153,12 +161,7 @@ impl Supervisor {
                 }
             }
             match signal_group(leader, Signal::KILL)? {
-                super::Stopped::Group => {}
-                super::Stopped::LeaderOnly => {
-                    return Err(io::Error::other(
-                        "the complete owned process group refused cancellation",
-                    ));
-                }
+                super::Stopped::Group | super::Stopped::LeaderOnly => {}
             }
             cancelled = true;
             for event in events {
@@ -213,15 +216,59 @@ impl Supervisor {
     /// A group signal is refused whole when any member is beyond this process's authority, as an Apple-signed binary a toolchain reached is on a runner, and on macOS when every member has ended and none is reaped yet, which is where a test process that printed its failure and exited is when the stop for that failure arrives.
     /// What is answerable in both is the child started here, the group's leader, so it is signalled by name, and a leader that has already gone is still success.
     fn signal(&self, signal: Signal) -> io::Result<()> {
+        match self.deliver(signal)? {
+            super::Stopped::Group | super::Stopped::LeaderOnly => Ok(()),
+        }
+    }
+
+    fn deliver(&self, signal: Signal) -> io::Result<super::Stopped> {
         let pgid = self.pgid.ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 "the supervisor has no adopted process group",
             )
         })?;
-        match signal_group(pgid, signal)? {
-            super::Stopped::Group | super::Stopped::LeaderOnly => Ok(()),
+        let mut retained = self
+            .retained
+            .lock()
+            .map_err(|source| io::Error::other(source.to_string()))?;
+        for member in group_members(pgid)? {
+            if !retained.iter().any(|(held, _event)| *held == member)
+                && let Some(event) = MemberExit::arm(member, pgid)?
+            {
+                retained.push((member, event));
+            }
         }
+        let delivered = signal_group(pgid, signal);
+        drop(retained);
+        delivered
+    }
+
+    fn settle_retained(&self, leader: Pid, deadline: Instant) -> io::Result<bool> {
+        let retained = {
+            let mut retained = self
+                .retained
+                .lock()
+                .map_err(|source| io::Error::other(source.to_string()))?;
+            std::mem::take(&mut *retained)
+        };
+        if retained.is_empty() {
+            return Ok(false);
+        }
+        match signal_group(leader, Signal::KILL)? {
+            super::Stopped::Group | super::Stopped::LeaderOnly => {}
+        }
+        for (_member, event) in retained {
+            event.wait(deadline)?;
+        }
+        Ok(true)
+    }
+
+    pub(super) fn stop(&self, how: super::GroupStop) -> io::Result<super::Stopped> {
+        self.deliver(match how {
+            super::GroupStop::Ask => Signal::TERM,
+            super::GroupStop::Kill => Signal::KILL,
+        })
     }
 
     /// Forgets the group id only after the caller has forcefully signalled the group while its leader remained waitable, then reaped that leader.
@@ -489,6 +536,7 @@ fn group_members(pgid: Pid) -> io::Result<Vec<Member>> {
 }
 
 #[cfg(target_os = "linux")]
+#[derive(Debug)]
 struct MemberExit(rustix::fd::OwnedFd);
 
 #[cfg(target_os = "linux")]
@@ -527,6 +575,7 @@ impl MemberExit {
 }
 
 #[cfg(target_os = "macos")]
+#[derive(Debug)]
 struct MemberExit {
     pid: i32,
     watcher: kqueue::Watcher,
@@ -598,15 +647,6 @@ fn member_timeout() -> io::Error {
         io::ErrorKind::TimedOut,
         "the owned process member has no confirmed exit event",
     )
-}
-
-/// Stops the group `leader` leads, as [`super::stop_group`] describes.
-pub(crate) fn stop_group(leader: Pid, how: super::GroupStop) -> io::Result<super::Stopped> {
-    let signal = match how {
-        super::GroupStop::Ask => Signal::TERM,
-        super::GroupStop::Kill => Signal::KILL,
-    };
-    signal_group(leader, signal)
 }
 
 #[derive(Debug)]

@@ -4,8 +4,6 @@
 //! A mandatory owner for a leader, its inherited process set and completion observer.
 
 use std::io;
-#[cfg(unix)]
-use std::marker::PhantomData;
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus};
 use std::sync::Arc;
 use std::time::Duration;
@@ -96,7 +94,7 @@ enum ExitRegistration {
 #[derive(Debug, Clone, Copy)]
 pub struct Leader<'a> {
     pid: rustix::process::Pid,
-    owner: PhantomData<&'a Owned>,
+    owner: &'a Owned,
 }
 
 #[cfg(unix)]
@@ -105,6 +103,10 @@ impl Leader<'_> {
     #[must_use]
     pub const fn pid(self) -> rustix::process::Pid {
         self.pid
+    }
+
+    pub(super) fn stop(self, how: super::GroupStop) -> io::Result<super::Stopped> {
+        self.owner.supervisor.stop(how)
     }
 }
 
@@ -465,10 +467,7 @@ impl Owned {
                 "the owned kernel child PID exceeds the platform width: {source}"
             )),
         };
-        rustix::process::Pid::from_raw(raw).map(|pid| Leader {
-            pid,
-            owner: PhantomData,
-        })
+        rustix::process::Pid::from_raw(raw).map(|pid| Leader { pid, owner: self })
     }
 }
 
