@@ -16,7 +16,11 @@ fn a_module_cache_is_retained_outside_its_disposable_snapshot() {
     let cache = super::module_cache(snapshot, Some(&vars)).expect("an actual retained cache");
     assert_eq!(
         cache.directory(),
-        retained.path().join("wasmtime-modules-v1")
+        retained
+            .path()
+            .join("wasmtime-modules-v1")
+            .canonicalize()
+            .expect("the actual retained cache identity")
     );
     assert!(!cache.directory().starts_with(snapshot));
 }

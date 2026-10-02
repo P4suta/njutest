@@ -5,6 +5,7 @@
 
 #[path = "after.rs"]
 mod after;
+#[path = "cache_process.rs"]
 mod cache_process;
 #[path = "common.rs"]
 pub mod common;
