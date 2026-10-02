@@ -5,6 +5,8 @@
 """Record the complete suite's timings and engine work, and refuse growth in compile/build counts."""
 
 import argparse
+import os
+import tempfile
 import collections
 import datetime
 import json
@@ -293,6 +295,68 @@ def suite_redundancy(inventory):
             f"redundant cold builds of one bound input: {key} built cold {cold} times across the suite{explanation}"
         )
     return errors
+
+
+def destination_conflict(output, inputs):
+    """Why `output` may not be written, by canonical or physical identity with any input."""
+    resolved_out = os.path.realpath(output)
+    for path in inputs:
+        resolved = os.path.realpath(path)
+        if resolved_out == resolved:
+            return f"the destination {output} is the input {path}"
+    for path in inputs:
+        try:
+            out_stat = os.stat(output)
+            in_stat = os.stat(path)
+        except FileNotFoundError:
+            continue
+        except OSError as failure:
+            return (
+                f"the identity of the destination {output} or the input {path} "
+                f"is not established ({failure}); refusing rather than guess"
+            )
+        if (out_stat.st_dev, out_stat.st_ino) == (in_stat.st_dev, in_stat.st_ino):
+            return f"the destination {output} is one physical file with the input {path}"
+    return None
+
+
+def publish_atomically(destination, write):
+    """Replaces `destination` through a staged file, so a failed write preserves the old one."""
+    staged = tempfile.NamedTemporaryFile(
+        mode="w", dir=str(destination.parent), prefix=".published-", delete=False
+    )
+    try:
+        with staged:
+            write(staged)
+        os.replace(staged.name, destination)
+    except BaseException:
+        try:
+            os.unlink(staged.name)
+        except OSError:
+            pass
+        raise
+
+
+def publish_report(output, report):
+    """Writes the reviewable diagnostic report to its own destination, atomically."""
+    publish_atomically(output, lambda staged: (json.dump(report, staged, indent=2), staged.write("\n")))
+
+
+def publish_ledger(baseline, ledger):
+    """Replaces the baseline atomically, so a failed write preserves the old one."""
+    publish_atomically(
+        baseline, lambda staged: (json.dump(ledger, staged, indent=2, sort_keys=True), staged.write("\n"))
+    )
+
+
+def protected_inputs(directory, junit):
+    """Every measured byte a publication may not touch: the records, the machine note and the JUnit."""
+    inputs = list(sorted(directory.glob("cost-*.json")))
+    machine = directory / "machine.json"
+    if machine.exists():
+        inputs.append(machine)
+    inputs.append(junit)
+    return inputs
 
 
 def measured(directory, junit, require_pass=True):
@@ -734,9 +798,46 @@ def main():
         raise ValueError(
             "--record and --measure-only cannot be combined: recording is a strict act"
         )
-    report = measured(args.directory, args.junit, require_pass=not args.measure_only)
     output = args.directory / "suite-cost.json"
-    output.write_text(json.dumps(report, indent=2) + "\n")
+    measured_inputs = protected_inputs(args.directory, args.junit)
+    inputs = [*measured_inputs, args.baseline]
+    reason = destination_conflict(output, inputs)
+    if reason is None and args.record:
+        reason = destination_conflict(args.baseline, measured_inputs)
+    if reason is not None:
+        raise ValueError(f"destination refused: {reason}")
+    report = measured(args.directory, args.junit, require_pass=not args.measure_only)
+    if not args.measure_only:
+        if args.record:
+            missing = []
+            if report["unobserved_cargo"]:
+                missing.append(
+                    f"unobserved cargo classes: {', '.join(report['unobserved_cargo'])}"
+                )
+            if report["gaps"]:
+                missing.append(f"uninstrumented meters: {', '.join(report['gaps'])}")
+            if missing:
+                raise ValueError(
+                    "a baseline cannot certify missing observations: "
+                    + "; ".join(missing)
+                    + "; record once the producer measures them"
+                )
+            ledger = (
+                json.loads(args.baseline.read_text())
+                if args.baseline.exists()
+                else {"schema": LEDGER_SCHEMA, "platforms": {}}
+            )
+            ledger["schema"] = LEDGER_SCHEMA
+            ledger["platforms"][report["platform"]] = budget(report)
+            publish_ledger(args.baseline, ledger)
+        else:
+            ledger = json.loads(args.baseline.read_text())
+            if ledger["schema"] != LEDGER_SCHEMA:
+                raise ValueError("unknown suite cost ledger schema")
+            errors = growth(budget(report), ledger["platforms"][report["platform"]])
+            if errors:
+                raise ValueError("suite work grew:\n" + "\n".join(errors))
+    publish_report(output, report)
     print(
         f"{len(report['tests'])} tests; suite wall {report['wall_seconds']:.3f}s; per-test counts: {output}"
     )
@@ -750,38 +851,8 @@ def main():
         print(f"redundant work, not certified: {violation}")
     for gap in report["coverage_gaps"]:
         print(f"unattributed cargo work, not certified: {gap}")
-    if args.measure_only:
-        return
-    if args.record:
-        missing = []
-        if report["unobserved_cargo"]:
-            missing.append(
-                f"unobserved cargo classes: {', '.join(report['unobserved_cargo'])}"
-            )
-        if report["gaps"]:
-            missing.append(f"uninstrumented meters: {', '.join(report['gaps'])}")
-        if missing:
-            raise ValueError(
-                "a baseline cannot certify missing observations: "
-                + "; ".join(missing)
-                + "; record once the producer measures them"
-            )
-        ledger = (
-            json.loads(args.baseline.read_text())
-            if args.baseline.exists()
-            else {"schema": LEDGER_SCHEMA, "platforms": {}}
-        )
-        ledger["schema"] = LEDGER_SCHEMA
-        ledger["platforms"][report["platform"]] = budget(report)
-        args.baseline.write_text(json.dumps(ledger, indent=2, sort_keys=True) + "\n")
-        return
-    ledger = json.loads(args.baseline.read_text())
-    if ledger["schema"] != LEDGER_SCHEMA:
-        raise ValueError("unknown suite cost ledger schema")
-    errors = growth(budget(report), ledger["platforms"][report["platform"]])
-    if errors:
-        raise ValueError("suite work grew:\n" + "\n".join(errors))
-    print("suite compile/build counts stayed within the committed ledger")
+    if not args.record and not args.measure_only:
+        print("suite compile/build counts stayed within the committed ledger")
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@
 """Behavioral checks for growth, incomplete observations and foreign suite records."""
 
 import json
+import os
 import pathlib
 import runpy
 import sys
@@ -683,6 +684,144 @@ class SuiteCost(unittest.TestCase):
                     "cold: the compilation record is absent"
                 ],
                 2,
+            )
+
+    def test_record_refuses_a_baseline_that_aliases_the_diagnostic(self):
+        variants = [
+            ("equal path", lambda root: root / "suite-cost.json"),
+            ("relative alias", lambda root: root / "dummy" / ".." / "suite-cost.json"),
+            ("symlink alias", None),
+            ("hard link alias", None),
+        ]
+        for label, baseline_of in variants:
+            with tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                write_junit(root)
+                write_record(root, "a", cold())
+                kept = b'{"schema":"njutest-suite-cost-budget-v3","platforms":{}}\n'
+                baseline = root / "suite-cost.json"
+                baseline.write_bytes(kept)
+                if label == "symlink alias":
+                    linked = root / "linked-baseline.json"
+                    linked.symlink_to(baseline)
+                    baseline = linked
+                if label == "hard link alias":
+                    linked = root / "linked-baseline.json"
+                    os.link(baseline, linked)
+                    baseline = linked
+                if baseline_of is not None:
+                    baseline = baseline_of(root)
+                with self.assertRaisesRegex(ValueError, "destination refused:"):
+                    run_main(
+                        [str(root), str(root / "suite.xml"), "--record", "--baseline", str(baseline)]
+                    )
+                self.assertEqual(
+                    (root / "suite-cost.json").read_bytes(),
+                    kept,
+                    f"{label}: the existing baseline bytes survive the refusal",
+                )
+
+    def test_measure_only_refuses_a_diagnostic_that_aliases_the_baseline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            write_junit(root)
+            write_record(root, "a", cold())
+            kept = b'{"schema":"njutest-suite-cost-budget-v3","platforms":{}}\n'
+            baseline = root / "suite-cost.json"
+            baseline.write_bytes(kept)
+            with self.assertRaisesRegex(ValueError, "destination refused:"):
+                run_main([str(root), str(root / "suite.xml"), "--measure-only", "--baseline", str(baseline)])
+            self.assertEqual(
+                baseline.read_bytes(),
+                kept,
+                "measure-only never overwrites protected baseline bytes",
+            )
+
+    def test_no_publication_touches_the_raw_measurement_junit_or_machine_inputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            write_junit(root)
+            write_record(root, "a", cold())
+            (root / "machine.json").write_text('{"host": "owned"}\n')
+            for victim in (root / "suite.xml", root / "cost-a.json", root / "machine.json"):
+                kept = victim.read_bytes()
+                with self.assertRaisesRegex(ValueError, "destination refused:"):
+                    run_main(
+                        [str(root), str(root / "suite.xml"), "--record", "--baseline", str(victim)]
+                    )
+                self.assertEqual(
+                    victim.read_bytes(), kept, f"{victim.name} bytes are unchanged"
+                )
+            junit_kept = (root / "suite.xml").read_bytes()
+            aliased = root / "suite-cost.json"
+            aliased.write_bytes(junit_kept)
+            with self.assertRaisesRegex(ValueError, "destination refused:"):
+                run_main(
+                    [str(root), str(aliased), "--measure-only", "--baseline", str(root / "elsewhere.json")]
+                )
+            self.assertEqual(aliased.read_bytes(), junit_kept, "the aliased JUnit survives")
+            self.assertFalse(root.joinpath("elsewhere.json").exists())
+
+    def test_record_refusal_creates_no_new_baseline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            write_junit(root)
+            write_record(root, "a", cold())
+            fresh = root / "absent.json"
+            with self.assertRaisesRegex(ValueError, "missing observation"):
+                run_main([str(root), str(root / "suite.xml"), "--record", "--baseline", str(fresh)])
+            self.assertFalse(fresh.exists(), "a refused recording creates no baseline")
+            self.assertFalse(
+                (root / "suite-cost.json").exists(),
+                "a refused recording writes no diagnostic either",
+            )
+
+    def test_a_strict_check_on_distinct_destinations_succeeds_and_preserves_the_baseline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            write_junit(root)
+            write_record(root, "a", cold())
+            report = COST["measured"](root, root / "suite.xml")
+            baseline = root / "elsewhere" / "ledger.json"
+            baseline.parent.mkdir()
+            baseline.write_text(
+                json.dumps(
+                    {"schema": "njutest-suite-cost-budget-v3", "platforms": {report["platform"]: COST["budget"](report)}},
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n"
+            )
+            kept = baseline.read_bytes()
+            run_main([str(root), str(root / "suite.xml"), "--baseline", str(baseline)])
+            self.assertEqual(baseline.read_bytes(), kept, "the checked baseline is not rewritten")
+            self.assertTrue((root / "suite-cost.json").exists(), "the diagnostic is published")
+
+    def test_measure_only_publishes_incomplete_diagnostics_without_certifying(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            write_junit(root)
+            write_record(root, "a", cold())
+            run_main([str(root), str(root / "suite.xml"), "--measure-only"])
+            published = json.loads((root / "suite-cost.json").read_text())
+            self.assertEqual(published["gaps"], list(COST["GAPS"]), "the gaps stay declared")
+
+    def test_a_failed_baseline_publication_preserves_the_existing_ledger(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            kept = b'{"schema":"njutest-suite-cost-budget-v3","platforms":{}}\n'
+            baseline = root / "ledger.json"
+            baseline.write_bytes(kept)
+            os.chmod(root, 0o500)
+            try:
+                with self.assertRaises(OSError):
+                    COST["publish_ledger"](baseline, {"schema": "njutest-suite-cost-budget-v3"})
+            finally:
+                os.chmod(root, 0o700)
+            self.assertEqual(
+                baseline.read_bytes(),
+                kept,
+                "a failed staged write leaves the old baseline byte-for-byte",
             )
 
     def test_the_ledger_certifies_its_observation_gaps(self):
