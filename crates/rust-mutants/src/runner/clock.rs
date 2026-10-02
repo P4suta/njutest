@@ -31,7 +31,6 @@ impl Clock {
 
     /// Virtual elapsed milliseconds published by each child under its PID, acknowledged by supervision.
     #[must_use]
-    #[cfg(any(test, feature = "testkit"))]
     pub const fn events(directory: PathBuf) -> Self {
         Self {
             source: ClockSource::Events(directory),
