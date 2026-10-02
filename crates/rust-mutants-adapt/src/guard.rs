@@ -53,9 +53,6 @@ impl std::fmt::Display for Form {
 /// The path one of the runtime's functions is called by from a site `super_depth` inline modules down.
 #[must_use]
 pub fn named(module: &str, super_depth: u32, function: &str) -> String {
-    if function == "value" {
-        return format!("crate::{module}_value");
-    }
     let mut path = String::new();
     for _ in 0..super_depth {
         path.push_str("super::");

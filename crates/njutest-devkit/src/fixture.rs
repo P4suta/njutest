@@ -36,36 +36,6 @@ impl Fixture {
         Self::copy_with_siblings(name, &[])
     }
 
-    /// Copies an external tree, such as a cached upstream crate exactly as the registry holds it, into a directory of this test's own.
-    ///
-    /// # Panics
-    /// When the copy cannot be made, which a test cannot continue without, or when the tree holds what a run writes.
-    #[must_use]
-    pub fn copy_external(source: &Path) -> Self {
-        let dir = tempfile::Builder::new()
-            .prefix("njutest-fixture-")
-            .tempdir()
-            .expect("a temporary directory");
-        if let Some(written) = run_output_in(source) {
-            panic!(
-                "{} is what a run writes, so a run was made inside the tree this test copies, \
-                 and a copy would hand this test its stored runs; remove it",
-                written.display()
-            );
-        }
-        copy_tree(source, &dir.path().join("trees").join("copied"));
-        let temp = dir.path().join("temp");
-        let cache = dir.path().join("cache");
-        std::fs::create_dir_all(&temp).expect("the temporary directory");
-        std::fs::create_dir_all(&cache).expect("the cache directory");
-        Self {
-            root: canonical(&dir.path().join("trees").join("copied")),
-            temp: canonical(&temp),
-            cache: canonical(&cache),
-            _dir: dir,
-        }
-    }
-
     /// Copies the fixture project `name`, and every fixture in `siblings` beside it, so a path dependency that climbs out of the tree has somewhere to land.
     ///
     /// # Panics

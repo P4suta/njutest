@@ -1087,8 +1087,7 @@ fn unwrapped(text: &str, module: &str) -> String {
         Some(after_the_last_call) => after_the_last_call,
         None => "",
     });
-    let call = format!("crate::{module}_value!");
-    kept.replace(&call, &" ".repeat(call.len()))
+    kept
 }
 
 impl File<'_> {
@@ -1742,7 +1741,7 @@ mod tests {
         let mut guard = inner.to_owned();
         for index in 0..depth {
             guard = format!(
-                "crate::rt_value!(if super::rt::active({index}) {{ 0 }} else {{ {guard} }})"
+                "super::rt::value!(if super::rt::active({index}) {{ 0 }} else {{ {guard} }})"
             );
         }
         format!("mod m {{\n    fn f() -> u8 {{\n        {guard}\n    }}\n}}\n")

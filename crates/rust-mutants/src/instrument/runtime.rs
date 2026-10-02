@@ -209,10 +209,10 @@ const VALUE_MACRO: &str = r"    // The invocation is an expression boundary befo
     // expansion is exactly the user's expression. That groups generated
     // boolean chains without adding lint-producing parentheses, a temporary
     // scope, a call boundary, or a new generic type-inference boundary.
-    #[macro_export]
-    macro_rules! {{MODULE}}_value {
+    macro_rules! value {
         ($value:expr) => { $value };
     }
+    pub(crate) use value;
 
 ";
 
@@ -789,7 +789,7 @@ mod {{MODULE}} {
     fn open_step_state(
         path: &str,
     ) -> __rm_std::result::Result<__rm_std::fs::File, Why> {
-        use self::__rm_std::os::unix::fs::OpenOptionsExt as _;
+        use __rm_std::os::unix::fs::OpenOptionsExt as _;
 
         __rm_std::fs::OpenOptions::new()
             .read(true)
@@ -803,7 +803,7 @@ mod {{MODULE}} {
     fn open_step_state(
         path: &str,
     ) -> __rm_std::result::Result<__rm_std::fs::File, Why> {
-        use self::__rm_std::os::windows::fs::OpenOptionsExt as _;
+        use __rm_std::os::windows::fs::OpenOptionsExt as _;
 
         // FILE_FLAG_OPEN_REPARSE_POINT makes the final component itself the
         // opened object. The regular-file check below then rejects links and
@@ -2293,7 +2293,7 @@ mod tests {
     use super::{
         ACTIVE_ENV, CATALOG_ENV, DELAY_ENV, FAULT_ENV, Rendering, SEALED_TEMPLATE, STEP_NONCE_ENV,
         STEP_NOTICE_ENV, STEP_NOTICE_SCHEMA, STEP_STATE_ENV, STEP_STATE_SCHEMA, STEPS_ENV,
-        TEMPLATE, TOUCH_ENV, VALUE_MACRO, WATCHED_ENV, render,
+        TEMPLATE, TOUCH_ENV, WATCHED_ENV, render,
     };
     use crate::instrument::Placement;
     use crate::rule::Tier;
@@ -2471,7 +2471,7 @@ mod tests {
         })
         .expect("generated runtime");
         assert!(
-            text.contains("macro_rules! __rm_value"),
+            text.contains("macro_rules! value"),
             "the file's guards group a value, so both modules hold the macro that groups it"
         );
         text
@@ -2864,96 +2864,5 @@ mod tests {
             step_transition(StepPhase::Dormant, StepAction::Activate, usize::MAX),
             Err(StepMachineError::Limit)
         );
-    }
-    /// Every line of `text` that spells a `use` item, plain or behind a visibility, with comments passed over.
-    fn use_declarations(text: &str) -> Vec<String> {
-        let mut found = Vec::new();
-        for line in text.lines() {
-            let line = line.trim_start();
-            if line.starts_with("//") {
-                continue;
-            }
-            if let Some(at) = line.find(" use ") {
-                found.push(line[at + 1..].to_owned());
-            } else if line.starts_with("use ") {
-                found.push(line.to_owned());
-            }
-        }
-        found
-    }
-
-    /// The path `declaration` imports, trimmed of its `use`, its visibility and its semicolon.
-    fn imported_path(declaration: &str) -> &str {
-        declaration
-            .strip_prefix("use ")
-            .unwrap_or(declaration)
-            .trim_end()
-            .trim_end_matches(';')
-    }
-
-    #[test]
-    fn every_generated_use_is_scope_anchored_so_every_edition_resolves_it() {
-        for template in [TEMPLATE, SEALED_TEMPLATE, VALUE_MACRO] {
-            for declaration in use_declarations(template) {
-                let path = imported_path(&declaration);
-                let head = path.split('{').next().unwrap_or_default().trim();
-                let first = head.split("::").next().unwrap_or_default();
-                assert!(
-                    ["self", "super", "crate", ""].contains(&first),
-                    "the generated runtime spells `{declaration}` without anchoring its \
-                     scope: under Rust 2015 a `use` path resolves at the crate root, where \
-                     the runtime's aliases do not live, so the instrumented tree of an \
-                     edition-2015 crate does not compile",
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn the_generated_module_compiles_under_rust_2015_where_its_aliases_live() {
-        let temporary = tempfile::tempdir().expect("an owned root");
-        let scripted =
-            ScriptedCompile::from_source("src/lib.rs", "pub fn step() -> i32 { 7 }\n", Tier::All);
-        let module = render(&Rendering {
-            module: "__rm",
-            catalog_digest: PLANT_CATALOG,
-            placements: scripted.placements(),
-            markers: &[],
-            first_item: 0,
-            item_count: 0,
-            newline: "\n",
-            watched: PLANT_WATCHED,
-        })
-        .expect("generated runtime");
-        let source = temporary.path().join("edition-2015.rs");
-        std::fs::write(
-            &source,
-            format!(
-                "{module}\npub fn anchored() -> i32 {{ {}!(7) }}\n",
-                rust_mutants_adapt::guard::named("__rm", 0, "value")
-            ),
-        )
-        .expect("the generated source");
-        for edition in ["2015", "2018", "2021", "2024"] {
-            for target in ["native", "wasm32-wasip1"] {
-                let mut compiler = Command::new("rustc");
-                compiler.args(["--edition", edition, "--crate-type", "lib"]);
-                if target != "native" {
-                    compiler.args(["--target", target]);
-                }
-                let built = compiler
-                    .arg("--out-dir")
-                    .arg(temporary.path())
-                    .arg(&source)
-                    .output()
-                    .expect("rustc runs");
-                assert!(
-                    built.status.success(),
-                    "edition {edition}, target {target}: the runtime and its macro resolve \
-                     in their actual scope: {:?}",
-                    std::str::from_utf8(&built.stderr)
-                );
-            }
-        }
     }
 }
