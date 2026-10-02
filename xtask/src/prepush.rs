@@ -12,15 +12,14 @@ use std::time::{Duration, Instant};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
+mod inputs;
+
 use crate::environment::{Environment, Spelling};
 use crate::lanes::{self, Held, Holder, Lane, LaneError, Lanes, Request};
 use crate::work::{self, Ended, Stops, WorkError};
 
 /// The object id Git gives a ref that is being deleted, or one the remote does not have yet.
 const ZERO: &str = "0000000000000000000000000000000000000000";
-
-/// How long a pass answers for a second push of the same commit against the same base.
-const REMEMBERED: Duration = Duration::from_secs(3600);
 
 /// What the gate is handed by the process that runs it.
 #[derive(Debug, Clone, Copy)]
@@ -38,7 +37,7 @@ pub struct Surroundings<'a> {
 pub enum Passed {
     /// The warm and cold checks ran on this commit and passed.
     Checked,
-    /// The warm check was remembered, and a new cold check passed on this commit.
+    /// Both complete checks were remembered under every unchanged proof input.
     Remembered,
 }
 
@@ -374,7 +373,6 @@ fn decide(
             &format!("{}^{{commit}}", settings.base_ref),
         ],
     )?;
-    let memory = place.memory(&head, base.as_deref(), &identity(surroundings)?);
     let stops = Stops::arm()?;
     let holder = Holder {
         worktree: here.to_path_buf(),
@@ -389,18 +387,6 @@ fn decide(
     };
     let (turn, tree) = take_lanes(&lanes, &place, asking, progress)?;
     let owner = place.own()?;
-    let warm_remembered = remembered(&memory)?;
-    if warm_remembered {
-        say(
-            progress,
-            &format!(
-                "pre-push: {head} against {} already passed the warm check within the hour; the cold check still runs",
-                base.as_deref().unwrap_or("no base")
-            ),
-        )?;
-    } else {
-        serve_the_cache(tools, &settings, progress)?;
-    }
     place.prepare(tools, here, &head)?;
     let run = Run {
         tools,
@@ -411,7 +397,51 @@ fn decide(
         stops: &stops,
         held: [&turn, &tree],
     };
-    let checked = check(&run, warm_remembered, progress);
+    let passed = prove(&run, surroundings, base.as_deref(), progress)?;
+    drop(owner);
+    drop(tree);
+    drop(turn);
+    Ok(passed)
+}
+
+fn prove(
+    run: &Run<'_>,
+    surroundings: &Surroundings<'_>,
+    base: Option<&str>,
+    progress: &mut dyn Write,
+) -> Result<Passed, PrePushError> {
+    let Run {
+        tools,
+        place,
+        head,
+        settings,
+        stops,
+        ..
+    } = run;
+    let proof_inputs = Surroundings {
+        directory: &place.tree,
+        executable: surroundings.executable,
+        environment: surroundings.environment,
+    };
+    let identity = inputs::fingerprint(&proof_inputs, &place.target)?;
+    let memory = place.memory(head, base, &identity);
+    let pair_remembered = remembered(&memory, head, &identity)?;
+    if pair_remembered {
+        say(
+            progress,
+            &format!(
+                "pre-push: {head} against {} already passed complete cold and warm checks under unchanged inputs",
+                base.unwrap_or("no base")
+            ),
+        )?;
+    } else {
+        serve_the_cache(*tools, settings, progress)?;
+    }
+    let checked = if pair_remembered {
+        place.require_exact(*tools, head)
+    } else {
+        check(run, progress)
+    };
     let restored = tools.restore(&place.tree);
     checked?;
     if let Err(failure) = restored {
@@ -425,13 +455,18 @@ fn decide(
     if let Some(signal) = stops.raised() {
         return Err(PrePushError::Interrupted { signal });
     }
-    if !warm_remembered {
-        remember(&memory, &head)?;
+    if !pair_remembered {
+        let finished_identity = inputs::fingerprint(&proof_inputs, &place.target)?;
+        if finished_identity == identity {
+            remember(&memory, head, &identity)?;
+        } else {
+            say(
+                progress,
+                "pre-push: proof inputs changed while checking; no reusable receipt was published",
+            )?;
+        }
     }
-    drop(owner);
-    drop(tree);
-    drop(turn);
-    Ok(if warm_remembered {
+    Ok(if pair_remembered {
         Passed::Remembered
     } else {
         Passed::Checked
@@ -522,8 +557,14 @@ impl Run<'_> {
         ran.map_err(|source| PrePushError::Work { source })
     }
 
-    fn cold_command(&self, target: &Path) -> Command {
-        let mut command = self.tools.command("cargo");
+    fn cold_command(&self, target: &Path) -> Result<Command, PrePushError> {
+        let cargo = crate::tools::cargo(&self.place.tree, self.tools.environment)
+            .map_err(|source| io_error(&self.place.tree, std::io::Error::other(source)))?;
+        let mut command = Command::new(cargo);
+        command.envs(self.tools.environment.pairs());
+        for name in self.tools.environment.beginning("GIT_") {
+            command.env_remove(name);
+        }
         command
             .args(["check", "--locked", "--workspace"])
             .current_dir(&self.place.tree)
@@ -536,18 +577,14 @@ impl Run<'_> {
             .env("CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER", "")
             .env("NJUTEST_COMMITTED_HEAD", self.head)
             .env(lanes::HELD, self.lanes.held_with(Lane::Heavy));
-        command
+        Ok(command)
     }
 }
 
-fn check(
-    run: &Run<'_>,
-    warm_remembered: bool,
-    progress: &mut dyn Write,
-) -> Result<(), PrePushError> {
+fn check(run: &Run<'_>, progress: &mut dyn Write) -> Result<(), PrePushError> {
     run.place.require_exact(run.tools, run.head)?;
     let started = Instant::now();
-    if !warm_remembered {
+    {
         let mut command = run.place.check_command(run.tools, run.head, run.lanes);
         let ended = run.pass(
             Stage {
@@ -564,7 +601,7 @@ fn check(
         .prefix("cold-")
         .tempdir_in(&run.place.home)
         .map_err(|source| io_error(&run.place.home, source))?;
-    let mut command = run.cold_command(cold.path());
+    let mut command = run.cold_command(cold.path())?;
     say(
         progress,
         "pre-push: checking the workspace in a fresh target directory",
@@ -598,7 +635,7 @@ fn check(
         say(
             progress,
             &format!(
-                "pre-push: the gate passed in {}s, over its {}s expected time\npre-push: the cold workspace check runs on every push; inspect which stage stayed slow",
+                "pre-push: the gate passed in {}s, over its {}s expected time\npre-push: inspect which complete proof stage stayed slow",
                 elapsed.as_secs(),
                 run.settings.expected.as_secs()
             ),
@@ -780,7 +817,7 @@ impl Settings {
             cache: cache_root(environment).ok_or(PrePushError::Nowhere)?,
             cached: environment
                 .value("RUSTC_WRAPPER")
-                .is_none_or(|wrapper| Path::new(wrapper).ends_with("sccache")),
+                .is_some_and(|wrapper| Path::new(wrapper).ends_with("sccache")),
         })
     }
 }
@@ -1116,23 +1153,6 @@ fn spelled<'a>(arguments: &[&'a str]) -> Vec<&'a OsStr> {
         .collect()
 }
 
-/// The gate that answers and the build settings it answers under: the gate binary's bytes, and every variable that changes what cargo builds.
-fn identity(surroundings: &Surroundings<'_>) -> Result<String, PrePushError> {
-    let executable = surroundings.executable;
-    let bytes = std::fs::read(executable).map_err(|source| io_error(executable, source))?;
-    let mut digest = Sha256::new();
-    digest.update(&bytes);
-    let environment = surroundings.environment;
-    let spelling = environment.spelling();
-    for (name, value) in environment.canonical(|name| shapes_the_build(spelling, name)) {
-        digest.update(name.as_encoded_bytes());
-        digest.update(b"=");
-        digest.update(value.as_encoded_bytes());
-        digest.update(b"\n");
-    }
-    Ok(hex::encode(digest.finalize()))
-}
-
 /// The prefixes of every variable that changes what cargo builds.
 const BUILD_SHAPING: [&str; 2] = ["CARGO_", "RUST"];
 
@@ -1151,22 +1171,63 @@ fn short(bytes: &[u8]) -> String {
         .collect()
 }
 
-fn remembered(memory: &Path) -> Result<bool, PrePushError> {
-    let written = match std::fs::metadata(memory) {
-        Ok(metadata) => metadata
-            .modified()
-            .map_err(|source| io_error(memory, source))?,
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CompleteProof {
+    schema: String,
+    head: String,
+    inputs: String,
+    warm: SuccessfulStage,
+    cold: SuccessfulStage,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum SuccessfulStage {
+    Passed,
+}
+
+fn remembered(memory: &Path, head: &str, inputs: &str) -> Result<bool, PrePushError> {
+    let text = match std::fs::read_to_string(memory) {
+        Ok(text) => text,
         Err(missing) if missing.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(source) => return Err(io_error(memory, source)),
     };
-    Ok(written.elapsed().is_ok_and(|age| age < REMEMBERED))
+    let receipt: CompleteProof = crate::strictjson::decode_str(&text)
+        .map_err(|source| io_error(memory, std::io::Error::other(source)))?;
+    Ok(receipt.schema == "njutest-complete-proof-v1"
+        && receipt.head == head
+        && receipt.inputs == inputs)
 }
 
-fn remember(memory: &Path, head: &str) -> Result<(), PrePushError> {
+fn remember(memory: &Path, head: &str, inputs: &str) -> Result<(), PrePushError> {
     if let Some(passed) = memory.parent() {
         std::fs::create_dir_all(passed).map_err(|source| io_error(passed, source))?;
     }
-    std::fs::write(memory, format!("{head}\n")).map_err(|source| io_error(memory, source))
+    let receipt = CompleteProof {
+        schema: "njutest-complete-proof-v1".to_owned(),
+        head: head.to_owned(),
+        inputs: inputs.to_owned(),
+        warm: SuccessfulStage::Passed,
+        cold: SuccessfulStage::Passed,
+    };
+    let text = serde_json::to_string(&receipt)
+        .map_err(|source| io_error(memory, std::io::Error::other(source)))?;
+    let parent = memory.parent().ok_or_else(|| {
+        io_error(
+            memory,
+            std::io::Error::other("the complete proof has no publication directory"),
+        )
+    })?;
+    let mut staged =
+        tempfile::NamedTempFile::new_in(parent).map_err(|source| io_error(parent, source))?;
+    staged
+        .write_all(text.as_bytes())
+        .map_err(|source| io_error(memory, source))?;
+    staged
+        .persist(memory)
+        .map_err(|source| io_error(memory, source.error))?;
+    Ok(())
 }
 
 fn text_of<'a>(name: &str, value: &'a OsStr) -> Result<&'a str, PrePushError> {

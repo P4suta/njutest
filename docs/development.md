@@ -413,10 +413,12 @@ A reader takes only a line that ends in a newline, holds no NUL and is text, nam
 A narrowed run — one crate, one test binary, one filter — does not take the lane: it is the inner loop, and queueing it behind a push would cost more than it saves.
 Run a whole-workspace command by hand as `cargo xtask slot heavy -- cargo nextest run --workspace --all-targets --all-features`.
 
-**A pass is remembered for an hour.** A commit that passed the gate against the same base is not checked again within the hour, so pushing it to the hub and then to origin costs one gate rather than two.
-What is remembered is the commit, the base the commit-message check reads, and the bytes of the gate that passed it; a moved base or a changed gate is a question nobody has answered yet.
+**A complete proof is remembered under its actual inputs.** The first gate must pass both its unchanged warm check and the complete cold Cargo check before publishing a reusable receipt.
+The receipt binds the commit and base, the actual gate and selected tool bytes, both Rust toolchains and components, resolved external dependency sources, effective environment, security databases and query bundles.
+Changed or missing inputs require both checks again; elapsed time alone never makes a proof valid.
+Publication occurs only if those inputs and the exact checked tree still match after both stages succeed.
 
-**The tools the gates run are the ones mise pins.** `cargo xtask tools` establishes it rather than assuming it: for every `cargo:` pin in mise.toml it resolves the executable through `mise which`, refuses where an earlier directory on the path would answer the same name with another executable, and asks `cargo <subcommand> --version` — through Cargo's external-subcommand protocol, never the plugin directly — requiring the pinned version to be what answers.
+**The tools the gates run are the ones mise pins.** `cargo xtask tools` establishes it rather than assuming it: for every `cargo:` pin in mise.toml it resolves the executable through `mise which`, selects that executable ahead of any earlier PATH or Cargo-home shadow, and asks `cargo <subcommand> --version` — through Cargo's external-subcommand protocol, never the plugin directly — requiring the pinned version to be what answers.
 The pins in mise.toml are metadata until something does this: a Homebrew `cargo-nextest` 0.9.146 sat earlier on the path than mise's 0.9.140 and every `cargo nextest` the tasks dispatched answered with it, and `mise which cargo-nextest` from a directory outside the project answers nothing because the pin is not active there, which is the single-resolver rule the campaign's pinned-cargo helper encodes and this gate now states in the repository.
 `mise run doctor` reports the same selection, naming the pinned executable and the shadow where one stands in front of it.
 
@@ -461,7 +463,7 @@ Their step deadlines leave time before the existing job deadlines to upload JUni
 `mise run test:cost` uses the same three-thread, three-build-job shape and records machine load and observed toolchain concurrency beside the suite measurements.
 Code behind `#[cfg(windows)]` does not: this machine's compiler never reads it, so a workspace that builds here can fail to build there on a lint nobody could have seen.
 `mise run lint:windows` asks for the reading without the machine: it is clippy for the Windows target with every warning an error, since a type check passes a lint that CI's Windows job fails on.
-Where the machine has no MSVC C headers — a Mac with the stock clang does not — the cross clippy stops in a C dependency's `#include` before Rust reads one cfg, and the task says so and refuses rather than presenting that as a reading; the supported native route is `cargo xtask remote-check --machines <file>`, which runs the whole suite on a real Windows machine.
+Where the machine has no MSVC C headers — a Mac with the stock clang does not — the cross clippy stops in a C dependency's `#include` before Rust reads one cfg, and the task says so and refuses rather than presenting that as a reading; the supported native route is `cargo xtask remote-check --machines <file>`, which preserves the configured checks on a real Windows machine.
 It needs the target's standard library once:
 
 ```console

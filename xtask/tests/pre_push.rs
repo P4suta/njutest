@@ -30,7 +30,7 @@ const LOOKS_AT_ITS_OWNER: &str = "printf '%s\\n' \"$*\" >> \"$CALLS\"; case \"$*
 
 struct Repository {
     directory: tempfile::TempDir,
-    _commands: tempfile::TempDir,
+    commands: tempfile::TempDir,
     binary: PathBuf,
     scratch: tempfile::TempDir,
     head: String,
@@ -81,7 +81,7 @@ impl Repository {
         let mise = bin.join("mise");
         std::fs::write(
             &mise,
-            format!("#!/usr/bin/env bash\nset -euo pipefail\n{check}\n"),
+            format!("#!/usr/bin/env bash\nset -euo pipefail\nif [ \"$*\" = 'which cargo' ]; then printf '%s\\n' \"$(dirname \"$0\")/cargo\"; exit 0; fi\n{check}\n"),
         )
         .expect("a scripted check");
         executable(&mise);
@@ -101,7 +101,7 @@ impl Repository {
 
         Self {
             directory,
-            _commands: commands,
+            commands,
             binary: private_binary,
             scratch,
             head,
@@ -225,6 +225,7 @@ impl Repository {
             .arg("pre-push")
             .current_dir(directory)
             .env("PATH", &self.path)
+            .env("HOME", self.scratch.path().join("home"))
             .envs(njutest_devkit::paths::temporary_directory(
                 self.scratch.path(),
             ))
@@ -666,11 +667,11 @@ fn replacing_the_source_binary_does_not_erase_a_remembered_pass() {
     let again = repository.push(&repository.head);
     assert!(again.status.success(), "{}", stderr(&again));
     assert_eq!(repository.calls(), 1, "the warm pass was not remembered");
-    assert_eq!(repository.cold_targets().len(), 2);
+    assert_eq!(repository.cold_targets().len(), 1);
 }
 
 #[test]
-fn a_remembered_warm_pass_still_requires_a_new_cold_check() {
+fn a_complete_unchanged_pair_reuses_both_actual_checks() {
     let repository = Repository::new(ACCEPTS_THE_CHECK);
     let first = repository.push(&repository.head);
     assert!(first.status.success(), "{}", stderr(&first));
@@ -682,13 +683,8 @@ fn a_remembered_warm_pass_still_requires_a_new_cold_check() {
     assert_eq!(repository.calls(), 1, "the warm check was not remembered");
     assert_eq!(
         targets.len(),
-        2,
-        "the remembered pass skipped its cold check"
-    );
-    assert_ne!(
-        targets.first().expect("the first cold target"),
-        targets.get(1).expect("the second cold target"),
-        "the cold target was reused"
+        1,
+        "the complete unchanged input repeated its cold proof"
     );
     for target in targets {
         assert!(
@@ -696,6 +692,81 @@ fn a_remembered_warm_pass_still_requires_a_new_cold_check() {
             "the cold target was not removed"
         );
     }
+}
+
+#[test]
+fn replacing_an_actual_gate_tool_invalidates_both_checks() {
+    let repository = Repository::new(ACCEPTS_THE_CHECK);
+    let first = repository.push(&repository.head);
+    assert!(first.status.success(), "{}", stderr(&first));
+    let mise = repository.commands.path().join("mise");
+    let mut changed = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&mise)
+        .expect("the actual selected gate tool");
+    writeln!(changed, "printf 'changed tool bytes\\n' >&2").expect("changed executable bytes");
+    let again = repository.push(&repository.head);
+    assert!(again.status.success(), "{}", stderr(&again));
+    assert_eq!(
+        repository.calls(),
+        2,
+        "changed tool bytes reused a warm proof"
+    );
+    assert_eq!(repository.cold_targets().len(), 2);
+}
+
+#[test]
+fn changing_a_declared_security_database_invalidates_both_checks() {
+    let repository = Repository::new(ACCEPTS_THE_CHECK);
+    let target = repository.scratch.path().join("security-target");
+    let database = target.join("advisory-db");
+    std::fs::create_dir_all(&database).expect("the actual declared security input");
+    std::fs::write(database.join("advisory.toml"), "before").expect("the original advisory");
+    let first = repository.push_with(
+        repository.directory.path(),
+        &update(&repository.head, &"0".repeat(40), "\n"),
+        &[("CARGO_TARGET_DIR", target.as_os_str())],
+    );
+    assert!(first.status.success(), "{}", stderr(&first));
+    std::fs::write(database.join("advisory.toml"), "changed").expect("the changed advisory");
+    let again = repository.push_with(
+        repository.directory.path(),
+        &update(&repository.head, &"0".repeat(40), "\n"),
+        &[("CARGO_TARGET_DIR", target.as_os_str())],
+    );
+    assert!(again.status.success(), "{}", stderr(&again));
+    assert_eq!(
+        repository.calls(),
+        2,
+        "a changed database reused a warm proof"
+    );
+    assert_eq!(repository.cold_targets().len(), 2);
+}
+
+#[test]
+fn a_cleared_compiler_wrapper_does_not_start_a_shared_daemon() {
+    let repository = Repository::new(ACCEPTS_THE_CHECK);
+    let daemon = repository.commands.path().join("sccache");
+    std::fs::write(
+        &daemon,
+        "#!/usr/bin/env bash\nprintf '%s\\n' \"$TMPDIR\" > \"$NJUTEST_WRAPPER_DAEMON_CALLS\"\n",
+    )
+    .expect("an actual daemon-launch observation control");
+    executable(&daemon);
+    let calls = repository.scratch.path().join("daemon-call");
+    let output = repository.push_with(
+        repository.directory.path(),
+        &update(&repository.head, &"0".repeat(40), "\n"),
+        &[
+            ("RUSTC_WRAPPER", "".as_ref()),
+            ("NJUTEST_WRAPPER_DAEMON_CALLS", calls.as_os_str()),
+        ],
+    );
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(
+        !present(&calls),
+        "an explicitly cleared wrapper started a shared daemon inside an expiring temporary context"
+    );
 }
 
 #[test]
@@ -737,7 +808,11 @@ fn a_remembered_warm_pass_cannot_hide_a_cold_failure() {
         "a failed cold check allowed the push"
     );
     assert!(stderr(&failed).contains("the check failed"));
-    assert_eq!(repository.calls(), 1, "the warm check was not remembered");
+    assert_eq!(
+        repository.calls(),
+        2,
+        "changed execution inputs reused the warm proof"
+    );
     let targets = repository.cold_targets();
     assert_eq!(targets.len(), 2);
     for target in targets {

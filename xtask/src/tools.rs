@@ -237,6 +237,41 @@ fn pins(root: &Path) -> Result<Vec<Plugin>, ToolsError> {
         .collect()
 }
 
+pub(crate) fn proof_paths(
+    root: &Path,
+    environment: &Environment,
+) -> Result<Vec<PathBuf>, ToolsError> {
+    let mut paths = vec![resolved(root, "mise".as_ref(), "cargo", environment)?];
+    let text =
+        std::fs::read_to_string(root.join("mise.toml")).map_err(|source| ToolsError::Read {
+            path: root.join("mise.toml").display().to_string(),
+            source,
+        })?;
+    let table: toml::Value = toml::from_str(&text).map_err(|source| ToolsError::Parse {
+        path: root.join("mise.toml").display().to_string(),
+        source,
+    })?;
+    let tools = table
+        .get("tools")
+        .and_then(toml::Value::as_table)
+        .ok_or_else(|| ToolsError::Unresolved {
+            tool: "mise tools".to_owned(),
+            said: "mise.toml has no complete tools table".to_owned(),
+        })?;
+    for tool in tools.keys() {
+        let executable = match tool.as_str() {
+            "rust" => "rustc",
+            named => named.strip_prefix("cargo:").unwrap_or(named),
+        };
+        paths.push(resolved(root, "mise".as_ref(), executable, environment)?);
+    }
+    Ok(paths)
+}
+
+pub(crate) fn cargo(root: &Path, environment: &Environment) -> Result<PathBuf, ToolsError> {
+    resolved(root, "mise".as_ref(), "cargo", environment)
+}
+
 /// The executable mise selects for `tool`, refused where mise cannot name one.
 fn resolved(
     root: &Path,
