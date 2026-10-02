@@ -825,7 +825,6 @@ fn an_upstream_edition_2015_crate_runs_with_the_generated_runtime_in_scope() {
 
 /// Requires the complete actual product report and trace rather than accepting its exit alone.
 fn fnv_report(fixture: &Fixture, trace: &Path) -> rust_mutants::report::run::RunDocument {
-    use rust_mutants::sealed::record::{Doubt, Evidence};
     let directory = njutest_devkit::fixture::newest_run(
         &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
     );
@@ -849,6 +848,25 @@ fn fnv_report(fixture: &Fixture, trace: &Path) -> rust_mutants::report::run::Run
     assert!(report.run.shard.is_none());
     assert!(!report.run.interrupted);
     assert!(report.rejections.is_empty());
+    fnv_rows(&report);
+    let records = std::fs::read(trace.join(rust_mutants::trace::FILE_NAME))
+        .expect("the full original product trace");
+    let events = rust_mutants::trace::read_events(records.as_slice())
+        .expect("every actual trace event is valid");
+    assert!(rust_mutants::trace::check(&events).is_empty());
+    println!(
+        "FNV run={}, catalog={}, workspace={}, trace={}",
+        report.run.id,
+        report.workspace.catalog_digest,
+        report.workspace.workspace_digest,
+        njutest_devkit::reproducible::digest(&trace.join(rust_mutants::trace::FILE_NAME))
+    );
+    report
+}
+
+/// Holds every original FNV row to its complete source identity, route and exact sealed doubt.
+fn fnv_rows(report: &rust_mutants::report::run::RunDocument) {
+    use rust_mutants::sealed::record::{Doubt, Evidence};
     assert_eq!(report.mutants.len(), 11);
     for row in &report.mutants {
         assert_eq!(row.path, "lib.rs");
@@ -872,19 +890,6 @@ fn fnv_report(fixture: &Fixture, trace: &Path) -> rust_mutants::report::run::Run
             Evidence::Sealed { .. } => {}
         }
     }
-    let records = std::fs::read(trace.join(rust_mutants::trace::FILE_NAME))
-        .expect("the full original product trace");
-    let events = rust_mutants::trace::read_events(records.as_slice())
-        .expect("every actual trace event is valid");
-    assert!(rust_mutants::trace::check(&events).is_empty());
-    println!(
-        "FNV run={}, catalog={}, workspace={}, trace={}",
-        report.run.id,
-        report.workspace.catalog_digest,
-        report.workspace.workspace_digest,
-        njutest_devkit::reproducible::digest(&trace.join(rust_mutants::trace::FILE_NAME))
-    );
-    report
 }
 
 /// Builds the unchanged original and holds all of its controls and outcomes to both actual tiers.
