@@ -35,14 +35,27 @@ const STARTED: u64 = 1_750_000_000_000_000_000;
 
 /// A runner for one test.
 fn runner() -> MeasuredRunner {
+    let directory = njutest_devkit::temporary::CacheDirectory::make("sealed-real-guests-")
+        .expect("the parent-owned real guest cache");
     MeasuredRunner(
         SealedRunner::cached(
             &rust_mutants_sealed::ModuleOwner::default(),
             WATCHDOG,
-            &njutest_devkit::paths::workspace_root().join("target/wasmtime-modules-v1"),
+            &rust_mutants_sealed::CompilationCache::retained(directory.path().to_path_buf())
+                .expect("the durable cache"),
         )
         .expect("the sealed runner starts"),
     )
+}
+
+/// A durable test cache outside every temporary owner, collected only after its producer process ends.
+///
+/// # Panics
+/// The test directory cannot be named or its durable cache cannot be retained.
+#[must_use]
+fn cache_for(named: &std::path::Path) -> rust_mutants_sealed::CompilationCache {
+    rust_mutants_sealed::CompilationCache::retained(named.to_path_buf())
+        .expect("the parent-owned compilation cache")
 }
 
 /// One runner whose direct guest work is included in the suite's cost ledger.
@@ -58,13 +71,14 @@ impl MeasuredRunner {
 #[test]
 fn actual_rust_guest_requests_share_one_preparation_across_compatible_runners() {
     let modules = rust_mutants_sealed::ModuleOwner::default();
-    let directory = tempfile::tempdir().expect("an owned cold module cache");
+    let directory = njutest_devkit::temporary::CacheDirectory::make("sealed-guest-")
+        .expect("an owned cold module cache");
     let first = MeasuredRunner(
-        SealedRunner::cached(&modules, WATCHDOG, directory.path())
+        SealedRunner::cached(&modules, WATCHDOG, &cache_for(directory.path()))
             .expect("the first compatible runner"),
     );
     let second = MeasuredRunner(
-        SealedRunner::cached(&modules, WATCHDOG, directory.path())
+        SealedRunner::cached(&modules, WATCHDOG, &cache_for(directory.path()))
             .expect("the second compatible runner"),
     );
     let bytes = program_bytes();
@@ -112,7 +126,8 @@ fn actual_rust_guest_requests_share_one_preparation_across_compatible_runners() 
 #[test]
 fn a_cold_guest_build_publishes_its_real_artifacts_completely() {
     let cost = tempfile::tempdir().expect("a cost directory");
-    let cache = tempfile::tempdir().expect("a fresh guest cache");
+    let cache = njutest_devkit::temporary::CacheDirectory::make("sealed-guest-")
+        .expect("a fresh guest cache");
     let status = std::process::Command::new(std::env::current_exe().expect("this binary"))
         .args(["--exact", "guests_child_cold_libtest", "--nocapture"])
         .env("NJUTEST_TEST_COST_CHILD", "1")

@@ -171,11 +171,12 @@ fn historical_spent_fields_keep_their_identity_and_absent_work() {
 
 #[test]
 fn actual_reused_preparation_diagnostics_read_back_without_losing_work() {
-    let directory = tempfile::tempdir().expect("an owned empty disk-cache domain");
+    let directory = njutest_devkit::temporary::CacheDirectory::make("sealed-transcript-")
+        .expect("an owned empty disk-cache domain");
     let runner = rust_mutants_sealed::SealedRunner::cached(
         &rust_mutants_sealed::ModuleOwner::default(),
         std::time::Duration::from_secs(60),
-        directory.path(),
+        &crate::common::cache_for(directory.path()),
     )
     .expect("the actual runner");
     let bytes = command(&[], "", "(call $emit (i32.const 3) (i32.const 0))");
@@ -203,7 +204,8 @@ fn actual_reused_preparation_diagnostics_read_back_without_losing_work() {
 #[test]
 fn the_compiled_module_cache_distinguishes_bytes_and_compiler_configuration() {
     use rust_mutants_sealed::{CompilerTier, SealedRunner};
-    let directory = tempfile::tempdir().expect("a shared compiled cache");
+    let directory = njutest_devkit::temporary::CacheDirectory::make("sealed-transcript-")
+        .expect("a shared compiled cache");
     let bytes = command(&[], "", "(call $emit (i32.const 3) (i32.const 0))");
     let changed = command(&[], "", "(call $emit (i32.const 4) (i32.const 0))");
     let modules = rust_mutants_sealed::ModuleOwner::default();
@@ -218,7 +220,7 @@ fn the_compiled_module_cache_distinguishes_bytes_and_compiler_configuration() {
             &modules,
             std::time::Duration::from_secs(120),
             tier,
-            Some(directory.path()),
+            Some(&crate::common::cache_for(directory.path())),
         )
         .expect("a configured cache");
         runner.prepare(module).expect("a valid module");

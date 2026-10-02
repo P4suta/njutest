@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
+use njutest_devkit::temporary::CacheDirectory;
 use rust_mutants_sealed::{
     Compilation, CompilerTier, Interrupt, ModuleOwner, SealedError, SealedRunner, SealedStop, Spent,
 };
@@ -55,14 +56,18 @@ fn measured(case: &str, runner: &SealedRunner, bytes: &[u8]) {
 fn measure_repeat(
     bytes: &[u8],
 ) -> (
-    tempfile::TempDir,
+    CacheDirectory,
     SealedRunner,
     rust_mutants_sealed::Transcript,
 ) {
     let modules = ModuleOwner::default();
-    let directory = tempfile::tempdir().expect("an owned cold cache domain");
-    let runner = SealedRunner::cached(&modules, Duration::from_secs(60), directory.path())
-        .expect("the measured runner");
+    let directory = CacheDirectory::make("sealed-owner-").expect("an owned cold cache domain");
+    let runner = SealedRunner::cached(
+        &modules,
+        Duration::from_secs(60),
+        &crate::common::cache_for(directory.path()),
+    )
+    .expect("the measured runner");
     let first = runner.prepare(bytes).expect("a cold actual module");
     let control = first
         .invoke(&invocation(), &uninterrupted())
@@ -99,9 +104,13 @@ fn physical_module_preparation_cases_execute_actual_guests() {
     let modules = ModuleOwner::default();
     let bytes = printing("measured");
     let (directory_owner, retained_runner, control) = measure_repeat(&bytes);
-    let directory = tempfile::tempdir().expect("an owned concurrent cold cache domain");
-    let runner = SealedRunner::cached(&modules, Duration::from_secs(60), directory.path())
-        .expect("the concurrent runner");
+    let directory = CacheDirectory::make("sm-").expect("cache");
+    let runner = SealedRunner::cached(
+        &modules,
+        Duration::from_secs(60),
+        &crate::common::cache_for(directory.path()),
+    )
+    .expect("the concurrent runner");
     let start = std::sync::Barrier::new(4);
     let answers = std::thread::scope(|scope| {
         let workers: Vec<_> = (0..4)
@@ -131,15 +140,19 @@ fn physical_module_preparation_cases_execute_actual_guests() {
     }
     measured("physical-same-runner-concurrent", &runner, &bytes);
 
-    let directory = tempfile::tempdir().expect("an owned separate-runner cold cache domain");
+    let directory =
+        CacheDirectory::make("sealed-owner-").expect("an owned separate-runner cold cache domain");
     let start = std::sync::Barrier::new(3);
     let answers = std::thread::scope(|scope| {
         let workers: Vec<_> = (0..3)
             .map(|_request| {
                 njutest_devkit::thread::ScopedThread::launch(scope, || {
-                    let runner =
-                        SealedRunner::cached(&modules, Duration::from_secs(60), directory.path())
-                            .expect("a separate compatible runner");
+                    let runner = SealedRunner::cached(
+                        &modules,
+                        Duration::from_secs(60),
+                        &crate::common::cache_for(directory.path()),
+                    )
+                    .expect("a separate compatible runner");
                     start.wait();
                     let answer = runner
                         .prepare(&bytes)
@@ -174,9 +187,13 @@ fn physical_module_preparation_cases_execute_actual_guests() {
 #[test]
 fn a_repeated_request_of_one_module_is_answered_by_what_the_process_holds() {
     let modules = ModuleOwner::default();
-    let directory = tempfile::tempdir().expect("a cache directory");
-    let runner = SealedRunner::cached(&modules, Duration::from_secs(60), directory.path())
-        .expect("the runner starts");
+    let directory = CacheDirectory::make("sealed-module-").expect("a parent-owned cache directory");
+    let runner = SealedRunner::cached(
+        &modules,
+        Duration::from_secs(60),
+        &crate::common::cache_for(directory.path()),
+    )
+    .expect("the runner starts");
     let bytes = printing("once");
     let first = runner.prepare(&bytes).expect("the command is valid");
     measured("cold", &runner, &bytes);
@@ -224,11 +241,19 @@ fn a_repeated_request_of_one_module_is_answered_by_what_the_process_holds() {
 fn a_separate_compatible_runner_is_answered_by_what_the_process_holds() {
     let modules = ModuleOwner::default();
     let cloned = modules.clone();
-    let directory = tempfile::tempdir().expect("a cache directory");
-    let first = SealedRunner::cached(&modules, Duration::from_secs(60), directory.path())
-        .expect("a runner starts");
-    let second = SealedRunner::cached(&cloned, Duration::from_millis(500), directory.path())
-        .expect("another runner starts");
+    let directory = CacheDirectory::make("sealed-module-").expect("a parent-owned cache directory");
+    let first = SealedRunner::cached(
+        &modules,
+        Duration::from_secs(60),
+        &crate::common::cache_for(directory.path()),
+    )
+    .expect("a runner starts");
+    let second = SealedRunner::cached(
+        &cloned,
+        Duration::from_millis(500),
+        &crate::common::cache_for(directory.path()),
+    )
+    .expect("another runner starts");
     let bytes = printing("both");
     first.prepare(&bytes).expect("the command is valid");
     let (_, compilation) = spent_of(&first);
@@ -265,16 +290,24 @@ fn a_separate_compatible_runner_is_answered_by_what_the_process_holds() {
 #[test]
 fn a_module_survives_the_runner_that_prepared_it() {
     let modules = ModuleOwner::default();
-    let directory = tempfile::tempdir().expect("a cache directory");
+    let directory = CacheDirectory::make("sealed-module-").expect("a parent-owned cache directory");
     {
-        let brief = SealedRunner::cached(&modules, Duration::from_secs(60), directory.path())
-            .expect("a runner starts");
+        let brief = SealedRunner::cached(
+            &modules,
+            Duration::from_secs(60),
+            &crate::common::cache_for(directory.path()),
+        )
+        .expect("a runner starts");
         brief
             .prepare(&printing("kept"))
             .expect("the command is valid");
     }
-    let later = SealedRunner::cached(&modules, Duration::from_secs(60), directory.path())
-        .expect("a runner starts");
+    let later = SealedRunner::cached(
+        &modules,
+        Duration::from_secs(60),
+        &crate::common::cache_for(directory.path()),
+    )
+    .expect("a runner starts");
     let module = later
         .prepare(&printing("kept"))
         .expect("the command is valid");
@@ -299,10 +332,14 @@ fn a_module_survives_the_runner_that_prepared_it() {
 #[test]
 fn concurrent_requests_of_one_module_prepare_once() {
     let modules = ModuleOwner::default();
-    let directory = tempfile::tempdir().expect("a cache directory");
+    let directory = CacheDirectory::make("sealed-module-").expect("a parent-owned cache directory");
     let runner = Arc::new(
-        SealedRunner::cached(&modules, Duration::from_secs(60), directory.path())
-            .expect("the runner starts"),
+        SealedRunner::cached(
+            &modules,
+            Duration::from_secs(60),
+            &crate::common::cache_for(directory.path()),
+        )
+        .expect("the runner starts"),
     );
     let bytes = printing("many");
     let answers = std::thread::scope(|scope| {
@@ -424,9 +461,13 @@ fn a_module_already_held_answers_every_invocation_afresh() {
 #[test]
 fn changed_bytes_prepare_again() {
     let modules = ModuleOwner::default();
-    let directory = tempfile::tempdir().expect("a cache directory");
-    let runner = SealedRunner::cached(&modules, Duration::from_secs(60), directory.path())
-        .expect("the runner starts");
+    let directory = CacheDirectory::make("sealed-module-").expect("a parent-owned cache directory");
+    let runner = SealedRunner::cached(
+        &modules,
+        Duration::from_secs(60),
+        &crate::common::cache_for(directory.path()),
+    )
+    .expect("the runner starts");
     let one = runner.prepare(&printing("ones")).expect("a valid command");
     let other = runner
         .prepare(&printing("twos"))
@@ -454,26 +495,34 @@ fn changed_bytes_prepare_again() {
 }
 
 #[test]
-fn a_changed_tier_or_cache_directory_prepares_its_own() {
+fn a_changed_tier_prepares_its_own_but_an_operational_directory_does_not() {
     let modules = ModuleOwner::default();
-    let held = tempfile::tempdir().expect("one cache directory");
-    let elsewhere = tempfile::tempdir().expect("another cache directory");
-    let speed = SealedRunner::cached(&modules, Duration::from_secs(60), held.path())
-        .expect("a runner starts");
+    let held = CacheDirectory::make("sealed-owner-").expect("one cache directory");
+    let elsewhere = CacheDirectory::make("sealed-owner-").expect("another cache directory");
+    let speed = SealedRunner::cached(
+        &modules,
+        Duration::from_secs(60),
+        &crate::common::cache_for(held.path()),
+    )
+    .expect("a runner starts");
     let plain = SealedRunner::with_compiler(
         &modules,
         Duration::from_secs(60),
         CompilerTier::Unoptimized,
-        Some(held.path()),
+        Some(&crate::common::cache_for(held.path())),
     )
     .expect("another runner starts");
-    let apart = SealedRunner::cached(&modules, Duration::from_secs(60), elsewhere.path())
-        .expect("a third runner starts");
+    let apart = SealedRunner::cached(
+        &modules,
+        Duration::from_secs(60),
+        &crate::common::cache_for(elsewhere.path()),
+    )
+    .expect("a third runner starts");
     let bytes = printing("tier");
     speed.prepare(&bytes).expect("a valid command");
     plain.prepare(&bytes).expect("a valid command");
     apart.prepare(&bytes).expect("a valid command");
-    for runner in [&speed, &plain, &apart] {
+    for runner in [&speed, &plain] {
         let (spent, compilation) = spent_of(runner);
         assert_eq!(
             (
@@ -483,9 +532,16 @@ fn a_changed_tier_or_cache_directory_prepares_its_own() {
                 compilation.process
             ),
             (1, 0, 1, None),
-            "a different tier or cache directory is a different engine configuration, holding its own"
+            "a different compiler tier requires a separate actual preparation"
         );
     }
+    let (spent, compilation) = spent_of(&apart);
+    assert_eq!(
+        (spent.compiles, compilation.attempts, compilation.process),
+        (1, None, Some(1)),
+        "changing an operational cache directory cannot cause another physical preparation"
+    );
+    assert_eq!(speed.configuration(), apart.configuration());
     assert_ne!(
         speed.configuration(),
         plain.configuration(),
@@ -496,9 +552,13 @@ fn a_changed_tier_or_cache_directory_prepares_its_own() {
 #[test]
 fn a_failed_preparation_is_counted_and_holds_nothing() {
     let modules = ModuleOwner::default();
-    let directory = tempfile::tempdir().expect("a cache directory");
-    let runner = SealedRunner::cached(&modules, Duration::from_secs(60), directory.path())
-        .expect("the runner starts");
+    let directory = CacheDirectory::make("sealed-module-").expect("a parent-owned cache directory");
+    let runner = SealedRunner::cached(
+        &modules,
+        Duration::from_secs(60),
+        &crate::common::cache_for(directory.path()),
+    )
+    .expect("the runner starts");
     for _attempt in 0..2 {
         assert!(
             runner.prepare(b"not webassembly").is_err(),
@@ -574,9 +634,13 @@ fn a_failed_preparation_is_counted_and_holds_nothing() {
 #[test]
 fn failed_module_new_attempts_keep_their_actual_work() {
     let modules = ModuleOwner::default();
-    let directory = tempfile::tempdir().expect("a cache directory");
-    let runner = SealedRunner::cached(&modules, Duration::from_secs(60), directory.path())
-        .expect("the runner starts");
+    let directory = CacheDirectory::make("sealed-module-").expect("a parent-owned cache directory");
+    let runner = SealedRunner::cached(
+        &modules,
+        Duration::from_secs(60),
+        &crate::common::cache_for(directory.path()),
+    )
+    .expect("the runner starts");
     let invalid = wat::parse_str(
         "(module (memory (export \"memory\") 1) (func (export \"_start\") (i32.add)))",
     )
@@ -620,16 +684,24 @@ fn failed_module_new_attempts_keep_their_actual_work() {
 #[test]
 fn dropping_one_runner_stops_no_ticker_another_runner_uses() {
     let modules = ModuleOwner::default();
-    let directory = tempfile::tempdir().expect("a cache directory");
+    let directory = CacheDirectory::make("sealed-module-").expect("a parent-owned cache directory");
     {
-        let brief = SealedRunner::cached(&modules, Duration::from_secs(60), directory.path())
-            .expect("a runner starts");
+        let brief = SealedRunner::cached(
+            &modules,
+            Duration::from_secs(60),
+            &crate::common::cache_for(directory.path()),
+        )
+        .expect("a runner starts");
         brief
             .prepare(&printing("tick"))
             .expect("the command is valid");
     }
-    let runner = SealedRunner::cached(&modules, Duration::from_millis(100), directory.path())
-        .expect("another runner starts");
+    let runner = SealedRunner::cached(
+        &modules,
+        Duration::from_millis(100),
+        &crate::common::cache_for(directory.path()),
+    )
+    .expect("another runner starts");
     let spinning = runner
         .prepare(&spinning())
         .expect("the spinning command is valid");
@@ -646,11 +718,19 @@ fn dropping_one_runner_stops_no_ticker_another_runner_uses() {
 #[test]
 fn each_runner_keeps_its_own_watchdog_on_a_shared_engine() {
     let modules = ModuleOwner::default();
-    let directory = tempfile::tempdir().expect("a cache directory");
-    let strict = SealedRunner::cached(&modules, Duration::from_millis(100), directory.path())
-        .expect("a strict runner starts");
-    let patient = SealedRunner::cached(&modules, Duration::from_secs(60), directory.path())
-        .expect("a patient runner starts");
+    let directory = CacheDirectory::make("sealed-module-").expect("a parent-owned cache directory");
+    let strict = SealedRunner::cached(
+        &modules,
+        Duration::from_millis(100),
+        &crate::common::cache_for(directory.path()),
+    )
+    .expect("a strict runner starts");
+    let patient = SealedRunner::cached(
+        &modules,
+        Duration::from_secs(60),
+        &crate::common::cache_for(directory.path()),
+    )
+    .expect("a patient runner starts");
     let spinning = strict
         .prepare(&spinning())
         .expect("the spinning command is valid");
@@ -672,9 +752,13 @@ fn each_runner_keeps_its_own_watchdog_on_a_shared_engine() {
 #[test]
 fn an_interrupt_is_one_invocation_s_and_no_other_s() {
     let modules = ModuleOwner::default();
-    let directory = tempfile::tempdir().expect("a cache directory");
-    let runner = SealedRunner::cached(&modules, Duration::from_secs(60), directory.path())
-        .expect("the runner starts");
+    let directory = CacheDirectory::make("sealed-module-").expect("a parent-owned cache directory");
+    let runner = SealedRunner::cached(
+        &modules,
+        Duration::from_secs(60),
+        &crate::common::cache_for(directory.path()),
+    )
+    .expect("the runner starts");
     let module = runner
         .prepare(&printing("quite"))
         .expect("the command is valid");

@@ -787,7 +787,9 @@ fn an_upstream_edition_2015_crate_runs_with_the_generated_runtime_in_scope() {
     let mut command = njutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
     command.env("NO_COLOR", "1");
     command.envs(njutest_devkit::paths::temporary_directory(fixture.temp()));
-    command.env("XDG_CACHE_HOME", fixture.cache());
+    let cache = njutest_devkit::temporary::CacheDirectory::make("edition-2015-product-")
+        .expect("the suite parent retains the product cache until its process ends");
+    command.env("XDG_CACHE_HOME", cache.path());
     command.arg("run");
     command.args(["--root", njutest_devkit::paths::utf8(fixture.root())]);
     command.args(["--tier", "all", "--offline"]);

@@ -66,6 +66,8 @@ pub enum SealedCode {
     ModuleUnstartable,
     /// A module whose functions cannot be answered through the ones it exports.
     ModuleUnredirected,
+    /// The owned compilation-cache preparation boundary could not be established.
+    PreparationUnavailable,
     /// A wasmtime that cannot be configured deterministically.
     EngineUnavailable,
     /// A module wasmtime refused to compile.
@@ -161,6 +163,11 @@ impl SealedCode {
                 code: "RS1006",
                 summary: "the module does not export the `chdir` and `malloc` of type (i32) -> i32 the host starts a guest in a directory through",
                 remedy: "link the guest with `-C link-arg=--undefined=chdir -C link-arg=--export=chdir -C link-arg=--export=malloc`, as the engine's sealed build does",
+            },
+            Self::PreparationUnavailable => ErrorCode {
+                code: "RS1008",
+                summary: "the owned compilation-cache directory or preparation lease could not be used",
+                remedy: "the message names the refused path; check its access and retain it until its producer process ends",
             },
             Self::EngineUnavailable => ErrorCode {
                 code: "RS2001",
@@ -348,6 +355,15 @@ pub enum SealedError {
         /// The export it does not have.
         export: &'static str,
     },
+    /// The owned compilation-cache directory or preparation lease could not be used.
+    #[error("the owned module preparation at {path:?} failed: {source}")]
+    Preparation {
+        /// The directory or keyed lease whose ownership could not be established.
+        path: std::path::PathBuf,
+        /// The operating-system failure.
+        #[source]
+        source: std::io::Error,
+    },
     /// Wasmtime refused the deterministic configuration.
     #[error("wasmtime could not be configured deterministically: {source}")]
     Engine {
@@ -442,6 +458,7 @@ impl SealedError {
             Self::RedirectUnexported { .. }
             | Self::RedirectMismatched { .. }
             | Self::RedirectUnread => SealedCode::ModuleUnredirected,
+            Self::Preparation { .. } => SealedCode::PreparationUnavailable,
             Self::Engine { .. } => SealedCode::EngineUnavailable,
             Self::Compile { .. } => SealedCode::ModuleUncompiled,
             Self::Link { .. } => SealedCode::HostUnlinked,

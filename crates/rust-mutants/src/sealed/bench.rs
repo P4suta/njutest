@@ -603,7 +603,7 @@ impl<'runner> Bench<'runner> {
     ) -> Self {
         Self {
             runner,
-            interrupt: Interrupt::of(cancel.flags()),
+            interrupt: cancel.interrupt(),
             cancel,
             compiled: None,
             stations: BTreeMap::new(),

@@ -18,22 +18,24 @@ Every runner constructor requires a `&ModuleOwner`; `SealedRunner::with_compiler
 Both CLI composition environments retain one cloneable owner and pass it through workspace opening, sessions, platform probes and runner construction.
 An omitted runner ownership argument is a compile error.
 No static registry or replaceable test state supplies this ownership.
-Each constructor derives its key from an actual configured engine's `precompile_compatibility_hash`, encoded with the pinned Wasmtime 48.0.3 identity and the existing host configuration digest.
-The configured disk-cache directory is part of the operational owner key.
-A matching key retains the original engine and linker; candidate engine construction is still performed and is not a removed-work claim.
-The context holds one compatible engine per that identity: its `Engine`, linked host, Wasmtime cache and prepared modules, keyed by a digest of each module's exact bytes.
+The owner key is the semantic compiler tier under the pinned host and Wasmtime version.
+Every other engine setting is a constant of the crate.
+Operational cache paths select no engine setting and cannot split the owner's module memory.
+The first compatible constructor selects its durable disk cache; later constructors reuse that engine before building any candidate.
+The retained engine's configuration digest binds Wasmtime's actual compilation compatibility hash and the host's identity.
 
+The context holds one compatible engine per that identity: its `Engine`, linked host, Wasmtime cache and prepared modules, keyed by a digest of each module's exact bytes.
 Module memory survives a runner while its composition retains the owner.
 A later compatible runner passed the same owner finds the prepared module.
 There is no arbitrary cap or eviction.
 The last context clone and runner releasing an engine also release its retained module memory.
-A different compiler tier or cache directory selects a different owner — Wasmtime keys compiled code by the complete module bytes, compiler and target settings, tunables, features and its own version — and holds its own: a module prepared for one configuration is never handed to another.
-A different cache directory is a different operational cache domain as well, and the same bytes asked of two such owners are prepared twice by design.
 
-The epoch ticker is the runners', not the memory's.
-The runners alive on one engine share one ticker, and it stops and joins when the last of them drops — an owned stop boundary, not a thread a static registry keeps alive — so dropping one runner stops nothing another runner uses, and a later runner starts the ticker again on the same retained engine.
-A successor waits for the prior ticker's owned stop and join to settle before starting a new one.
+The epoch alarm is the runners', not the memory's.
+The runners alive on one engine share one alarm, which advances the epoch when a registered deadline falls or a watching `Raised` flag is raised, and it stops and joins when the last of them drops — an owned stop boundary, not a thread a static registry keeps alive — so dropping one runner stops nothing another runner uses, and a later runner starts the alarm again on the same retained engine.
+A successor waits for the prior alarm's owned stop and join to settle before starting a new one.
+An engine whose invocations all ended, or that never ran one, advances nothing: there is no periodic work.
 Every invocation, held module or not, runs in a fresh `Store` with its own host authority, fuel, wall-clock watchdog, cancellation and transcript; nothing of one invocation reaches another.
+An interrupt flag a signal handler may store to has no raise that can wake the alarm, so while such a raw flag is armed the alarm keeps one typed real-OS backstop wake, counted beside its advances; the product's own cancellation goes through `Raised`, whose raise wakes the alarm itself.
 
 ## The one preparation
 
@@ -46,6 +48,18 @@ A poisoned owner lock is a sticky typed host failure; no path recovers its prote
 
 One actual preparation runs at a time per engine.
 The serialization is the meter's, not a throughput claim: Wasmtime's `Cache::cache_hits` is one counter for the whole cache, so the before-and-after observation that says whether a preparation hit the compiled code on the disk is exact only when one actual preparation at a time observes it — otherwise one request's cold compilation can be counted a disk hit while another digest's load happens inside its interval, and true cold work could grow while its count did not.
+Across processes and independently created contexts, the durable cache's keyed preparation lease binds the module bytes and semantic engine configuration.
+The lease file sits beside the cache directory because Wasmtime's worker removes unrecognized cache entries.
+The lease lasts through safe `Module::new` loading and synchronous publication of compiled code.
+A waiter observes the operating system's lock release, then loads the published code through Wasmtime.
+Wasmtime's separate worker can still update statistics after that release or after the engine drops.
+`CompilationCache` therefore requires a durable directory whose disposal follows actual producer process completion.
+A temporary-cache control runs its producer in an owned subprocess, and its parent observes process completion and pipe EOF before disposing its directory.
+In-process cache controls use `njutest_devkit::temporary::CacheDirectory` under the verified parent root supplied by `cargo xtask tidy`.
+They remain owned by that parent until the entire producing command has ended.
+The product cache selector uses that parent root, an explicitly supplied fixture-build cache or the supplied absolute user cache.
+It never places Wasmtime under a session snapshot or temporary build directory.
+A missing retained root returns RS1008 and retains the refusal.
 The engine that compiles a module and the host that runs it stay the safe public Wasmtime interfaces; nothing deserializes native code, and the crate forbids `unsafe`.
 
 ## The meter
@@ -71,11 +85,27 @@ These measurements belong to diagnostics, never to transcript digests or evidenc
 
 ## What this does not close
 
-- Independently created owner contexts prepare the same bytes separately, even within one process.
-Compatible runners reuse work when their composition passes the same owner.
-- Two processes that prepare the same cold module at once each perform one preparation; the simultaneous cross-process cold owner needs a cross-process lease, which is a separate task this process-local owner does not pretend to close.
-- Different configured cache-directory paths select separate operational owners and prepare the same bytes once each, including aliases spelled differently.
-This boundary does not deduplicate those domains.
-- The ticker is periodic; replacing the tick with an event-driven deadline is a separate task.
+- Two different physical cache directories are separate operational domains and prepare the same bytes once each; this process-local owner does not deduplicate distinct domains, which are distinct caches.
+- An engine without a cache directory holds no domain to lease, so independently created contexts without one each compile their own bytes: `--no-cache` establishes each observation again by design.
+- A lease a dead process held is released by the operating system when the process ends, and a preparation that waited for it still loads what the domain published or compiles afresh; the lease serializes, it does not publish.
 
 A disk-cache hit still validates and links the module, while a process-memory answer adds no preparation; every invocation starts a fresh store and instance; compilation reuse does not answer an invocation or reuse a verdict, and `--no-cache` still establishes each observation again.
+
+## Cancellation observations
+
+`runner::Cancel::subscribe()` retains a cancellation subscription before its work starts.
+`Cancelled::wait()` observes that event, and `wait_timeout` bounds the caller's own wait.
+A parent cancellation wakes each subscribed child, including a subscription created later.
+A child cancellation changes nothing in its parent.
+`Cancel::interrupt()` carries those same events into the sealed epoch alarm.
+Exposing a raw signal-handler flag retains the required raw-flag backstop too.
+
+
+## Inherited receipt corrections
+
+The B4 commit `3b319d9d` replaced two deprecated atomic spellings without changing their orderings or checked arithmetic.
+Its deprecation Red used `nightly-2026-10-01`; the unchanged pinned `nightly-2026-07-02` passed before the replacement.
+Both original receipts remain retained, and no toolchain pin changed.
+The B1 commit `7dadcb30` originally partitioned owners by physical cache domains.
+This correction removes that operational partition and supersedes its temporary-cache disposal assumptions.
+No inherited commit or receipt is rewritten.

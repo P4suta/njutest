@@ -3,6 +3,7 @@
 
 //! Starts one child process, supervises the platform's declared process set, and returns what happened.
 
+mod cancel;
 mod clock;
 mod group;
 pub mod output;
@@ -63,76 +64,7 @@ pub const TERMINATION_GRACE: Duration = Duration::from_secs(2);
 /// How long [`run`] waits for the output pipe to reach EOF after the child itself has exited.
 pub const IO_DRAIN_GRACE: Duration = Duration::from_secs(2);
 
-/// A cooperative cancellation flag shared between the caller and a run.
-#[derive(Debug, Clone)]
-pub struct Cancel {
-    own: Arc<AtomicBool>,
-    above: Vec<Arc<AtomicBool>>,
-    clock: Clock,
-}
-
-impl Cancel {
-    /// A flag that is not yet cancelled.
-    #[must_use]
-    #[expect(
-        clippy::new_without_default,
-        reason = "an execution-control state must be constructed explicitly, never by a semantic Default"
-    )]
-    pub fn new() -> Self {
-        Self {
-            own: Arc::new(AtomicBool::new(false)),
-            above: Vec::new(),
-            clock: Clock::wall(),
-        }
-    }
-
-    /// A flag cancelled whenever this one is, whose own cancellation this one never sees: what a run that stops its own work raises, so a caller does not read that stop as having been interrupted.
-    #[must_use]
-    pub fn child(&self) -> Self {
-        let mut above = self.above.clone();
-        above.push(Arc::clone(&self.own));
-        Self {
-            own: Arc::new(AtomicBool::new(false)),
-            above,
-            clock: self.clock.clone(),
-        }
-    }
-
-    /// Carries an explicit supervision clock through every child cancellation scope.
-    #[must_use]
-    pub fn with_clock(mut self, clock: Clock) -> Self {
-        self.clock = clock;
-        self
-    }
-
-    /// Requests cancellation.
-    /// Idempotent.
-    pub fn cancel(&self) {
-        self.own.store(true, Ordering::SeqCst);
-    }
-
-    /// Whether cancellation was requested, of this flag or of any it is a child of.
-    #[must_use]
-    pub fn is_cancelled(&self) -> bool {
-        self.own.load(Ordering::SeqCst) || self.above.iter().any(|flag| flag.load(Ordering::SeqCst))
-    }
-
-    /// Every flag whose raising cancels this one, its own first, for what checks them without this type.
-    #[must_use]
-    pub fn flags(&self) -> Vec<Arc<AtomicBool>> {
-        std::iter::once(&self.own)
-            .chain(&self.above)
-            .map(Arc::clone)
-            .collect()
-    }
-
-    /// The flag itself, so a composition root can raise it from a signal handler.
-    /// This crate never installs one: a signal is the process's business, not a library's.
-    #[must_use]
-    pub fn flag(&self) -> Arc<AtomicBool> {
-        Arc::clone(&self.own)
-    }
-}
+pub use cancel::{Cancel, Cancelled};
 
 /// How long a child may run before this process stops it.
 ///

@@ -124,12 +124,24 @@ fn planted(what: &str) -> wasmtime::Error {
     wasmtime::Error::msg(format!("planted {what}"))
 }
 
+/// A cache ownership refusal retains its actual path and underlying failure.
+fn preparation_failure() -> (SealedError, String) {
+    (
+        SealedError::Preparation {
+            path: std::path::PathBuf::from("retained-cache/module.lock"),
+            source: std::io::Error::other("planted retained-cache refusal"),
+        },
+        "planted retained-cache refusal".to_owned(),
+    )
+}
+
 /// One failure of every variant that carries no fault, each beside the detail its message must carry for its remedy to be followed.
 fn unfaulted_failures() -> Vec<(SealedError, String)> {
     let malformed = runner()
         .prepare(b"not webassembly")
         .expect_err("text is not WebAssembly");
     vec![
+        preparation_failure(),
         (
             SealedError::ArgumentHoldsNul { index: 3 },
             "argument 3".to_owned(),

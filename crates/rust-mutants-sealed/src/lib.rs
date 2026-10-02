@@ -10,6 +10,7 @@
 )]
 
 mod abi;
+mod cache;
 mod digest;
 mod error;
 mod host;
@@ -27,13 +28,14 @@ mod transcripts;
 mod validate;
 
 pub use abi::Errno;
+pub use cache::CompilationCache;
 pub use digest::SealedDigest;
 pub use error::{
     EntryFault, EnvironmentFault, ErrorCode, ImportFault, Invariant, MemoryFault, PreopenFault,
     RuntimeStep, SealedCode, SealedError, SnapshotFault, WorkingFault, error_codes,
 };
 pub use imports::{IMPORT_MODULE, WasiFunction};
-pub use interrupt::Interrupt;
+pub use interrupt::{Interrupt, Raised};
 pub use invocation::{
     Arguments, ClockPolicy, Environment, Invocation, Limits, Preopen, Preopens, START_LINK_ARGS,
     Start,

@@ -487,13 +487,67 @@ fn sources_of(target: &TestTarget, units: &[Unit], packages: &[Package]) -> BTre
         .collect()
 }
 
-/// The shared compiled-module cache, independent of invocation and verdict stores.
-pub(crate) fn module_cache(parent: &Path, vars: Option<&crate::vars::Variables>) -> PathBuf {
-    let root = vars.and_then(|vars| vars.var("NJUTEST_FIXTURE_BUILD_CACHE"));
-    match root {
-        Some(root) => Path::new(root).join("wasmtime-modules-v1"),
-        None => parent.join("wasmtime-modules-v1"),
+/// The shared compiled-module cache, retained by the parent suite or the supplied user cache.
+pub(crate) fn module_cache(
+    parent: &Path,
+    vars: Option<&crate::vars::Variables>,
+) -> Result<rust_mutants_sealed::CompilationCache, rust_mutants_sealed::SealedError> {
+    let refused = |source| rust_mutants_sealed::SealedError::Preparation {
+        path: parent.to_path_buf(),
+        source,
+    };
+    let vars = vars.ok_or_else(|| {
+        refused(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "no environment with a retained compilation-cache root was supplied",
+        ))
+    })?;
+    let root = if let Some(root) = vars.var("NJUTEST_TEST_CACHE_ROOT") {
+        let root = PathBuf::from(root);
+        let marker = root.join("owner.json");
+        let bytes = std::fs::read(&marker).map_err(|source| {
+            rust_mutants_sealed::SealedError::Preparation {
+                path: marker.clone(),
+                source,
+            }
+        })?;
+        let owner: ModuleCacheParent =
+            crate::strictjson::decode_slice(&bytes).map_err(|source| {
+                rust_mutants_sealed::SealedError::Preparation {
+                    path: marker.clone(),
+                    source: std::io::Error::other(source),
+                }
+            })?;
+        if owner.schema != "njutest-suite-cache-owner-v1" || owner.pid == 0 {
+            return Err(rust_mutants_sealed::SealedError::Preparation {
+                path: marker,
+                source: std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "the compilation-cache root has no parent suite owner",
+                ),
+            });
+        }
+        root
+    } else if let Some(root) = vars.var("NJUTEST_FIXTURE_BUILD_CACHE") {
+        PathBuf::from(root)
+    } else {
+        crate::userdirs::cache_directory(vars, "")
+    };
+    if !root.is_absolute() {
+        return Err(refused(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "no absolute retained compilation-cache root was supplied",
+        )));
     }
+    rust_mutants_sealed::CompilationCache::retained(root.join("wasmtime-modules-v1"))
+}
+
+/// The external suite owner that disposes its caches after actual producer completion.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ModuleCacheParent {
+    schema: String,
+    pid: u32,
 }
 
 pub mod bench;

@@ -1394,7 +1394,9 @@ impl Session {
     }
 
     /// The shared module cache beside this session's build caches.
-    pub(crate) fn module_cache(&self) -> PathBuf {
+    pub(crate) fn module_cache(
+        &self,
+    ) -> Result<rust_mutants_sealed::CompilationCache, rust_mutants_sealed::SealedError> {
         crate::sealed::module_cache(&self.workspace.target_dir, Some(&self.workspace.base_env))
     }
 

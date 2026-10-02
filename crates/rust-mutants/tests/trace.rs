@@ -139,12 +139,15 @@ fn actual_module_preparation_work_validates_against_the_published_trace_schema()
         .map(|end| &end["properties"]["run"]["properties"]["sealed"])
         .expect("the actual run-end sealed diagnostics");
     let validator = jsonschema::validator_for(sealed).expect("the published boundary compiles");
-    let directory = tempfile::tempdir().expect("an owned cold disk-cache domain");
+    let directory = njutest_devkit::temporary::CacheDirectory::make("trace-modules-")
+        .expect("the actual producing test process has a parent suite cache owner");
+    let cache = rust_mutants_sealed::CompilationCache::retained(directory.path().to_path_buf())
+        .expect("the parent-owned compilation cache");
     let modules = rust_mutants_sealed::ModuleOwner::default();
     let runner = rust_mutants_sealed::SealedRunner::cached(
         &modules,
         std::time::Duration::from_secs(60),
-        directory.path(),
+        &cache,
     )
     .expect("an actual preparation owner");
     let command = b"\0asm\x01\0\0\0\x01\x04\x01\x60\0\0\x03\x02\x01\0\x05\x03\x01\0\x01\x07\x13\x02\x06memory\x02\0\x06_start\0\0\x0a\x04\x01\x02\0\x0b";

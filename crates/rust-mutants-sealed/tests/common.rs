@@ -217,7 +217,7 @@ pub fn invocation() -> Invocation {
 
 /// An interrupt nothing raises, for an invocation nobody stops.
 #[must_use]
-pub const fn uninterrupted() -> Interrupt {
+pub fn uninterrupted() -> Interrupt {
     Interrupt::of(Vec::new())
 }
 
@@ -247,4 +247,14 @@ pub fn emitted(transcript: &Transcript) -> Vec<u64> {
             u64::from_le_bytes(number)
         })
         .collect()
+}
+
+/// A durable test cache outside every temporary owner, collected only after its producer process ends.
+///
+/// # Panics
+/// The test directory cannot be named or its durable cache cannot be retained.
+#[must_use]
+pub fn cache_for(named: &std::path::Path) -> rust_mutants_sealed::CompilationCache {
+    rust_mutants_sealed::CompilationCache::retained(named.to_path_buf())
+        .expect("the parent-owned compilation cache")
 }

@@ -8,8 +8,8 @@ use std::num::NonZeroU64;
 use std::path::Path;
 
 use rust_mutants_sealed::{
-    Arguments, ClockPolicy, Environment, Interrupt, Invocation, Limits, Preopen, Preopens,
-    Redirect, SealedRunner, SealedStop, names_std_env, redirected,
+    Arguments, ClockPolicy, CompilationCache, Environment, Interrupt, Invocation, Limits, Preopen,
+    Preopens, Redirect, SealedRunner, SealedStop, names_std_env, redirected,
 };
 
 use crate::cargo::{CargoError, CargoErrorKind, Driver};
@@ -160,16 +160,36 @@ pub fn ready(
         )));
     }
     let bytes = std::fs::read(&module).map_err(|error| failed(&module, error))?;
-    if let Some(said) = unanswered(
-        modules,
-        &bytes,
-        &trace,
-        Some(&super::module_cache(root, driver.toolchain.env())),
-    ) {
+    let cache = retained_cache(driver.toolchain.env())?;
+    if let Some(said) = unanswered(modules, &bytes, &trace, Some(&cache)) {
         return Ok(Readied::Unanswered(said));
     }
     std::fs::write(&answered, PROBE_ANSWER).map_err(|error| failed(&answered, error))?;
     Ok(Readied::Object(text))
+}
+
+/// Selects the retained module-cache capability without treating a platform-build directory as its owner.
+fn retained_cache(vars: Option<&crate::vars::Variables>) -> Result<CompilationCache, CargoError> {
+    let supplied = vars.and_then(|vars| {
+        vars.var("XDG_CACHE_HOME")
+            .map(std::path::PathBuf::from)
+            .or_else(|| vars.var("LOCALAPPDATA").map(std::path::PathBuf::from))
+            .or_else(|| {
+                vars.var("HOME")
+                    .map(|home| std::path::PathBuf::from(home).join(".cache"))
+            })
+    });
+    let selected = match &supplied {
+        Some(root) => super::module_cache(root, vars),
+        None => super::module_cache(Path::new(""), vars),
+    };
+    selected.map_err(|source| {
+        CargoError::new(
+            CargoErrorKind::CommandFailed,
+            "the sealed platform requires a retained module-cache owner",
+        )
+        .with_source(std::io::Error::other(source))
+    })
 }
 
 /// The platform object's directory, pinned to its compiler and source inputs.
@@ -235,7 +255,7 @@ fn unanswered(
     modules: &rust_mutants_sealed::ModuleOwner,
     bytes: &[u8],
     trace: &crate::trace::Recorder,
-    cache: Option<&Path>,
+    cache: Option<&CompilationCache>,
 ) -> Option<String> {
     let rewritten = match redirected(bytes, &REDIRECTS) {
         Ok(rewritten) if rewritten.counts.iter().all(|count| *count > 0) => rewritten.bytes,

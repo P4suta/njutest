@@ -292,7 +292,7 @@ fn elapsed(counter: &AtomicU64, duration: Duration) -> Result<(), crate::SealedE
         }
     })?;
     counter
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
             value.checked_add(nanos)
         })
         .map(|_previous| ())
@@ -304,7 +304,7 @@ fn elapsed(counter: &AtomicU64, duration: Duration) -> Result<(), crate::SealedE
 /// Adds one without letting an exhausted count impersonate a fresh one.
 fn counted(counter: &AtomicU64) -> Result<(), crate::SealedError> {
     counter
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
             value.checked_add(1)
         })
         .map(|_previous| ())

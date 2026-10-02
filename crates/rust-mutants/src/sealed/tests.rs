@@ -5,6 +5,42 @@ use super::bench::Tree;
 use super::{TARGET, installed};
 
 #[test]
+fn a_module_cache_is_retained_outside_its_disposable_snapshot() {
+    let retained = njutest_devkit::temporary::CacheDirectory::make("sealed-product-root-")
+        .expect("the parent-owned user-cache control");
+    let vars = crate::vars::Variables::of([(
+        std::ffi::OsString::from("XDG_CACHE_HOME"),
+        retained.path().as_os_str().to_owned(),
+    )]);
+    let snapshot = std::path::Path::new("disposable-snapshot/target");
+    let cache = super::module_cache(snapshot, Some(&vars)).expect("an actual retained cache");
+    assert_eq!(
+        cache.directory(),
+        retained.path().join("wasmtime-modules-v1")
+    );
+    assert!(!cache.directory().starts_with(snapshot));
+}
+
+#[test]
+fn an_absent_or_relative_retained_root_refuses_without_creating_a_snapshot_cache() {
+    let snapshot = std::path::Path::new("disposable-snapshot/target");
+    let relative = crate::vars::Variables::of([(
+        std::ffi::OsString::from("NJUTEST_FIXTURE_BUILD_CACHE"),
+        std::ffi::OsString::from("relative"),
+    )]);
+    for vars in [
+        None,
+        Some(&crate::vars::Variables::empty()),
+        Some(&relative),
+    ] {
+        assert!(matches!(
+            super::module_cache(snapshot, vars),
+            Err(rust_mutants_sealed::SealedError::Preparation { .. })
+        ));
+    }
+}
+
+#[test]
 fn a_tree_is_spelled_as_its_build_baked_it_in_and_places_a_directory_by_its_names() {
     let dir = tempfile::tempdir().expect("tempdir");
     let root = dir.path().join("tree");

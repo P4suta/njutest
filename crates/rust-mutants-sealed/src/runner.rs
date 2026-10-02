@@ -4,9 +4,10 @@
 //! The runner: one deterministic engine, a module validated and compiled once, and a fresh store and instance for every invocation.
 
 use std::collections::BTreeMap;
+use std::fs::TryLockError;
 use std::hash::{Hash as _, Hasher};
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -16,6 +17,7 @@ use wasmtime::{
     Trap, UpdateDeadline, WasmFeatures,
 };
 
+use crate::cache::CompilationCache;
 use crate::digest::{Encoder, SealedDigest};
 use crate::error::{Invariant, RuntimeStep, SealedError};
 use crate::host::{BYTE_FUEL, CALL_FUEL, Host, HostStop, RESOLUTION, TABLE_ELEMENTS};
@@ -28,6 +30,9 @@ use crate::validate;
 
 /// The wasmtime every digest of this crate is taken under, which `Cargo.toml` pins exactly.
 pub const WASMTIME_VERSION: &str = "48.0.3";
+
+/// The suffix naming a cache domain's preparation leases, as a sibling of the cache directory itself: Wasmtime's cache worker removes anything inside its directory it does not recognize.
+const PREPARATION_LEASES: &str = ".preparations-v1";
 
 /// The compiler strategy, whose configuration is part of every module and transcript identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
@@ -57,8 +62,9 @@ impl CompilerTier {
 /// The native stack a guest may use, in bytes.
 const MAX_WASM_STACK: usize = 512 * 1024;
 
-/// How often the watchdog's thread advances the engine's epoch.
-const TICK: Duration = Duration::from_millis(10);
+/// How long the alarm waits between looks at a raw interrupt flag, which no raise can wake: a signal handler may only store it.
+/// This is the typed real-OS backstop, counted by the alarm, and it runs only while such a flag is armed.
+const RAW_BACKSTOP: Duration = Duration::from_millis(10);
 
 /// The WebAssembly proposals sealed execution leaves off: each is nondeterministic, or a shape the host does not run.
 const REFUSED_FEATURES: WasmFeatures = WasmFeatures::RELAXED_SIMD
@@ -74,39 +80,192 @@ const REFUSED_FEATURES: WasmFeatures = WasmFeatures::RELAXED_SIMD
     .union(WasmFeatures::LEGACY_EXCEPTIONS)
     .union(WasmFeatures::COMPONENT_MODEL);
 
-/// The thread that advances an engine's epoch every tick, stopped and joined when it is dropped.
-#[derive(Debug)]
-struct EpochTicker {
+/// What an engine's alarm holds: the deadlines of the invocations running on it, and which of them gave it a raw flag it cannot be woken about.
+#[derive(Debug, Default)]
+struct AlarmState {
     /// Set to stop the thread.
-    stopping: Arc<AtomicBool>,
-    /// The thread, until it is joined.
+    stopped: bool,
+    /// Whether a watching raise pinged the alarm since it last looked.
+    pinged: bool,
+    /// The deadlines of the invocations running on the engine.
+    due: Vec<Instant>,
+    /// One entry for each live invocation whose interrupt carries a raw flag.
+    raw: Vec<RawInterrupt>,
+}
+
+/// A live invocation whose interrupt flag has no wake of its own.
+#[derive(Debug, Clone, Copy)]
+struct RawInterrupt;
+
+/// The epoch alarm one engine's live runners share: it advances the epoch when a registered deadline falls or a watching raise pings it, and it wakes for nothing else.
+#[derive(Debug, Default)]
+pub(crate) struct Advances {
+    state: Mutex<AlarmState>,
+    /// Wakes the alarm when a deadline is registered or removed, a raise pings it, or it is stopped.
+    changed: Condvar,
+    /// How many times the alarm advanced the engine's epoch: a diagnostic, never part of a transcript or evidence.
+    advanced: AtomicU64,
+    /// How many of the alarm's wakes were its typed raw-flag backstop rather than an observed event.
+    backstops: AtomicU64,
+}
+
+impl Advances {
+    /// Registers one invocation's deadline and interrupt, and says when to unregister.
+    fn arm(advances: &Arc<Self>, deadline: Option<Instant>, interrupt: &Interrupt) -> Armed {
+        interrupt.watch(advances);
+        let raw = interrupt.raw();
+        if let Ok(mut state) = advances.state.lock() {
+            if let Some(deadline) = deadline {
+                state.due.push(deadline);
+            }
+            if raw {
+                state.raw.push(RawInterrupt);
+            }
+        }
+        advances.changed.notify_all();
+        Armed {
+            advances: Arc::clone(advances),
+            deadline,
+            raw,
+        }
+    }
+
+    /// Wakes the alarm: a watching flag was raised, so the engine's stores look at their interrupts.
+    pub(crate) fn ping(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.pinged = true;
+        }
+        self.changed.notify_all();
+    }
+
+    /// Stops the alarm thread and waits for it.
+    fn halt(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.stopped = true;
+        }
+        self.changed.notify_all();
+    }
+
+    /// How many times the alarm advanced the epoch, and how many of its wakes were the typed raw-flag backstop.
+    fn counts(&self) -> (u64, u64) {
+        (
+            self.advanced.load(Ordering::Relaxed),
+            self.backstops.load(Ordering::Relaxed),
+        )
+    }
+}
+
+/// One invocation's registration on an engine's alarm, removed however the invocation ends.
+#[derive(Debug)]
+pub(crate) struct Armed {
+    advances: Arc<Advances>,
+    deadline: Option<Instant>,
+    raw: bool,
+}
+
+impl Drop for Armed {
+    fn drop(&mut self) {
+        if let Ok(mut state) = self.advances.state.lock() {
+            if let Some(deadline) = self.deadline
+                && let Some(at) = state.due.iter().position(|due| *due == deadline)
+            {
+                state.due.swap_remove(at);
+            }
+            if self.raw {
+                state.raw.pop();
+            }
+        }
+        self.advances.changed.notify_all();
+    }
+}
+
+/// Runs one engine's alarm until it is halted: waiting for the next registered deadline, a raise's ping or the stop, advancing the epoch when one arrives.
+fn alarm(engine: &Engine, advances: &Advances) {
+    let Ok(mut state) = advances.state.lock() else {
+        return;
+    };
+    loop {
+        if state.stopped {
+            return;
+        }
+        let now = Instant::now();
+        let due = state.due.iter().min().copied();
+        let backstop = (!state.raw.is_empty())
+            .then(|| now.checked_add(RAW_BACKSTOP))
+            .flatten();
+        let bound = match (due, backstop) {
+            (Some(due), Some(backstop)) => Some(due.min(backstop)),
+            (Some(earliest), None) | (None, Some(earliest)) => Some(earliest),
+            (None, None) => None,
+        }
+        .map(|at| at.saturating_duration_since(now));
+        let timed_out = match bound {
+            Some(bound) => match advances.changed.wait_timeout(state, bound) {
+                Ok((next, waited)) => {
+                    state = next;
+                    waited.timed_out()
+                }
+                Err(_poisoned) => return,
+            },
+            None => match advances.changed.wait(state) {
+                Ok(next) => {
+                    state = next;
+                    false
+                }
+                Err(_poisoned) => return,
+            },
+        };
+        if state.stopped {
+            return;
+        }
+        let now = Instant::now();
+        let fell = state.due.iter().any(|due| *due <= now);
+        let pinged = state.pinged;
+        state.pinged = false;
+        if fell || pinged {
+            state.due.retain(|due| *due > now);
+            engine.increment_epoch();
+            advances.advanced.fetch_add(1, Ordering::Relaxed);
+        } else if timed_out && !state.raw.is_empty() {
+            engine.increment_epoch();
+            advances.advanced.fetch_add(1, Ordering::Relaxed);
+            advances.backstops.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
+
+/// The alarm of one shared engine, which the last runner alive on that engine stops and joins, so no alarm thread outlives the runners whose stores stand on it.
+#[derive(Debug)]
+struct Ticking {
+    /// The engine whose ticker slot stays occupied until stop and join complete.
+    owner: Arc<Owner>,
+    /// The alarm's shared state, which the live invocations of every runner on the engine arm.
+    advances: Arc<Advances>,
+    /// The thread, until the last runner sharing it drops this.
+    alarm: Option<AlarmThread>,
+}
+
+/// The alarm thread of one [`Ticking`], joined by the last runner that shares it.
+#[derive(Debug)]
+struct AlarmThread {
     handle: Option<JoinHandle<()>>,
 }
 
-impl EpochTicker {
-    /// Starts advancing `engine`'s epoch every tick.
-    fn start(engine: Engine) -> std::io::Result<Self> {
-        let stopping = Arc::new(AtomicBool::new(false));
-        let asked = Arc::clone(&stopping);
+impl AlarmThread {
+    /// Starts the alarm of `engine` on `advances`.
+    fn start(engine: Engine, advances: Arc<Advances>) -> std::io::Result<Self> {
         let handle = std::thread::Builder::new()
-            .name("rust-mutants-sealed-epoch".to_owned())
-            .spawn(move || {
-                while !asked.load(Ordering::Acquire) {
-                    std::thread::park_timeout(TICK);
-                    engine.increment_epoch();
-                }
-            })?;
+            .name("rust-mutants-sealed-alarm".to_owned())
+            .spawn(move || alarm(&engine, &advances))?;
         Ok(Self {
-            stopping,
             handle: Some(handle),
         })
     }
 
     /// Stops the thread and waits for it.
-    fn stop(&mut self) {
-        self.stopping.store(true, Ordering::Release);
+    fn stop(&mut self, advances: &Advances) {
+        advances.halt();
         if let Some(handle) = self.handle.take() {
-            handle.thread().unpark();
             match handle.join() {
                 Ok(()) => {}
                 Err(panic) => drop(panic),
@@ -115,27 +274,12 @@ impl EpochTicker {
     }
 }
 
-impl Drop for EpochTicker {
-    fn drop(&mut self) {
-        self.stop();
-    }
-}
-
-/// The epoch ticker of one shared engine, which the last runner alive on that engine stops and joins, so no periodic thread outlives the runners whose watchdogs stand on it.
-#[derive(Debug)]
-struct Ticking {
-    /// The engine whose ticker slot stays occupied until stop and join complete.
-    owner: Arc<Owner>,
-    /// The thread, until the last runner sharing it drops this.
-    ticker: Option<EpochTicker>,
-}
-
 impl Drop for Ticking {
     fn drop(&mut self) {
         {
             let live = self.owner.ticking.lock();
-            if let Some(mut ticker) = self.ticker.take() {
-                ticker.stop();
+            if let Some(mut alarm) = self.alarm.take() {
+                alarm.stop(&self.advances);
             }
             match live {
                 Ok(mut live) => {
@@ -149,20 +293,19 @@ impl Drop for Ticking {
     }
 }
 
-/// The requested compiler settings and operational disk-cache domain.
+/// The requested compiler settings and operational disk-cache directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Identity {
     /// The Cranelift level the engine compiles at.
     tier: CompilerTier,
     /// The directory Wasmtime's compiled-module cache lives in, or none where the engine keeps no cache.
-    directory: Option<PathBuf>,
+    directory: Option<CompilationCache>,
 }
 
-/// An owner key derived from the actual configured engine and host, plus its disk-cache domain.
+/// An owner key: the semantic engine configuration, which the tier alone selects because every other engine setting is a constant of this crate under one pinned Wasmtime, under the pinned host and Wasmtime; operational cache paths select no semantic setting.
 #[derive(Debug, PartialEq, Eq)]
 struct OwnerKey {
-    configuration: SealedDigest,
-    directory: Option<PathBuf>,
+    tier: CompilerTier,
 }
 
 /// One engine compatible runners of an explicit module owner share, holding its modules prepared once.
@@ -182,9 +325,11 @@ struct Owner {
     changed: Condvar,
     /// One actual preparation at a time, which owns the engine's whole observation of the shared cache counter.
     preparing: Mutex<()>,
-    /// The ticker the engine's live runners share, which no runner outlives.
+    /// Where this domain's cross-process preparation leases live, under the cache directory Wasmtime's own files sit beside.
+    leases: Option<PathBuf>,
+    /// The alarm the engine's live runners share, which no runner outlives.
     ticking: Mutex<Option<Weak<Ticking>>>,
-    /// Wakes a successor after the previous last-runner ticker has stopped and joined.
+    /// Wakes a successor after the previous last-runner alarm has stopped and joined.
     ticker_changed: Condvar,
 }
 
@@ -340,18 +485,16 @@ impl Drop for Claim<'_> {
 }
 
 impl ModuleOwner {
-    /// The compatible engine for `identity`, retained by this explicit owner for its runners.
+    /// The compatible engine for `identity`, retained by this explicit owner for its runners, looking the owner up by its key before any engine is built.
     fn shared(&self, identity: &Identity) -> Result<Arc<Owner>, SealedError> {
-        let candidate = Owner::built(identity)?;
         let key = OwnerKey {
-            configuration: candidate.configuration,
-            directory: identity.directory.clone(),
+            tier: identity.tier,
         };
         let mut owners = held(self.owners.lock())?;
         if let Some((_known, owner)) = owners.iter().find(|(known, _owner)| known == &key) {
             return Ok(Arc::clone(owner));
         }
-        let owner = Arc::new(candidate);
+        let owner = Arc::new(Owner::built(identity)?);
         owners.push((key, Arc::clone(&owner)));
         drop(owners);
         Ok(owner)
@@ -359,11 +502,10 @@ impl ModuleOwner {
 }
 
 impl Owner {
-    /// Builds the engine of `identity`, its linked host, its configuration digest and its empty module memory.
+    /// Builds the engine of `identity`, its linked host, its configuration digest, its lease directory and its empty module memory.
     fn built(identity: &Identity) -> Result<Self, SealedError> {
-        let cache = identity
-            .directory
-            .as_deref()
+        let canonical = identity.directory.as_ref().map(CompilationCache::directory);
+        let cache = canonical
             .map(|directory| {
                 let mut configuration = CacheConfig::new();
                 configuration.with_directory(directory.to_path_buf());
@@ -385,6 +527,17 @@ impl Owner {
         let engine = Engine::new(&config).map_err(|source| SealedError::Engine { source })?;
         let linker = link(&engine)?;
         let configuration = configuration(&engine);
+        let leases = canonical.map(|directory| {
+            let name = match directory.file_name() {
+                Some(name) => {
+                    let mut name = name.to_os_string();
+                    name.push(PREPARATION_LEASES);
+                    name
+                }
+                None => std::ffi::OsString::from(format!("wasmtime-modules{PREPARATION_LEASES}")),
+            };
+            directory.with_file_name(name)
+        });
         Ok(Self {
             engine,
             linker,
@@ -393,12 +546,13 @@ impl Owner {
             slots: Mutex::new(BTreeMap::new()),
             changed: Condvar::new(),
             preparing: Mutex::new(()),
+            leases,
             ticking: Mutex::new(None),
             ticker_changed: Condvar::new(),
         })
     }
 
-    /// The ticker this engine's live runners share, started where none is alive, so the thread lives exactly as long as the runners whose watchdogs stand on it.
+    /// The alarm this engine's live runners share, started where none is alive, so the thread lives exactly as long as the runners whose stores stand on it.
     fn ticking(self: &Arc<Self>) -> Result<Arc<Ticking>, SealedError> {
         let mut live = held(self.ticking.lock())?;
         while let Some(ticking) = live.as_ref() {
@@ -407,10 +561,12 @@ impl Owner {
             }
             live = held(self.ticker_changed.wait(live))?;
         }
+        let advances = Arc::new(Advances::default());
         let ticking = Arc::new(Ticking {
             owner: Arc::clone(self),
-            ticker: Some(
-                EpochTicker::start(self.engine.clone())
+            advances: Arc::clone(&advances),
+            alarm: Some(
+                AlarmThread::start(self.engine.clone(), advances)
                     .map_err(|source| SealedError::WatchdogUnavailable { source })?,
             ),
         });
@@ -454,7 +610,7 @@ impl Owner {
             preparation,
             unsettled: true,
         };
-        let answer = self.compile_with_hooks(bytes, hooks);
+        let answer = self.compile_with_hooks(digest, bytes, hooks);
         match answer {
             Ok(prepared) => {
                 let prepared = Arc::new(prepared);
@@ -484,6 +640,7 @@ impl Owner {
     /// Validates and compiles `bytes` on this engine, the one actual preparation a module's exact bytes get from this process, one at a time so the shared cache counter is observed by the preparation that moves it.
     fn compile_with_hooks(
         &self,
+        digest: &SealedDigest,
         bytes: &[u8],
         hooks: &PreparationHooks<impl Fn(PreparationStage)>,
     ) -> Result<Prepared, Refused> {
@@ -492,7 +649,7 @@ impl Owner {
             attempted: None,
         })?;
         let answer = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.compile_owned(bytes, hooks)
+            self.compile_owned(digest, bytes, hooks)
         }));
         drop(preparing);
         match answer {
@@ -504,6 +661,7 @@ impl Owner {
     /// Performs preparation under the caller's meter lock, which is released before any panic resumes.
     fn compile_owned(
         &self,
+        digest: &SealedDigest,
         bytes: &[u8],
         hooks: &PreparationHooks<impl Fn(PreparationStage)>,
     ) -> Result<Prepared, Refused> {
@@ -512,8 +670,9 @@ impl Owner {
             error,
             attempted: None,
         })?;
-        let hits = self.cache.as_ref().map(Cache::cache_hits);
         (hooks.observe)(PreparationStage::Observed);
+        let leased = self.leased(digest)?;
+        let hits = self.cache.as_ref().map(Cache::cache_hits);
         let answer = (|| {
             let module = Module::new(&self.engine, bytes)
                 .map_err(|source| SealedError::Compile { source })?;
@@ -523,6 +682,7 @@ impl Owner {
                 .map_err(|source| SealedError::Link { source })
         })();
         let preparation = started.elapsed();
+        drop(leased);
         let disk = self
             .cache
             .as_ref()
@@ -543,15 +703,60 @@ impl Owner {
             }),
         }
     }
+
+    /// Takes this module's keyed preparation lease for the cache domain, holding it while the preparation runs so exactly one preparation of these bytes compiles cold across the processes and contexts that share the domain.
+    /// A lease another preparation holds is waited for through the operating system, which wakes this one when it is released; a preparation without a cache domain holds nothing.
+    fn leased(&self, digest: &SealedDigest) -> Result<Lease, Refused> {
+        let Some(root) = &self.leases else {
+            return Ok(Lease(None));
+        };
+        let mut key = Encoder::new("rust-mutants-sealed/preparation/v1");
+        key.bytes(self.configuration.as_bytes())
+            .bytes(digest.as_bytes());
+        let path = root.join(format!("{}.lock", key.finish()));
+        let refused = |source: std::io::Error| Refused {
+            error: SealedError::Preparation {
+                path: path.clone(),
+                source,
+            },
+            attempted: None,
+        };
+        std::fs::create_dir_all(root).map_err(refused)?;
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+            .map_err(refused)?;
+        match file.try_lock() {
+            Ok(()) => Ok(Lease(Some(file))),
+            Err(TryLockError::WouldBlock) => {
+                file.lock().map_err(refused)?;
+                Ok(Lease(Some(file)))
+            }
+            Err(TryLockError::Error(source)) => Err(refused(source)),
+        }
+    }
 }
+
+/// A held cross-process preparation lease, released when it is dropped.
+#[derive(Debug)]
+struct Lease(
+    #[expect(
+        dead_code,
+        reason = "the file is held, not read: its lock is the lease"
+    )]
+    Option<std::fs::File>,
+);
 
 /// The engine sealed guests run on, shared by compatible runners of the explicit module owner.
 #[derive(Debug)]
 pub struct SealedRunner {
     /// The engine owner: the engine, the host linked on it and the modules this process holds on it.
     owner: Arc<Owner>,
-    /// The engine's epoch ticker, alive exactly as long as the runners sharing it: this runner's own share, whose stop runs when the last sharing runner drops it.
-    _ticking: Arc<Ticking>,
+    /// The engine's epoch alarm, alive exactly as long as the runners sharing it: this runner's own share, whose stop runs when the last sharing runner drops it.
+    ticking: Arc<Ticking>,
     /// How long a guest may run by the wall clock before the watchdog stops it.
     watchdog: Duration,
     counted: crate::Counted,
@@ -573,7 +778,7 @@ impl SealedRunner {
     pub fn cached(
         modules: &ModuleOwner,
         watchdog: Duration,
-        directory: &Path,
+        directory: &CompilationCache,
     ) -> Result<Self, SealedError> {
         Self::with_compiler(modules, watchdog, CompilerTier::faithful(), Some(directory))
     }
@@ -586,16 +791,16 @@ impl SealedRunner {
         modules: &ModuleOwner,
         watchdog: Duration,
         tier: CompilerTier,
-        directory: Option<&Path>,
+        directory: Option<&CompilationCache>,
     ) -> Result<Self, SealedError> {
         let owner = modules.shared(&Identity {
             tier,
-            directory: directory.map(Path::to_path_buf),
+            directory: directory.cloned(),
         })?;
         let ticking = owner.ticking()?;
         Ok(Self {
             owner,
-            _ticking: ticking,
+            ticking,
             watchdog,
             counted: crate::Counted::default(),
         })
@@ -623,6 +828,13 @@ impl SealedRunner {
     #[must_use]
     pub fn configuration(&self) -> &SealedDigest {
         &self.owner.configuration
+    }
+
+    /// How many times the engine's alarm advanced the epoch, and how many of its wakes were the typed backstop for a raw interrupt flag rather than an observed event.
+    /// A diagnostic of the alarm's own work, never part of a transcript or evidence.
+    #[must_use]
+    pub fn alarm_advances(&self) -> (u64, u64) {
+        self.ticking.advances.counts()
     }
 
     /// Validates and compiles `bytes` once, for as many invocations as are asked of it.
@@ -817,6 +1029,7 @@ impl SealedModule<'_> {
         let digest = invocation.digest(&self.digest, &self.runner.owner.configuration);
         let watchdog = self.runner.watchdog;
         let deadline = Instant::now().checked_add(watchdog);
+        let _armed = Advances::arm(&self.runner.ticking.advances, deadline, interrupt);
         let halt = invocation.halting()?;
         let host = Host::new((invocation, halt), (deadline, interrupt.clone())).map_err(broken)?;
         let mut store = Store::new(&self.runner.owner.engine, host);
@@ -1024,13 +1237,20 @@ mod tests {
     use std::sync::mpsc;
 
     use std::sync::{Arc, Weak};
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use super::{
-        CompilerTier, Identity, ModuleOwner, Owner, PreparationHooks, PreparationStage,
-        SealedRunner, Slot,
+        CompilerTier, Identity, ModuleOwner, Owner, PREPARATION_LEASES, PreparationHooks,
+        PreparationStage, RAW_BACKSTOP, SealedRunner, Slot,
     };
     use crate::{Interrupt, Invocation, Reuse, SealedDigest, SealedStop};
+    use njutest_devkit::temporary::CacheDirectory;
+
+    /// A durable test cache outside every temporary owner, collected only after its producer process ends.
+    fn cache_for(named: &std::path::Path) -> crate::CompilationCache {
+        crate::CompilationCache::retained(named.to_path_buf())
+            .expect("the parent-owned compilation cache")
+    }
 
     /// A test's owned synchronization state, whose failure is a setup failure.
     fn held<T>(lock: std::sync::LockResult<T>) -> T {
@@ -1081,11 +1301,20 @@ mod tests {
     #[test]
     fn the_last_runner_stops_and_joins_its_shared_ticker() {
         let modules = ModuleOwner::default();
-        let directory = tempfile::tempdir().expect("a cache directory");
-        let first = SealedRunner::cached(&modules, Duration::from_secs(60), directory.path())
-            .expect("the first runner");
-        let last = SealedRunner::cached(&modules, Duration::from_secs(60), directory.path())
-            .expect("the compatible runner");
+        let directory =
+            CacheDirectory::make("sealed-module-").expect("a parent-owned cache directory");
+        let first = SealedRunner::cached(
+            &modules,
+            Duration::from_secs(60),
+            &cache_for(directory.path()),
+        )
+        .expect("the first runner");
+        let last = SealedRunner::cached(
+            &modules,
+            Duration::from_secs(60),
+            &cache_for(directory.path()),
+        )
+        .expect("the compatible runner");
         let ticker = Weak::clone(
             held(last.owner.ticking.lock())
                 .as_ref()
@@ -1115,8 +1344,12 @@ mod tests {
             held(owner.ticking.lock()).is_none(),
             "stop and join settled the ticker slot"
         );
-        let successor = SealedRunner::cached(&modules, Duration::from_secs(60), directory.path())
-            .expect("a later runner restarts the ticker");
+        let successor = SealedRunner::cached(
+            &modules,
+            Duration::from_secs(60),
+            &cache_for(directory.path()),
+        )
+        .expect("a later runner restarts the ticker");
         assert!(
             Arc::ptr_eq(&owner, &successor.owner),
             "the module engine outlives the ticker"
@@ -1141,9 +1374,14 @@ mod tests {
     #[test]
     fn a_panicking_preparation_releases_its_claim_and_owned_waiters() {
         let modules = ModuleOwner::default();
-        let directory = tempfile::tempdir().expect("a cache directory");
-        let runner = SealedRunner::cached(&modules, Duration::from_secs(60), directory.path())
-            .expect("the runner");
+        let directory =
+            CacheDirectory::make("sealed-module-").expect("a parent-owned cache directory");
+        let runner = SealedRunner::cached(
+            &modules,
+            Duration::from_secs(60),
+            &cache_for(directory.path()),
+        )
+        .expect("the runner");
         let bytes = command("recovered");
         let digest = SealedDigest::of(&bytes);
         let (observed, observation) = mpsc::sync_channel(0);
@@ -1237,8 +1475,9 @@ mod tests {
     /// Publishes real compiled code through a compatible temporary engine before the concurrent disk control.
     fn warm_disk(identity: &Identity, bytes: &[u8]) {
         let warming = Owner::built(identity).expect("the disk-warming engine");
+        let digest = SealedDigest::of(bytes);
         let prepared = warming
-            .compile_with_hooks(bytes, &PreparationHooks::quiet())
+            .compile_with_hooks(&digest, bytes, &PreparationHooks::quiet())
             .expect("actual preparation publishes disk code synchronously");
         assert!(!prepared.disk, "the warming preparation is truly cold");
     }
@@ -1246,16 +1485,20 @@ mod tests {
     #[test]
     fn concurrent_cold_and_disk_warm_modules_have_exact_work_attribution() {
         let modules = ModuleOwner::default();
-        let directory = tempfile::tempdir().expect("a cache directory");
+        let directory = CacheDirectory::make("sm-").expect("cache");
         let identity = Identity {
             tier: CompilerTier::faithful(),
-            directory: Some(directory.path().to_path_buf()),
+            directory: Some(cache_for(directory.path())),
         };
         let cold = command("cold");
         let warm = command("disk");
         warm_disk(&identity, &warm);
-        let runner = SealedRunner::cached(&modules, Duration::from_secs(60), directory.path())
-            .expect("the runner");
+        let runner = SealedRunner::cached(
+            &modules,
+            Duration::from_secs(60),
+            &cache_for(directory.path()),
+        )
+        .expect("the runner");
         let (start_warm, warm_requested) = mpsc::sync_channel(0);
         let (done, warm_done) = mpsc::sync_channel(1);
         let (cold_answer, warm_answer) = std::thread::scope(|scope| {
@@ -1320,6 +1563,292 @@ mod tests {
         assert_eq!(
             (compilation.hits, compilation.misses, compilation.attempts),
             (1, 1, Some(2))
+        );
+    }
+
+    /// An alias of one cache directory is the same operational domain, so two runners spelled through it share one owner and prepare the bytes once.
+    #[test]
+    fn aliases_of_one_cache_directory_are_one_owner_and_one_preparation() {
+        let modules = ModuleOwner::default();
+        let directory =
+            CacheDirectory::make("sealed-module-").expect("a parent-owned cache directory");
+        let name = directory
+            .path()
+            .file_name()
+            .expect("a temporary cache directory has a name")
+            .to_owned();
+        let alias = directory.path().join("..").join(&name);
+        let spelled = SealedRunner::cached(
+            &modules,
+            Duration::from_secs(60),
+            &cache_for(directory.path()),
+        )
+        .expect("the runner through the given spelling");
+        let aliased = SealedRunner::cached(&modules, Duration::from_secs(60), &cache_for(&alias))
+            .expect("the runner through the alias");
+        assert!(
+            Arc::ptr_eq(&spelled.owner, &aliased.owner),
+            "two spellings of one physical cache directory retain one compatible owner, so no candidate engine or linker is built for the alias"
+        );
+        let bytes = command("aliased");
+        let first = spelled.prepare(&bytes).expect("the first preparation");
+        let second = aliased.prepare(&bytes).expect("the aliased preparation");
+        assert_eq!(first.reuse(), Reuse::Cold, "the first preparation is cold");
+        assert_eq!(
+            second.reuse(),
+            Reuse::Process,
+            "the alias answers from the one prepared module"
+        );
+        let spelled_compilation = spelled
+            .spent()
+            .expect("the spelled runner's requests are measured")
+            .compilation
+            .expect("actual preparation is measured");
+        let aliased_compilation = aliased
+            .spent()
+            .expect("the aliased runner's requests are measured")
+            .compilation
+            .expect("the aliased request is measured");
+        assert_eq!(
+            (
+                spelled_compilation.attempts,
+                aliased_compilation.attempts,
+                aliased_compilation.process
+            ),
+            (Some(1), None, Some(1)),
+            "one physical domain performs one actual preparation, and the alias's answer is a process hit"
+        );
+    }
+
+    /// A command large enough that two cold preparations of it released together certainly overlap.
+    fn large_command() -> Vec<u8> {
+        let fill = "l".repeat(512 * 1024);
+        wat::parse_str(format!(
+            r#"(module
+                (import "wasi_snapshot_preview1" "fd_write"
+                    (func $write (param i32 i32 i32 i32) (result i32)))
+                (memory (export "memory") 1)
+                (data (i32.const 65536) "{fill}")
+                (data (i32.const 100) "leased")
+                (func (export "_start")
+                    (i32.store (i32.const 0) (i32.const 100))
+                    (i32.store (i32.const 4) (i32.const 6))
+                    (drop (call $write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 6)))))"#
+        ))
+        .expect("the WAT is valid")
+    }
+
+    /// Two independently created contexts that share a cache domain prepare the bytes once: the keyed lease makes one the cold owner and answers the other from the disk.
+    #[test]
+    fn independent_contexts_prepare_one_cold_compilation_across_the_domain() {
+        let directory =
+            CacheDirectory::make("sealed-module-").expect("a parent-owned cache directory");
+        let bytes = large_command();
+        let digest = SealedDigest::of(&bytes);
+        let (answers, answered) = mpsc::sync_channel(2);
+        let together = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| {
+            let directory = &directory;
+            let bytes = &bytes;
+            for context in [ModuleOwner::default(), ModuleOwner::default()] {
+                let together = &together;
+                let answers = answers.clone();
+                njutest_devkit::thread::ScopedThread::launch(scope, move || {
+                    let runner = SealedRunner::cached(
+                        &context,
+                        Duration::from_secs(60),
+                        &cache_for(directory.path()),
+                    )
+                    .expect("the independent context's runner");
+                    let hooks = PreparationHooks {
+                        observe: |stage| match stage {
+                            PreparationStage::Observed => {
+                                together.wait();
+                            }
+                            PreparationStage::Waiting => {}
+                        },
+                    };
+                    let answer = runner
+                        .obtain_with_hooks(bytes, None, &hooks)
+                        .map(|module| (module.reuse(), *module.configuration()));
+                    answers
+                        .send(answer)
+                        .expect("the context's answer has an owner");
+                });
+            }
+        });
+        let first = answered
+            .recv()
+            .expect("the first context answered")
+            .expect("the first preparation succeeded");
+        let second = answered
+            .recv()
+            .expect("the second context answered")
+            .expect("the second preparation succeeded");
+        assert_eq!(
+            first.1, second.1,
+            "both contexts bind the same engine settings"
+        );
+        let mut reuses = [first.0, second.0];
+        reuses.sort_by_key(|reuse| match reuse {
+            Reuse::Cold => 0,
+            Reuse::Disk => 1,
+            Reuse::Process => 2,
+        });
+        assert_eq!(
+            reuses,
+            [Reuse::Cold, Reuse::Disk],
+            "the keyed domain lease lets one context compile the bytes cold and answers the other from the disk cache it published"
+        );
+        let cache = cache_for(directory.path());
+        let mut name = cache
+            .directory()
+            .file_name()
+            .expect("the cache has a name")
+            .to_os_string();
+        name.push(PREPARATION_LEASES);
+        let leases = cache.directory().with_file_name(name);
+        let mut key = super::Encoder::new("rust-mutants-sealed/preparation/v1");
+        key.bytes(first.1.as_bytes()).bytes(digest.as_bytes());
+        let filename = format!("{}.lock", key.finish());
+        assert!(
+            std::fs::read_dir(&leases)
+                .expect("the lease directory exists")
+                .any(|entry| entry.expect("the lease entry is read").file_name()
+                    == filename.as_str()),
+            "the physical lease binds module bytes and semantic engine configuration"
+        );
+    }
+
+    /// The alarm of an engine with live runners but no running invocation advances nothing: an idle engine does no periodic work.
+    #[test]
+    fn an_idle_engine_advances_no_epoch() {
+        let modules = ModuleOwner::default();
+        let directory =
+            CacheDirectory::make("sealed-module-").expect("a parent-owned cache directory");
+        let runner = SealedRunner::cached(
+            &modules,
+            Duration::from_secs(60),
+            &cache_for(directory.path()),
+        )
+        .expect("the runner");
+        let window = RAW_BACKSTOP.saturating_mul(5);
+        std::thread::sleep(window);
+        let (advanced, backstops) = runner.alarm_advances();
+        assert_eq!(
+            (advanced, backstops),
+            (0, 0),
+            "an idle engine with no deadline and no raw flag does no periodic epoch work"
+        );
+        let bytes = command("woken");
+        runner
+            .prepare(&bytes)
+            .expect("the preparation")
+            .invoke(&invocation(), &Interrupt::of(Vec::new()))
+            .expect("the guest runs and returns");
+        let (advanced, backstops) = runner.alarm_advances();
+        assert_eq!(
+            (advanced, backstops),
+            (0, 0),
+            "a returned invocation leaves no armed deadline, so the alarm still advances nothing"
+        );
+    }
+
+    /// A raised interrupt stops a running guest through the alarm's owned wake, with no periodic advance before it.
+    #[test]
+    fn a_raised_interrupt_stops_a_running_guest_through_the_owned_wake() {
+        let modules = ModuleOwner::default();
+        let directory =
+            CacheDirectory::make("sealed-module-").expect("a parent-owned cache directory");
+        let runner = SealedRunner::cached(
+            &modules,
+            Duration::from_secs(60),
+            &cache_for(directory.path()),
+        )
+        .expect("the runner");
+        let spinning = wat::parse_str(
+            r#"(module
+                (import "wasi_snapshot_preview1" "fd_write"
+                    (func $write (param i32 i32 i32 i32) (result i32)))
+                (memory (export "memory") 1)
+                (data (i32.const 100) "spinning")
+                (func (export "_start")
+                    (i32.store (i32.const 0) (i32.const 100))
+                    (i32.store (i32.const 4) (i32.const 8))
+                    (drop (call $write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 8)))
+                    (loop $again (br $again))))"#,
+        )
+        .expect("the WAT is valid");
+        let module = runner.prepare(&spinning).expect("the spinning module");
+        let mut asked = invocation();
+        asked.fuel = 4_000_000_000;
+        let raised = Arc::new(crate::Raised::new());
+        let interrupt = Interrupt::raising(vec![Arc::clone(&raised)]);
+        let started = Instant::now();
+        let answer = std::thread::scope(|scope| {
+            let waking = njutest_devkit::thread::ScopedThread::launch(scope, move || {
+                let entered = Duration::from_millis(50);
+                assert!(
+                    !raised.wait_raised(entered),
+                    "the interrupt is not raised before the guest entered its loop"
+                );
+                raised.raise();
+            });
+            let answer = module.invoke(&asked, &interrupt);
+            waking.join().expect("the waking thread is joined");
+            answer
+        });
+        let stopped = started.elapsed();
+        match answer {
+            Err(crate::SealedError::Interrupted) => {}
+            other => panic!("the raised wake stops the spinning guest: {other:?}"),
+        }
+        assert!(
+            stopped < Duration::from_secs(30),
+            "the interrupt is delivered while the guest runs, not at the watchdog"
+        );
+        let (advanced, _backstops) = runner.alarm_advances();
+        assert!(
+            advanced > 0,
+            "the alarm advanced the epoch for the raise itself"
+        );
+    }
+
+    /// A watchdog deadline is the alarm's own wake: the engine's epoch advances when the deadline falls, with no periodic work before it.
+    #[test]
+    fn a_watchdog_deadline_is_advanced_by_the_alarm_itself() {
+        let modules = ModuleOwner::default();
+        let directory =
+            CacheDirectory::make("sealed-module-").expect("a parent-owned cache directory");
+        let runner = SealedRunner::cached(
+            &modules,
+            Duration::from_millis(100),
+            &cache_for(directory.path()),
+        )
+        .expect("the runner");
+        let spinning = wat::parse_str(
+            r#"(module
+                (memory (export "memory") 1)
+                (func (export "_start") (loop $again (br $again))))"#,
+        )
+        .expect("the WAT is valid");
+        let module = runner.prepare(&spinning).expect("the spinning module");
+        let mut asked = invocation();
+        asked.fuel = 4_000_000_000;
+        match module.invoke(&asked, &Interrupt::of(Vec::new())) {
+            Err(crate::SealedError::WatchdogExpired { limit }) => {
+                assert_eq!(limit, Duration::from_millis(100));
+            }
+            other => panic!("the watchdog stops the spinning guest: {other:?}"),
+        }
+        let (advanced, backstops) = runner.alarm_advances();
+        assert_eq!(
+            backstops, 0,
+            "no raw flag is armed, so no backstop wake runs"
+        );
+        assert!(
+            advanced > 0,
+            "the deadline itself woke the alarm and advanced the epoch"
         );
     }
 }
