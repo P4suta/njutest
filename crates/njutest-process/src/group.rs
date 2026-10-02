@@ -493,14 +493,14 @@ pub(crate) fn terminal(message: &str) -> ! {
     std::process::abort();
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::GroupChild;
 
+    #[cfg(unix)]
     #[test]
     fn a_child_that_has_been_reaped_leads_no_group() {
-        let mut ended =
-            GroupChild::start(&mut std::process::Command::new("true")).expect("true starts");
+        let mut ended = GroupChild::start(&mut Command::new("true")).expect("true starts");
         assert!(
             ended.leader().is_some(),
             "a child not yet reaped leads the group it was started at the head of"
@@ -512,10 +512,10 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn stopping_a_group_whose_leader_has_already_exited_is_no_failure() {
-        let mut ended =
-            GroupChild::start(&mut std::process::Command::new("true")).expect("true starts");
+        let mut ended = GroupChild::start(&mut Command::new("true")).expect("true starts");
         assert!(
             ended
                 .owned
@@ -532,22 +532,19 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_child_left_running_is_stopped_and_reaped_when_it_is_dropped() {
-        let mut command = std::process::Command::new("sleep");
+        let mut command = Command::new("sleep");
         command.arg("30");
         let started = std::time::Instant::now();
         let running = GroupChild::start(&mut command).expect("the child starts");
         drop(running);
         assert!(
-            started.elapsed() < std::time::Duration::from_secs(20),
+            started.elapsed() < Duration::from_secs(20),
             "dropping a child that still runs ends it rather than waiting for it to end by itself"
         );
     }
-}
-
-#[cfg(test)]
-mod preparation_tests {
     use std::io::{BufRead as _, Read as _};
     use std::process::{Command, Stdio};
     use std::time::Duration;
@@ -558,11 +555,7 @@ mod preparation_tests {
         let mut command =
             Command::new(std::env::current_exe().expect("the real fixture executable"));
         command
-            .args([
-                "--exact",
-                "ownership_tests::held_producer_fixture",
-                "--nocapture",
-            ])
+            .args(["--exact", "tests::held_producer_fixture", "--nocapture"])
             .env("NJUTEST_PROCESS_OWNED_FIXTURE", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::null())

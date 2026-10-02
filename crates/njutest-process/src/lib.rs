@@ -75,72 +75,6 @@ fn checked_decide_stop(
     }
 }
 
-#[cfg(all(test, unix))]
-mod tests {
-    use super::{Delivered, Others, StopDecision, Stopped, checked_decide_stop, decide_stop};
-    #[test]
-    fn an_invalid_foreign_pid_is_refused_instead_of_reported_settled() {
-        let error = super::stop_process(0).expect_err("zero names no retained process generation");
-        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
-    }
-
-    #[test]
-    fn group_stop_self_check_accepts_every_decision_the_classifier_makes() {
-        for group in Delivered::ALL {
-            for leader in Delivered::ALL {
-                for others in Others::ALL {
-                    let checked = checked_decide_stop(group, leader, others, decide_stop);
-                    assert_eq!(
-                        checked.expect("the classifier's decision matches the independent check"),
-                        decide_stop(group, leader, others)
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn a_planted_whole_group_claim_for_a_refused_group_is_rejected() {
-        for others in [Others::Somebody, Others::Unseen] {
-            let checked =
-                checked_decide_stop(Delivered::Refused, Delivered::Sent, others, |_, _, _| {
-                    StopDecision::Reached(Stopped::Group)
-                });
-            let error = checked.expect_err("the planted classifier must not pass its self-check");
-            let said = error.to_string();
-            assert!(
-                said.contains("group-stop decision Reached(Group)")
-                    && said.contains(&format!("others {others:?}")),
-                "{said}"
-            );
-        }
-    }
-
-    #[test]
-    fn every_planted_wrong_group_stop_decision_is_rejected() {
-        for group in Delivered::ALL {
-            for leader in Delivered::ALL {
-                for others in Others::ALL {
-                    for planted in Stopped::ALL
-                        .map(StopDecision::Reached)
-                        .into_iter()
-                        .chain(std::iter::once(StopDecision::Failed))
-                    {
-                        if planted == decide_stop(group, leader, others) {
-                            continue;
-                        }
-                        let checked = checked_decide_stop(group, leader, others, |_, _, _| planted);
-                        assert!(
-                            checked.is_err(),
-                            "a planted {planted:?} passed for {group:?}, {leader:?}, {others:?}"
-                        );
-                    }
-                }
-            }
-        }
-    }
-}
-
 /// The exact event that released a cancellable output reader.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReaderReady {
@@ -263,7 +197,75 @@ pub fn stop_process(pid: u32) -> std::io::Result<()> {
 }
 
 #[cfg(test)]
-mod ownership_tests {
+mod tests {
+    #[cfg(unix)]
+    use super::{Delivered, Others, StopDecision, Stopped, checked_decide_stop, decide_stop};
+    #[cfg(unix)]
+    #[test]
+    fn an_invalid_foreign_pid_is_refused_instead_of_reported_settled() {
+        let error = super::stop_process(0).expect_err("zero names no retained process generation");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn group_stop_self_check_accepts_every_decision_the_classifier_makes() {
+        for group in Delivered::ALL {
+            for leader in Delivered::ALL {
+                for others in Others::ALL {
+                    let checked = checked_decide_stop(group, leader, others, decide_stop);
+                    assert_eq!(
+                        checked.expect("the classifier's decision matches the independent check"),
+                        decide_stop(group, leader, others)
+                    );
+                }
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_planted_whole_group_claim_for_a_refused_group_is_rejected() {
+        for others in [Others::Somebody, Others::Unseen] {
+            let checked =
+                checked_decide_stop(Delivered::Refused, Delivered::Sent, others, |_, _, _| {
+                    StopDecision::Reached(Stopped::Group)
+                });
+            let error = checked.expect_err("the planted classifier must not pass its self-check");
+            let said = error.to_string();
+            assert!(
+                said.contains("group-stop decision Reached(Group)")
+                    && said.contains(&format!("others {others:?}")),
+                "{said}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn every_planted_wrong_group_stop_decision_is_rejected() {
+        for group in Delivered::ALL {
+            for leader in Delivered::ALL {
+                for others in Others::ALL {
+                    for planted in Stopped::ALL
+                        .map(StopDecision::Reached)
+                        .into_iter()
+                        .chain(std::iter::once(StopDecision::Failed))
+                    {
+                        if planted == decide_stop(group, leader, others) {
+                            continue;
+                        }
+                        let checked = checked_decide_stop(group, leader, others, |_, _, _| planted);
+                        assert!(
+                            checked.is_err(),
+                            "a planted {planted:?} passed for {group:?}, {leader:?}, {others:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     use std::io::{BufRead as _, Read as _, Write as _};
     use std::process::{Command, Stdio};
     use std::time::Duration;
@@ -288,11 +290,7 @@ mod ownership_tests {
     fn held_child() -> GroupChild {
         let mut command = Command::new(std::env::current_exe().expect("the compiled fixture"));
         command
-            .args([
-                "--exact",
-                "ownership_tests::held_producer_fixture",
-                "--nocapture",
-            ])
+            .args(["--exact", "tests::held_producer_fixture", "--nocapture"])
             .env("NJUTEST_PROCESS_OWNED_FIXTURE", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
