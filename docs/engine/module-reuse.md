@@ -5,7 +5,9 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Module reuse
 
-**Status: implemented.** One explicit process-local owner prepares one module once.
+**Status: implemented.**
+
+One explicit process-local owner prepares one module once.
 The first request for a module's exact bytes performs the actual preparation.
 Every later request through that owner, from the same runner or a separate compatible runner, uses the prepared module.
 This page records the ownership the [`rust-mutants-sealed`](../../crates/rust-mutants-sealed) runner gives that work; [sealed execution](sealed.md) keeps the host and its judgements, and the meter below extends the `run-end.sealed` fields that page names.
