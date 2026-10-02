@@ -700,5 +700,9 @@ The configured command keeps every native target, feature and suite flag.
 The dispatcher queries existing commits through an owned domyjob script snapshot, transfers one owned Git bundle through a fresh domyjob source landing, and checks out the exact requested commit in the configured private remote worktree.
 The local packet owner remains live until dispatch answers, and domyjob retains the remote job independently when its connection is interrupted.
 Set a package-specific remote worktree and target directory; the fleet must never name another worker's target.
+
+The published `njutest-process` library provides the common owned generation and group API used by the engine, test support and task runner.
+Its public library surface participates through those actual compiler-checked consumers.
+The retained inline encoding controls keep their original assertions in the remote integration test module, while production delivers complete script files.
 On macOS, `lint:windows` requires `NJUTEST_WINDOWS_MACHINES` naming this supported native route because absent MSVC headers cannot establish a Rust lint result.
 A transport control proves dispatch and input binding; only the retained actual Windows command result proves the native check.

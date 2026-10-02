@@ -225,7 +225,7 @@ pub fn known(machine: &Machine) -> String {
 pub struct Invocation {
     /// The actual shell executable.
     pub program: &'static str,
-    /// Its arguments with the script encoded as one exact argument.
+    /// The separate arguments selecting the complete immutable script file.
     pub arguments: Vec<String>,
 }
 
@@ -233,32 +233,6 @@ impl Invocation {
     /// The executable followed by every separate transport argument.
     pub fn argv(&self) -> impl Iterator<Item = &str> {
         std::iter::once(self.program).chain(self.arguments.iter().map(String::as_str))
-    }
-}
-
-/// The finite executable and argument vector that carries `script` unchanged.
-#[must_use]
-pub fn invocation(shell: Shell, script: &str) -> Invocation {
-    match shell {
-        Shell::Posix => Invocation {
-            program: "bash",
-            arguments: vec![
-                "-lc".to_owned(),
-                format!("echo {} | base64 -d | bash -l", base64(script.as_bytes())),
-            ],
-        },
-        Shell::Powershell => {
-            let wide: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
-            Invocation {
-                program: "pwsh",
-                arguments: vec![
-                    "-NoProfile".to_owned(),
-                    "-NonInteractive".to_owned(),
-                    "-EncodedCommand".to_owned(),
-                    base64(&wide),
-                ],
-            }
-        }
     }
 }
 
@@ -290,44 +264,6 @@ pub fn file_invocation(shell: Shell) -> Invocation {
         },
         arguments,
     }
-}
-
-/// The base64 digit for the low six bits of `value`.
-fn digit(value: u32) -> char {
-    const DIGITS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let at = match usize::try_from(value & 0x3f) {
-        Ok(at) => at,
-        Err(_six_bits_always_fit) => return '=',
-    };
-    match DIGITS.get(at) {
-        Some(byte) => char::from(*byte),
-        None => '=',
-    }
-}
-
-/// Standard base64 with padding.
-#[must_use]
-pub fn base64(bytes: &[u8]) -> String {
-    let mut encoded = String::with_capacity(bytes.len().div_ceil(3).saturating_mul(4));
-    for chunk in bytes.chunks(3) {
-        let (joined, kept) = match *chunk {
-            [first, second, third] => (
-                (u32::from(first) << 16) | (u32::from(second) << 8) | u32::from(third),
-                4,
-            ),
-            [first, second] => ((u32::from(first) << 16) | (u32::from(second) << 8), 3),
-            [first] => (u32::from(first) << 16, 2),
-            _ => continue,
-        };
-        for (index, shift) in [18_u32, 12, 6, 0].into_iter().enumerate() {
-            encoded.push(if index < kept {
-                digit(joined >> shift)
-            } else {
-                '='
-            });
-        }
-    }
-    encoded
 }
 
 /// The lines of a suite's output that say what failed, each once, in the order they came.

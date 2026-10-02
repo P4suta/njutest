@@ -4,9 +4,73 @@
 //! What `cargo xtask remote-check` tells each machine, and what it reads back.
 
 use xtask::remote::{
-    BUNDLE, Fleet, Machine, RemoteError, Shell, base64, failures, file_invocation, fleet,
-    invocation, known, script, script_name,
+    BUNDLE, Fleet, Invocation, Machine, RemoteError, Shell, failures, file_invocation, fleet,
+    known, script, script_name,
 };
+
+/// The finite executable and argument vector that carries `script` unchanged.
+#[must_use]
+fn invocation(shell: Shell, script: &str) -> Invocation {
+    match shell {
+        Shell::Posix => Invocation {
+            program: "bash",
+            arguments: vec![
+                "-lc".to_owned(),
+                format!("echo {} | base64 -d | bash -l", base64(script.as_bytes())),
+            ],
+        },
+        Shell::Powershell => {
+            let wide: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+            Invocation {
+                program: "pwsh",
+                arguments: vec![
+                    "-NoProfile".to_owned(),
+                    "-NonInteractive".to_owned(),
+                    "-EncodedCommand".to_owned(),
+                    base64(&wide),
+                ],
+            }
+        }
+    }
+}
+
+/// The base64 digit for the low six bits of `value`.
+fn digit(value: u32) -> char {
+    const DIGITS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let at = match usize::try_from(value & 0x3f) {
+        Ok(at) => at,
+        Err(_six_bits_always_fit) => return '=',
+    };
+    match DIGITS.get(at) {
+        Some(byte) => char::from(*byte),
+        None => '=',
+    }
+}
+
+/// Standard base64 with padding.
+#[must_use]
+fn base64(bytes: &[u8]) -> String {
+    let mut encoded = String::with_capacity(bytes.len().div_ceil(3).saturating_mul(4));
+    for chunk in bytes.chunks(3) {
+        let (joined, kept) = match *chunk {
+            [first, second, third] => (
+                (u32::from(first) << 16) | (u32::from(second) << 8) | u32::from(third),
+                4,
+            ),
+            [first, second] => ((u32::from(first) << 16) | (u32::from(second) << 8), 3),
+            [first] => (u32::from(first) << 16, 2),
+            _ => continue,
+        };
+        for (index, shift) in [18_u32, 12, 6, 0].into_iter().enumerate() {
+            encoded.push(if index < kept {
+                digit(joined >> shift)
+            } else {
+                '='
+            });
+        }
+    }
+    encoded
+}
 
 fn posix() -> Machine {
     Machine {

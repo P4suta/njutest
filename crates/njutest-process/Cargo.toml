@@ -16,7 +16,7 @@ authors.workspace = true
 readme.workspace = true
 
 [package.metadata.njutest]
-surface = "incidental"
+surface = "public"
 
 [dependencies]
 rust-mutants-decision = { workspace = true }
