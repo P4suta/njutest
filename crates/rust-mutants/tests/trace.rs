@@ -1792,6 +1792,48 @@ fn completion_after_observation_overflow_does_not_hide_the_lost_evidence() {
     }
 }
 
+#[test]
+fn filesystem_invalidations_retain_one_wake_until_the_actual_reader_receives_it() {
+    use rust_mutants::observation::{Event, Observation};
+    let root = tempfile::tempdir().expect("an actual filesystem resource");
+    let observed = Observation::filesystem(root.path(), false)
+        .expect("the resource is subscribed before its producer starts");
+    let witness = Observation::filesystem(root.path(), false)
+        .expect("an independent native observer is registered before every write");
+    for change in 0..128 {
+        fs::write(
+            root.path().join(format!("change-{change}")),
+            b"actual write",
+        )
+        .expect("the actual producer changes its resource");
+        let waited = witness
+            .wait("actual-source-tree", "native-filesystem-change", None)
+            .expect("the host observes the actual writer");
+        assert_eq!(
+            waited.event.expect("the actual native notification"),
+            Event::Changed
+        );
+        while witness
+            .pending()
+            .expect("every witness event is retained")
+            .is_some()
+        {}
+    }
+    observed
+        .ensure_complete()
+        .expect("resource invalidations must coalesce without losing counted product events");
+    assert_eq!(
+        observed.pending().expect("the retained invalidation"),
+        Some(Event::Changed)
+    );
+    assert_eq!(
+        observed
+            .pending()
+            .expect("the invalidation is acknowledged once"),
+        None
+    );
+}
+
 #[derive(Debug)]
 struct SemanticClock(std::cell::Cell<std::time::Instant>);
 
@@ -1908,4 +1950,88 @@ fn a_concurrent_completion_cannot_erase_a_retained_producer_failure() {
             "{refusal}"
         );
     }
+}
+
+#[test]
+fn resource_invalidations_coalesce_until_received_and_keep_terminal_events_distinct() {
+    use rust_mutants::observation::{Event, Observation};
+    let observed = Observation::subscribe();
+    let resource = observed.invalidation();
+    for _actual_change in 0..4096 {
+        resource.changed();
+    }
+    observed
+        .ensure_complete()
+        .expect("a latest-resource wake is not a counted backlog");
+    assert_eq!(
+        observed.pending().expect("one retained wake"),
+        Some(Event::Changed)
+    );
+    assert_eq!(observed.pending().expect("one acknowledgement"), None);
+    observed.signal().publish(Event::Completed);
+    observed.signal().publish(Event::Cancelled);
+    resource.changed();
+    assert_eq!(
+        observed.pending().expect("independent completion"),
+        Some(Event::Completed)
+    );
+    assert_eq!(
+        observed.pending().expect("independent cancellation"),
+        Some(Event::Cancelled)
+    );
+    assert_eq!(
+        observed
+            .pending()
+            .expect("independent resource invalidation"),
+        Some(Event::Changed)
+    );
+    assert_eq!(observed.pending().expect("all evidence received"), None);
+}
+
+#[test]
+fn resource_invalidations_keep_the_first_refusal_and_counted_overflow_sticky() {
+    use rust_mutants::observation::{Event, Observation};
+    let observed = Observation::subscribe();
+    let resource = observed.invalidation();
+    resource.changed();
+    resource.failed(io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        "native resource refused",
+    ));
+    resource.failed(io::Error::other("a later producer refusal"));
+    observed.signal().publish(Event::Completed);
+    for _read in 0..2 {
+        let error = observed
+            .pending()
+            .expect_err("the original refusal remains authoritative");
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(error.to_string(), "native resource refused");
+    }
+    let counted = Observation::subscribe();
+    for _event in 0..4096 {
+        counted.signal().publish(Event::Changed);
+        counted.invalidation().changed();
+    }
+    assert!(
+        counted
+            .pending()
+            .expect_err("counted evidence was lost")
+            .to_string()
+            .contains("full")
+    );
+}
+
+#[test]
+fn a_retained_subscription_endpoint_expires_with_its_actual_reader() {
+    let observed = rust_mutants::observation::Observation::subscribe();
+    let retained = observed.retained_signal();
+    assert!(
+        retained.upgrade().is_some(),
+        "the real reader owns its endpoint"
+    );
+    drop(observed);
+    assert!(
+        retained.upgrade().is_none(),
+        "a producer must not retain a disposed reader registration"
+    );
 }

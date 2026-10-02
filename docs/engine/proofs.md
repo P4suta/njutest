@@ -205,9 +205,9 @@ The artifact and provenance inventories remain complete, and the actual producer
 Each family keeps the layer whose behavior it claims live.
 
 Host observations subscribe before their producer starts or their resource is first read.
-The engine and task runner reserve 64 notification slots and one sticky refusal per subscription.
+The engine and task runner reserve 64 counted event slots and one sticky refusal per subscription.
 This bounds the observer's retained memory while its producer continues; it is neither a work limit nor a proof threshold.
-Every notification that does not fit refuses the subscription rather than truncating its evidence into success.
+Every counted event that does not fit refuses the subscription rather than truncating its evidence into success.
 A producer failure is sticky too, and the publication lock orders it against the final observation decision.
 The reader rechecks that refusal immediately before returning its decision, including completion.
 Each actual wait names its producer and cause and measures its monotonic duration and executing host.
@@ -219,6 +219,12 @@ Reading the actual answer consumes its wake, and the reader checks retained refu
 Each displayed event acknowledges its wake before another frame is read, so continuous successful progress cannot accumulate already consumed notifications.
 Protocol EOF is published after the answer channel closes, while the actual process and reader threads are still joined by their owner.
 Presentation wait notes remain in the durable trace and never wake the same presentation channel again.
+
+Host observations retain counted product events through `Signal` and latest-resource wakes through `Invalidation`.
+A filesystem subscription is registered before the first resource read, and every native change retains one pending invalidation until the reader receives it.
+That wake permits rereading the actual resource; it proves no process, writer, group, pipe or collector completed.
+Counted events preserve their bounded overflow refusal, and both endpoints retain the first producer failure independently of cancellation and completion.
+The original native filesystem burst and explicit overflow controls hold these distinct contracts.
 
 | Family | Live layer | Actual recording holding the other layers |
 | --- | --- | --- |

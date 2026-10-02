@@ -5,8 +5,9 @@
 
 use std::io;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::thread::{self, Thread};
 use std::time::{Duration, Instant};
 
@@ -106,6 +107,7 @@ pub struct Signal {
     sent: SyncSender<io::Result<Event>>,
     reader: Arc<Mutex<Thread>>,
     lost: Arc<Mutex<Option<io::Error>>>,
+    invalidated: Arc<AtomicBool>,
 }
 
 impl Signal {
@@ -144,6 +146,10 @@ impl Signal {
             Err(TrySendError::Disconnected(_reader_has_ended)) => {}
         }
         drop(lost);
+        self.wake();
+    }
+
+    fn wake(&self) {
         match self.reader.lock() {
             Ok(reader) => reader.unpark(),
             Err(poisoned) => {
@@ -166,10 +172,29 @@ impl Signal {
     }
 }
 
+/// A coalesced resource wake whose pending change survives until this subscription receives it.
+#[derive(Debug, Clone)]
+pub struct Invalidation {
+    signal: Signal,
+}
+
+impl Invalidation {
+    /// Retains one pending resource change without enqueueing a counted product event.
+    pub fn changed(&self) {
+        self.signal.invalidated.store(true, Ordering::Release);
+        self.signal.wake();
+    }
+
+    /// Retains the first producer refusal independently of the pending resource change.
+    pub fn failed(&self, error: io::Error) {
+        self.signal.failed(error);
+    }
+}
+
 /// An owned subscription registered before a producer starts or an initial resource observation is made.
 pub struct Observation {
     received: Receiver<io::Result<Event>>,
-    signal: Signal,
+    signal: Arc<Signal>,
     reader: thread::ThreadId,
     watcher: Option<notify::RecommendedWatcher>,
 }
@@ -191,11 +216,12 @@ impl Observation {
         let (sent, received) = mpsc::sync_channel(BACKLOG);
         Self {
             received,
-            signal: Signal {
+            signal: Arc::new(Signal {
                 sent,
                 reader: Arc::new(Mutex::new(thread::current())),
                 lost: Arc::new(Mutex::new(None)),
-            },
+                invalidated: Arc::new(AtomicBool::new(false)),
+            }),
             reader: thread::current().id(),
             watcher: None,
         }
@@ -215,7 +241,7 @@ impl Observation {
     /// A requested root or excluded spelling cannot be subscribed exactly.
     pub fn filesystem_except(root: &Path, recursive: bool, excluded: &[&str]) -> io::Result<Self> {
         let mut observed = Self::subscribe();
-        let signal = observed.signal();
+        let signal = observed.invalidation();
         let root = std::fs::canonicalize(root)?;
         let generated: Vec<_> = excluded.iter().map(|name| root.join(name)).collect();
         let mut watcher =
@@ -228,7 +254,7 @@ impl Observation {
                                 .iter()
                                 .any(|generated| path.starts_with(generated))
                         }) => {}
-                Ok(_changed) => signal.publish(Event::Changed),
+                Ok(_changed) => signal.changed(),
                 Err(source) => signal.failed(io::Error::other(source)),
             })
             .map_err(io::Error::other)?;
@@ -249,7 +275,21 @@ impl Observation {
     /// The endpoint retained by each explicit producer of this subscription.
     #[must_use]
     pub fn signal(&self) -> Signal {
-        self.signal.clone()
+        self.signal.as_ref().clone()
+    }
+
+    /// A publication endpoint whose retained lifetime proves only that this reader subscription still exists.
+    #[must_use]
+    pub fn retained_signal(&self) -> Weak<Signal> {
+        Arc::downgrade(&self.signal)
+    }
+
+    /// The distinct endpoint for a latest-resource wake rather than a counted event sequence.
+    #[must_use]
+    pub fn invalidation(&self) -> Invalidation {
+        Invalidation {
+            signal: self.signal(),
+        }
     }
 
     /// Refuses every queued-result decision after a retained producer or backlog failure.
@@ -271,7 +311,11 @@ impl Observation {
         self.ensure_complete()?;
         let event = match self.received.try_recv() {
             Ok(event) => Some(event?),
-            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Empty) => self
+                .signal
+                .invalidated
+                .swap(false, Ordering::AcqRel)
+                .then_some(Event::Changed),
             Err(TryRecvError::Disconnected) => {
                 return Err(io::Error::other("the observation producers disconnected"));
             }
