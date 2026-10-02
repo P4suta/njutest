@@ -1,0 +1,50 @@
+RUN	run=20261002t023921944z-00b908	kind=full	contract=whole-v1
+BUILD	name=default
+TOOLCHAIN	rustc=rustc 1.98.0 (88d9e12ae 2026-08-18)	cargo=cargo 1.98.0 (797e8a9bc 2026-08-05)	target=aarch64-apple-darwin	os=macos	arch=aarch64
+REPOSITORY	root=fixture-simple	packages=1	commit=unavailable	branch=unavailable	dirty=false
+SCOPE	requested=(nothing named)	resolved=(nothing named)	included=(nothing named)	excluded=(nothing named)	from=.njutest.toml
+TIMING	started=2026-10-02T02:39:21.944784Z	finished=2026-10-02T02:39:34.376896Z	compute_total_ms=12432
+TARGET	passed	238ms	75b1f05e11b20c1dc61d2e63b66a91f4dedc5e87f628e29ff45ac9ddbcff6ef0	fixture-simple/lib/fixture_simple
+TARGET	passed	226ms	3b321d0402693467c792f5569f72c22813f318784f6755cec0c5bc0bb9e7dd79	fixture-simple/test/parity
+MUTANT	unproven	4f09b8f6515d886cf638	src/lib.rs:11:5	return-default	build=default killed_by=fixture-simple/lib/fixture_simple
+MUTANT	unproven	36f3786c607b20288246	src/lib.rs:11:8	negate-condition	build=default killed_by=fixture-simple/lib/fixture_simple
+MUTANT	unproven	97dcf2a134137b47d185	src/lib.rs:11:8	condition-to-true	build=default killed_by=fixture-simple/lib/fixture_simple
+MUTANT	unproven	355723c8d204e44dac60	src/lib.rs:11:8	condition-to-false	build=default killed_by=fixture-simple/lib/fixture_simple
+MUTANT	unproven	f0d20edfda2959667ff1	src/lib.rs:11:10	gt-to-ge
+MUTANT	unproven	29fa56091a8bb5622f20	src/lib.rs:11:16	return-default	build=default killed_by=fixture-simple/lib/fixture_simple
+MUTANT	unproven	7dade0daa6fdfca0540a	src/lib.rs:11:27	return-default	build=default killed_by=fixture-simple/lib/fixture_simple
+MUTANT	unproven	c7df40a2d69eae0d983d	src/lib.rs:16:5	return-true	build=default killed_by=fixture-simple/test/parity
+MUTANT	unproven	00e556aa9db45bd9d1d5	src/lib.rs:16:7	rem-to-mul	build=default killed_by=fixture-simple/test/parity
+MUTANT	unproven	4cd205f7d6faa29392ae	src/lib.rs:16:11	eq-to-neq	build=default killed_by=fixture-simple/test/parity
+FINDING	dimension-not-measured	mutation	10 thing(s) the mutation dimension put were not decided, so it is not established along it: 4f09b8f6515d886cf638: a native lead of killed no sealed execution established; 36f3786c607b20288246: a native lead of killed no sealed execution established; 97dcf2a134137b47d185: a native lead of killed no sealed execution established; 355723c8d204e44dac60: a native lead of killed no sealed execution established; f0d20edfda2959667ff1: a native lead of survived no sealed execution established; 29fa56091a8bb5622f20: a native lead of killed no sealed execution established; 7dade0daa6fdfca0540a: a native lead of killed no sealed execution established; c7df40a2d69eae0d983d: a native lead of killed no sealed execution established; 00e556aa9db45bd9d1d5: a native lead of killed no sealed execution established; 4cd205f7d6faa29392ae: a native lead of killed no sealed execution established
+FINDING	dimension-not-measured	schedule	3 thing(s) the schedule dimension put were not decided, so it is not established along it: fixture-simple/doc/fixture_simple: its baseline did not pass, so no schedule of it could be held; fixture-simple/lib/fixture_simple: every delayed schedule passed, which is a sample of its schedules and never all of them; fixture-simple/test/parity: every delayed schedule passed, which is a sample of its schedules and never all of them
+FINDING	unproven-mutant	4f09b8f6515d886cf638	no sealed execution established a verdict about return-default at src/lib.rs (nothing was sealed to put it to), so the native run's killed is a lead and not a verdict	11:5
+FINDING	unproven-mutant	36f3786c607b20288246	no sealed execution established a verdict about negate-condition at src/lib.rs (nothing was sealed to put it to), so the native run's killed is a lead and not a verdict	11:8
+FINDING	unproven-mutant	97dcf2a134137b47d185	no sealed execution established a verdict about condition-to-true at src/lib.rs (nothing was sealed to put it to), so the native run's killed is a lead and not a verdict	11:8
+FINDING	unproven-mutant	355723c8d204e44dac60	no sealed execution established a verdict about condition-to-false at src/lib.rs (nothing was sealed to put it to), so the native run's killed is a lead and not a verdict	11:8
+FINDING	unproven-mutant	f0d20edfda2959667ff1	no sealed execution established a verdict about gt-to-ge at src/lib.rs (nothing was sealed to put it to), so the native run's survived is a lead and not a verdict: no test could have noticed it natively, since every one of the 1 targets that reach it was removed without being run, by never-infected	11:10
+FINDING	unproven-mutant	29fa56091a8bb5622f20	no sealed execution established a verdict about return-default at src/lib.rs (nothing was sealed to put it to), so the native run's killed is a lead and not a verdict	11:16
+FINDING	unproven-mutant	7dade0daa6fdfca0540a	no sealed execution established a verdict about return-default at src/lib.rs (nothing was sealed to put it to), so the native run's killed is a lead and not a verdict	11:27
+FINDING	unproven-mutant	c7df40a2d69eae0d983d	no sealed execution established a verdict about return-true at src/lib.rs (nothing was sealed to put it to), so the native run's killed is a lead and not a verdict	16:5
+FINDING	unproven-mutant	00e556aa9db45bd9d1d5	no sealed execution established a verdict about rem-to-mul at src/lib.rs (nothing was sealed to put it to), so the native run's killed is a lead and not a verdict	16:7
+FINDING	unproven-mutant	4cd205f7d6faa29392ae	no sealed execution established a verdict about eq-to-neq at src/lib.rs (nothing was sealed to put it to), so the native run's killed is a lead and not a verdict	16:11
+LIMITATION	git-metadata-unavailable	git could not be asked, so the run cannot name the commit it verified
+LIMITATION	touch-not-recorded	the target's guards recorded nothing this run can route by, so every test of it reaches every mutation in it and none of them is narrowed (fixture-simple/doc/fixture_simple)
+LIMITATION	skipped-test-only-file	2 places were not mutated: test-only-file
+LIMITATION	skipped-let-condition	1 place was not mutated: let-condition
+LIMITATION	schedule-not-explored	1 test binary is not proven to run one thread and no schedule of it was explored, so what it does when its threads interleave otherwise is not known (fixture-simple/doc/fixture_simple)
+LIMITATION	schedule-sampled	2 test binaries are passed every schedule a delayed guard made, which is a sample of the schedules and not all of them, so a race none of those delays exposed is not ruled out (fixture-simple/lib/fixture_simple, fixture-simple/test/parity)
+LIMITATION	fault-no-site	no measured file has a `?`, so there was no call a fault could fail
+LIMITATION	crash-no-site	no measured file calls anything that writes, so there was nothing to stop after
+TARGETS	selected=2	passed=2	failed=0	skipped=0	missing=0
+MUTANTS	cataloged=10	rejected=0	executed=10	unreached=0
+OUTCOMES	killed=9	survived=1	step_limit_reached=0	waited=0	equivalent=0
+WITHIN_OUTCOMES	accepted_of_survived=0	reused_of_killed=0	reused_of_survived=0
+DIMENSION	mutation	measured	catalogued=10	answered=0	holes=10	open=4f09b8f6515d886cf638: a native lead of killed no sealed execution established; 36f3786c607b20288246: a native lead of killed no sealed execution established; 97dcf2a134137b47d185: a native lead of killed no sealed execution established; 355723c8d204e44dac60: a native lead of killed no sealed execution established; f0d20edfda2959667ff1: a native lead of survived no sealed execution established; 29fa56091a8bb5622f20: a native lead of killed no sealed execution established; 7dade0daa6fdfca0540a: a native lead of killed no sealed execution established; c7df40a2d69eae0d983d: a native lead of killed no sealed execution established; 00e556aa9db45bd9d1d5: a native lead of killed no sealed execution established; 4cd205f7d6faa29392ae: a native lead of killed no sealed execution established	speaks_not_about=skipped-let-condition; skipped-test-only-file
+DIMENSION	repeatable	measured	catalogued=14	answered=14	holes=0
+DIMENSION	fault	nothing-to-ask	no measured file has a `?`
+DIMENSION	schedule	measured	catalogued=3	answered=0	holes=3	open=fixture-simple/doc/fixture_simple: its baseline did not pass, so no schedule of it could be held; fixture-simple/lib/fixture_simple: every delayed schedule passed, which is a sample of its schedules and never all of them; fixture-simple/test/parity: every delayed schedule passed, which is a sample of its schedules and never all of them
+DIMENSION	wire	nothing-to-ask	no seam was configured or asked a question
+DIMENSION	durable	nothing-to-ask	no measured file calls anything that writes
+SOUNDNESS	build=default	unsafe_items=0	packages_with_unsafe=0	was_executed=true
+VERDICT	INSUFFICIENT

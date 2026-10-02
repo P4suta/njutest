@@ -18,11 +18,12 @@ Yasunobu = "Yasunobu"
 extend-exclude = [
   "target/",
   "*.lock",
-  "*.golden",                           # instrumentation output compared byte for byte
+  "*.golden",                                  # instrumentation output compared byte for byte
   "*.input",
-  "fuzz/regressions/",                  # crash inputs a fuzzer wrote, kept byte for byte
-  "fixtures/",                          # deliberately weak, odd, or non-ASCII code under test
-  "xtask/tests/testdata/engine-run-*/", # recorded runs over fixtures, quoting their code
-  "xtask/tests/testdata/sharded-run/",  # a recorded run over a fixture in two shards, quoting its code
+  "fuzz/regressions/",                         # crash inputs a fuzzer wrote, kept byte for byte
+  "fixtures/",                                 # deliberately weak, odd, or non-ASCII code under test
+  "xtask/tests/testdata/engine-run-*/",        # recorded runs over fixtures, quoting their code
+  "xtask/tests/testdata/sharded-run/",         # a recorded run over a fixture in two shards, quoting its code
+  "xtask/tests/testdata/matrix-run-unsealed/", # a recorded whole run that sealed nothing, quoting its code and output
   "CHANGELOG.md",
 ]
