@@ -10,6 +10,104 @@ use std::time::{Duration, Instant};
 
 use crate::runner::Advances;
 
+/// One actual guest checkpoint, observed without guessing when its host thread starts.
+#[derive(Debug)]
+pub struct GuestEntry {
+    state: Arc<EntryState>,
+}
+
+/// The single invocation that owns publication or completion of a guest-entry observation.
+#[derive(Debug)]
+pub struct GuestEntrySender {
+    state: Arc<EntryState>,
+}
+
+/// A checkpoint's finite state and the event that changes it.
+#[derive(Debug)]
+struct EntryState {
+    arrival: Mutex<Arrival>,
+    changed: Condvar,
+}
+
+/// Whether an actual invocation has reached a checkpoint or completed before one.
+#[derive(Debug, Clone, Copy)]
+enum Arrival {
+    Pending,
+    Entered,
+    Finished,
+}
+
+impl GuestEntry {
+    /// Creates a single producer and its observer, with completion published when the producer drops.
+    #[must_use]
+    pub fn channel() -> (GuestEntrySender, Self) {
+        let state = Arc::new(EntryState {
+            arrival: Mutex::new(Arrival::Pending),
+            changed: Condvar::new(),
+        });
+        (
+            GuestEntrySender {
+                state: Arc::clone(&state),
+            },
+            Self { state },
+        )
+    }
+
+    /// Waits for an actual host call or epoch callback, returning false if the invocation completes first.
+    #[must_use]
+    pub fn wait(&self) -> bool {
+        let mut arrival = self.state.lock();
+        loop {
+            match *arrival {
+                Arrival::Entered => return true,
+                Arrival::Finished => return false,
+                Arrival::Pending => {
+                    arrival = match self.state.changed.wait(arrival) {
+                        Ok(arrival) => arrival,
+                        Err(_poisoned) => {
+                            eprintln!("the owned guest-entry wait was poisoned before completion");
+                            std::process::abort();
+                        }
+                    };
+                }
+            }
+        }
+    }
+}
+
+impl EntryState {
+    /// Acquires the checkpoint state or refuses an irrecoverable ownership failure.
+    fn lock(&self) -> std::sync::MutexGuard<'_, Arrival> {
+        match self.arrival.lock() {
+            Ok(arrival) => arrival,
+            Err(_poisoned) => {
+                eprintln!("the owned guest-entry state was poisoned before settlement");
+                std::process::abort();
+            }
+        }
+    }
+}
+
+impl GuestEntrySender {
+    /// Publishes a checkpoint reached by the actual guest, once.
+    pub(crate) fn entered(self) {
+        *self.state.lock() = Arrival::Entered;
+        self.state.changed.notify_all();
+    }
+}
+
+impl Drop for GuestEntrySender {
+    fn drop(&mut self) {
+        let mut arrival = self.state.lock();
+        match *arrival {
+            Arrival::Pending => *arrival = Arrival::Finished,
+            Arrival::Entered | Arrival::Finished => {}
+        }
+        drop(arrival);
+        self.state.changed.notify_all();
+    }
+}
+
 /// A flag whose raising is an owned event: a waiter is woken by it, not by looking again.
 #[derive(Debug, Default)]
 pub struct Raised {

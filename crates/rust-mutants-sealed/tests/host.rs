@@ -1242,12 +1242,16 @@ fn an_interrupt_stops_a_runaway_guest_as_an_error_before_its_watchdog_would() {
     endless.fuel = u64::MAX;
     let raised = Arc::new(AtomicBool::new(false));
     let interrupt = Interrupt::of(vec![Arc::clone(&raised)]);
+    let (entry, entered) = rust_mutants_sealed::GuestEntry::channel();
     let answer = std::thread::scope(|scope| {
         let stopping = njutest_devkit::thread::ScopedThread::launch(scope, || {
-            std::thread::sleep(Duration::from_millis(50));
+            assert!(
+                entered.wait(),
+                "the actual raw-flag epoch checkpoint precedes cancellation"
+            );
             raised.store(true, Ordering::SeqCst);
         });
-        let answer = module.invoke(&endless, &interrupt);
+        let answer = module.invoke_observed(&endless, &interrupt, entry);
         stopping.join().expect("the caller stops");
         answer
     });

@@ -18,7 +18,7 @@ use wasmtime::{Caller, Val};
 use crate::abi::{CLOCK_REALTIME, Errno, RIGHTS_FD_WRITE};
 use crate::error::Invariant;
 use crate::imports::WasiFunction;
-use crate::interrupt::Interrupt;
+use crate::interrupt::{GuestEntrySender, Interrupt};
 use crate::invocation::{ClockPolicy, Halt, Invocation};
 use crate::random::RandomStream;
 use crate::transcript::{Captured, Denials, OverlayEntry, Refusal, RefusalReason};
@@ -141,6 +141,8 @@ pub(crate) struct Host {
     interrupt: Interrupt,
     /// Where a rename that puts a file there ends the guest, where anywhere does.
     halt: Option<Halt>,
+    /// The producer retained until an actual guest checkpoint or this host's completion.
+    pub(crate) entry: Option<GuestEntrySender>,
 }
 
 /// What the host hands the runner once the guest has stopped.
@@ -203,7 +205,15 @@ impl Host {
             deadline,
             interrupt,
             halt,
+            entry: None,
         })
+    }
+
+    /// Publishes the actual guest checkpoint once, without affecting its transcript.
+    pub(crate) fn entered(&mut self) {
+        if let Some(entry) = self.entry.take() {
+            entry.entered();
+        }
     }
 
     /// Counts one refusal of `function` for `reason`.
@@ -465,6 +475,7 @@ pub(crate) fn call(
     params: &[Val],
     results: &mut [Val],
 ) -> wasmtime::Result<()> {
+    caller.data_mut().entered();
     match answer(function, &mut caller, &Params(params)) {
         Ok(errno) => {
             if let Some(result) = results.first_mut() {

@@ -22,7 +22,7 @@ use crate::digest::{Encoder, SealedDigest};
 use crate::error::{Invariant, RuntimeStep, SealedError};
 use crate::host::{BYTE_FUEL, CALL_FUEL, Host, HostStop, RESOLUTION, TABLE_ELEMENTS};
 use crate::imports::{IMPORT_MODULE, WasiFunction};
-use crate::interrupt::Interrupt;
+use crate::interrupt::{GuestEntrySender, Interrupt};
 use crate::invocation::Invocation;
 use crate::transcript::{KEPT_REQUESTS, Parts, SealedStop, Transcript, TrapClass, classify};
 use crate::transcripts::Reuse;
@@ -96,6 +96,32 @@ struct AlarmState {
 /// A live invocation whose interrupt flag has no wake of its own.
 #[derive(Debug, Clone, Copy)]
 struct RawInterrupt;
+
+/// The only reasons an owned alarm can park: an event, an invocation deadline or an armed raw flag.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AlarmWait {
+    Event,
+    Deadline(Instant),
+    RawBackstop(Instant),
+}
+
+impl AlarmState {
+    /// Selects the next causal wake, refusing an unrepresentable raw-flag deadline.
+    fn wait_at(&self, now: Instant) -> Option<AlarmWait> {
+        let due = self.due.iter().min().copied();
+        let raw = if self.raw.is_empty() {
+            None
+        } else {
+            Some(now.checked_add(RAW_BACKSTOP)?)
+        };
+        Some(match (due, raw) {
+            (Some(due), Some(raw)) if due <= raw => AlarmWait::Deadline(due),
+            (Some(_) | None, Some(raw)) => AlarmWait::RawBackstop(raw),
+            (Some(due), None) => AlarmWait::Deadline(due),
+            (None, None) => AlarmWait::Event,
+        })
+    }
+}
 
 /// The epoch alarm one engine's live runners share: it advances the epoch when a registered deadline falls or a watching raise pings it, and it wakes for nothing else.
 #[derive(Debug, Default)]
@@ -185,6 +211,7 @@ impl Advances {
             self.overflowed.store(true, Ordering::Release);
         }
         engine.increment_epoch();
+        self.changed.notify_all();
         counted
     }
 
@@ -221,6 +248,7 @@ impl Advances {
         store.set_epoch_deadline(1);
         let advances = Arc::clone(advances);
         store.epoch_deadline_callback(move |mut context| {
+            context.data_mut().entered();
             if advances.checked().is_err() {
                 context.data_mut().stop = Some(HostStop::Broken(Invariant::Width));
                 return Err(wasmtime::Error::msg("the sealed alarm counter overflowed"));
@@ -244,6 +272,18 @@ pub(crate) struct Armed {
     advances: Arc<Advances>,
     deadline: Option<Instant>,
     raw: bool,
+}
+
+/// Observes the owned alarm registration before guest instantiation, without replacing guest execution.
+struct InvocationHooks<F> {
+    registered: F,
+}
+
+impl InvocationHooks<fn()> {
+    /// Observes no additional event beyond the invocation's actual owned producers.
+    fn quiet() -> Self {
+        Self { registered: || {} }
+    }
 }
 
 impl Drop for Armed {
@@ -278,28 +318,20 @@ fn alarm(engine: &Engine, advances: &Advances) {
             return;
         }
         let now = Instant::now();
-        let due = state.due.iter().min().copied();
-        let backstop = if state.raw.is_empty() {
-            None
-        } else {
-            match now.checked_add(RAW_BACKSTOP) {
-                Some(bound) => Some(bound),
-                None => {
-                    drop(state);
-                    advances.overflowed.store(true, Ordering::Release);
-                    engine.increment_epoch();
-                    return;
-                }
+        let waiting = match state.wait_at(now) {
+            Some(waiting) => waiting,
+            None => {
+                drop(state);
+                advances.overflowed.store(true, Ordering::Release);
+                engine.increment_epoch();
+                return;
             }
         };
-        let bound = match (due, backstop) {
-            (Some(due), Some(backstop)) => Some(due.min(backstop)),
-            (Some(earliest), None) | (None, Some(earliest)) => Some(earliest),
-            (None, None) => None,
-        }
-        .map(|at| at.saturating_duration_since(now));
-        let timed_out = match bound {
-            Some(bound) => match advances.changed.wait_timeout(state, bound) {
+        let timed_out = match waiting {
+            AlarmWait::Deadline(at) | AlarmWait::RawBackstop(at) => match advances
+                .changed
+                .wait_timeout(state, at.saturating_duration_since(now))
+            {
                 Ok((next, waited)) => {
                     state = next;
                     waited.timed_out()
@@ -311,7 +343,7 @@ fn alarm(engine: &Engine, advances: &Advances) {
                     std::process::abort();
                 }
             },
-            None => match advances.changed.wait(state) {
+            AlarmWait::Event => match advances.changed.wait(state) {
                 Ok(next) => {
                     state = next;
                     false
@@ -1144,6 +1176,37 @@ impl SealedModule<'_> {
         interrupt: &Interrupt,
         counted: &crate::transcripts::Counted,
     ) -> Result<Transcript, SealedError> {
+        self.invoke_with_hooks(
+            (invocation, interrupt),
+            (counted, None),
+            InvocationHooks::quiet(),
+        )
+    }
+
+    /// Runs a fresh invocation while its single producer announces an actual guest checkpoint or early completion.
+    ///
+    /// # Errors
+    /// The same runtime, interruption and watchdog failures as [`Self::invoke`].
+    pub fn invoke_observed(
+        &self,
+        invocation: &Invocation,
+        interrupt: &Interrupt,
+        entry: GuestEntrySender,
+    ) -> Result<Transcript, SealedError> {
+        self.invoke_with_hooks(
+            (invocation, interrupt),
+            (&crate::transcripts::Counted::default(), Some(entry)),
+            InvocationHooks::quiet(),
+        )
+    }
+
+    /// Runs the actual invocation while observing its owned alarm registration through an argument.
+    fn invoke_with_hooks<F: FnOnce()>(
+        &self,
+        (invocation, interrupt): (&Invocation, &Interrupt),
+        (counted, entry): (&crate::transcripts::Counted, Option<GuestEntrySender>),
+        hooks: InvocationHooks<F>,
+    ) -> Result<Transcript, SealedError> {
         self.runner.ticking.advances.checked()?;
         if interrupt.raised() {
             return Err(SealedError::Interrupted);
@@ -1156,21 +1219,13 @@ impl SealedModule<'_> {
                 .checked_add(watchdog)
                 .ok_or_else(|| broken(Invariant::Width))?,
         );
+        let mut store = self.store((invocation, interrupt), (deadline, entry))?;
         let armed = Advances::arm(&self.runner.ticking.advances, deadline, interrupt);
-        let halt = invocation.halting()?;
-        let host = Host::new((invocation, halt), (deadline, interrupt.clone())).map_err(broken)?;
-        let mut store = Store::new(&self.runner.owner.engine, host);
-        store.limiter(|host| &mut host.limiter);
-        store
-            .set_fuel(invocation.fuel)
-            .map_err(|source| runtime(RuntimeStep::Fuel, source))?;
-        Advances::watch_store(
-            &self.runner.ticking.advances,
-            &mut store,
-            interrupt.clone(),
-            deadline,
-        );
+        (hooks.registered)();
         self.runner.ticking.advances.checked()?;
+        if interrupt.raised() {
+            return Err(SealedError::Interrupted);
+        }
         self.runner.counted.instantiated()?;
         counted.instantiated()?;
         let stop = match self.pre.instantiate(&mut store) {
@@ -1221,6 +1276,29 @@ impl SealedModule<'_> {
             waited: ended.waited,
             overlay: ended.overlay,
         }))
+    }
+    /// Configures a fresh store's interrupt and checkpoint ownership before its alarm can publish a wake.
+    fn store(
+        &self,
+        (invocation, interrupt): (&Invocation, &Interrupt),
+        (deadline, entry): (Option<Instant>, Option<GuestEntrySender>),
+    ) -> Result<Store<Host>, SealedError> {
+        let halt = invocation.halting()?;
+        let mut host =
+            Host::new((invocation, halt), (deadline, interrupt.clone())).map_err(broken)?;
+        host.entry = entry;
+        let mut store = Store::new(&self.runner.owner.engine, host);
+        store.limiter(|host| &mut host.limiter);
+        store
+            .set_fuel(invocation.fuel)
+            .map_err(|source| runtime(RuntimeStep::Fuel, source))?;
+        Advances::watch_store(
+            &self.runner.ticking.advances,
+            &mut store,
+            interrupt.clone(),
+            deadline,
+        );
+        Ok(store)
     }
 }
 
@@ -1365,7 +1443,7 @@ mod tests {
 
     use super::{
         CompilerTier, Identity, ModuleOwner, Owner, PREPARATION_LEASES, PreparationHooks,
-        PreparationStage, RAW_BACKSTOP, SealedRunner, Slot,
+        PreparationStage, SealedRunner, Slot,
     };
     use crate::error::Invariant;
     use crate::{Interrupt, Invocation, Reuse, SealedDigest, SealedStop};
@@ -1857,9 +1935,12 @@ mod tests {
             &cache_for(directory.path()),
         )
         .expect("the runner");
-        let window = RAW_BACKSTOP.saturating_mul(5);
-        std::thread::sleep(window);
-        let (advanced, backstops) = runner.alarm_advances();
+        let alarm = Arc::clone(&runner.ticking.advances);
+        assert_eq!(
+            alarm.lock().wait_at(Instant::now()).expect("the idle wait"),
+            super::AlarmWait::Event
+        );
+        let (advanced, backstops) = alarm.counts();
         assert_eq!(
             (advanced, backstops),
             (0, 0),
@@ -1871,7 +1952,15 @@ mod tests {
             .expect("the preparation")
             .invoke(&invocation(), &Interrupt::of(Vec::new()))
             .expect("the guest runs and returns");
-        let (advanced, backstops) = runner.alarm_advances();
+        assert_eq!(
+            alarm
+                .lock()
+                .wait_at(Instant::now())
+                .expect("the returned guest leaves no wait"),
+            super::AlarmWait::Event
+        );
+        drop(runner);
+        let (advanced, backstops) = alarm.counts();
         assert_eq!(
             (advanced, backstops),
             (0, 0),
@@ -1909,17 +1998,17 @@ mod tests {
         asked.fuel = 4_000_000_000;
         let raised = Arc::new(crate::Raised::new());
         let interrupt = Interrupt::raising(vec![Arc::clone(&raised)]);
+        let (entry, entered) = crate::GuestEntry::channel();
         let started = Instant::now();
         let answer = std::thread::scope(|scope| {
             let waking = njutest_devkit::thread::ScopedThread::launch(scope, move || {
-                let entered = Duration::from_millis(50);
                 assert!(
-                    !raised.wait_raised(entered),
-                    "the interrupt is not raised before the guest entered its loop"
+                    entered.wait(),
+                    "the actual guest reached its host call before cancellation"
                 );
                 raised.raise();
             });
-            let answer = module.invoke(&asked, &interrupt);
+            let answer = module.invoke_observed(&asked, &interrupt, entry);
             waking.join().expect("the waking thread is joined");
             answer
         });
@@ -1976,6 +2065,142 @@ mod tests {
                 assert_eq!(counter.load(Ordering::Relaxed), u64::MAX);
             }
         }
+    }
+
+    #[test]
+    fn a_cancel_observed_after_arming_never_enters_a_fresh_store() {
+        let modules = ModuleOwner::default();
+        let runner =
+            SealedRunner::new(&modules, Duration::from_millis(100)).expect("the actual runner");
+        let bytes = wat::parse_str(r#"(module (memory (export "memory") 1) (func (export "_start") (loop $again (br $again))))"#).expect("the actual spinning guest");
+        let module = runner.prepare(&bytes).expect("the actual module");
+        let raised = Arc::new(crate::Raised::new());
+        let interrupt = Interrupt::raising(vec![Arc::clone(&raised)]);
+        let counted = crate::Counted::default();
+        counted.assembled();
+        let mut asked = invocation();
+        asked.fuel = u64::MAX;
+        let advances = &runner.ticking.advances;
+        let answer = module.invoke_with_hooks(
+            (&asked, &interrupt),
+            (&counted, None),
+            super::InvocationHooks {
+                registered: || {
+                    raised.raise();
+                    let mut state = advances.lock();
+                    while advances.advanced.load(Ordering::Relaxed) == 0 {
+                        state = advances
+                            .changed
+                            .wait(state)
+                            .expect("the actual alarm advance is observed");
+                    }
+                    drop(state);
+                },
+            },
+        );
+        assert!(
+            matches!(answer, Err(crate::SealedError::Interrupted)),
+            "the owned cancellation stops the actual invocation: {answer:?}"
+        );
+        assert_eq!(
+            counted
+                .spent()
+                .expect("the actual invocation count")
+                .instances,
+            0,
+            "a cancellation observed after arming is checked before a fresh guest instance starts"
+        );
+    }
+
+    #[test]
+    fn an_entry_observer_finishes_when_a_guest_returns_without_a_checkpoint() {
+        let modules = ModuleOwner::default();
+        let runner =
+            SealedRunner::new(&modules, Duration::from_secs(60)).expect("the actual runner");
+        let bytes =
+            wat::parse_str(r#"(module (memory (export "memory") 1) (func (export "_start")))"#)
+                .expect("the returning guest");
+        let module = runner.prepare(&bytes).expect("the returning module");
+        let (entry, entered) = crate::GuestEntry::channel();
+        let answer = module
+            .invoke_observed(&invocation(), &Interrupt::of(Vec::new()), entry)
+            .expect("the actual guest returns");
+        assert_eq!(answer.stop(), SealedStop::Returned);
+        assert!(
+            !entered.wait(),
+            "completion wakes an observer even if the guest has no host call or epoch checkpoint"
+        );
+    }
+
+    #[test]
+    fn a_preentry_refusal_finishes_its_owned_observer() {
+        let modules = ModuleOwner::default();
+        let runner =
+            SealedRunner::new(&modules, Duration::from_secs(60)).expect("the actual runner");
+        let bytes = command("never entered");
+        let module = runner.prepare(&bytes).expect("the actual module");
+        let raised = Arc::new(crate::Raised::new());
+        raised.raise();
+        let (entry, entered) = crate::GuestEntry::channel();
+        let answer =
+            module.invoke_observed(&invocation(), &Interrupt::raising(vec![raised]), entry);
+        assert!(matches!(answer, Err(crate::SealedError::Interrupted)));
+        assert!(
+            !entered.wait(),
+            "a refused invocation completes its producer before any guest entry"
+        );
+    }
+
+    #[test]
+    fn a_guest_checkpoint_keeps_the_actual_transcript_unchanged() {
+        let modules = ModuleOwner::default();
+        let runner =
+            SealedRunner::new(&modules, Duration::from_secs(60)).expect("the actual runner");
+        let bytes = command("observed");
+        let module = runner.prepare(&bytes).expect("the actual module");
+        let interrupt = Interrupt::of(Vec::new());
+        let quiet = module
+            .invoke(&invocation(), &interrupt)
+            .expect("the quiet transcript");
+        let (entry, entered) = crate::GuestEntry::channel();
+        let observed = module
+            .invoke_observed(&invocation(), &interrupt, entry)
+            .expect("the observed transcript");
+        assert!(entered.wait(), "the actual fd_write call is the checkpoint");
+        assert_eq!(
+            quiet, observed,
+            "host coordination never changes a guest transcript"
+        );
+    }
+
+    #[test]
+    fn an_unwound_invocation_completes_its_owned_entry_observer() {
+        let modules = ModuleOwner::default();
+        let runner =
+            SealedRunner::new(&modules, Duration::from_secs(60)).expect("the actual runner");
+        let bytes = command("never entered");
+        let module = runner.prepare(&bytes).expect("the actual module");
+        let (entry, entered) = crate::GuestEntry::channel();
+        let counted = crate::Counted::default();
+        let answer = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            module.invoke_with_hooks(
+                (&invocation(), &Interrupt::of(Vec::new())),
+                (&counted, Some(entry)),
+                super::InvocationHooks {
+                    registered: || panic!("the immutable registration observer refused"),
+                },
+            )
+        }));
+        assert!(answer.is_err(), "the actual registration hook unwinds");
+        drop(answer);
+        assert!(
+            !entered.wait(),
+            "store teardown completes the owned observer during unwinding"
+        );
+        assert!(
+            runner.ticking.advances.lock().due.is_empty(),
+            "the invocation's alarm registration is settled during unwinding"
+        );
     }
 
     /// A watchdog deadline is the alarm's own wake: the engine's epoch advances when the deadline falls, with no periodic work before it.

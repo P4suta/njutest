@@ -97,6 +97,10 @@ A wall-clock watchdog stands behind every instance in case the host itself stops
 An interrupted run stops the instance it is in at the next epoch or host call, and every mutant it had not decided is `not_run` for `interrupted`, as a native run's are.
 Each shared engine owns an alarm that is stopped and joined before its last runner releases it.
 Owned cancellation publishes one monotonic event per subscription into a channel of capacity one.
+Each store installs its epoch checks before registering its alarm, then confirms cancellation before starting an instance.
+Guest-entry observers wait for an actual host call or epoch callback, and their single producer also publishes completion on return, refusal or unwinding.
+These observations alter neither guest time nor transcripts.
+An idle alarm has only an event wait; it owns no periodic deadline.
 Raw signal flags retain the counted ten-millisecond OS backstop only while an invocation is armed.
 Alarm counters refuse overflow without wrapping and permanently refuse guest answers after a width failure.
 Poisoned alarm or interrupt ownership and a panicked alarm terminate with a diagnostic rather than release unsettled state.

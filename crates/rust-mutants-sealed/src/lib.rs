@@ -35,7 +35,7 @@ pub use error::{
     RuntimeStep, SealedCode, SealedError, SnapshotFault, WorkingFault, error_codes,
 };
 pub use imports::{IMPORT_MODULE, WasiFunction};
-pub use interrupt::{Interrupt, Raised};
+pub use interrupt::{GuestEntry, GuestEntrySender, Interrupt, Raised};
 pub use invocation::{
     Arguments, ClockPolicy, Environment, Invocation, Limits, Preopen, Preopens, START_LINK_ARGS,
     Start,
