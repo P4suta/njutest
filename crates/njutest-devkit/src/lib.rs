@@ -22,5 +22,6 @@ pub mod reproducible;
 pub mod result;
 pub mod rust_source;
 pub mod strictjson;
+pub mod temporary;
 pub mod thread;
 pub mod workflow_commands;

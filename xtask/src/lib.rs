@@ -615,6 +615,19 @@ fn tidy(command: &[OsString], process: &Process<'_>, stderr: &mut dyn Write) -> 
     };
     let mut running = Command::new(program);
     running.args(arguments);
+    let cache = match parent_cache(&parent) {
+        Ok(cache) => cache,
+        Err(source) => {
+            return after_output(
+                writeln!(
+                    stderr,
+                    "tidy: the parent cache owner cannot be created: {source}"
+                ),
+                ExitCode::FAILURE,
+            );
+        }
+    };
+    running.env("NJUTEST_TEST_CACHE_ROOT", cache.path());
     for name in TEMPORARY_VARIABLES {
         running.env(name, scratch.path());
     }
@@ -636,24 +649,57 @@ fn tidy(command: &[OsString], process: &Process<'_>, stderr: &mut dyn Write) -> 
         Ok(work::Ended::Interrupted { signal }) => signalled_code(signal),
         Ok(work::Ended::OverBudget { .. } | work::Ended::Quiet { .. }) => 124,
         Err(failure) => {
+            let retained_cache = cache.keep();
+            let retained_scratch = scratch.keep();
             return after_output(
-                writeln!(stderr, "tidy: {}", failure.coded()),
+                writeln!(
+                    stderr,
+                    "tidy: {}; producer completion is unknown, retaining owned roots {} and {}",
+                    failure.coded(),
+                    retained_cache.display(),
+                    retained_scratch.display()
+                ),
                 ExitCode::from(127),
             );
         }
     };
-    left_behind(scratch.path(), code, stderr)
+    let tidy = left_behind(scratch.path(), code, stderr);
+    dispose_cache(cache, tidy, stderr)
 }
 
-/// The run's own exit `code` where it left nothing in `scratch`, and a refusal naming each entry where it did.
+/// Disposes the parent's compilation cache after producer completion, refusing removal failures.
+fn dispose_cache(cache: tempfile::TempDir, tidy: ExitCode, stderr: &mut dyn Write) -> ExitCode {
+    match cache.close() {
+        Ok(()) => tidy,
+        Err(source) => after_output(
+            writeln!(
+                stderr,
+                "tidy: the parent-owned cache could not be removed after producer completion: {source}"
+            ),
+            ExitCode::FAILURE,
+        ),
+    }
+}
+
+/// Creates the parent cleanup root before any producer is started.
+fn parent_cache(parent: &Path) -> std::io::Result<tempfile::TempDir> {
+    let cache = tempfile::Builder::new()
+        .prefix("njutest-suite-cache-")
+        .tempdir_in(parent)?;
+    let owner = serde_json::json!({
+        "schema": "njutest-suite-cache-owner-v1",
+        "pid": std::process::id(),
+    });
+    std::fs::write(cache.path().join("owner.json"), owner.to_string())?;
+    Ok(cache)
+}
+
+/// The run's own exit `code` where it left nothing in `scratch`, and a refusal naming each entry, with the owner its marker names where one is readable.
 fn left_behind(scratch: &Path, code: u8, stderr: &mut dyn Write) -> ExitCode {
     let left = repository::entries(scratch).map(|entries| {
         entries
             .iter()
-            .map(|entry| match entry.file_name() {
-                Some(name) => name.display().to_string(),
-                None => entry.display().to_string(),
-            })
+            .map(|entry| named_leftover(entry))
             .collect::<Vec<String>>()
     });
     match left {
@@ -678,6 +724,53 @@ fn left_behind(scratch: &Path, code: u8, stderr: &mut dyn Write) -> ExitCode {
             ),
             ExitCode::FAILURE,
         ),
+    }
+}
+
+/// One leftover's name, beside the owner its marker records where it records one, so a refusal names who made the directory rather than only where it sits.
+fn named_leftover(entry: &Path) -> String {
+    let name = match entry.file_name() {
+        Some(name) => name.display().to_string(),
+        None => entry.display().to_string(),
+    };
+    match owner_named_by(entry) {
+        Some(owner) => format!("{name} ({owner})"),
+        None => name,
+    }
+}
+
+/// The owner a leftover's `owner.json` names: a test's binary and test where a test owner wrote it, and the claiming pid or run holder where a product or engine marker did.
+fn owner_named_by(leftover: &Path) -> Option<String> {
+    let marker = match std::fs::read_to_string(leftover.join("owner.json")) {
+        Ok(marker) => marker,
+        Err(_absent) => return None,
+    };
+    let value = match strictjson::from_str(&marker) {
+        Ok(value) => value,
+        Err(_unreadable) => return None,
+    };
+    let schema = value.get("schema").and_then(serde_json::Value::as_str);
+    let binary = value.get("binary").and_then(serde_json::Value::as_str);
+    let named = value.get("test").and_then(serde_json::Value::as_str);
+    let pid = value.get("pid").and_then(serde_json::Value::as_u64);
+    let named_by = match (binary, named) {
+        (Some(binary), Some(named)) => Some(format!("{binary}: {named}")),
+        _ => None,
+    };
+    match (named_by, pid) {
+        (Some(who), Some(pid)) => Some(format!(
+            "owned by {} {who} (pid {pid})",
+            schema.unwrap_or("an unlabelled schema")
+        )),
+        (Some(who), None) => Some(format!(
+            "owned by {} {who}",
+            schema.unwrap_or("an unlabelled schema")
+        )),
+        (None, Some(pid)) => Some(format!(
+            "owner marker {} names pid {pid}",
+            schema.unwrap_or("an unlabelled schema")
+        )),
+        (None, None) => None,
     }
 }
 

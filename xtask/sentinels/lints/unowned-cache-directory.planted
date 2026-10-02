@@ -1,0 +1,5 @@
+fn cached_module() {
+    let scratch = tempfile::tempdir().expect("temporary scratch");
+    let path = scratch.path().to_path_buf();
+    SealedRunner::cached(&modules, deadline, &path).expect("compiled module");
+}

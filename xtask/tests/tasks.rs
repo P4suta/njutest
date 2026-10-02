@@ -1596,3 +1596,148 @@ fn a_loop_of_durable_writes_answers_to_its_own_watch_and_not_the_cpu_clock() {
         "and the filter names the tests that are that loop, in both crates that keep entries"
     );
 }
+
+const PLANTED_OWNER: &str = "{\"schema\":\"njutest-test-temp-owner-v1\",\"binary\":\"xtask::tasks\",\"test\":\"planted\",\"pid\":1}";
+
+#[test]
+fn tidy_passes_a_command_that_leaves_nothing_behind() {
+    let said = tidy_over("exit 0");
+    assert!(
+        said.status.success(),
+        "a command that leaves nothing passes with the run's own exit code: {}",
+        said.text
+    );
+}
+
+#[test]
+fn tidy_keeps_cache_work_until_its_producer_process_ends() {
+    let receipt = tempfile::tempdir().expect("a receipt directory");
+    let named = receipt.path().join("cache-root");
+    let script = format!(
+        "test -n \"$NJUTEST_TEST_CACHE_ROOT\" || exit 91; printf '%s' \"$NJUTEST_TEST_CACHE_ROOT\" > '{}'; mkdir -p \"$NJUTEST_TEST_CACHE_ROOT/modules/late\"; printf work > \"$NJUTEST_TEST_CACHE_ROOT/modules/late/record\"",
+        named.display()
+    );
+    let said = tidy_over(&script);
+    let cache = match std::fs::read_to_string(&named) {
+        Ok(cache) => Some(std::path::PathBuf::from(cache)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => panic!("the receipt is readable: {error}"),
+    };
+    assert!(
+        said.status.success(),
+        "the producer exits successfully: {}",
+        said.text
+    );
+    let cache = cache.expect("tidy gives the producer a parent-owned cache root");
+    assert!(
+        !cache.try_exists().expect("the cache root is observable"),
+        "cleanup follows producer exit"
+    );
+}
+
+#[test]
+fn raw_temporary_cache_publication_is_refused_by_the_class_gate() {
+    let source = "fn cache() { let directory = tempfile::tempdir().unwrap(); SealedRunner::cached(&modules, deadline, directory.path()).unwrap(); }";
+    let findings = xtask::lints::scan_source("crates/planted/tests/cache.rs", source)
+        .expect("the planted Rust source parses");
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.kind.label() == "unowned-cache-directory"),
+        "the class gate refuses raw TempDir cache publication: {findings:?}"
+    );
+}
+
+#[test]
+fn the_cache_gate_keeps_parent_owned_and_durable_cache_controls() {
+    for source in [
+        "fn cache() { let directory = CacheDirectory::make(\"cache-\").unwrap(); SealedRunner::cached(&modules, deadline, directory.path()).unwrap(); }",
+        "fn cache(durable: &Path) { SealedRunner::cached(&modules, deadline, durable).unwrap(); }",
+    ] {
+        let findings = xtask::lints::scan_source("crates/planted/tests/cache.rs", source)
+            .expect("the control source parses");
+        assert!(
+            !findings
+                .iter()
+                .any(|finding| finding.kind.label() == "unowned-cache-directory"),
+            "the lifetime control remains available: {findings:?}"
+        );
+    }
+    for source in [
+        "fn cache() { let directory = tempfile::Builder::new().tempdir().unwrap(); let path = directory.path().join(\"cache\"); SealedRunner::cached(&modules, deadline, &path).unwrap(); }",
+        "fn cache() { let directory = Temporary::make(\"cache\").unwrap(); SealedRunner::configured(&modules, deadline, Settings { directory: directory.path() }).unwrap(); }",
+        "fn cache() { let directory = tempfile::tempdir().unwrap(); CompilationCache::retained(directory.path().to_path_buf()) }",
+    ] {
+        let findings = xtask::lints::scan_source("crates/planted/tests/cache.rs", source)
+            .expect("the planted source parses");
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.kind.label() == "unowned-cache-directory"),
+            "aliases and configured caches retain the refusal: {findings:?}"
+        );
+    }
+}
+
+#[test]
+fn tidy_refuses_a_leftover_nobody_marked() {
+    let said = tidy_over("mkdir \"$TMPDIR/.tmpUnowned\"; exit 0");
+    assert!(
+        !said.status.success(),
+        "a leftover nobody owns is refused: {}",
+        said.text
+    );
+    assert!(
+        said.text.contains(".tmpUnowned"),
+        "the refusal names the leftover: {}",
+        said.text
+    );
+}
+
+#[test]
+fn tidy_refuses_a_leftover_and_names_the_owner_its_marker_records() {
+    let said = tidy_over(
+        "mkdir \"$TMPDIR/.tmpPlanted\"; printf '%s' 'PLANTED_MARKER' > \"$TMPDIR/.tmpPlanted/owner.json\"; exit 3",
+    );
+    assert!(
+        !said.status.success(),
+        "a leftover with an owner marker is still refused: {}",
+        said.text
+    );
+    assert!(
+        said.text.contains(".tmpPlanted"),
+        "the refusal names the leftover: {}",
+        said.text
+    );
+    assert!(
+        said.text.contains("xtask::tasks: planted"),
+        "the refusal names the owner the marker records: {}",
+        said.text
+    );
+}
+
+/// What `cargo xtask tidy -- sh -c script` said, with its refusal as text.
+fn tidy_over(script: &str) -> TidySaid {
+    let sh = njutest_devkit::paths::posix_sh();
+    let planted = PLANTED_OWNER.replace('\'', "'\\''");
+    let script = script.replace("PLANTED_MARKER", &planted);
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .arg("tidy")
+        .arg("--")
+        .arg(&sh)
+        .arg("-c")
+        .arg(script)
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .unwrap_or_else(|error| panic!("the tidy gate ran: {error}"));
+    TidySaid {
+        status: output.status,
+        text: String::from_utf8(output.stderr).unwrap_or_else(|error| panic!("UTF-8: {error}")),
+    }
+}
+
+/// One tidy invocation's exit status and what it said.
+struct TidySaid {
+    status: std::process::ExitStatus,
+    text: String,
+}

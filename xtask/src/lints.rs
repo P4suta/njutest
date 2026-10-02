@@ -11,6 +11,7 @@ use syn::visit::Visit;
 
 use super::cfg_conditions::{CfgScope, CfgTruth, CfgWorld, cfg_constant, item_attributes};
 
+mod cache_directories;
 mod ffi;
 mod git_doors;
 mod raw_buffers;
@@ -250,6 +251,9 @@ const RAW_READ_REMEDY: &str = "ask `crate::observe` what the path is. A reader o
     how a lock file beside the profiles became a directory that could not be read and how running \
     out of descriptors became an unread file; `observe` decides it once, as absent, unreadable, or \
     an error that says nothing about the path";
+const UNOWNED_CACHE_DIRECTORY_REMEDY: &str = "a compilation-cache writer can outlive its caller. \
+    Use a durable cache or the parent-owned CacheDirectory from cargo xtask tidy. \
+    A TempDir destructor or a successful removal is not a producer completion event";
 
 macro_rules! declare_kinds {
     ($( $variant:ident => $label:literal),+ $(,)?) => {
@@ -310,6 +314,7 @@ declare_kinds! {
     Comment => "comment",
     UnboundedRemoval => "unbounded-removal",
     RawTreeRemoval => "raw-tree-removal",
+    UnownedCacheDirectory => "unowned-cache-directory",
     PerishableHandle => "perishable-handle",
     LooseLayout => "loose-layout",
     WildcardOverOurOwn => "wildcard-over-our-own",
@@ -373,6 +378,7 @@ impl Kind {
             Self::Comment => COMMENT_REMEDY,
             Self::UnboundedRemoval => UNBOUNDED_REMOVAL_REMEDY,
             Self::RawTreeRemoval => RAW_TREE_REMOVAL_REMEDY,
+            Self::UnownedCacheDirectory => UNOWNED_CACHE_DIRECTORY_REMEDY,
             Self::PerishableHandle => PERISHABLE_HANDLE_REMEDY,
             Self::LooseLayout => LOOSE_LAYOUT_REMEDY,
             Self::WildcardOverOurOwn => WILDCARD_OVER_OUR_OWN_REMEDY,
@@ -439,13 +445,16 @@ const PAINTER: &str = "rust-mutants/src/telling.rs";
 /// Where the rule itself is written, which has to spell what it refuses in order to refuse it.
 const PAINT_RULE: [&str; 2] = ["xtask/src/lints.rs", "xtask/tests/lints.rs"];
 
-/// The module that is allowed to make it in a loop, being the one that bounds it.
+/// The modules that are allowed to make it in a loop, being the ones that bound it.
 ///
 /// A test may make it too: what a test removes is what it made, and it is standing there watching.
-const RECLAIMER: &str = "crates/rust-mutants/src/reclaim.rs";
+const RECLAIMERS: [&str; 1] = ["crates/rust-mutants/src/reclaim.rs"];
 
-/// The one module that removes a tree a run owns, restoring the owner's access on the way down.
-const TREE_REMOVER: &str = "crates/rust-mutants/src/tempowner/mod.rs";
+/// The modules that remove a tree an owner holds, restoring the owner's access on the way down.
+const TREE_REMOVERS: [&str; 2] = [
+    "crates/rust-mutants/src/tempowner/mod.rs",
+    "crates/njutest-devkit/src/temporary.rs",
+];
 
 /// Whether `file` is code a crate ships, which is where a removal of a run's own tree happens.
 fn shipped_source(file: &str) -> bool {
@@ -646,11 +655,11 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
     let parsed = crate::lexed::file(source)?;
     let policies = [
         (
-            file.ends_with(RECLAIMER) || file.contains("/tests/"),
+            RECLAIMERS.contains(&file) || file.contains("/tests/"),
             SourcePolicy::Reclaimer,
         ),
         (
-            file == TREE_REMOVER || !shipped_source(file),
+            TREE_REMOVERS.contains(&file) || !shipped_source(file),
             SourcePolicy::TreeRemover,
         ),
         (
@@ -678,6 +687,7 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
     scan.visit_file(&parsed);
     scan.found.extend(raw_buffers::found(&parsed, file));
     scan.found.extend(sensitive_names::found(&parsed, file));
+    scan.found.extend(cache_directories::found(&parsed, file));
     scan.found.extend(comments(file, source));
     scan.found.extend(handles(file, source));
     scan.found.extend(painted(file, source));
