@@ -235,7 +235,9 @@ fn an_identical_sealed_build_with_the_engines_linked_flags_hits_without_starting
         cancel: &cancel,
         trace: &trace,
     };
+    let modules = rust_mutants::sealed::ModuleOwner::default();
     let object = match rust_mutants::sealed::platform::ready(
+        &modules,
         &driver,
         &target_dir.join("platform with spaces"),
     )
@@ -380,12 +382,14 @@ fn a_changed_valid_object_relinks_the_real_instrumented_build_and_then_hits() {
         cancel: &cancel,
         trace: &trace,
     };
-    let object = match rust_mutants::sealed::platform::ready(&driver, &target.join("platform"))
-        .expect("the engine's actual object and probe")
-    {
-        rust_mutants::sealed::platform::Readied::Object(object) => object,
-        rust_mutants::sealed::platform::Readied::Unanswered(said) => panic!("{said}"),
-    };
+    let modules = rust_mutants::sealed::ModuleOwner::default();
+    let object =
+        match rust_mutants::sealed::platform::ready(&modules, &driver, &target.join("platform"))
+            .expect("the engine's actual object and probe")
+        {
+            rust_mutants::sealed::platform::Readied::Object(object) => object,
+            rust_mutants::sealed::platform::Readied::Unanswered(said) => panic!("{said}"),
+        };
     let options = sealed_compile_options(&root, &target, &object);
     let first = compile(&driver, &options).expect("the real instrumented fixture completes");
     assert_eq!(first.completion(), rust_mutants::cargo::Completion::Built);
@@ -476,8 +480,13 @@ fn a_changed_platform_object_cannot_publish_a_stale_cargo_artifact() {
         cancel: &cancel,
         trace: &trace,
     };
-    let object = match rust_mutants::sealed::platform::ready(&driver, &target_dir.join("platform"))
-        .expect("a real self-contained platform object and successful probe")
+    let modules = rust_mutants::sealed::ModuleOwner::default();
+    let object = match rust_mutants::sealed::platform::ready(
+        &modules,
+        &driver,
+        &target_dir.join("platform"),
+    )
+    .expect("a real self-contained platform object and successful probe")
     {
         rust_mutants::sealed::platform::Readied::Object(object) => object,
         rust_mutants::sealed::platform::Readied::Unanswered(said) => {
