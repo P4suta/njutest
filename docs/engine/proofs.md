@@ -205,7 +205,11 @@ The artifact and provenance inventories remain complete, and the actual producer
 Each family keeps the layer whose behavior it claims live.
 
 Host observations subscribe before their producer starts or their resource is first read.
-The engine and task runner retain a bounded backlog whose overflow remains a failure even after producer completion.
+The engine and task runner reserve 64 notification slots and one sticky refusal per subscription.
+This bounds the observer's retained memory while its producer continues; it is neither a work limit nor a proof threshold.
+Every notification that does not fit refuses the subscription rather than truncating its evidence into success.
+A producer failure is sticky too, and the publication lock orders it against the final observation decision.
+The reader rechecks that refusal immediately before returning its decision, including completion.
 Each actual wait names its producer and cause and measures its monotonic duration and executing host.
 Semantic deadlines use an injected clock; host measurement stays independent of that clock.
 Completion, cancellation, resource change and deadline remain distinct decisions.

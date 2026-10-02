@@ -105,3 +105,52 @@ fn an_actual_publication_precedes_the_injected_deadline() -> std::io::Result<()>
     assert_eq!(clock.now(), deadline);
     Ok(())
 }
+
+#[derive(Debug)]
+struct ConcurrentFailureClock(xtask::observation::Signal);
+
+impl xtask::observation::Clock for ConcurrentFailureClock {
+    fn now(&self) -> std::time::Instant {
+        std::time::Instant::now()
+    }
+
+    fn park(&self, _remaining: Option<std::time::Duration>) -> std::io::Result<()> {
+        std::thread::scope(|scope| {
+            let publisher = njutest_devkit::thread::ScopedThread::launch(scope, || {
+                self.0.publish(Event::Completed);
+                self.0.failed(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "the actual producer lost its completion evidence",
+                ));
+            });
+            publisher
+                .join()
+                .map_err(|_panic| std::io::Error::other("the actual publication panicked"))
+        })
+    }
+}
+
+#[test]
+fn concurrent_completion_cannot_erase_a_retained_producer_failure() -> std::io::Result<()> {
+    let observation = Observation::subscribe();
+    let clock = ConcurrentFailureClock(observation.signal());
+    for _decision in 0..2 {
+        let waited = observation.wait_with(
+            xtask::observation::Waiting {
+                owner: "actual-concurrent-task-producer",
+                cause: "complete evidence or producer refusal",
+                deadline: None,
+            },
+            &clock,
+        )?;
+        let refusal = waited
+            .event
+            .expect_err("queued completion erased a concurrent producer failure");
+        assert_eq!(refusal.kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(
+            refusal.to_string().contains("lost its completion evidence"),
+            "{refusal}"
+        );
+    }
+    Ok(())
+}

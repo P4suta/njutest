@@ -105,7 +105,7 @@ pub struct Waited {
 pub struct Signal {
     sent: SyncSender<io::Result<Event>>,
     reader: Thread,
-    lost: Arc<Mutex<Option<String>>>,
+    lost: Arc<Mutex<Option<io::Error>>>,
 }
 
 impl Signal {
@@ -120,26 +120,31 @@ impl Signal {
     }
 
     fn deliver(&self, event: io::Result<Event>) {
+        let mut lost = match self.lost.lock() {
+            Ok(lost) => lost,
+            Err(poisoned) => {
+                drop(poisoned);
+                std::process::abort();
+            }
+        };
+        if let Err(source) = &event
+            && lost.is_none()
+        {
+            *lost = Some(io::Error::new(source.kind(), source.to_string()));
+        }
         match self.sent.try_send(event) {
-            Ok(()) => self.reader.unpark(),
+            Ok(()) => {}
             Err(TrySendError::Full(event)) => {
-                let mut lost = match self.lost.lock() {
-                    Ok(lost) => lost,
-                    Err(poisoned) => {
-                        drop(poisoned);
-                        std::process::abort();
-                    }
-                };
                 if lost.is_none() {
-                    *lost = Some(format!(
+                    *lost = Some(io::Error::other(format!(
                         "the bounded observation backlog is full: {event:?}"
-                    ));
+                    )));
                 }
-                drop(lost);
-                self.reader.unpark();
             }
             Err(TrySendError::Disconnected(_reader_has_ended)) => {}
         }
+        drop(lost);
+        self.reader.unpark();
     }
 
     fn failure(&self) -> io::Result<Option<io::Error>> {
@@ -149,7 +154,7 @@ impl Signal {
             .map_err(|_poisoned| io::Error::other("the observation failure mutex is poisoned"))?;
         let failure = lost
             .as_ref()
-            .map(|message| io::Error::other(message.clone()));
+            .map(|source| io::Error::new(source.kind(), source.to_string()));
         drop(lost);
         Ok(failure)
     }
@@ -287,6 +292,10 @@ impl Observation {
             }
         };
         let elapsed_ns = u64::try_from(started.elapsed().as_nanos()).map_err(io::Error::other)?;
+        let event = match self.signal.failure() {
+            Ok(Some(failure)) | Err(failure) => Err(failure),
+            Ok(None) => event,
+        };
         Ok(Waited {
             event,
             note: WaitNote {
