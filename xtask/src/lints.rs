@@ -12,6 +12,7 @@ use syn::visit::Visit;
 use super::cfg_conditions::{CfgScope, CfgTruth, CfgWorld, cfg_constant, item_attributes};
 
 mod cache_directories;
+mod compiler_diagnostics;
 mod ffi;
 mod git_doors;
 mod raw_buffers;
@@ -307,6 +308,7 @@ declare_kinds! {
     StringAlias => "string-alias",
     ResultAlias => "result-alias",
     DiscardedResult => "discarded-result",
+    DiscardedCompilerStderr => "discarded-compiler-stderr",
     DroppedComputation => "dropped-computation",
     IgnoredComputation => "ignored-computation",
     OpenDeserialization => "open-deserialization",
@@ -371,6 +373,7 @@ impl Kind {
             Self::StringAlias => STRING_ALIAS_REMEDY,
             Self::ResultAlias => RESULT_ALIAS_REMEDY,
             Self::DiscardedResult => DISCARDED_RESULT_REMEDY,
+            Self::DiscardedCompilerStderr => compiler_diagnostics::REMEDY,
             Self::DroppedComputation => DROPPED_COMPUTATION_REMEDY,
             Self::IgnoredComputation => IGNORED_COMPUTATION_REMEDY,
             Self::OpenDeserialization => OPEN_DESERIALIZATION_REMEDY,
@@ -688,6 +691,8 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
     scan.found.extend(raw_buffers::found(&parsed, file));
     scan.found.extend(sensitive_names::found(&parsed, file));
     scan.found.extend(cache_directories::found(&parsed, file));
+    scan.found
+        .extend(compiler_diagnostics::found(&parsed, file));
     scan.found.extend(comments(file, source));
     scan.found.extend(handles(file, source));
     scan.found.extend(painted(file, source));

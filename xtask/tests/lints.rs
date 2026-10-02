@@ -2948,3 +2948,35 @@ fn every_place_code_runs_from_is_held_to_the_one_signaller() {
         "a module that says it is compiled only for tests is test code wherever it sits"
     );
 }
+
+#[test]
+fn compiler_failures_cannot_discard_the_actual_stderr() {
+    let refused = |source| {
+        scan_source("crates/app/src/lib.rs", source)
+            .expect("the diagnostic specimen parses")
+            .iter()
+            .any(|finding| finding.kind.label() == "discarded-compiler-stderr")
+    };
+    for source in [
+        "fn failed(messages: &[Message]) { crate::validate::first_error_of(messages); }",
+        "use crate::validate::first_error_of as explain; fn failed(messages: &[Message]) { explain(messages); }",
+        "fn failed(messages: &[Message]) { let explain = crate::validate::first_error_of; explain(messages); }",
+        "macro_rules! failed { ($messages:expr) => { crate::validate::first_error_of($messages) } }",
+        "#[cfg(windows)] fn failed(messages: &[Message]) { crate::validate::first_error_of(messages); }",
+        "fn failed(messages: &[Message]) { crate::validate::first_error_with_stderr(messages, &[]); }",
+    ] {
+        assert!(
+            refused(source),
+            "discarded captured stderr was accepted: {source}"
+        );
+    }
+    for source in [
+        "fn failed(attempt: &Attempt) { crate::validate::first_error_with_stderr(&attempt.messages, &attempt.stderr); }",
+        "#[cfg(test)] fn failed(messages: &[Message]) { crate::validate::first_error_of(messages); }",
+    ] {
+        assert!(
+            !refused(source),
+            "the complete diagnostic or pure compatibility control was refused: {source}"
+        );
+    }
+}

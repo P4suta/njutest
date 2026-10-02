@@ -23,6 +23,8 @@ pub struct Attempt {
     pub files: Vec<FileOutput>,
     /// Everything the compiler said.
     pub messages: Vec<Message>,
+    /// The same attempt's actual bounded stderr capture, including compiler-wrapper failures.
+    pub stderr: Vec<u8>,
     /// How the build came out, as its one final record and cargo's exit code established it together.
     pub completion: Completion,
     /// How many of the files this attempt had to write again, which is how many its condemnations changed.
@@ -557,19 +559,51 @@ fn rendered(diagnostic: &Diagnostic) -> String {
 /// The first error of a message stream, rendered, so a caller can say what stopped a build without matching on the stream itself.
 #[must_use]
 pub fn first_error_of(messages: &[Message]) -> String {
-    first_error(messages)
+    match CapturedDiagnostic::of(messages, &[]) {
+        CapturedDiagnostic::Compiler(diagnostic) => rendered(diagnostic),
+        CapturedDiagnostic::Stderr(bytes) => crate::telling::LosslessBytes::new(bytes).to_string(),
+        CapturedDiagnostic::Silent => "the build failed without an error message".to_owned(),
+    }
 }
 
-/// The first error of a round, rendered, for a message about the round.
-fn first_error(messages: &[Message]) -> String {
-    match messages.iter().find_map(|message| match message {
-        Message::CompilerMessage(compiler) if compiler.message.is_error() => {
-            Some(rendered(&compiler.message))
+/// The first compiler error, or the same process's captured stderr when no compiler message exists.
+///
+/// Invalid text bytes remain visible through the lossless diagnostic boundary.
+#[must_use]
+pub fn first_error_with_stderr(messages: &[Message], stderr: &[u8]) -> String {
+    match CapturedDiagnostic::of(messages, stderr) {
+        CapturedDiagnostic::Compiler(diagnostic) => rendered(diagnostic),
+        CapturedDiagnostic::Stderr(bytes) => crate::telling::LosslessBytes::new(bytes).to_string(),
+        CapturedDiagnostic::Silent => {
+            "the build failed without an error message or captured stderr".to_owned()
         }
-        _ => None,
-    }) {
-        Some(first) => first,
-        None => "the build failed without an error message".to_owned(),
+    }
+}
+
+/// The exhaustively selected source of one failed compilation's diagnostic.
+#[derive(Debug, Clone, Copy)]
+enum CapturedDiagnostic<'a> {
+    Compiler(&'a Diagnostic),
+    Stderr(&'a [u8]),
+    Silent,
+}
+
+impl<'a> CapturedDiagnostic<'a> {
+    fn of(messages: &'a [Message], stderr: &'a [u8]) -> Self {
+        let compiler = messages.iter().find_map(|message| match message {
+            Message::CompilerMessage(compiler) => {
+                compiler.message.is_error().then_some(&compiler.message)
+            }
+            Message::CompilerArtifact(_)
+            | Message::BuildScriptExecuted(_)
+            | Message::BuildFinished(_)
+            | Message::Other { .. } => None,
+        });
+        match compiler {
+            Some(compiler) => Self::Compiler(compiler),
+            None if !stderr.is_empty() => Self::Stderr(stderr),
+            None => Self::Silent,
+        }
     }
 }
 
@@ -853,7 +887,7 @@ fn settle(
         Completion::Built => {}
         Completion::Refused => {
             return Err(ValidateError::NotMutantInduced {
-                first: first_error(&pristine.messages),
+                first: first_error_with_stderr(&pristine.messages, &pristine.stderr),
             });
         }
     }
@@ -1178,4 +1212,48 @@ fn first_error_code(messages: &[Message]) -> Option<String> {
         }
         _ => None,
     })
+}
+
+#[cfg(test)]
+mod captured_diagnostic_tests {
+    #[test]
+    fn captured_stderr_remains_lossless_when_cargo_has_no_error_message() {
+        assert_eq!(
+            super::first_error_with_stderr(&[], b"wrapper refused"),
+            "utf8:\"wrapper refused\""
+        );
+        assert_eq!(
+            super::first_error_with_stderr(&[], &[0xff, 0]),
+            "bytes:ff00"
+        );
+        assert_ne!(
+            super::first_error_with_stderr(&[], &[0xff]),
+            super::first_error_with_stderr(&[], &[0xfe])
+        );
+    }
+
+    #[test]
+    fn the_actual_compiler_message_precedes_its_wrapper_chatter() {
+        let messages = crate::cargo::parse_messages(br#"{"reason":"compiler-message","package_id":"p","target":{"kind":["lib"],"crate_types":["lib"],"name":"fixture","src_path":"src/lib.rs","edition":"2024"},"message":{"message":"compiler refusal","level":"error","rendered":"rendered compiler refusal"}}"#).expect("the diagnostic selector specimen parses");
+        assert_eq!(
+            super::first_error_with_stderr(&messages, b"wrapper chatter"),
+            "rendered compiler refusal"
+        );
+        assert_eq!(
+            super::first_error_of(&messages),
+            "rendered compiler refusal"
+        );
+    }
+
+    #[test]
+    fn silent_actual_capture_and_legacy_compatibility_have_explicit_diagnostics() {
+        assert_eq!(
+            super::first_error_with_stderr(&[], &[]),
+            "the build failed without an error message or captured stderr"
+        );
+        assert_eq!(
+            super::first_error_of(&[]),
+            "the build failed without an error message"
+        );
+    }
 }

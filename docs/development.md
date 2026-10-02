@@ -111,7 +111,9 @@ A raw thread or child may only be constructed inside the exact owner that joins 
 queues have a finite capacity and an explicit full/disconnect policy; and a panic-interrupted lock remains a typed sticky failure rather than being reclassified with `PoisonError::into_inner` or `clear_poison`.
 Renamed imports,
 qualified calls, macro bodies, and code excluded by the host's `cfg` are subject to the same rules.
-`raw-group-signal` keeps the end of a process group in one place: code stops a group through `rust_mutants::runner::stop_group`, and only the runner's `unix.rs` and `windows.rs` and xtask's `work.rs` signal a process by its id.
+`raw-group-signal` confines native process signals to the shared `njutest-process` Unix and Windows owners.
+Consumers stop the typed `GroupChild` or its retained generation capability.
+Audit-token and pidfd signals obey the same boundary as ordinary group signals.
 `stop_group` takes no id: it takes the `Leader` that only a `GroupChild` hands out, and only until it has reaped its child, so a group stop cannot be asked of an id the kernel may have given to somebody else.
 What the kernel answers a group signal is one question wherever it is asked.
 The rule reads what code does with a name rather than how the name is spelled, in every file the gate reads — build scripts, fuzz targets, examples, benchmarks, compiler surfaces and modules under `src/tests` included — except a crate's own suites and what is compiled only for tests.
@@ -677,3 +679,15 @@ Synchronous test scratch remains test-owned and closes once without a quiet-peri
 The engine shares the dependency-free `njutest-fixture-tree` filesystem policy with development tools.
 The dependency gate allows that finite lower edge and refuses reverse engine, devkit, xtask and sealed-host edges.
 The runtime helper remains unpublished and declares its surface as `unreleased`.
+
+## Captured compiler refusals
+
+A failed compiler process retains its original bounded stderr beside its Cargo messages.
+`Attempt.stderr` and `Compiled::stderr()` expose that same capture to every diagnostic consumer.
+`first_error_with_stderr` prefers the compiler's rendered error and otherwise reports the original stderr bytes through the lossless renderer.
+A truly silent refusal explicitly says that no error message or stderr was captured.
+The inherited message-only helper remains available for pure compatibility tests.
+The `discarded-compiler-stderr` gate refuses its production use, including aliases, native branches and macro bodies.
+It also refuses invented empty captures passed to the complete diagnostic API.
+Nested `cargo xtask tidy` commands clear all four Cargo compiler-wrapper variables before a wrapper can retain an expiring temporary context.
+The same actual owned runner observes output, reader failures and host waits on success and refusal paths.
