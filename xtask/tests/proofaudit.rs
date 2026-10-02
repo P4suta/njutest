@@ -450,6 +450,22 @@ fn a_catalog_that_carries_no_mutant_proves_no_route_is_owed() {
 }
 
 #[test]
+fn a_hidden_catalog_count_does_not_close_an_empty_routing_scope() {
+    let mut report = catalogued_none();
+    *report
+        .pointer_mut("/accounting/mutants/cataloged")
+        .expect("the declared catalog count") = serde_json::json!(1);
+    let audit = audited(&report);
+    assert!(
+        !matches!(
+            audit.coverage.get(&Layer::Proofs),
+            Some(Coverage::Absent(_))
+        ),
+        "the independent catalog count still owes a routing subject: {audit}"
+    );
+}
+
+#[test]
 fn a_route_in_a_recording_of_a_catalog_of_none_is_not_proven_absence() {
     let audit = audited_with(&catalogued_none(), &routes());
 

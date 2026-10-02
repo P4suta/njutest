@@ -796,6 +796,43 @@ fn a_run_whose_guards_measured_owes_no_coverage_measurement() {
 }
 
 #[test]
+fn a_hidden_expected_row_does_not_close_an_empty_ledger_scope() {
+    let mut report = claiming_none();
+    report["mutants"][1]["expected"] = serde_json::json!(true);
+    report["accounting"]["expected"] = serde_json::json!(1);
+    let audit = audited(&report);
+    assert!(
+        !matches!(audit.coverage[&Layer::Ledger], Coverage::Absent(_)),
+        "the independently counted acceptance still owes its ledger: {audit}"
+    );
+}
+
+#[test]
+fn hidden_executions_do_not_close_a_zero_catalog_proof_scope() {
+    let audit = audited_with(&catalogued_none(), &recording());
+    assert!(
+        !matches!(audit.coverage[&Layer::Proofs], Coverage::Absent(_)),
+        "the independently retained execution subjects are still owed proofs: {audit}"
+    );
+}
+
+#[test]
+fn a_foreign_guard_target_does_not_close_the_configured_measurement_scope() {
+    let mut guarded = touched();
+    let target = guarded["targets"]
+        .as_object_mut()
+        .expect("the actual target map")
+        .remove(TARGET)
+        .expect("the configured target's record");
+    guarded["targets"]["foreign/lib/foreign"] = target;
+    let audit = with_record(&base(), &guarded);
+    assert!(
+        !matches!(audit.coverage[&Layer::Proofs], Coverage::Absent(_)),
+        "a record from another configuration proves no complete measurement scope: {audit}"
+    );
+}
+
+#[test]
 fn a_run_whose_guards_recorded_nothing_is_owed_its_coverage_measurement() {
     let audit = audited(&base());
 

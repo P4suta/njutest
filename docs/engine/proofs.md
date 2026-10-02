@@ -172,6 +172,11 @@ a mutant it does not name as compared is one `infected` says nothing about,
 however often a test ran it.
 
 An audit also states, for every layer it has, how far it got, and a layer whose subject the recording's own complete scope proves cannot be there says so rather than calling the evidence missing.
+Only a checked `Closed` scope can construct the private absence token.
+An empty inventory must reconcile its explicit accounting column with independently enumerated rows and retained execution or routing subjects.
+An unrequested observation is a separate typed decision derived from the complete request, rather than a zero substituted for missing evidence.
+Guard measurements close a configuration only when recorded and explicitly declined targets account for the entire requested inventory, without foreign targets or overlapping explanations.
+Acceptance absence also checks the expected-row flags and their explicit accounting, so an empty claim list cannot hide an accepted subject.
 The scope is derived, never defaulted from an absent value:
 a catalog whose own accounting carries no mutant owes no routing decision,
 a run that measured the whole catalog itself — its own `shard` field says — owes no merge against parts,

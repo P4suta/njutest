@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
-use crate::layers::Closed;
+use crate::layers::{Closed, Configuration, Inventory, ObservedSubjects, Request};
 
 use super::wire::{
     Guarded, GuardedItem, GuardedNarrowing, GuardedSeen, GuardedTarget, Measurement,
@@ -165,7 +165,7 @@ pub(super) fn merge(report: &Report, evidence: &CheckedEvidence<'_>, audit: &mut
     }
     if evidence.shards.is_empty() {
         match merged_scope(report) {
-            Closed::NothingOwed(why) => return notes.absent(why),
+            Closed::NothingOwed(why) => return notes.absent(why.reason()),
             Closed::Missing => {
                 notes.unaudited(
                     "shards",
@@ -254,15 +254,16 @@ fn count_each_row_once(
     }
 }
 
-/// The merge layer's subject, closed from the run's own scope: a run that measured the whole catalog itself, as its own `shard` field says, is one run's report and a merge is somebody else's question, while a run that measured one part is owed the other parts of its catalog.
+/// Closes merge absence only from the complete report's explicit whole-catalog configuration.
 const fn merged_scope(report: &Report) -> Closed {
-    if report.shard.is_none() {
-        return Closed::NothingOwed(
-            "this report is one run's own whole catalog, and a merge is audited against its \
-             parts",
-        );
-    }
-    Closed::Missing
+    let request = match report.shard {
+        None => Request::Unrequested,
+        Some(_) => Request::Requested,
+    };
+    Closed::requested(
+        request,
+        "this report is one run's own whole catalog, and a merge is audited against its parts",
+    )
 }
 
 /// Every row of the merged `report`, against the row of the same index in the part its `part_run_id` names among `parts`: the same outcome, resting on the same executions, since a merge runs nothing and carries what its parts decided.
@@ -319,15 +320,18 @@ fn decided_in_parts(report: &Report, parts: &[(&str, Report)], notes: &mut Notes
 /// Re-derives every discharge the run claimed from the evidence it kept, and says what the coverage measurement is owed.
 fn measured_every_target(
     report: &Report,
-    reached: Option<&Measurement>,
-    touched: Option<&Guarded>,
+    evidence: &CheckedEvidence<'_>,
     notes: &mut Notes<'_>,
 ) -> Closed {
-    let scope = measured_scope(report, touched);
+    let scope = measured_scope(
+        report,
+        evidence.touched.as_ref(),
+        evidence.recorded.as_ref(),
+    );
     if let Closed::NothingOwed(why) = scope {
         return Closed::NothingOwed(why);
     }
-    let Some(reached) = reached else {
+    let Some(reached) = evidence.reached.as_ref() else {
         notes.unaudited(
             "measurement",
             "the run kept no measurement, so what it was allowed to narrow by cannot be \
@@ -363,21 +367,47 @@ fn measured_every_target(
     Closed::Missing
 }
 
-/// The proofs layer's coverage-measurement subject, closed from the run's own routing contract: a run whose guards measured routes by what they recorded, and so says the coverage measurement narrowed nothing, owes no measurement, and a catalog with no row narrows nothing whoever measured; anything else is owed the measurement its routes rested on.
-fn measured_scope(report: &Report, touched: Option<&Guarded>) -> Closed {
+/// Closes measurement absence from a counted empty catalog or a producer record of the complete configured target inventory.
+fn measured_scope(
+    report: &Report,
+    touched: Option<&Guarded>,
+    retained: Option<&super::CheckedRecording>,
+) -> Closed {
     if report.mutants.is_empty() {
-        return Closed::NothingOwed(
-            "the catalog holds no mutant, so no route narrowed by anything a measurement would \
-             say",
+        let observed = match retained {
+            Some(recorded) => match count(recorded.routing.routes.len())
+                .checked_add(count(recorded.routing.executions().len()))
+            {
+                Some(count) => ObservedSubjects::Counted(count),
+                None => ObservedSubjects::Missing,
+            },
+            None if report.column("executed") == Some(0) => ObservedSubjects::Unrequested,
+            None => ObservedSubjects::Missing,
+        };
+        return Closed::empty(
+            Inventory {
+                declared: report.column("cataloged"),
+                subjects: Some(count(report.mutants.len())),
+                observed,
+            },
+            "the catalog holds no mutant, so no route narrowed by anything a measurement would say",
         );
     }
-    if touched.is_some_and(|record| !record.targets.is_empty()) {
-        return Closed::NothingOwed(
-            "every route rests on what the guards recorded, which the touch layer re-decides, \
-             so the coverage measurement narrowed nothing",
-        );
-    }
-    Closed::Missing
+    let Some(touched) = touched else {
+        return Closed::Missing;
+    };
+    let requested = report.targets.iter().map(String::as_str).collect();
+    let recorded = touched.targets.keys().map(String::as_str).collect();
+    let limitations = excused(&touched.limitations);
+    let excepted = limitations.iter().map(String::as_str).collect();
+    Closed::configured(
+        &Configuration {
+            requested: &requested,
+            recorded: &recorded,
+            excepted: &excepted,
+        },
+        "every route rests on what the guards recorded, which the touch layer re-decides, so the coverage measurement narrowed nothing",
+    )
 }
 
 /// Every route the guards decided, re-decided from what the guards recorded.
@@ -832,14 +862,9 @@ pub(super) fn proofs(
     if let Some(recorded) = &evidence.recorded {
         selected(report, &recorded.events, &mut notes);
     }
-    let measured = measured_every_target(
-        report,
-        evidence.reached.as_ref(),
-        evidence.touched.as_ref(),
-        &mut notes,
-    );
+    let measured = measured_every_target(report, evidence, &mut notes);
     let claims = claimed(report);
-    let discharge = discharge_scope(report, counted, &claims);
+    let discharge = discharge_scope(report, counted, &claims, evidence.recorded.as_ref());
     match (measured, discharge) {
         (Closed::NothingOwed(_), Closed::NothingOwed(_)) => {
             return notes.absent(
@@ -847,7 +872,8 @@ pub(super) fn proofs(
                  proof is owed",
             );
         }
-        (Closed::Missing, _) | (_, Closed::Missing) => {}
+        (Closed::Missing | Closed::NothingOwed(_), Closed::Missing)
+        | (Closed::Missing, Closed::NothingOwed(_)) => {}
     }
     if claims.is_empty() {
         return notes.looked();
@@ -861,22 +887,39 @@ pub(super) fn proofs(
     notes.looked()
 }
 
-/// The discharge subject, closed from the report's own accounting: a run whose accounting claims no discharge and whose routes name none has no proof to re-derive; a column that claims any, or a route that names one, is owed the evidence its proofs rest on.
-fn discharge_scope(report: &Report, counted: u64, claims: &[Discharged]) -> Closed {
-    if claims.is_empty()
-        && counted == 0
-        && report.mutants.iter().all(|row| {
-            row.route
-                .as_ref()
-                .is_none_or(|route| route.discharged.is_empty())
-        })
-    {
-        return Closed::NothingOwed(
-            "the report's own accounting claims no discharge and no route names one, so no \
-             proof is owed",
-        );
+/// Closes discharge absence against its counted rows and every discharge the independently retained routing names.
+fn discharge_scope(
+    report: &Report,
+    counted: u64,
+    claims: &[Discharged],
+    recorded: Option<&super::CheckedRecording>,
+) -> Closed {
+    let observed = match recorded {
+        Some(recorded) => ObservedSubjects::Counted(count(
+            recorded
+                .routing
+                .routes
+                .iter()
+                .filter(|route| !route.discharged.is_empty())
+                .count(),
+        )),
+        None => ObservedSubjects::Unrequested,
+    };
+    if report.mutants.iter().any(|row| {
+        row.route
+            .as_ref()
+            .is_some_and(|route| !route.discharged.is_empty())
+    }) {
+        return Closed::Missing;
     }
-    Closed::Missing
+    Closed::empty(
+        Inventory {
+            declared: Some(counted),
+            subjects: Some(count(claims.len())),
+            observed,
+        },
+        "the report's own accounting claims no discharge and no route names one, so no proof is owed",
+    )
 }
 
 /// Every mutant that never ran says why, in the recording as well as in the report.

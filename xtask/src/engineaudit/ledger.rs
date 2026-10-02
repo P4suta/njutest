@@ -8,22 +8,28 @@ use std::fmt;
 
 use serde::Deserialize;
 
-use super::{Audit, Decided, Layer, MET, Notes, Report, SURVIVING_MUTANT, UNREACHED_MUTANT};
-use crate::layers::Closed;
+use super::{Audit, Decided, Layer, MET, Notes, Report, SURVIVING_MUTANT, UNREACHED_MUTANT, count};
+use crate::layers::{Closed, Inventory, ObservedSubjects};
 
-/// The ledger layer's subject, closed from the report's own claim list: a run that claims no acceptance — whose `expectations` the report itself carries complete and empty — has no acceptance a ledger could answer or go stale over, so no ledger is owed one; a run that claims any is owed the ledger its claims answer to.
-const fn accepted_scope(report: &Report) -> Closed {
-    if report.expectations.is_empty() {
-        return Closed::NothingOwed("the run claims no acceptance, so no ledger is owed an answer");
-    }
-    Closed::Missing
+/// Closes acceptance absence against its explicit accounting, complete claim list and independently expected rows.
+fn accepted_scope(report: &Report) -> Closed {
+    Closed::empty(
+        Inventory {
+            declared: report.column("expected"),
+            subjects: Some(count(report.expectations.len())),
+            observed: ObservedSubjects::Counted(count(
+                report.mutants.iter().filter(|row| row.expected).count(),
+            )),
+        },
+        "the run claims no acceptance, so no ledger is owed an answer",
+    )
 }
 
 pub(super) fn ledger(report: &Report, ledger: Option<&Ledger>, audit: &mut Audit) -> Decided {
     let mut notes = Notes::on(audit, Layer::Ledger);
     let Some(ledger) = ledger else {
         match accepted_scope(report) {
-            Closed::NothingOwed(why) => return notes.absent(why),
+            Closed::NothingOwed(why) => return notes.absent(why.reason()),
             Closed::Missing => {
                 notes.unaudited(
                     "ledger",
