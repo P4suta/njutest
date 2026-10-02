@@ -54,6 +54,7 @@ pub mod shapes;
 pub mod specimen;
 pub mod strictjson;
 pub mod surface;
+pub mod tools;
 pub mod wasitestsuite;
 pub mod wire;
 pub mod work;
@@ -99,6 +100,8 @@ enum Task {
         #[arg(last = true, required = true)]
         command: Vec<OsString>,
     },
+    /// Every pinned cargo plugin, selected by mise, unshadowed on the path, and answering through Cargo's external-subcommand protocol with the pinned version.
+    Tools,
 }
 
 #[derive(Debug, Subcommand)]
@@ -281,9 +284,26 @@ where
         Task::Slot { lane, command } => return slot(&lane, &command, process, stderr),
         Task::PrePush => return pre_push(process, &mut *streams.input, stderr),
         Task::Tidy { command } => return tidy(&command, process, stderr),
+        Task::Tools => return tools(process, stderr),
         Task::Execution(gate) => return run_execution(gate, &root, process, (stdout, stderr)),
     };
     report(outcome, stdout, stderr)
+}
+
+/// Validates the pinned tools the gates invoke, writing what it established or the refusal that says why.
+fn tools(process: &Process<'_>, stderr: &mut dyn Write) -> ExitCode {
+    match tools::check(
+        &gates::workspace_root(),
+        "mise".as_ref(),
+        process.cargo,
+        process.environment,
+    ) {
+        Ok(said) => after_output(writeln!(stderr, "{said}"), ExitCode::SUCCESS),
+        Err(failure) => after_output(
+            writeln!(stderr, "tools: {}", failure.coded()),
+            ExitCode::FAILURE,
+        ),
+    }
 }
 
 fn run_execution(

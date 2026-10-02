@@ -144,7 +144,15 @@ run_windows = "rustup target add --toolchain %RUSTUP_TOOLCHAIN% x86_64-pc-window
 [tasks."lint:windows"]
 description = "Lint every non-benchmark target with every non-benchmark feature for Windows, where CI reads the cfgs this machine does not compile; real Windows CI covers feature-complete benchmarks"
 depends = ["setup:windows-target"]
-run = "cargo clippy --locked --workspace --all-targets --features njutest/testkit,rust-mutants-cli/testkit,rust-mutants/testkit,xtask/testkit --target x86_64-pc-windows-msvc -- -D warnings"
+shell = "bash -c"
+run = """
+if [ "$(uname -s)" = Darwin ] && ! echo 'int main(void){return 0;}' | cc --target=x86_64-pc-windows-msvc -x c - -o /dev/null 2>/dev/null; then
+  echo "lint:windows: this Mac has no MSVC C headers, so a cross clippy stops in a C dependency's #include before Rust reads one cfg; that is not a Rust proof." >&2
+  echo "lint:windows: the supported native route is 'cargo xtask remote-check --machines <file>', which runs the whole suite on a real Windows machine." >&2
+  exit 1
+fi
+cargo clippy --locked --workspace --all-targets --features njutest/testkit,rust-mutants-cli/testkit,rust-mutants/testkit,xtask/testkit --target x86_64-pc-windows-msvc -- -D warnings
+"""
 
 # CI's Linux runners are where a `cfg` this machine never compiles is first read, and `-D warnings` turns each one into a failed job rather than a note.
 # Three arrived at once the first time CI got far enough to run clippy: a function that is const once the macOS branch is gone, a placeholder binding with nothing to bind, and a widening conversion that is the identity where `st_mode` is already a u32.

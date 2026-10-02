@@ -414,6 +414,10 @@ Run a whole-workspace command by hand as `cargo xtask slot heavy -- cargo nextes
 **A pass is remembered for an hour.** A commit that passed the gate against the same base is not checked again within the hour, so pushing it to the hub and then to origin costs one gate rather than two.
 What is remembered is the commit, the base the commit-message check reads, and the bytes of the gate that passed it; a moved base or a changed gate is a question nobody has answered yet.
 
+**The tools the gates run are the ones mise pins.** `cargo xtask tools` establishes it rather than assuming it: for every `cargo:` pin in mise.toml it resolves the executable through `mise which`, refuses where an earlier directory on the path would answer the same name with another executable, and asks `cargo <subcommand> --version` — through Cargo's external-subcommand protocol, never the plugin directly — requiring the pinned version to be what answers.
+The pins in mise.toml are metadata until something does this: a Homebrew `cargo-nextest` 0.9.146 sat earlier on the path than mise's 0.9.140 and every `cargo nextest` the tasks dispatched answered with it, and `mise which cargo-nextest` from a directory outside the project answers nothing because the pin is not active there, which is the single-resolver rule the campaign's pinned-cargo helper encodes and this gate now states in the repository.
+`mise run doctor` reports the same selection, naming the pinned executable and the shadow where one stands in front of it.
+
 **Every temporary directory has an owner.** `mise run test:fast` and CI's fast suite run under `cargo xtask tidy`, which hands the suite an empty temporary directory and fails naming whatever it finds there afterwards ([ADR 0006](adr/0006-every-temporary-directory-has-an-owner.md)).
 The refusal names the owner a leftover's `owner.json` records, where it records one, so it answers who made the directory rather than only where it sits.
 Synchronous test scratch takes `njutest_devkit::temporary::Temporary`, which names its owner and closes once after its users end.
@@ -455,6 +459,7 @@ Their step deadlines leave time before the existing job deadlines to upload JUni
 `mise run test:cost` uses the same three-thread, three-build-job shape and records machine load and observed toolchain concurrency beside the suite measurements.
 Code behind `#[cfg(windows)]` does not: this machine's compiler never reads it, so a workspace that builds here can fail to build there on a lint nobody could have seen.
 `mise run lint:windows` asks for the reading without the machine: it is clippy for the Windows target with every warning an error, since a type check passes a lint that CI's Windows job fails on.
+Where the machine has no MSVC C headers — a Mac with the stock clang does not — the cross clippy stops in a C dependency's `#include` before Rust reads one cfg, and the task says so and refuses rather than presenting that as a reading; the supported native route is `cargo xtask remote-check --machines <file>`, which runs the whole suite on a real Windows machine.
 It needs the target's standard library once:
 
 ```console
