@@ -10,7 +10,7 @@
 
 use std::collections::BTreeSet;
 
-use xtask::work::{Delivered, Others, StopDecision, Stopped, decide_stop};
+use rust_mutants_decision::group::{Delivered, Others, StopDecision, Stopped, decide_stop};
 
 fn delivered(word: &str) -> Delivered {
     match word {

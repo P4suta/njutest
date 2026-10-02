@@ -34,8 +34,8 @@ impl Machine {
         let root = tempfile::tempdir().expect("the complete owned lane observation scope");
         let slots = root.path().join("slots");
         let turns = root.path().join("turns");
-        std::fs::create_dir(&slots).expect("the lane directory");
-        std::fs::create_dir(&turns).expect("the turn directory");
+        std::fs::create_dir_all(&slots).expect("the lane directory");
+        std::fs::create_dir_all(&turns).expect("the turn directory");
         let observed = xtask::observation::Observation::filesystem(root.path(), true)
             .expect("subscribe before starting any lane producer");
         Self {
@@ -433,13 +433,13 @@ fn a_run_inside_a_held_lane_does_not_wait_for_itself() {
 /// Kills the run `holder` outright once the work it started is recorded, and says which process that work is.
 fn orphan_the_work(machine: &Machine, holder: &mut SupervisedChild) -> String {
     assert!(
-        until(&machine, Duration::from_secs(60), || machine
+        until(machine, Duration::from_secs(60), || machine
             .marker("inside")),
         "the holder never started"
     );
     let record = machine.slots.as_path().join("heavy.holder");
     assert!(
-        until(&machine, Duration::from_secs(60), || {
+        until(machine, Duration::from_secs(60), || {
             std::fs::read_to_string(&record).is_ok_and(|text| text.contains("group="))
         }),
         "the holder never recorded the work it started"
@@ -573,10 +573,11 @@ fn a_test_that_ends_while_its_run_waits_leaves_no_worker_behind() {
         .expect("the work said who it is")
         .trim()
         .to_owned();
-    let completion =
-        njutest_process::ForeignProcess::retain(work.parse().expect("the actual worker's PID"))
-            .expect("retain the worker generation before ending its holder")
-            .expect("the worker is alive before the holder ends");
+    let completion = njutest_process::ForeignProcess::retain(
+        work.parse::<u32>().expect("the actual worker's PID"),
+    )
+    .expect("retain the worker generation before ending its holder")
+    .expect("the worker is alive before the holder ends");
     let pid = holder.id().expect("a live holder").to_string();
     let killed = Command::new("kill")
         .args(["-KILL", &pid])
