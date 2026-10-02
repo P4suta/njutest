@@ -38,7 +38,11 @@ The gate was a Bash script, and the rule that decides what may run on the machin
    Waiting for it to end on its own was the first form of this decision, and a loop that never ended held the lane for every session on the machine (2026-09-26).
    A waiting run says whom it is waiting for and repeats it; `NJUTEST_SLOT_HELD` lets a run already inside the lane through.
    A narrowed run does not take the lane.
-4. **A pass is remembered for an hour**, keyed by the commit, the base the commit-message check reads, and the bytes of the gate binary.
+4. **Only a complete success receipt can answer an unchanged input.** Its identity binds the actual source tree, commit-message base, gate binary, toolchain and components, dependencies, configuration, environment, features and every required check.
+   The cold receipt records the actual commands, outputs, counts and successful terminal results.
+   A warm receipt independently verifies those same complete inputs before reusing that success, and records the work it actually starts.
+   Missing, mismatched, refused or unfinished evidence requires the complete check again.
+   An hourly marker does not establish any of these facts.
 
 ## Consequences
 
@@ -66,3 +70,13 @@ The gate was a Bash script, and the rule that decides what may run on the machin
 - A narrowed run can still coincide with a whole one.
   Whether that costs anything is a count to take before widening the lane to it.
 - The four feature-set builds, and the Developer Tools setting on a new machine, are separate decisions: the first is a change to `mise.toml`, the second is recorded in [the limitation](../limitations.md#on-macos-measure-what-an-execution-costs-before-measuring-anything-else) and [development](../development.md#one-machine-several-sessions).
+
+## Retained lane observations
+
+Lane readers subscribe to native directory publications and cancellation before their first lock or record observation.
+The holder publishes release after dropping its actual lock, so a publication never authorizes work while that lock is still held.
+Quiet and progress deadlines retain the executing host's measured wait and actual operating-system CPU samples.
+Legacy PID, start-time and session records retain no capability for a complete process group or its inherited descriptors.
+A missing process listing or a successfully delivered signal cannot prove that lifetime ended.
+An unreleased legacy group therefore remains an explicit refusal with its original receipt retained.
+Complete cross-process recovery requires an owned supervisor to settle its group and descriptors before publishing a terminal receipt.
