@@ -33,7 +33,7 @@ pub fn recorder(
     wanted: &Recording<'_>,
     progress: Option<std::sync::mpsc::SyncSender<Event>>,
 ) -> Result<Recorder, CliError> {
-    recorder_observed(wanted, progress, None)
+    recorder_with(wanted, progress, None)
 }
 
 /// Builds the requested durable authority and the display's explicitly registered observation.
@@ -41,6 +41,19 @@ pub fn recorder(
 /// # Errors
 /// The recording cannot retain its requested authority.
 pub fn recorder_observed(
+    wanted: &Recording<'_>,
+    progress: Option<std::sync::mpsc::SyncSender<Event>>,
+    observed: Option<&rust_mutants::observation::Observation>,
+) -> Result<Recorder, CliError> {
+    match (progress, observed) {
+        (None, _) => recorder(wanted, None),
+        (Some(sender), None) => recorder(wanted, Some(sender)),
+        (Some(sender), Some(observed)) => recorder_with(wanted, Some(sender), Some(observed)),
+    }
+}
+
+/// Builds the actual authority with its chosen progress producer registration.
+fn recorder_with(
     wanted: &Recording<'_>,
     progress: Option<std::sync::mpsc::SyncSender<Event>>,
     observed: Option<&rust_mutants::observation::Observation>,

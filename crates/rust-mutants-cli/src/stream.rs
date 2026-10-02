@@ -98,14 +98,9 @@ pub fn watch<F>(
     working: &F,
 ) -> Result<(), crate::error::CliError>
 where
-    F: Fn() -> bool,
+    F: crate::ui::Preparation,
 {
-    watch_waiting(events, stream, working, &|| {
-        use rust_mutants::observation::Clock as _;
-        rust_mutants::observation::WallClock
-            .park(None)
-            .map_err(|source| crate::error::CliError::PreparationStartFailed { source })
-    })
+    watch_waiting(events, stream, working)
 }
 
 /// Watches the actual preparation producer through a subscription registered before it started.
@@ -124,60 +119,35 @@ pub fn watch_observed<F>(
 where
     F: Fn() -> bool,
 {
-    watch_waiting(events, stream, working, &|| {
-        observed
-            .ensure_complete()
-            .map_err(|source| crate::error::CliError::PreparationStartFailed { source })?;
-        let waited = observed
-            .wait(
-                "workspace-preparation",
-                "phase, cancellation or complete preparation",
-                None,
-            )
-            .map_err(|source| crate::error::CliError::PreparationStartFailed { source })?;
-        let detail = serde_json::to_string(&waited.note).map_err(|source| {
-            crate::error::CliError::PreparationStartFailed {
-                source: std::io::Error::other(source),
-            }
-        })?;
-        recorder.note("host-wait", &detail);
-        match waited
-            .event
-            .map_err(|source| crate::error::CliError::PreparationStartFailed { source })?
-        {
-            rust_mutants::observation::Event::Changed
-            | rust_mutants::observation::Event::Completed
-            | rust_mutants::observation::Event::Cancelled
-            | rust_mutants::observation::Event::Deadline => Ok(()),
-        }
-    })?;
-    observed
-        .ensure_complete()
-        .map_err(|source| crate::error::CliError::PreparationStartFailed { source })
+    watch(
+        events,
+        stream,
+        &crate::ui::ObservedPreparation::new(working, (observed, recorder)),
+    )
 }
 
 fn watch_waiting<F>(
     events: &Receiver<Event>,
     stream: &mut dyn Write,
     working: &F,
-    wait: &impl Fn() -> Result<(), crate::error::CliError>,
 ) -> Result<(), crate::error::CliError>
 where
-    F: Fn() -> bool,
+    F: crate::ui::Preparation,
 {
     loop {
         match events.try_recv() {
             Ok(event) => {
+                working.received()?;
                 if let Some(line) = phase_of(&event)? {
                     say(stream, &line)?;
                 }
             }
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => return Ok(()),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => return working.complete(),
             Err(std::sync::mpsc::TryRecvError::Empty) => {
-                if !working() {
-                    return Ok(());
+                if !working.active() {
+                    return working.complete();
                 }
-                wait()?;
+                working.wait()?;
             }
         }
     }

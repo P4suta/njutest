@@ -292,16 +292,10 @@ impl Observation {
         };
         let started = Instant::now();
         let event = loop {
-            match self.signal.failure() {
-                Ok(Some(failure)) | Err(failure) => break Err(failure),
+            match self.pending() {
+                Ok(Some(event)) => break Ok(event),
+                Err(failure) => break Err(failure),
                 Ok(None) => {}
-            }
-            match self.received.try_recv() {
-                Ok(event) => break event,
-                Err(TryRecvError::Disconnected) => {
-                    break Err(io::Error::other("the observation producers disconnected"));
-                }
-                Err(TryRecvError::Empty) => {}
             }
             match deadline {
                 Some(deadline) => match deadline.checked_duration_since(clock.now()) {

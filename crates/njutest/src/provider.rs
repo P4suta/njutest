@@ -448,7 +448,7 @@ impl Answers {
             self.observed.ensure_complete().map_err(refused)?;
             match self.received.try_recv() {
                 Ok(Ok(answer)) => {
-                    let _publication = self.observed.pending().map_err(refused)?;
+                    self.observed.acknowledge().map_err(refused)?;
                     return Ok(answer);
                 }
                 Ok(Err(source)) => {
@@ -513,11 +513,23 @@ impl AnswerPublisher {
             Err(_closed) => false,
         }
     }
+
+    /// Finishes one reader's last answer, including an owner that already disposed its receiver.
+    fn finish(self, answer: ReadAnswer) {
+        let Some(sender) = &self.sent else {
+            std::process::abort()
+        };
+        match sender.send(answer) {
+            Ok(()) => self.signal.publish(Event::Changed),
+            Err(_disposed_receiver) => {}
+        }
+    }
 }
 
 impl Drop for AnswerPublisher {
     fn drop(&mut self) {
-        drop(self.sent.take());
+        let sender = self.sent.take();
+        drop(sender);
         self.signal.publish(Event::Completed);
     }
 }
@@ -625,7 +637,7 @@ fn spawn_all_reader(
             Ok(_read) => String::from_utf8(bytes).map_err(ProviderReadError::from),
             Err(source) => Err(ProviderReadError::Io(source)),
         };
-        let _sent = sender.send(answer);
+        sender.finish(answer);
     })
     .map_err(|source| {
         ProviderError::new(
@@ -890,7 +902,7 @@ pub struct Once<'a> {
 /// [`ProviderErrorKind::Unstartable`] when the command cannot be run,
 /// [`ProviderErrorKind::Timeout`] when it does not end in time, and [`ProviderErrorKind::Protocol`] when it writes more than `limit`.
 pub fn once(asking: &Once<'_>) -> Result<String, ProviderError> {
-    once_observed(asking, &crate::trace::Recorder::disabled())
+    once_recorded(asking, &crate::trace::Recorder::disabled())
 }
 
 /// Runs the actual one-shot provider and retains its measured semantic response wait.
@@ -898,6 +910,17 @@ pub fn once(asking: &Once<'_>) -> Result<String, ProviderError> {
 /// # Errors
 /// The provider or its complete owned output observation fails.
 pub fn once_observed(
+    asking: &Once<'_>,
+    trace: &crate::trace::Recorder,
+) -> Result<String, ProviderError> {
+    if !trace.is_enabled() {
+        return once(asking);
+    }
+    once_recorded(asking, trace)
+}
+
+/// Runs the actual provider with the selected complete output and recording authority.
+fn once_recorded(
     asking: &Once<'_>,
     trace: &crate::trace::Recorder,
 ) -> Result<String, ProviderError> {

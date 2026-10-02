@@ -255,7 +255,6 @@ impl Recorder {
 
     /// Whether anything is recorded.
     #[must_use]
-    #[cfg(feature = "testkit")]
     pub const fn is_enabled(&self) -> bool {
         self.inner.is_some()
     }

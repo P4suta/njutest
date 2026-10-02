@@ -216,6 +216,7 @@ Completion, cancellation, resource change and deadline remain distinct decisions
 Preparation and provider readers register their subscriptions before starting the producer.
 An exclusive reader may transfer threads while retaining the original registered producer and every queued wake.
 Reading the actual answer consumes its wake, and the reader checks retained refusals again before a successful result.
+Each displayed event acknowledges its wake before another frame is read, so continuous successful progress cannot accumulate already consumed notifications.
 Protocol EOF is published after the answer channel closes, while the actual process and reader threads are still joined by their owner.
 Presentation wait notes remain in the durable trace and never wake the same presentation channel again.
 
