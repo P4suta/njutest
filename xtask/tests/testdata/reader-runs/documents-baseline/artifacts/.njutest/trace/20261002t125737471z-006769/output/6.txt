@@ -1,0 +1,24 @@
+WARNING: Ignoring `RUSTC_WRAPPER` environment variable, Miri does not support wrapping.
+   Compiling fixture-baseline v0.1.0 (/Users/yasunobu/njutest-oc/evidence/batch/phase3/package-C/reader-recording-products/documents-baseline/trees/fixture-baseline)
+    Finished `test` profile [unoptimized] target(s) in 0.29s
+     Running unittests src/lib.rs (target/miri/aarch64-apple-darwin/debug/build/fixture-baseline/01433cc1a1ab8def/out/fixture_baseline-01433cc1a1ab8def)
+
+running 2 tests
+test tests::sign_names_both_sides_of_zero ... ok
+test tests::zero_has_a_sign_of_its_own ... ignored, the baseline reports an ignored test as skipped, not as a pass
+
+test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.22s
+
+     Running tests/doubling.rs (target/miri/aarch64-apple-darwin/debug/build/fixture-baseline/4d7a1c7353c38437/out/doubling-4d7a1c7353c38437)
+
+running 1 test
+test doubling_is_addition_twice ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+
+   Doc-tests fixture_baseline
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

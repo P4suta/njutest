@@ -93,7 +93,8 @@ fn asked(root: &Path, args: &[&str]) -> (u8, String, String) {
 
 /// The document a run or a merge left at `path`, parsed.
 fn document(path: &Path) -> serde_json::Value {
-    let text = std::fs::read_to_string(path).expect("a document a recording keeps");
+    let text = std::fs::read_to_string(path)
+        .unwrap_or_else(|error| panic!("recorded document {}: {error}", path.display()));
     njutest_devkit::strictjson::decode_str(&text).expect("a recording's document is JSON")
 }
 
@@ -103,6 +104,15 @@ fn shape(value: &serde_json::Value, at: &str, into: &mut BTreeSet<String>) {
         serde_json::Value::Object(fields) => {
             into.insert(format!("{at}:object"));
             for (name, field) in fields {
+                let name = if at.ends_with("/sealed/modules") {
+                    assert!(
+                        name.len() == 64 && name.bytes().all(|one| one.is_ascii_hexdigit()),
+                        "a physical module map key is a complete SHA-256 identity: {name}"
+                    );
+                    "<module>"
+                } else {
+                    name.as_str()
+                };
                 shape(field, &format!("{at}/{name}"), into);
             }
         }
@@ -346,6 +356,18 @@ fn every_committed_sharded_run_is_one_todays_runner_records() {
     let mut stale = Vec::new();
     for (recording, sealed) in RECORDINGS {
         let fixture = fixture();
+        if updating {
+            njutest_devkit::report::OriginalTree::record(
+                &fixture.root,
+                &committed(recording).join("original"),
+            )
+            .expect("the exact complete pre-producer source and configuration");
+        } else {
+            njutest_devkit::report::OriginalTree::read(&committed(recording).join("original"))
+                .expect("the complete original source archive")
+                .check_source(&fixture.root)
+                .expect("today's live producer is asked about the exact original source and configuration");
+        }
         let fresh = recorded(&fixture, sealed);
         if updating {
             rewrite(recording, &fresh);
@@ -381,6 +403,18 @@ fn every_committed_sharded_run_is_one_todays_runner_records() {
 #[test]
 fn the_proofaudit_specimen_report_is_a_shape_a_run_writes() {
     let fixture = fixture();
+    if std::env::var_os(UPDATE_SPECIMEN).is_some() {
+        njutest_devkit::report::OriginalTree::record(
+            &fixture.root,
+            &committed("specimen-original"),
+        )
+        .expect("the exact specimen producer input");
+    } else {
+        njutest_devkit::report::OriginalTree::read(&committed("specimen-original"))
+            .expect("the complete specimen source archive")
+            .check_source(&fixture.root)
+            .expect("the live specimen producer is asked about its exact original source and configuration");
+    }
     let (code, out, err) = asked(
         &fixture.root,
         &["verify", "--offline", "--locked", "--ui=plain"],

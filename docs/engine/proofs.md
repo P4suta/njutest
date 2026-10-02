@@ -193,9 +193,23 @@ The deferral carries its scope as a private type; an unreadable input or another
 A complete inventory that owes no subject proves absence, while a missing shard, engine recording or control leaves the layer partly audited.
 
 The committed engine and sharded recordings preserve the exact source and configuration copied before each real producer ran.
+Each original is a lossless regular-file archive with a strict complete inventory, byte digests and permissions.
+Readers verify every archive entry before extracting immutable bytes into a new owned directory.
+Missing, added, mismatched, repeated, linked or unsafe paths refuse the recording; the original source bytes remain unchanged.
 Their shape checks retain optional physical module work, compilation attempts and every field of each keyed module observation.
 Only a validated SHA-256 map key is normalized when comparing shape; the observation object's keys and value types remain mandatory.
 Updates run the actual compiler and product again, and the audit readers rederive the resulting reports against their preserved originals and traces.
+
+Reader tests bind the complete source, requested configuration, actual producer command, captured output, report and trace to the retained execution.
+The artifact and provenance inventories remain complete, and the actual producer metadata must reconcile its source revision, patch and stdout and stderr digests.
+Each family keeps the layer whose behavior it claims live.
+
+| Family | Live layer | Actual recording holding the other layers |
+| --- | --- | --- |
+| CLI reports | CLI projection, diagnostics and serialization | `reports-simple`, `reports-coverage` |
+| CLI projections | CLI document projection | `projections-unicode` |
+| CLI explanation | Explanation reader; printed-command reproduction remains a real run | `explain-simple` |
+| Assurance documents | Document and bundle readers; cache, rerun, shard and acceptance controls remain real runs | `documents-baseline` |
 
 `--equivalence` asks the compiler whether each survivor's mutation is one it renders at all: the tree the user wrote is built once, the mutation is spliced in, and the two builds' executables are compared byte for byte.
 An answer of `identical` says the compiler produced the same program, and the control is built again to check that the tree builds reproducibly at all — a tree whose build is not reproducible proves nothing, and one such answer withdraws every answer afterwards.

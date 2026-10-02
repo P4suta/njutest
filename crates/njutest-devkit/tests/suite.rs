@@ -17,6 +17,8 @@ mod golden;
 mod paths;
 #[path = "repo.rs"]
 mod repo;
+#[path = "report.rs"]
+mod report;
 #[path = "rust_source.rs"]
 mod rust_source;
 #[path = "workflow_commands.rs"]

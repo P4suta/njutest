@@ -83,8 +83,8 @@ fn ask(root: &Path, args: &[&str]) -> Said {
     }
 }
 
-/// A copy of `fixture-baseline` that one verification has already run in.
-fn verified() -> Verified {
+/// The cache writer and collection control pays for live verification and its actual durable cache entries.
+fn live_verified() -> Verified {
     let dir = tempfile::Builder::new()
         .prefix("njutest-commands-")
         .tempdir()
@@ -106,6 +106,36 @@ fn verified() -> Verified {
     let run = njutest::app::reports::pointed_at(&root, Index::Any)
         .expect("the index is readable")
         .expect("the index names a run")
+        .as_str()
+        .to_owned();
+    Verified {
+        root,
+        run,
+        _dir: dir,
+    }
+}
+
+/// Readers pay for their live commands; the original holds the complete audited verification.
+fn verified() -> Verified {
+    let dir = tempfile::Builder::new()
+        .prefix("njutest-reader-")
+        .tempdir()
+        .expect("the reader's workspace");
+    let root = dir.path().join("fixture-baseline");
+    copy_tree(
+        &njutest_devkit::paths::fixtures_dir().join("fixture-baseline"),
+        &root,
+    );
+    njutest_devkit::report::Original::open(
+        "documents-baseline",
+        &["verify", "--offline", "--locked", "--trace", "--ui=plain"],
+    )
+    .expect("the actual complete verification recording")
+    .restore(&root)
+    .expect("the reader's source and configuration match that verification");
+    let run = njutest::app::reports::pointed_at(&root, Index::Any)
+        .expect("the genuine index is readable")
+        .expect("the genuine index names the actual run")
         .as_str()
         .to_owned();
     Verified {
@@ -604,7 +634,7 @@ fn refusals(it: &Verified, survivor: &str) {
 
 #[test]
 fn what_a_run_left_behind_is_listed_bundled_and_collected() {
-    let it = verified();
+    let it = live_verified();
     bundled(&it);
     stored(&it);
     planned(&it.root);

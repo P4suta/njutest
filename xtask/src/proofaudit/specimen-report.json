@@ -93,14 +93,14 @@
             },
             "repaired": [],
             "resources": [],
-            "run_id": "20260930t121300106z-00d994-b0000000000",
+            "run_id": "20261002t125529796z-010996-b0000000000",
             "seams": [],
             "sources": [],
             "targets": [],
             "timing": {
-              "duration_ms": 6114,
-              "finished": "2026-09-30T12:13:06.220847Z",
-              "started": "2026-09-30T12:13:00.106676Z"
+              "duration_ms": 3159,
+              "finished": "2026-10-02T12:55:32.955228Z",
+              "started": "2026-10-02T12:55:29.796001Z"
             },
             "toolchain": {
               "arch": "aarch64",
@@ -123,7 +123,7 @@
     },
     "provenance": {
       "cached": false,
-      "identity": "0fae0118a3aab211ea2aa411d0c877ab38a986c4c08f365a3311c6bf815c497e",
+      "identity": "103f31f59020c0185da8baadfef851ec804697a7d88689c83ec66d1849c0fb61",
       "source_run_id": null
     },
     "repository": {
@@ -142,7 +142,7 @@
       "root_name": "fixture-assured",
       "workspace_digest": "3a7fae75eade6b12b2536419baff5338b4dfe392875a10f077caf812aa98ea5d"
     },
-    "run_id": "20260930t121300106z-00d994",
+    "run_id": "20261002t125529796z-010996",
     "run_kind": "full",
     "schema": "njutest-assurance-report-v1",
     "schema_version": 3,

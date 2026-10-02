@@ -1,0 +1,42 @@
+{
+  "schema": "njutest-original-source-v1",
+  "archive": "9a011082bad8d014519fa7377faa515fc3675b85866f8bb49721240ce5b1e46d",
+  "files": {
+    ".njutest.toml": {
+      "sha256": "b1b3121a3f86a1e8b3911b9e6df280e9cb20ad712a4ba034afa754fe0a4b0b9e",
+      "mode": 420
+    },
+    ".rust-mutants.toml": {
+      "sha256": "168d6ca754d1a46f416768546c5bee9ac721f71411c2c64561a1630c2d3d9c7e",
+      "mode": 420
+    },
+    "Cargo.lock": {
+      "sha256": "8bd24fbd0f819635b2ea49b724d809074a8cda2c595226553408cb5477c44a21",
+      "mode": 420
+    },
+    "Cargo.toml": {
+      "sha256": "82e159deb51bc3171d9fc65215226455fc4845d027b5c397019ed56065abe78d",
+      "mode": 420
+    },
+    "README.md": {
+      "sha256": "6d0d59992105a4d41e836c1e788b5bf1f4056b31cb07887329e2693384d2b373",
+      "mode": 420
+    },
+    "src/lib.rs": {
+      "sha256": "eb9cc3c324d54ed28c44babfddacaedbcd2d53be282a0a3b4e6272b1c5091d1e",
+      "mode": 420
+    },
+    "tests/calls.rs": {
+      "sha256": "b861e1d26c0f7556391e8fc87ad0f419130ab238214f3df859c4bb97f7014b92",
+      "mode": 420
+    },
+    "tests/declines.rs": {
+      "sha256": "b7b55b007ffeb7f4bf27c030eb60b754055e4d283a1c89aedd6c364e9cdf1822",
+      "mode": 420
+    },
+    "tests/second.rs": {
+      "sha256": "651c4040b89b62ca6965795d12f9e9451331f56404083bb13775bca5c4a11763",
+      "mode": 420
+    }
+  }
+}

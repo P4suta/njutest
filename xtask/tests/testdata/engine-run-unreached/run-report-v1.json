@@ -3,9 +3,9 @@
   "schema_version": 5,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20261001t091757846z",
-    "started_at": "2026-10-01T09:17:57.84624Z",
-    "finished_at": "2026-10-01T09:17:59.886638Z",
+    "id": "20261002t125534089z",
+    "started_at": "2026-10-02T12:55:34.08907Z",
+    "finished_at": "2026-10-02T12:55:35.881396Z",
     "duration_ms": 161,
     "interrupted": false,
     "exit_code": 1,
@@ -18,7 +18,7 @@
   "workspace": {
     "root_name": "fixture-unreached",
     "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
-    "workspace_digest": "02dbc061d1c8a9f917babe93aae52fd804de155f846c94a674ea3ab533418346",
+    "workspace_digest": "913adead0d8f08549baec71f56d97dc96246f7e0be16db77e913335929f5352a",
     "catalog_digest": "03c20af27c9024062341116ff85836fcf3a0955215778abecd0001f5c374dd22",
     "platform": {
       "os": "darwin",
@@ -113,7 +113,7 @@
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
       "exit_code": -1,
-      "duration_ms": 17,
+      "duration_ms": 12,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
@@ -170,7 +170,7 @@
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
       "exit_code": -1,
-      "duration_ms": 49,
+      "duration_ms": 35,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
@@ -227,7 +227,7 @@
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
       "exit_code": -1,
-      "duration_ms": 15,
+      "duration_ms": 28,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
@@ -284,7 +284,7 @@
       "step_notice": null,
       "target": "fixture-unreached/lib/fixture_unreached",
       "exit_code": -1,
-      "duration_ms": 22,
+      "duration_ms": 41,
       "tests_run": 1,
       "killed_by": [
         "tests::doubling_two_is_four"
@@ -341,7 +341,7 @@
       "step_notice": null,
       "target": "",
       "exit_code": -1,
-      "duration_ms": 23,
+      "duration_ms": 13,
       "tests_run": 0,
       "killed_by": [],
       "signal": null,
@@ -388,7 +388,7 @@
       "step_notice": null,
       "target": "",
       "exit_code": -1,
-      "duration_ms": 27,
+      "duration_ms": 15,
       "tests_run": 0,
       "killed_by": [],
       "signal": null,
@@ -435,7 +435,7 @@
       "step_notice": null,
       "target": "",
       "exit_code": -1,
-      "duration_ms": 24,
+      "duration_ms": 11,
       "tests_run": 0,
       "killed_by": [],
       "signal": null,
@@ -482,7 +482,7 @@
       "step_notice": null,
       "target": "",
       "exit_code": -1,
-      "duration_ms": 2,
+      "duration_ms": 7,
       "tests_run": 0,
       "killed_by": [],
       "signal": null,

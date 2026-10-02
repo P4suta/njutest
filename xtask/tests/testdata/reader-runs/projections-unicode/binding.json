@@ -1,0 +1,61 @@
+{
+  "schema": "njutest-reader-recording-v1",
+  "fixture": "fixture-unicode",
+  "arguments": [
+    "run",
+    "--offline",
+    "--locked"
+  ],
+  "recording_arguments": [
+    "--trace"
+  ],
+  "command": [
+    "/Users/yasunobu/projects/github.com/P4suta/njutest-w18/target/debug/rust-mutants",
+    "run",
+    "--offline",
+    "--locked",
+    "--trace",
+    "--root",
+    "/Users/yasunobu/njutest-oc/evidence/batch/phase3/package-C/reader-recording-products/projections-unicode/trees/fixture-unicode"
+  ],
+  "source_root": "/Users/yasunobu/njutest-oc/evidence/batch/phase3/package-C/reader-recording-products/projections-unicode/trees/fixture-unicode",
+  "program": "/Users/yasunobu/projects/github.com/P4suta/njutest-w18/target/debug/rust-mutants",
+  "producer_revision": "38bba9e90ba9df4bc8dee4e1c3e8e999eed4d669",
+  "exit_code": 1,
+  "sources": {
+    "Cargo.lock": "cad3d7b4a11f115a2ddeff99a930c96ea6c00b9afe1ad41a93363321420b28bf",
+    "Cargo.toml": "47f20048c2c1bd2c55fa2f893e2eefe804e7784ff0b578bd7a1879fe38213291",
+    "README.md": "7cc0add5e39ebd11d6b67f3b534fb1cfaf3682aa10f6fde1d1e029b43de466e0",
+    "src/lib.rs": "273de0e5158d38a5d461dee0fe970e7eb64a3067bf09947af01c74362ad3f62a"
+  },
+  "artifacts": {
+    "reports/mutation/.gitignore": "cdbcae15105d6b781e620813c79c7e868740d4e9cc53ce6f5fcbbc12387adf4b",
+    "reports/mutation/20261002t125728556z/carried-v1.json": "eaef98655bfbbf7920f7c78908d258f3d02536fb1d820caad9aab766f48dbe4f",
+    "reports/mutation/20261002t125728556z/catalog-v1.json": "5f795f71706f07c2e473f4c53411abe876bcd3d8e66e5e5cac2a17ce5db729f9",
+    "reports/mutation/20261002t125728556z/reached-v1.json": "d77c1d7db0f396354fd4d4452ebb966d883214ffd12e44f64c4da9727d66227f",
+    "reports/mutation/20261002t125728556z/run-report-v1.json": "1a4b71fff0c8fe04a77704a805a7630a7ced1c0ae3a3220a863630b917b6f2de",
+    "reports/mutation/20261002t125728556z/skeletons-v1.json": "d89cc4ef9974f88f34f9738c3db22ca352066184fa2596ea6869ebf2ab579e28",
+    "reports/mutation/20261002t125728556z/touched-v1.json": "3387fe6478ef9aad45dcf1d94819c8bfa142269382c6e0c0fdf39473313b189a",
+    "reports/mutation/20261002t125728556z/trace/output/28.txt": "6b6a94133582ed3cf9982ea4ed5607776f7b5c80632856694dd293da301ca113",
+    "reports/mutation/20261002t125728556z/trace/output/42.txt": "6b6a94133582ed3cf9982ea4ed5607776f7b5c80632856694dd293da301ca113",
+    "reports/mutation/20261002t125728556z/trace/output/54.txt": "7e0c714aa8630e690255731010fd76ac9b29a1a52d268edadd1166735988a0df",
+    "reports/mutation/20261002t125728556z/trace/output/61.txt": "1d002c11a54a5685258d5932d8e42f5a3df4b50530b96a74cb6a07a3be224b3f",
+    "reports/mutation/20261002t125728556z/trace/output/64.txt": "b31879af48501004604eddde738263852ad714117e5c09b70cac831d3322ab9a",
+    "reports/mutation/20261002t125728556z/trace/output/78.txt": "5fb6d2d27c8ee02f72e96fc0b4a85a3790f83aceecce0be3fcffe8adf2d5d074",
+    "reports/mutation/20261002t125728556z/trace/output/81.txt": "2605ad6cae81a0d8f501bffb2a4de12931e73e4eb50b90e7a6ff44a5d9d6b667",
+    "reports/mutation/20261002t125728556z/trace/trace.jsonl": "775f22109373c33c50f8a82b83d3715d055872e79b8557b38a473a7bd594762a",
+    "reports/mutation/latest.json": "7087a6e950cd5e3a2ef7b1c458f7cb199b0f3f81ed6a726cb6b4c77f12242a30"
+  },
+  "provenance": {
+    "producer.json": "ead7c7aa8b15d9a0d570e341cf5eb0f1d4c2fa9165ef6d6bb0b7ed9b5afa586c",
+    "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stdout": "41a44eaea37cc6984f5aa21f4565539327167476aa85abc6aee7e6c048aeb880",
+    "producer-source.tar": "a029984508aa567d44cb6f22d61bfe4541e680667f40b30b32eb3b90f5e772f0"
+  },
+  "subjects": [
+    {
+      "report": "reports/mutation/20261002t125728556z/run-report-v1.json",
+      "trace": "reports/mutation/20261002t125728556z/trace/trace.jsonl"
+    }
+  ]
+}

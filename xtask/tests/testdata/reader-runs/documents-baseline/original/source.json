@@ -1,0 +1,26 @@
+{
+  "schema": "njutest-original-source-v1",
+  "archive": "4510eae5e0bdbcee89ee48969583aad16e8d58d6d9bbf115b6d7d542b3dd058f",
+  "files": {
+    "Cargo.lock": {
+      "sha256": "1933e77f196b4c7a907dd02b5c5848f56cc5ac3e7e7805489c3130decb68d7b0",
+      "mode": 420
+    },
+    "Cargo.toml": {
+      "sha256": "c6029036a8ef9a8afd126e9904c7014a690e0a36a82b40fae8b870b0354430eb",
+      "mode": 420
+    },
+    "README.md": {
+      "sha256": "13e0811a501d083043d51993803ec437ab7e0baccd60ca6423461f2337722850",
+      "mode": 420
+    },
+    "src/lib.rs": {
+      "sha256": "400591d2b6d70ca7438752af8cd8d95dacff6daa96a65af1e1b0e80c0f7c275e",
+      "mode": 420
+    },
+    "tests/doubling.rs": {
+      "sha256": "1f708344f4133f46e8ae2c94213bbf51a27a2c97cffab2547b98bca7a1cfb479",
+      "mode": 420
+    }
+  }
+}

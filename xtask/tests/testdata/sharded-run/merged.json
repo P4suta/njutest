@@ -3,7 +3,7 @@
   "report": {
     "schema": "njutest-assurance-report-v1",
     "schema_version": 3,
-    "run_id": "20261001t091800114z-0181c4",
+    "run_id": "20261002t125539509z-01355c",
     "run_kind": "full",
     "contract": "standard-v1",
     "tool": {
@@ -27,7 +27,7 @@
       }
     },
     "provenance": {
-      "identity": "860e5f81b4968078367d292bedea0a0d2305cba1f59fe04ce47e24699b3c2998",
+      "identity": "f178c35571f064db52953b26dc3b9e3a713ce419330549b6b02e679438924a4a",
       "cached": false,
       "source_run_id": null
     },
@@ -46,14 +46,14 @@
       "kind": "merged",
       "sources": [
         {
-          "run_id": "20261001t091747777z-014e8d",
+          "run_id": "20261002t125529796z-010997",
           "shard": {
             "index": 1,
             "of": 2
           }
         },
         {
-          "run_id": "20261001t091753937z-0169f3",
+          "run_id": "20261002t125535409z-0125bd",
           "shard": {
             "index": 2,
             "of": 2
@@ -76,7 +76,7 @@
         },
         "parts": [
           {
-            "run_id": "20261001t091747777z-014e8d-b0000000000",
+            "run_id": "20261002t125529796z-010997-b0000000000",
             "part": {
               "kind": "shard",
               "index": 1,
@@ -90,9 +90,9 @@
               "arch": "aarch64"
             },
             "timing": {
-              "started": "2026-10-01T09:17:47.777993Z",
-              "finished": "2026-10-01T09:17:53.889677Z",
-              "duration_ms": 6111
+              "started": "2026-10-02T12:55:29.796002Z",
+              "finished": "2026-10-02T12:55:35.351036Z",
+              "duration_ms": 5555
             },
             "accounting": {
               "targets": {
@@ -168,7 +168,7 @@
                 "name": "fixture-assured/test/doubling",
                 "package": "fixture-assured",
                 "status": "passed",
-                "duration_ms": 232,
+                "duration_ms": 35,
                 "message": null
               },
               {
@@ -176,7 +176,7 @@
                 "name": "fixture-assured/lib/fixture_assured",
                 "package": "fixture-assured",
                 "status": "passed",
-                "duration_ms": 230,
+                "duration_ms": 34,
                 "message": null
               }
             ],
@@ -371,7 +371,7 @@
             ]
           },
           {
-            "run_id": "20261001t091753937z-0169f3-b0000000000",
+            "run_id": "20261002t125535409z-0125bd-b0000000000",
             "part": {
               "kind": "shard",
               "index": 2,
@@ -385,9 +385,9 @@
               "arch": "aarch64"
             },
             "timing": {
-              "started": "2026-10-01T09:17:53.937776Z",
-              "finished": "2026-10-01T09:18:00.087425Z",
-              "duration_ms": 6149
+              "started": "2026-10-02T12:55:35.409596Z",
+              "finished": "2026-10-02T12:55:39.463831Z",
+              "duration_ms": 4054
             },
             "accounting": {
               "targets": {
@@ -463,7 +463,7 @@
                 "name": "fixture-assured/test/doubling",
                 "package": "fixture-assured",
                 "status": "passed",
-                "duration_ms": 315,
+                "duration_ms": 35,
                 "message": null
               },
               {
@@ -471,7 +471,7 @@
                 "name": "fixture-assured/lib/fixture_assured",
                 "package": "fixture-assured",
                 "status": "passed",
-                "duration_ms": 227,
+                "duration_ms": 26,
                 "message": null
               }
             ],

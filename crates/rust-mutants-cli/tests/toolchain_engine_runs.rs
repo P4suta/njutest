@@ -102,6 +102,15 @@ fn shape(value: &serde_json::Value, at: &str, into: &mut BTreeSet<String>) {
         serde_json::Value::Object(fields) => {
             into.insert(format!("{at}:object"));
             for (name, field) in fields {
+                let name = if at.ends_with("/sealed/modules") {
+                    assert!(
+                        name.len() == 64 && name.bytes().all(|one| one.is_ascii_hexdigit()),
+                        "a physical module map key is a complete SHA-256 identity: {name}"
+                    );
+                    "<module>"
+                } else {
+                    name.as_str()
+                };
                 shape(field, &format!("{at}/{name}"), into);
             }
         }
@@ -188,6 +197,18 @@ fn every_committed_engine_run_has_the_shape_todays_engine_records() {
     let mut stale = Vec::new();
     for (name, fixture, asking) in SAMPLES {
         let fixture = Fixture::copy(fixture);
+        if updating {
+            njutest_devkit::report::OriginalTree::record(
+                fixture.root(),
+                &committed(name).join("original"),
+            )
+            .expect("the exact complete pre-producer source and configuration");
+        } else {
+            njutest_devkit::report::OriginalTree::read(&committed(name).join("original"))
+                .expect("the complete original source archive")
+                .check_source(fixture.root())
+                .expect("today's live producer is asked about the exact original source and configuration");
+        }
         let fresh = recorded(&fixture, asking);
         if updating {
             rewrite(name, &fresh);
@@ -235,4 +256,36 @@ fn every_committed_engine_run_is_one_this_test_records_again() {
         "a committed engine run this test does not record again drifts from the engine without \
          anything noticing, and one it names that is not committed is a sample of nothing"
     );
+}
+
+#[test]
+fn module_map_shape_keeps_every_physical_field_when_only_identity_changes() {
+    let mut left = BTreeSet::new();
+    let mut right = BTreeSet::new();
+    let one = serde_json::json!({
+        "module": "bytes", "configuration": "semantic", "requests": 1,
+        "attempts": 1, "cold": 1, "disk": 0, "process": 0,
+        "failures": 0, "failed_cold": 0, "failed_disk": 0, "duration_ns": 7,
+    });
+    let mut before = serde_json::Map::new();
+    before.insert("a".repeat(64), one.clone());
+    let mut after = serde_json::Map::new();
+    after.insert("b".repeat(64), one);
+    let at = "report.json/run/sealed/modules";
+    shape(&serde_json::Value::Object(before), at, &mut left);
+    shape(&serde_json::Value::Object(after.clone()), at, &mut right);
+    assert_eq!(left, right);
+    for field in ["attempts", "duration_ns", "module", "configuration"] {
+        let mut planted = after.clone();
+        planted.values_mut().for_each(|value| {
+            let removed = value
+                .as_object_mut()
+                .expect("the physical module object")
+                .remove(field);
+            assert!(removed.is_some(), "the planted field exists: {field}");
+        });
+        let mut missing = BTreeSet::new();
+        shape(&serde_json::Value::Object(planted), at, &mut missing);
+        assert_ne!(left, missing, "the physical field {field} cannot disappear");
+    }
 }

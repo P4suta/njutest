@@ -1,0 +1,52 @@
+open                             started
+open                               0.52s
+prepare                          started
+pristine                         started
+pristine                           0.41s
+discover                         started
+discover                           0.00s
+plan                             started
+plan                               0.00s
+witness                          started
+witness                            0.21s
+validate                         started
+validate                           0.35s
+build                            started
+verify                           started
+verify                             0.62s
+build                              0.63s
+prepare                            2.59s
+run         9 mutants on 4 jobs (auto)
+[1/9] e3b6704b5ad1a397b70e killed        fixture-unicode/lib/fixture_unicode
+[2/9] b9ee60c80aeb0d583a9a killed        fixture-unicode/lib/fixture_unicode
+[3/9] 8397c7a24300958e5632 survived    
+[4/9] cd0fe30657c3066384f8 killed        fixture-unicode/lib/fixture_unicode
+[5/9] d7e3b82f4dbc216eb916 survived    
+[6/9] b8365b4dc7ef3c68c890 killed        fixture-unicode/lib/fixture_unicode
+[7/9] 072bf7bcf30d93f11250 not_run       unreached
+[8/9] a1e14ecf9c4786a86b9a not_run       unreached
+[9/9] e3376fd69875370e7c06 not_run       unreached
+          killed 4  survived 2  unproven 0  step_limit_reached 0  waited 0  inconclusive 0  errored 0  not_run 3   elapsed 0:00
+
+run       20261002t125728556z
+workspace e6aadab10ee1573e81c153848e64852bc0c4d4707f435305c81361ed7eb75751
+catalog   4bbadbfa63b3c621e87dfbbfaac15359c7fff49ba37b67b893a2649f0d078cf0
+jobs      4 (auto)
+
+surviving-mutant       no test noticed 8397c7a24300958e5632; 1 test ran and passed
+surviving-mutant       no test noticed d7e3b82f4dbc216eb916; 1 test ran and passed
+unreached-mutant       no sealed test reaches 072bf7bcf30d93f11250: the mutation lives in code the tests never execute
+unreached-mutant       no sealed test reaches a1e14ecf9c4786a86b9a: the mutation lives in code the tests never execute
+unreached-mutant       no sealed test reaches e3376fd69875370e7c06: the mutation lives in code the tests never execute
+
+SURVIVORS    2 survivors: 2 each its own finding, and 0 that are 0 unexercised paths, named once each below
+
+MUTANTS   9 mutants were cataloged: 6 executed, 0 refused by the compiler, 0 places passed over.
+OUTCOMES  killed=4 survived=2 unproven=0 step_limit_reached=0 waited=0 inconclusive=0 errored=0 not_run=3
+OF THOSE  Those 8 add to the 9 cataloged. Within them, not run is 3 unreached, not run is 0 declined, survived is 0 expected, unproven is 0 killed natively, unproven is 0 survived natively, unproven is 0 unreached natively, unproven is 0 discharged by a native proof.
+SCORE     66.7%  (4 detected of 6 decided)
+WORK      started=0 of 18 pairs across 2 targets; 100.0% removed (unreached=12 sealed=5 never-infected=1)
+          tests=0 of 9; 100.0% removed
+REPORT    /Users/yasunobu/njutest-oc/evidence/batch/phase3/package-C/reader-recording-products/projections-unicode/trees/fixture-unicode/reports/mutation/20261002t125728556z/run-report-v1.json
+NEXT      rust-mutants explain src/lib.rs:大きい方:condition-to-false@7
+          says which tests reached one of these, and writes the block that records a reason for it

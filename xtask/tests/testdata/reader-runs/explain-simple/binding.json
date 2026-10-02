@@ -1,0 +1,76 @@
+{
+  "schema": "njutest-reader-recording-v1",
+  "fixture": "fixture-simple",
+  "arguments": [
+    "run",
+    "--tier",
+    "all",
+    "--no-coverage",
+    "--jobs",
+    "1",
+    "--ui",
+    "quiet",
+    "--offline",
+    "--locked"
+  ],
+  "recording_arguments": [
+    "--trace"
+  ],
+  "command": [
+    "/Users/yasunobu/projects/github.com/P4suta/njutest-w18/target/debug/rust-mutants",
+    "run",
+    "--tier",
+    "all",
+    "--no-coverage",
+    "--jobs",
+    "1",
+    "--ui",
+    "quiet",
+    "--offline",
+    "--locked",
+    "--trace",
+    "--root",
+    "/Users/yasunobu/njutest-oc/evidence/batch/phase3/package-C/reader-recording-products/explain-simple/trees/fixture-simple"
+  ],
+  "source_root": "/Users/yasunobu/njutest-oc/evidence/batch/phase3/package-C/reader-recording-products/explain-simple/trees/fixture-simple",
+  "program": "/Users/yasunobu/projects/github.com/P4suta/njutest-w18/target/debug/rust-mutants",
+  "producer_revision": "38bba9e90ba9df4bc8dee4e1c3e8e999eed4d669",
+  "exit_code": 1,
+  "sources": {
+    "Cargo.lock": "dfdad12c97a16673b591d188a3bffb2ad11104f6b01435c0798d22162bef6648",
+    "Cargo.toml": "b46a61b6aaa2e86d98bcf2fad36214ee74e7c25ac29c7aa4373b4028d4d0def1",
+    "README.md": "61cd77621458b19bb386b10958145115838a32031ac09120c304e35b1d6e6ff5",
+    "src/lib.rs": "e5c82cdb402211599158ceb4098e7411234f0c43a03f8dca8774d753b04880c6",
+    "src/testutil.rs": "f69eb1f4ed834eb1989f6c3f0dc96a01fb7378279086ca5fb55368d098cc3e37",
+    "tests/parity.rs": "9772dfdbc6ec9e8e76d252744c0764a6fa821ad4871a44010fccc3332992b08f"
+  },
+  "artifacts": {
+    "reports/mutation/.gitignore": "cdbcae15105d6b781e620813c79c7e868740d4e9cc53ce6f5fcbbc12387adf4b",
+    "reports/mutation/20261002t125732779z/carried-v1.json": "eaef98655bfbbf7920f7c78908d258f3d02536fb1d820caad9aab766f48dbe4f",
+    "reports/mutation/20261002t125732779z/catalog-v1.json": "25fff9d7577529a0c8d8d798d33fc3985e2dff7049c4367566c995d776b28074",
+    "reports/mutation/20261002t125732779z/reached-v1.json": "d77c1d7db0f396354fd4d4452ebb966d883214ffd12e44f64c4da9727d66227f",
+    "reports/mutation/20261002t125732779z/run-report-v1.json": "d7deb0acae741129271531ef5d9499e110cc14e27246616a0c8677a6b6a900d0",
+    "reports/mutation/20261002t125732779z/skeletons-v1.json": "78a5d95d80dbc1374ab1be1a2fbf66654a627cbe9dd3569b94d0026c6000bb04",
+    "reports/mutation/20261002t125732779z/touched-v1.json": "cfad7102f9339e7e7e77d7e7a9646796ab7991d478b55cc98d41dff5615ccc81",
+    "reports/mutation/20261002t125732779z/trace/output/51.txt": "15605a8b57b45d5fe4ab341c42a6f7e21543e8c8d9ecf7d3ec98d0874e0e6a88",
+    "reports/mutation/20261002t125732779z/trace/output/58.txt": "b7d6292cb48df45e45b3f5999cfc96757c682e2c094672a39d2f3c5a48ce036a",
+    "reports/mutation/20261002t125732779z/trace/output/61.txt": "a71973468d89fb69336ef433463e94f3ed5806e812b6e839acc8b97259280463",
+    "reports/mutation/20261002t125732779z/trace/output/64.txt": "5b4654b84f734be6f550ab9a6f9ca995516095955f72af7bb547ebb12f747902",
+    "reports/mutation/20261002t125732779z/trace/output/78.txt": "fb80db0f5e810eed8980d13bde83efe6f4f2fe4e8cc7240cdd706d803a3e7696",
+    "reports/mutation/20261002t125732779z/trace/output/81.txt": "3d0b75d07da1c67b893b80819596845f290e508239db6776041d20819d97ccb8",
+    "reports/mutation/20261002t125732779z/trace/trace.jsonl": "97d3a27467920f55b4f2b3bdf8737882c7490fa6f563fabde2ed88cd9cc9c9fa",
+    "reports/mutation/latest.json": "c39f2fd5b0a97eb7357a17bd2775abd99c01a900b58a6d6bd1a753ec07cf4c70"
+  },
+  "provenance": {
+    "producer.json": "22e40ca93bdd4fbe06a2b4cec3cc7dd9813e6cc838093fb0cd2dff5cc22e16ec",
+    "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stdout": "e229f10d1ec00a0319aaf9961df0d7da9e8d11a85c3289ec2b54d5d8dec6daa5",
+    "producer-source.tar": "a029984508aa567d44cb6f22d61bfe4541e680667f40b30b32eb3b90f5e772f0"
+  },
+  "subjects": [
+    {
+      "report": "reports/mutation/20261002t125732779z/run-report-v1.json",
+      "trace": "reports/mutation/20261002t125732779z/trace/trace.jsonl"
+    }
+  ]
+}

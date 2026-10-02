@@ -55,9 +55,10 @@ fn environment(fixture: &Fixture) -> Environment {
     }
 }
 
-fn measured(fixture: &Fixture) {
-    let output = against(
-        fixture,
+/// Explanations remain live; the original holds the complete all-tier execution without coverage.
+fn measured(fixture: &Fixture) -> std::io::Result<()> {
+    njutest_devkit::report::Original::open(
+        "explain-simple",
         &[
             "run",
             "--tier",
@@ -67,15 +68,17 @@ fn measured(fixture: &Fixture) {
             "1",
             "--ui",
             "quiet",
+            "--offline",
+            "--locked",
         ],
-    );
-    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    )?
+    .restore(fixture.root())
 }
 
 #[test]
 fn explain_reads_the_stored_run_and_says_what_it_established() {
     let fixture = Fixture::copy("fixture-simple");
-    measured(&fixture);
+    measured(&fixture).expect("the genuine original matches the complete reader input");
     let output = against(&fixture, &["explain", "f0d2"]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let text = njutest_devkit::process::strict_utf8(&output.stdout);
@@ -106,7 +109,7 @@ fn explain_reads_the_stored_run_and_says_what_it_established() {
 #[test]
 fn the_explanation_validates_against_the_schema_published_with_it() {
     let fixture = Fixture::copy("fixture-simple");
-    measured(&fixture);
+    measured(&fixture).expect("the genuine original matches the complete reader input");
     let output = against(&fixture, &["explain", "f0d2", "--json"]);
     let document: serde_json::Value =
         njutest_devkit::strictjson::decode_slice(&output.stdout).expect("the explanation is JSON");
@@ -128,7 +131,7 @@ fn the_explanation_validates_against_the_schema_published_with_it() {
 #[test]
 fn a_file_that_changed_since_the_run_is_said_rather_than_diffed_against() {
     let fixture = Fixture::copy("fixture-simple");
-    measured(&fixture);
+    measured(&fixture).expect("the genuine original matches the complete reader input");
     let path = fixture.root().join("src/lib.rs");
     let source = std::fs::read_to_string(&path).expect("the source");
     std::fs::write(&path, format!("// a comment nobody measured\n{source}")).expect("write");
@@ -143,7 +146,7 @@ fn a_file_that_changed_since_the_run_is_said_rather_than_diffed_against() {
 #[test]
 fn a_prefix_that_names_more_than_one_says_what_it_could_have_meant() {
     let fixture = Fixture::copy("fixture-simple");
-    measured(&fixture);
+    measured(&fixture).expect("the genuine original matches the complete reader input");
     let output = against(&fixture, &["explain", ""]);
     assert_eq!(
         output.status.code(),
@@ -467,7 +470,7 @@ fn explain_reads_the_run_it_is_told_to_and_refuses_a_name_nobody_stored() {
 #[test]
 fn a_catalog_and_a_report_that_disagree_about_a_mutant_are_said_to_rather_than_one_believed() {
     let fixture = Fixture::copy("fixture-simple");
-    measured(&fixture);
+    measured(&fixture).expect("the genuine original matches the complete reader input");
     let run = njutest_devkit::fixture::newest_run(
         &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
     );
@@ -525,7 +528,7 @@ fn a_catalog_and_a_report_that_disagree_about_a_mutant_are_said_to_rather_than_o
 #[test]
 fn an_identity_the_newest_run_lacks_is_answered_with_the_runs_that_hold_it() {
     let fixture = Fixture::copy("fixture-simple");
-    measured(&fixture);
+    measured(&fixture).expect("the genuine original matches the complete reader input");
     let stored = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
     let holding = njutest_devkit::fixture::newest_run(&stored);
     let holding = holding
@@ -579,7 +582,7 @@ fn an_identity_the_newest_run_lacks_is_answered_with_the_runs_that_hold_it() {
 #[test]
 fn the_reproduce_line_explain_prints_reproduces_the_mutant_it_explains() {
     let fixture = Fixture::copy("fixture-simple");
-    measured(&fixture);
+    measured(&fixture).expect("the genuine original matches the complete reader input");
     let explained = against(&fixture, &["explain", "f0d2"]);
     let text = njutest_devkit::process::strict_utf8(&explained.stdout);
     let line = text
@@ -608,7 +611,7 @@ fn the_reproduce_line_explain_prints_reproduces_the_mutant_it_explains() {
 #[test]
 fn a_stored_run_this_release_cannot_read_does_not_stop_an_answer_about_another() {
     let fixture = Fixture::copy("fixture-simple");
-    measured(&fixture);
+    measured(&fixture).expect("the genuine original matches the complete reader input");
     let stored = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
     let current = njutest_devkit::fixture::newest_run(&stored);
     let older = stored.join("20200101t000000000z");
