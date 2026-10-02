@@ -174,10 +174,6 @@ pub(super) fn publish(
             | Err(WorkError::Watch { .. } | WorkError::Signals { .. }) => Launch::Unobserved {
                 reason: "the owned runner did not publish a leader identity".to_owned(),
             },
-            #[cfg(unix)]
-            Err(WorkError::Outlived) => Launch::Unobserved {
-                reason: "the producer outlived the owned completion observation".to_owned(),
-            },
         },
     };
     let record = Record {
