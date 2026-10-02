@@ -681,6 +681,8 @@ pub enum Invariant {
     Width,
     /// A module owner's synchronization state was interrupted while locked.
     ModuleOwnerPoisoned,
+    /// Physical module observations were interrupted while their lock was held.
+    ModuleWorkPoisoned,
 }
 
 impl fmt::Display for Invariant {
@@ -692,6 +694,7 @@ impl fmt::Display for Invariant {
             Self::Memory => "the guest's memory was not there when a host function needed it",
             Self::Width => "a count or a size did not fit the width it is recorded at",
             Self::ModuleOwnerPoisoned => "a module owner lock was poisoned",
+            Self::ModuleWorkPoisoned => "the physical module observation lock was poisoned",
         })
     }
 }

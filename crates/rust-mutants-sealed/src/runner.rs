@@ -837,10 +837,8 @@ impl Owner {
         let Some(root) = &self.leases else {
             return Ok(Lease(None));
         };
-        let mut key = Encoder::new("rust-mutants-sealed/preparation/v1");
-        key.bytes(self.configuration.as_bytes())
-            .bytes(digest.as_bytes());
-        let path = root.join(format!("{}.lock", key.finish()));
+        let key = crate::preparation_key(digest, &self.configuration);
+        let path = root.join(format!("{key}.lock"));
         let refused = |source: std::io::Error| Refused {
             error: SealedError::Preparation {
                 path: path.clone(),
@@ -997,9 +995,10 @@ impl SealedRunner {
                     Reuse::Process => Duration::ZERO,
                     Reuse::Cold | Reuse::Disk => prepared.preparation,
                 };
-                self.counted.prepared(worked, reuse)?;
+                self.counted
+                    .prepared_module((&digest, self.configuration()), worked, reuse)?;
                 if let Some(run) = run {
-                    run.prepared(worked, reuse)?;
+                    run.prepared_module((&digest, self.configuration()), worked, reuse)?;
                 }
                 Ok(SealedModule {
                     preparation: prepared.preparation,
@@ -1010,15 +1009,11 @@ impl SealedRunner {
                 })
             }
             Err(refused) => {
-                if let Some(work) = refused.attempted {
-                    self.counted.attempt_failed(work.duration, work.disk)?;
-                    if let Some(run) = run {
-                        run.attempt_failed(work.duration, work.disk)?;
-                    }
-                }
-                self.counted.failed()?;
+                let attempted = refused.attempted.map(|work| (work.duration, work.disk));
+                self.counted
+                    .failed_module(&digest, self.configuration(), attempted)?;
                 if let Some(run) = run {
-                    run.failed()?;
+                    run.failed_module(&digest, self.configuration(), attempted)?;
                 }
                 Err(refused.error)
             }

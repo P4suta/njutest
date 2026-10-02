@@ -49,6 +49,15 @@ impl fmt::Display for SealedDigest {
     }
 }
 
+/// The physical preparation identity, shared by leases and observed module work.
+/// Operational cache directories select no bytes or semantic engine settings.
+#[must_use]
+pub fn preparation_key(module: &SealedDigest, configuration: &SealedDigest) -> SealedDigest {
+    let mut key = Encoder::new("rust-mutants-sealed/preparation/v1");
+    key.bytes(configuration.as_bytes()).bytes(module.as_bytes());
+    key.finish()
+}
+
 /// A canonical encoding under a domain tag: every byte string as a netstring, every number at a fixed width.
 pub(crate) struct Encoder(Sha256);
 

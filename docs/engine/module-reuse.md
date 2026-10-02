@@ -83,9 +83,17 @@ A refusal before `Module::new` adds no actual attempt or preparation duration; a
 The legacy suite-cost reader continues to budget successful-request hits and misses; failed cold and disk work is directly observable in these additional diagnostics and is not claimed as a newly gated budget.
 These measurements belong to diagnostics, never to transcript digests or evidence.
 
+`Spent.modules` records actual requests under the same physical key as the preparation lease.
+`preparation_key(module, configuration)` binds the byte digest and the semantic configuration digest, which includes the host identity and pinned Wasmtime version.
+Each `ModuleWork` retains requests, actual attempts, successful cold/disk/process answers, refusals, failed cold/disk attempts and measured preparation nanoseconds.
+Validation refusal records one request and failure with no invented attempt or elapsed work.
+Historical absence remains `None`; it does not imply zero measured work.
+Keyed updates hold one owned lock, check every recorded width and publish each observation whole.
+
 ## What this does not close
 
-- Two different physical cache directories are separate operational domains and prepare the same bytes once each; this process-local owner does not deduplicate distinct domains, which are distinct caches.
+- A shared `ModuleOwner` answers compatible constructors across different operational cache directories with the same preparation.
+- Separate process owners with separate disk caches have no shared preparation to observe; their physical attempts remain separately counted.
 - An engine without a cache directory holds no domain to lease, so independently created contexts without one each compile their own bytes: `--no-cache` establishes each observation again by design.
 - A lease a dead process held is released by the operating system when the process ends, and a preparation that waited for it still loads what the domain published or compiles afresh; the lease serializes, it does not publish.
 

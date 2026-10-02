@@ -128,6 +128,7 @@ fn the_counters_say_what_the_host_spent_only_where_a_bench_assembled() {
     assert_eq!(
         counted.spent(),
         Some(rust_mutants_sealed::Spent {
+            modules: None,
             compiles: 2,
             instances: 1,
             answered: 3,
@@ -148,6 +149,10 @@ fn historical_spent_fields_keep_their_identity_and_absent_work() {
     assert_eq!(
         spent.failures, None,
         "an older record observed no failure meter"
+    );
+    assert_eq!(
+        spent.modules, None,
+        "historical absence is not keyed zero work"
     );
     let compilation = spent
         .compilation

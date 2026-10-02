@@ -29,7 +29,7 @@ mod validate;
 
 pub use abi::Errno;
 pub use cache::CompilationCache;
-pub use digest::SealedDigest;
+pub use digest::{SealedDigest, preparation_key};
 pub use error::{
     EntryFault, EnvironmentFault, ErrorCode, ImportFault, Invariant, MemoryFault, PreopenFault,
     RuntimeStep, SealedCode, SealedError, SnapshotFault, WorkingFault, error_codes,
@@ -48,6 +48,6 @@ pub use transcript::{
     TrapKind,
 };
 pub use transcripts::{
-    Compilation, Counted, LAYOUT as TRANSCRIPTS_LAYOUT, Reuse, SCHEMA as TRANSCRIPTS_SCHEMA, Spent,
-    Transcripts,
+    Compilation, Counted, LAYOUT as TRANSCRIPTS_LAYOUT, ModuleWork, Reuse,
+    SCHEMA as TRANSCRIPTS_SCHEMA, Spent, Transcripts,
 };

@@ -238,6 +238,45 @@ fn a_repeated_request_of_one_module_is_answered_by_what_the_process_holds() {
 }
 
 #[test]
+fn every_actual_module_request_retains_its_physical_key() {
+    let modules = ModuleOwner::default();
+    let runner = SealedRunner::new(&modules, Duration::from_secs(60)).expect("the runner");
+    let bytes = printing("keyed");
+    runner.prepare(&bytes).expect("actual cold preparation");
+    runner.prepare(&bytes).expect("actual process reuse");
+    let spent = runner
+        .spent()
+        .expect("the actual module requests are counted");
+    let recorded = serde_json::to_value(spent).expect("the existing counted record");
+    let observed = recorded
+        .get("modules")
+        .expect("actual physical module keys must be recorded");
+    let work = observed.as_object().expect("the keyed work is a map");
+    assert_eq!(
+        work.len(),
+        1,
+        "both requests have exactly one preparation identity"
+    );
+    let entry = work.values().next().expect("the actual module's work");
+    assert_eq!(
+        entry.get("module"),
+        Some(&serde_json::json!(
+            rust_mutants_sealed::SealedDigest::of(&bytes).to_string()
+        ))
+    );
+    assert_eq!(
+        entry.get("configuration"),
+        Some(&serde_json::json!(runner.configuration().to_string()))
+    );
+    assert_eq!(entry.get("requests"), Some(&serde_json::json!(2)));
+    assert_eq!(entry.get("attempts"), Some(&serde_json::json!(1)));
+    assert_eq!(entry.get("cold"), Some(&serde_json::json!(1)));
+    assert_eq!(entry.get("disk"), Some(&serde_json::json!(0)));
+    assert_eq!(entry.get("process"), Some(&serde_json::json!(1)));
+    assert_eq!(entry.get("failures"), Some(&serde_json::json!(0)));
+}
+
+#[test]
 fn a_separate_compatible_runner_is_answered_by_what_the_process_holds() {
     let modules = ModuleOwner::default();
     let cloned = modules.clone();
@@ -671,6 +710,36 @@ fn failed_module_new_attempts_keep_their_actual_work() {
         compilation.duration_ns > 0,
         "observed failed work is retained"
     );
+    let key = rust_mutants_sealed::preparation_key(
+        &rust_mutants_sealed::SealedDigest::of(&invalid),
+        runner.configuration(),
+    )
+    .to_string();
+    let observed = spent
+        .modules
+        .as_ref()
+        .expect("actual keyed requests")
+        .get(&key)
+        .expect("the physical invalid module was observed");
+    assert_eq!(
+        (
+            observed.requests,
+            observed.attempts,
+            observed.failures,
+            observed.failed_cold
+        ),
+        (2, 2, 2, 2)
+    );
+    assert_eq!(
+        (
+            observed.cold,
+            observed.disk,
+            observed.process,
+            observed.failed_disk
+        ),
+        (0, 0, 0, 0)
+    );
+    assert_eq!(observed.duration_ns, compilation.duration_ns);
     let module = runner
         .prepare(&printing("valid"))
         .expect("a succeeding control");

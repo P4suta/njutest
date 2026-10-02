@@ -3,10 +3,11 @@
 
 //! What one sealed invocation established, remembered under the digest of everything it was a function of, so a later invocation of the same module under the same world does not run it again.
 
+use std::collections::BTreeMap;
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -127,6 +128,8 @@ pub struct Counted {
 /// The counters themselves, behind the shared handle.
 #[derive(Debug, Default)]
 struct Countings {
+    /// Actual preparation requests, indexed by their physical preparation key.
+    modules: Mutex<BTreeMap<String, ModuleWork>>,
     /// Whether any bench of the run assembled, which is what says a run that counted nothing sealed anything at all.
     assembled: AtomicBool,
     /// Module preparation requests this run's preparations answered, including every kind of reuse.
@@ -194,6 +197,60 @@ impl Counted {
         Ok(())
     }
 
+    /// Records the actual keyed request together with the existing aggregate accounting.
+    pub(crate) fn prepared_module(
+        &self,
+        (module, configuration): (&SealedDigest, &SealedDigest),
+        duration: Duration,
+        reuse: Reuse,
+    ) -> Result<(), crate::SealedError> {
+        self.observe_module(
+            module,
+            configuration,
+            ModuleAnswer::Prepared(duration, reuse),
+        )?;
+        self.prepared(duration, reuse)
+    }
+
+    /// Records a refused request, distinguishing validation from an actual failed attempt.
+    pub(crate) fn failed_module(
+        &self,
+        module: &SealedDigest,
+        configuration: &SealedDigest,
+        attempt: Option<(Duration, bool)>,
+    ) -> Result<(), crate::SealedError> {
+        self.observe_module(module, configuration, ModuleAnswer::Refused(attempt))?;
+        if let Some((duration, disk)) = attempt {
+            self.attempt_failed(duration, disk)?;
+        }
+        self.failed()
+    }
+
+    /// Updates one observation under its owned lock without publishing a partial width failure.
+    fn observe_module(
+        &self,
+        module: &SealedDigest,
+        configuration: &SealedDigest,
+        answer: ModuleAnswer,
+    ) -> Result<(), crate::SealedError> {
+        let mut modules =
+            self.inner
+                .modules
+                .lock()
+                .map_err(|_poisoned| crate::SealedError::HostInvariant {
+                    invariant: crate::error::Invariant::ModuleWorkPoisoned,
+                })?;
+        let key = crate::preparation_key(module, configuration).to_string();
+        let observed = modules
+            .entry(key)
+            .or_insert_with(|| ModuleWork::new(module, configuration));
+        let mut next = observed.clone();
+        next.observe(answer)?;
+        *observed = next;
+        drop(modules);
+        Ok(())
+    }
+
     /// Records one actual preparation attempt that failed, with the work it had done when it failed.
     ///
     /// # Errors
@@ -257,7 +314,15 @@ impl Counted {
         let attempts = self.inner.attempts.load(Ordering::Relaxed);
         let failed_cold = self.inner.failed_cold.load(Ordering::Relaxed);
         let failed_disk = self.inner.failed_disk.load(Ordering::Relaxed);
+        let modules = match self.inner.modules.lock() {
+            Ok(modules) => (!modules.is_empty()).then(|| modules.clone()),
+            Err(_poisoned) => {
+                eprintln!("{}", crate::error::Invariant::ModuleWorkPoisoned);
+                std::process::abort();
+            }
+        };
         Some(Spent {
+            modules,
             compiles: self.inner.compiles.load(Ordering::Relaxed),
             instances: self.inner.instances.load(Ordering::Relaxed),
             answered: self.inner.answered.load(Ordering::Relaxed),
@@ -314,9 +379,12 @@ fn counted(counter: &AtomicU64) -> Result<(), crate::SealedError> {
 }
 
 /// What the host spent on sealed executions, as a recording writes it: the module preparations answered, the instances started, and the invocations a record answered instead.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Spent {
+    /// Physical keyed module requests and attempts, absent when these were not observed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modules: Option<BTreeMap<String, ModuleWork>>,
     /// Module preparation requests answered, including every kind of reuse.
     pub compiles: u64,
     /// Instances started on the host.
@@ -332,6 +400,107 @@ pub struct Spent {
     /// Module preparation attempts that failed, absent in older recordings and where none did.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failures: Option<u64>,
+}
+
+/// What actual requests of one byte/configuration preparation identity cost.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModuleWork {
+    /// SHA-256 of the original module bytes.
+    pub module: String,
+    /// Semantic engine configuration, including host identity and pinned Wasmtime version.
+    pub configuration: String,
+    /// All actual requests, including refused validation and preparation.
+    pub requests: u64,
+    /// Actual safe `Module::new` calls, including failed calls.
+    pub attempts: u64,
+    /// Successful cold preparations.
+    pub cold: u64,
+    /// Successful preparations loaded by Wasmtime's disk cache.
+    pub disk: u64,
+    /// Requests answered by the process's compatible prepared module.
+    pub process: u64,
+    /// Refused requests, including those refused before an attempt.
+    pub failures: u64,
+    /// Actual cold attempts that failed.
+    pub failed_cold: u64,
+    /// Actual disk-load attempts that failed.
+    pub failed_disk: u64,
+    /// Measured time of physical preparations; process reuse contributes no preparation time.
+    pub duration_ns: u64,
+}
+
+/// The observed answer of one request, including whether a refused request actually attempted work.
+#[derive(Debug, Clone, Copy)]
+enum ModuleAnswer {
+    Prepared(Duration, Reuse),
+    Refused(Option<(Duration, bool)>),
+}
+
+impl ModuleWork {
+    fn new(module: &SealedDigest, configuration: &SealedDigest) -> Self {
+        Self {
+            module: module.to_string(),
+            configuration: configuration.to_string(),
+            requests: 0,
+            attempts: 0,
+            cold: 0,
+            disk: 0,
+            process: 0,
+            failures: 0,
+            failed_cold: 0,
+            failed_disk: 0,
+            duration_ns: 0,
+        }
+    }
+
+    fn observe(&mut self, answer: ModuleAnswer) -> Result<(), crate::SealedError> {
+        add(&mut self.requests, 1)?;
+        let duration = match answer {
+            ModuleAnswer::Prepared(duration, reuse) => {
+                match reuse {
+                    Reuse::Cold => {
+                        add(&mut self.attempts, 1)?;
+                        add(&mut self.cold, 1)?;
+                    }
+                    Reuse::Disk => {
+                        add(&mut self.attempts, 1)?;
+                        add(&mut self.disk, 1)?;
+                    }
+                    Reuse::Process => add(&mut self.process, 1)?,
+                }
+                duration
+            }
+            ModuleAnswer::Refused(attempt) => {
+                add(&mut self.failures, 1)?;
+                match attempt {
+                    Some((duration, disk)) => {
+                        add(&mut self.attempts, 1)?;
+                        if disk {
+                            add(&mut self.failed_disk, 1)?;
+                        } else {
+                            add(&mut self.failed_cold, 1)?;
+                        }
+                        duration
+                    }
+                    None => Duration::ZERO,
+                }
+            }
+        };
+        let nanos = u64::try_from(duration.as_nanos()).map_err(|_overflow| width())?;
+        add(&mut self.duration_ns, nanos)
+    }
+}
+
+const fn width() -> crate::SealedError {
+    crate::SealedError::HostInvariant {
+        invariant: crate::error::Invariant::Width,
+    }
+}
+
+fn add(value: &mut u64, amount: u64) -> Result<(), crate::SealedError> {
+    *value = value.checked_add(amount).ok_or_else(width)?;
+    Ok(())
 }
 
 /// The compiled-module cache's hits and misses, and the elapsed time spent preparing modules.
@@ -356,4 +525,107 @@ pub struct Compilation {
     /// Actual disk-load preparation attempts that failed, absent in older recordings and where none did.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failed_disk: Option<u64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Duration;
+
+    use super::{Counted, Reuse, counted, elapsed};
+    use crate::{SealedDigest, SealedError};
+
+    #[test]
+    fn exhausted_atomic_counts_and_elapsed_time_refuse_without_wrapping() {
+        let count = AtomicU64::new(u64::MAX);
+        assert!(matches!(
+            counted(&count),
+            Err(SealedError::HostInvariant { .. })
+        ));
+        assert_eq!(count.load(Ordering::Relaxed), u64::MAX);
+        let nanos = AtomicU64::new(u64::MAX - 1);
+        assert!(matches!(
+            elapsed(&nanos, Duration::from_nanos(2)),
+            Err(SealedError::HostInvariant { .. })
+        ));
+        assert_eq!(nanos.load(Ordering::Relaxed), u64::MAX - 1);
+        assert!(elapsed(&nanos, Duration::MAX).is_err());
+        assert_eq!(nanos.load(Ordering::Relaxed), u64::MAX - 1);
+    }
+
+    #[test]
+    fn concurrent_atomic_increments_preserve_every_observed_request() {
+        let count = AtomicU64::new(0);
+        std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..8)
+                .map(|_worker| {
+                    let count = &count;
+                    njutest_devkit::thread::ScopedThread::launch(scope, move || {
+                        for _request in 0..128 {
+                            counted(count).expect("the actual count fits");
+                        }
+                    })
+                })
+                .collect();
+            for worker in workers {
+                worker.join().expect("the counting thread is joined");
+            }
+        });
+        assert_eq!(count.load(Ordering::Relaxed), 1024);
+    }
+
+    #[test]
+    fn validation_refusals_have_requests_and_no_invented_attempt() {
+        let counted = Counted::default();
+        counted.assembled();
+        counted
+            .failed_module(
+                &SealedDigest::of(b"refused"),
+                &SealedDigest::of(b"config"),
+                None,
+            )
+            .expect("the observed refusal fits");
+        let spent = counted.spent().expect("the bench assembled");
+        let modules = spent.modules.expect("the refusal was observed");
+        let refused = modules
+            .values()
+            .next()
+            .expect("the refused physical identity");
+        assert_eq!(
+            (
+                refused.requests,
+                refused.attempts,
+                refused.failures,
+                refused.duration_ns
+            ),
+            (1, 0, 1, 0)
+        );
+        assert_eq!(spent.compilation, None);
+        assert_eq!(spent.compiles, 0);
+    }
+
+    #[test]
+    fn a_keyed_width_failure_keeps_the_previous_whole_observation() {
+        let counted = Counted::default();
+        counted.assembled();
+        let module = SealedDigest::of(b"module");
+        let configuration = SealedDigest::of(b"config");
+        counted
+            .prepared_module(
+                (&module, &configuration),
+                Duration::from_nanos(u64::MAX),
+                Reuse::Cold,
+            )
+            .expect("the first measurement fits exactly");
+        let before = counted.spent().expect("the actual measurement");
+        assert!(matches!(
+            counted.prepared_module(
+                (&module, &configuration),
+                Duration::from_nanos(1),
+                Reuse::Cold
+            ),
+            Err(SealedError::HostInvariant { .. })
+        ));
+        assert_eq!(counted.spent(), Some(before));
+    }
 }

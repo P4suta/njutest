@@ -2545,6 +2545,30 @@
                       "minimum": 0,
                       "description": "Invocations a remembered transcript answered instead."
                     },
+                    "modules": {
+                      "type": "object",
+                      "minProperties": 1,
+                      "propertyNames": { "pattern": "^[0-9a-f]{64}$" },
+                      "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["module", "configuration", "requests", "attempts", "cold", "disk", "process", "failures", "failed_cold", "failed_disk", "duration_ns"],
+                        "properties": {
+                          "module": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                          "configuration": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                          "requests": { "type": "integer", "minimum": 1 },
+                          "attempts": { "type": "integer", "minimum": 0 },
+                          "cold": { "type": "integer", "minimum": 0 },
+                          "disk": { "type": "integer", "minimum": 0 },
+                          "process": { "type": "integer", "minimum": 0 },
+                          "failures": { "type": "integer", "minimum": 0 },
+                          "failed_cold": { "type": "integer", "minimum": 0 },
+                          "failed_disk": { "type": "integer", "minimum": 0 },
+                          "duration_ns": { "type": "integer", "minimum": 0 }
+                        }
+                      },
+                      "description": "Observed physical requests keyed by module bytes and semantic engine configuration, host and Wasmtime version; absent when no keyed observation exists."
+                    },
                     "compilation": {
                       "type": "object",
                       "additionalProperties": false,
