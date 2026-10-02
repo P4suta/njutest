@@ -45,6 +45,7 @@ getrandom = { workspace = true }
 jiff = { workspace = true, features = ["serde"] }
 jsonschema = { workspace = true }
 njutest-fixture-tree = { workspace = true }
+njutest-process = { workspace = true }
 njutest-macros = { workspace = true }
 notify = { workspace = true }
 proc-macro2 = { workspace = true }

@@ -1,16 +1,71 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The executables the gates invoke are the ones mise pins: selected through `mise which`, asked through Cargo's external-subcommand protocol, and refused where the path would answer with another one.
+//! Mise selects gate executables while Cargo retains its external-subcommand protocol.
 
 use std::collections::BTreeMap;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use thiserror::Error;
 
 use crate::environment::Environment;
+use crate::work::{Bound, Ended, Stops, WorkError};
+
+mod commandwork;
+mod hostcost;
+
+/// The actual destination of both child streams.
+#[derive(Debug)]
+pub(crate) enum Output {
+    Inherited,
+    Log(std::fs::File),
+    Capture {
+        stdout: std::fs::File,
+        stderr: std::fs::File,
+    },
+}
+
+/// The retained inputs to one existing owned command execution.
+pub(crate) struct Request<'a, 'b> {
+    pub(crate) command: &'a mut Command,
+    pub(crate) bound: Option<&'a mut Bound<'b>>,
+    pub(crate) stops: &'a Stops,
+    pub(crate) environment: &'a Environment,
+    pub(crate) output: Output,
+}
+
+impl std::fmt::Debug for Request<'_, '_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Request")
+            .field("command", &self.command)
+            .field("stops", &self.stops)
+            .field("output", &self.output)
+            .finish_non_exhaustive()
+    }
+}
+
+pub(crate) fn run<F>(request: Request<'_, '_>, started: F) -> Result<Ended, WorkError>
+where
+    F: FnOnce(u32) -> std::io::Result<()>,
+{
+    commandwork::run(request, started)
+}
+
+pub(crate) fn capture(
+    command: &mut Command,
+    environment: &Environment,
+) -> std::io::Result<std::process::Output> {
+    commandwork::capture(command, environment)
+}
+
+pub(crate) fn log(path: &Path) -> std::io::Result<Output> {
+    std::fs::File::create(path).map(Output::Log)
+}
 
 /// Why the pinned-tool gate refused.
 #[derive(Debug, Error)]
@@ -55,7 +110,7 @@ pub enum ToolsError {
         said: String,
     },
     /// An earlier directory on the path answers the tool's name with another executable.
-    #[error("{tool}: the path answers with {shadow} before mise's pinned {pinned}")]
+    #[error("{tool}: mise's relative selection {pinned} can be shadowed by {shadow}")]
     Shadowed {
         /// The pinned tool.
         tool: String,
@@ -92,12 +147,6 @@ impl crate::error::Coded for ToolsError {
     }
 }
 
-/// The `[tools]` table of mise.toml, which is the whole shape this gate reads of it.
-#[derive(Debug, serde::Deserialize)]
-struct Tools {
-    tools: BTreeMap<String, String>,
-}
-
 /// One pinned cargo plugin, as mise.toml names it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Plugin {
@@ -111,21 +160,29 @@ struct Plugin {
 
 /// Validates every pinned cargo plugin for the gates that invoke it.
 ///
-/// mise must resolve its executable, nothing earlier on the path may shadow it, and `cargo <subcommand> --version` through the external-subcommand protocol must answer with the pinned version.
+/// Mise resolves each executable before Cargo asks it for its pinned version.
 ///
 /// # Errors
 /// The first pin whose selection, protocol or version this cannot establish.
 pub fn check(
     root: &Path,
     mise: &OsStr,
-    cargo: &OsStr,
+    _cargo: &OsStr,
     environment: &Environment,
 ) -> Result<String, ToolsError> {
     let plugins = pins(root)?;
     for plugin in &plugins {
-        let pinned = resolved(mise, &plugin.executable)?;
-        first_on_path(&plugin.executable, environment, &pinned)?;
-        answered(cargo, environment, plugin, &pinned)?;
+        let pinned = resolved(root, mise, &plugin.executable, environment)?;
+        let cargo = resolved(root, mise, "cargo", environment)?;
+        answered(
+            Protocol {
+                cargo: cargo.as_os_str(),
+                environment,
+                pinned: &pinned,
+                toolchain: None,
+            },
+            plugin,
+        )?;
     }
     let said = plugins
         .iter()
@@ -133,7 +190,7 @@ pub fn check(
         .collect::<Vec<_>>()
         .join(", ");
     Ok(format!(
-        "tools: {count} pinned cargo plugin(s) selected by mise, unshadowed on the path, and answering through cargo's protocol: {said}",
+        "tools: {count} pinned cargo plugin(s) selected by mise and answering through Cargo's protocol: {said}",
         count = plugins.len()
     ))
 }
@@ -146,34 +203,56 @@ fn pins(root: &Path) -> Result<Vec<Plugin>, ToolsError> {
         path: shown.clone(),
         source,
     })?;
-    let table: Tools = toml::from_str(&text).map_err(|source| ToolsError::Parse {
-        path: shown,
-        source,
-    })?;
-    Ok(table
-        .tools
+    let table: BTreeMap<String, toml::Value> =
+        toml::from_str(&text).map_err(|source| ToolsError::Parse {
+            path: shown,
+            source,
+        })?;
+    let tools = table
+        .get("tools")
+        .and_then(toml::Value::as_table)
+        .ok_or_else(|| ToolsError::Unresolved {
+            tool: "mise tools".to_owned(),
+            said: "mise.toml has no tools table".to_owned(),
+        })?;
+    tools
         .iter()
-        .filter_map(|(held, pinned)| {
-            let tool = held.strip_prefix("cargo:")?;
-            let subcommand = tool.strip_prefix("cargo-")?;
-            Some(Plugin {
-                executable: tool.to_owned(),
-                subcommand: subcommand.to_owned(),
-                pinned: pinned.clone(),
-            })
+        .filter_map(|(held, value)| {
+            let executable = held.strip_prefix("cargo:")?;
+            let subcommand = executable.strip_prefix("cargo-")?;
+            Some(
+                value
+                    .as_str()
+                    .map(|pinned| Plugin {
+                        executable: executable.to_owned(),
+                        subcommand: subcommand.to_owned(),
+                        pinned: pinned.to_owned(),
+                    })
+                    .ok_or_else(|| ToolsError::Unresolved {
+                        tool: executable.to_owned(),
+                        said: "the plugin has no exact textual pin".to_owned(),
+                    }),
+            )
         })
-        .collect())
+        .collect()
 }
 
 /// The executable mise selects for `tool`, refused where mise cannot name one.
-fn resolved(mise: &OsStr, tool: &str) -> Result<PathBuf, ToolsError> {
-    let output = Command::new(mise)
+fn resolved(
+    root: &Path,
+    mise: &OsStr,
+    tool: &str,
+    environment: &Environment,
+) -> Result<PathBuf, ToolsError> {
+    let mut request = Command::new(mise);
+    request
         .args(["which", tool])
-        .output()
-        .map_err(|source| ToolsError::Start {
-            program: tool.to_owned(),
-            source,
-        })?;
+        .current_dir(root)
+        .envs(environment.pairs());
+    let output = capture(&mut request, environment).map_err(|source| ToolsError::Start {
+        program: tool.to_owned(),
+        source,
+    })?;
     if !output.status.success() {
         return Err(ToolsError::Unresolved {
             tool: tool.to_owned(),
@@ -189,29 +268,56 @@ fn resolved(mise: &OsStr, tool: &str) -> Result<PathBuf, ToolsError> {
 }
 
 /// The first directory on `environment`'s path holding an executable `tool`, refused where it is not the pinned one.
-fn first_on_path(
+fn selected_path(
     tool: &str,
     environment: &Environment,
     pinned: &Path,
-) -> Result<PathBuf, ToolsError> {
-    let path = environment.value("PATH").unwrap_or_default();
-    for directory in std::env::split_paths(&path) {
-        let candidate = directory.join(tool);
-        if executable(&candidate) {
-            return if candidate == pinned {
-                Ok(candidate)
-            } else {
-                Err(ToolsError::Shadowed {
-                    tool: tool.to_owned(),
-                    shadow: candidate.display().to_string(),
-                    pinned: pinned.display().to_string(),
-                })
-            };
-        }
+) -> Result<OsString, ToolsError> {
+    if !pinned.is_absolute() {
+        return Err(ToolsError::Shadowed {
+            tool: tool.to_owned(),
+            shadow: "the caller's working directory".to_owned(),
+            pinned: pinned.display().to_string(),
+        });
     }
-    Err(ToolsError::Unresolved {
+    if !executable(pinned) {
+        return Err(ToolsError::Unresolved {
+            tool: tool.to_owned(),
+            said: format!("{} is not executable", pinned.display()),
+        });
+    }
+    let parent = pinned.parent().ok_or_else(|| ToolsError::Unresolved {
         tool: tool.to_owned(),
-        said: "no directory on the path holds its executable".to_owned(),
+        said: "mise returned a path without a directory".to_owned(),
+    })?;
+    let mut parts = vec![parent.to_path_buf()];
+    if let Some(path) = environment.value("PATH") {
+        parts.extend(std::env::split_paths(path));
+    }
+    let home = environment
+        .value("CARGO_HOME")
+        .map(PathBuf::from)
+        .or_else(|| {
+            environment
+                .value("HOME")
+                .map(|home| Path::new(home).join(".cargo"))
+        })
+        .or_else(|| {
+            environment
+                .value("USERPROFILE")
+                .map(|home| Path::new(home).join(".cargo"))
+        })
+        .ok_or_else(|| ToolsError::Unresolved {
+            tool: tool.to_owned(),
+            said: "Cargo home cannot be established for its subcommand search".to_owned(),
+        })?;
+    let bin = home.join("bin");
+    if !parts.contains(&bin) {
+        parts.push(bin);
+    }
+    std::env::join_paths(parts).map_err(|source| ToolsError::Unresolved {
+        tool: tool.to_owned(),
+        said: source.to_string(),
     })
 }
 
@@ -226,7 +332,6 @@ fn executable(path: &Path) -> bool {
 /// Whether the file carries at least one execute bit, which is a Unix question.
 #[cfg(unix)]
 fn executable_bit(path: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt as _;
     match std::fs::metadata(path) {
         Ok(held) => held.permissions().mode() & 0o111 != 0,
         Err(_absent) => false,
@@ -240,35 +345,17 @@ fn executable_bit(_path: &Path) -> bool {
 }
 
 /// What `cargo <subcommand> --version` answers, refused unless it is the pinned version.
-fn answered(
-    cargo: &OsStr,
-    environment: &Environment,
-    plugin: &Plugin,
-    pinned: &Path,
-) -> Result<(), ToolsError> {
-    let mut asking = Command::new(cargo);
-    asking.args([plugin.subcommand.as_str(), "--version"]);
-    asking.envs(environment.pairs());
-    let output = asking.output().map_err(|source| ToolsError::Start {
-        program: pinned.display().to_string(),
-        source,
-    })?;
-    let said = String::from_utf8(output.stdout).map_err(|_undecodable| ToolsError::NotText {
-        program: plugin.executable.clone(),
-    })?;
-    if !output.status.success() {
-        let mut complained =
-            String::from_utf8(output.stderr).map_err(|_undecodable| ToolsError::NotText {
-                program: plugin.executable.clone(),
-            })?;
-        complained.push_str(&said);
-        return Err(ToolsError::Protocol {
-            tool: plugin.executable.clone(),
-            subcommand: plugin.subcommand.clone(),
-            said: complained.trim_end().to_owned(),
-        });
-    }
-    if said.contains(&plugin.pinned) {
+#[derive(Debug, Clone, Copy)]
+struct Protocol<'a> {
+    cargo: &'a OsStr,
+    environment: &'a Environment,
+    pinned: &'a Path,
+    toolchain: Option<&'a str>,
+}
+
+fn answered(request: Protocol<'_>, plugin: &Plugin) -> Result<(), ToolsError> {
+    let said = protocol(request, &plugin.executable, &plugin.subcommand)?;
+    if first_version(&said) == plugin.pinned {
         return Ok(());
     }
     Err(ToolsError::WrongVersion {
@@ -276,6 +363,205 @@ fn answered(
         answered: first_version(&said),
         pinned: plugin.pinned.clone(),
     })
+}
+
+fn protocol(
+    request: Protocol<'_>,
+    executable: &str,
+    subcommand: &str,
+) -> Result<String, ToolsError> {
+    let Protocol {
+        cargo,
+        environment,
+        pinned,
+        toolchain,
+    } = request;
+    let mut asking = Command::new(cargo);
+    if let Some(toolchain) = toolchain {
+        asking.arg(format!("+{toolchain}"));
+    }
+    asking.args([subcommand, "--version"]);
+    asking.envs(environment.pairs());
+    asking.env("PATH", selected_path(executable, environment, pinned)?);
+    asking.env("CARGO", cargo);
+    let output = capture(&mut asking, environment).map_err(|source| ToolsError::Start {
+        program: pinned.display().to_string(),
+        source,
+    })?;
+    let said = String::from_utf8(output.stdout).map_err(|_undecodable| ToolsError::NotText {
+        program: executable.to_owned(),
+    })?;
+    if !output.status.success() {
+        let mut complained =
+            String::from_utf8(output.stderr).map_err(|_undecodable| ToolsError::NotText {
+                program: executable.to_owned(),
+            })?;
+        complained.push_str(&said);
+        return Err(ToolsError::Protocol {
+            tool: executable.to_owned(),
+            subcommand: subcommand.to_owned(),
+            said: complained.trim_end().to_owned(),
+        });
+    }
+    if said.trim().is_empty() {
+        return Err(ToolsError::Protocol {
+            tool: executable.to_owned(),
+            subcommand: subcommand.to_owned(),
+            said: "the selected executable returned an empty version answer".to_owned(),
+        });
+    }
+    Ok(said)
+}
+
+/// Selects and validates an actual pinned Cargo plugin command for a gate or task.
+///
+/// # Errors
+/// The command is not pinned, mise cannot resolve it, or the protocol/version control fails.
+pub fn command(
+    root: &Path,
+    mise: &OsStr,
+    args: &[OsString],
+    environment: &Environment,
+) -> Result<Command, ToolsError> {
+    let (toolchain, arguments) = requested_toolchain(root, args)?;
+    let Some(subcommand) = arguments.first().and_then(|name| name.to_str()) else {
+        return Err(ToolsError::Unresolved {
+            tool: "cargo plugin".to_owned(),
+            said: "a UTF-8 subcommand is required".to_owned(),
+        });
+    };
+    let cargo = resolved(root, mise, "cargo", environment)?;
+    let (executable, pinned) = if subcommand == "miri" {
+        let channel = toolchain.as_deref().ok_or_else(|| ToolsError::Unresolved {
+            tool: "cargo-miri".to_owned(),
+            said: "Miri requires the explicitly pinned nightly toolchain".to_owned(),
+        })?;
+        let pinned = component(
+            Site {
+                root,
+                mise,
+                environment,
+            },
+            channel,
+            "cargo-miri",
+        )?;
+        protocol(
+            Protocol {
+                cargo: cargo.as_os_str(),
+                environment,
+                pinned: &pinned,
+                toolchain: Some(channel),
+            },
+            "cargo-miri",
+            subcommand,
+        )?;
+        ("cargo-miri".to_owned(), pinned)
+    } else {
+        let plugin = pins(root)?
+            .into_iter()
+            .find(|plugin| plugin.subcommand == subcommand)
+            .ok_or_else(|| ToolsError::Unresolved {
+                tool: subcommand.to_owned(),
+                said: "this command has no mise pin".to_owned(),
+            })?;
+        let pinned = resolved(root, mise, &plugin.executable, environment)?;
+        answered(
+            Protocol {
+                cargo: cargo.as_os_str(),
+                environment,
+                pinned: &pinned,
+                toolchain: toolchain.as_deref(),
+            },
+            &plugin,
+        )?;
+        (plugin.executable, pinned)
+    };
+    let mut command = Command::new(&cargo);
+    command
+        .args(args)
+        .current_dir(root)
+        .envs(environment.pairs())
+        .env("PATH", selected_path(&executable, environment, &pinned)?)
+        .env("CARGO", &cargo);
+    Ok(command)
+}
+
+fn requested_toolchain<'a>(
+    root: &Path,
+    args: &'a [OsString],
+) -> Result<(Option<String>, &'a [OsString]), ToolsError> {
+    let Some(requested) = args
+        .first()
+        .and_then(|value| value.to_str())
+        .and_then(|value| value.strip_prefix('+'))
+    else {
+        return Ok((None, args));
+    };
+    let path = root.join("rust-toolchain.toml");
+    let text = std::fs::read_to_string(&path).map_err(|source| ToolsError::Read {
+        path: path.display().to_string(),
+        source,
+    })?;
+    let table: toml::Value = toml::from_str(&text).map_err(|source| ToolsError::Parse {
+        path: path.display().to_string(),
+        source,
+    })?;
+    let channel = table
+        .get("njutest")
+        .and_then(|held| held.get("nightly"))
+        .and_then(toml::Value::as_str)
+        .ok_or_else(|| ToolsError::Unresolved {
+            tool: "nightly".to_owned(),
+            said: "rust-toolchain.toml has no exact nightly pin".to_owned(),
+        })?;
+    if requested != channel {
+        return Err(ToolsError::Unresolved {
+            tool: requested.to_owned(),
+            said: format!("rust-toolchain.toml requires {channel}"),
+        });
+    }
+    let arguments = args.get(1..).ok_or_else(|| ToolsError::Unresolved {
+        tool: requested.to_owned(),
+        said: "the requested toolchain has no subcommand".to_owned(),
+    })?;
+    Ok((Some(channel.to_owned()), arguments))
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Site<'a> {
+    root: &'a Path,
+    mise: &'a OsStr,
+    environment: &'a Environment,
+}
+
+fn component(site: Site<'_>, channel: &str, executable: &str) -> Result<PathBuf, ToolsError> {
+    let Site {
+        root,
+        mise,
+        environment,
+    } = site;
+    let rustup = resolved(root, mise, "rustup", environment)?;
+    let mut request = Command::new(rustup);
+    request
+        .args(["which", "--toolchain", channel, executable])
+        .current_dir(root)
+        .envs(environment.pairs());
+    let output = capture(&mut request, environment).map_err(|source| ToolsError::Start {
+        program: executable.to_owned(),
+        source,
+    })?;
+    if !output.status.success() {
+        return Err(ToolsError::Unresolved {
+            tool: executable.to_owned(),
+            said: String::from_utf8(output.stderr).map_err(|_undecodable| ToolsError::NotText {
+                program: executable.to_owned(),
+            })?,
+        });
+    }
+    let path = String::from_utf8(output.stdout).map_err(|_undecodable| ToolsError::NotText {
+        program: executable.to_owned(),
+    })?;
+    Ok(PathBuf::from(path.trim_end()))
 }
 
 /// The first version-shaped word of `said`, so a refusal names what answered rather than a whole banner.
@@ -295,26 +581,101 @@ mod tests {
     use super::check;
     use crate::environment::Environment;
     use std::ffi::OsString;
-    use std::os::unix::fs::PermissionsExt as _;
     use std::path::{Path, PathBuf};
 
     fn scripted(root: &Path, name: &str, body: &str) -> PathBuf {
+        let script = format!("#!/usr/bin/env sh\nset -eu\n{body}\n");
+        script_program(root, name, &script)
+    }
+
+    #[cfg(unix)]
+    fn script_program(root: &Path, name: &str, script: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt as _;
         let path = root.join(name);
-        std::fs::write(
-            &path,
-            format!("#!/usr/bin/env bash\nset -euo pipefail\n{body}\n"),
-        )
-        .expect("a scripted program");
+        std::fs::write(&path, script).expect("the scripted program");
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
-            .expect("an executable script");
+            .expect("the executable script");
         path
+    }
+
+    #[cfg(windows)]
+    fn script_program(root: &Path, name: &str, script: &str) -> PathBuf {
+        let driver = script_driver(root);
+        let program = root.join(name).with_extension("exe");
+        std::fs::copy(driver, &program).expect("the native script bridge");
+        std::fs::write(program.with_extension("script"), script).expect("the fixture script");
+        program
+    }
+
+    #[cfg(windows)]
+    fn script_driver(root: &Path) -> PathBuf {
+        let executable = root.join("fixture-script-driver.exe");
+        if executable
+            .try_exists()
+            .expect("the driver can be inspected")
+        {
+            return executable;
+        }
+        let shell = njutest_devkit::paths::posix_sh();
+        let shell = serde_json::to_string(shell.to_str().expect("the Git shell path"))
+            .expect("a Rust string literal");
+        let source = root.join("fixture-script-driver.rs");
+        let body = format!(
+            r#"fn main() {{
+    let script = std::env::current_exe().expect("this bridge").with_extension("script");
+    let status = std::process::Command::new({shell})
+        .arg(script).args(std::env::args_os().skip(1)).status().expect("the fixture shell");
+    std::process::exit(status.code().expect("the shell status"));
+}}
+"#
+        );
+        std::fs::write(&source, body).expect("the real native bridge source");
+        let cargo = njutest_devkit::paths::cargo_binary();
+        let compiler = cargo
+            .parent()
+            .expect("the pinned Cargo directory")
+            .join("rustc.exe");
+        let mut command = std::process::Command::new(compiler);
+        command
+            .arg(&source)
+            .arg("-o")
+            .arg(&executable)
+            .current_dir(root);
+        let built = njutest_devkit::cost::probe(
+            command,
+            njutest_devkit::cost::ProbeRole::RustcBuild,
+            "native Cargo protocol fixture",
+        )
+        .expect("the observed native bridge compilation");
+        assert!(
+            built.status.success(),
+            "the native bridge compiles: {built:?}"
+        );
+        executable
+    }
+
+    fn search_path(directories: &[&Path]) -> String {
+        let host = std::env::var_os("PATH").expect("the host PATH");
+        std::env::join_paths(
+            directories
+                .iter()
+                .map(|path| path.to_path_buf())
+                .chain(std::env::split_paths(&host)),
+        )
+        .expect("the fixture search path")
+        .into_string()
+        .expect("the test PATH is UTF-8")
     }
 
     fn environment(pairs: &[(&str, &str)]) -> Environment {
         Environment::of(
-            pairs
-                .iter()
-                .map(|(name, value)| (OsString::from(*name), OsString::from(*value))),
+            std::env::vars_os()
+                .filter(|(name, _value)| !pairs.iter().any(|(replaced, _new)| name == replaced))
+                .chain(
+                    pairs
+                        .iter()
+                        .map(|(name, value)| (OsString::from(*name), OsString::from(*value))),
+                ),
         )
     }
 
@@ -322,11 +683,24 @@ mod tests {
         std::fs::write(root.join("mise.toml"), table).expect("the pins");
     }
 
+    fn selector(root: &Path, plugin: &Path) -> PathBuf {
+        let cargo = njutest_devkit::paths::cargo_binary();
+        scripted(
+            root,
+            "mise",
+            &format!(
+                "case \"$*\" in 'which cargo') echo '{}';; 'which cargo-'*) echo '{}';; *) exit 99;; esac",
+                cargo.display(),
+                plugin.display(),
+            ),
+        )
+    }
+
     #[test]
     fn the_pinned_plugin_answering_through_the_protocol_passes() {
         let root = tempfile::tempdir().expect("a scratch repository");
         let bin = root.path().join("bin");
-        std::fs::create_dir_all(&bin).expect("a bin directory");
+        std::fs::create_dir_all(&bin).expect("the plugin directory");
         repository(
             root.path(),
             "[tools]\n\"cargo:cargo-nextest\" = \"9.9.9\"\n",
@@ -334,69 +708,56 @@ mod tests {
         let plugin = scripted(
             &bin,
             "cargo-nextest",
-            "case \"$*\" in '--version') echo 'cargo-nextest 9.9.9 (stable)'; exit 0;; *) exit 9;; esac",
+            "test \"$1\" = nextest; test \"$2\" = --version; test -n \"$CARGO\"; printf '%s\n' \"$*\" > \"$CALLS\"; echo 'cargo-nextest 9.9.9'",
         );
-        let mise = scripted(root.path(), "mise", &format!("echo '{}'", plugin.display()));
-        let cargo = scripted(
-            root.path(),
-            "cargo",
-            "printf '%s\\n' \"cargo $*\" >> \"$CALLS\"; exec \"$(dirname \"$0\")/bin/cargo-nextest\" \"${@:2}\"",
-        );
-        std::fs::create_dir_all(root.path().join("target")).expect("a place for the calls");
-        let calls = root.path().join("target/calls");
-        std::fs::write(&calls, "").expect("an empty record");
-        let path = format!("{}:{}:/bin:/usr/bin", bin.display(), root.path().display());
-        let environment = environment(&[
-            ("PATH", path.as_str()),
-            ("CALLS", &calls.display().to_string()),
-        ]);
-        let said = check(
+        let mise = selector(root.path(), &plugin);
+        let calls = root.path().join("calls");
+        let environment = environment(&[("CALLS", &calls.display().to_string())]);
+        let cargo = njutest_devkit::paths::cargo_binary();
+        let result = check(
             root.path(),
             mise.as_os_str(),
             cargo.as_os_str(),
             &environment,
         );
         assert!(
-            said.is_ok(),
-            "the pinned plugin answering through the protocol passes: {said:?}"
+            result.is_ok(),
+            "the actual Cargo protocol passes: {result:?}"
         );
-        let made = std::fs::read_to_string(&calls).expect("the recorded invocations");
         assert_eq!(
-            made, "cargo nextest --version\n",
-            "the gate asks the plugin through cargo's external-subcommand protocol, never directly"
+            std::fs::read_to_string(calls).expect("the actual plugin arguments"),
+            "nextest --version\n"
         );
     }
 
     #[test]
-    fn an_earlier_executable_shadowing_the_pin_is_refused() {
+    fn an_earlier_executable_does_not_replace_the_selected_pin() {
         let root = tempfile::tempdir().expect("a scratch repository");
         let poisoned = root.path().join("poisoned");
-        let pinned_dir = root.path().join("pinned");
-        std::fs::create_dir_all(&poisoned).expect("a poisoned directory");
-        std::fs::create_dir_all(&pinned_dir).expect("a pinned directory");
+        let pinned = root.path().join("pinned");
+        for directory in [&poisoned, &pinned] {
+            std::fs::create_dir_all(directory).expect("a plugin directory");
+        }
         repository(root.path(), "[tools]\n\"cargo:cargo-deny\" = \"1.2.3\"\n");
-        scripted(
-            &poisoned,
+        scripted(&poisoned, "cargo-deny", "echo 'cargo-deny 0.0.0-poisoned'");
+        let plugin = scripted(
+            &pinned,
             "cargo-deny",
-            "echo 'cargo-deny 0.0.0-poisoned'; exit 0",
+            "test \"$1\" = deny; echo 'cargo-deny 1.2.3'",
         );
-        let pinned = scripted(&pinned_dir, "cargo-deny", "echo 'cargo-deny 1.2.3'; exit 0");
-        let mise = scripted(root.path(), "mise", &format!("echo '{}'", pinned.display()));
-        let path = format!(
-            "{}:{}:/bin:/usr/bin",
-            poisoned.display(),
-            pinned_dir.display()
-        );
-        let environment = environment(&[("PATH", path.as_str())]);
-        let said = check(
+        let mise = selector(root.path(), &plugin);
+        let path = search_path(&[&poisoned, &pinned]);
+        let environment = environment(&[("PATH", &path)]);
+        let cargo = njutest_devkit::paths::cargo_binary();
+        let result = check(
             root.path(),
             mise.as_os_str(),
-            std::ffi::OsStr::new("cargo"),
+            cargo.as_os_str(),
             &environment,
         );
         assert!(
-            matches!(said, Err(super::ToolsError::Shadowed { ref shadow, .. }) if shadow.contains("poisoned/cargo-deny")),
-            "the earlier executable is refused by name: {said:?}"
+            result.is_ok(),
+            "the earlier plugin cannot replace the pin: {result:?}"
         );
     }
 
@@ -404,66 +765,96 @@ mod tests {
     fn a_wrong_version_answering_through_the_protocol_is_refused() {
         let root = tempfile::tempdir().expect("a scratch repository");
         let bin = root.path().join("bin");
-        std::fs::create_dir_all(&bin).expect("a bin directory");
+        std::fs::create_dir_all(&bin).expect("the plugin directory");
         repository(
             root.path(),
             "[tools]\n\"cargo:cargo-nextest\" = \"0.9.140\"\n",
         );
-        let plugin = scripted(
-            &bin,
-            "cargo-nextest",
-            "echo 'cargo-nextest 0.9.146'; exit 0",
-        );
-        let mise = scripted(root.path(), "mise", &format!("echo '{}'", plugin.display()));
-        let cargo = scripted(
-            root.path(),
-            "cargo",
-            "exec \"$(dirname \"$0\")/bin/cargo-nextest\" \"${@:2}\"",
-        );
-        let path = format!("{}:{}:/bin:/usr/bin", bin.display(), root.path().display());
-        let environment = environment(&[("PATH", path.as_str())]);
-        let said = check(
+        let plugin = scripted(&bin, "cargo-nextest", "echo 'cargo-nextest 0.9.146'");
+        let mise = selector(root.path(), &plugin);
+        let environment = environment(&[]);
+        let cargo = njutest_devkit::paths::cargo_binary();
+        let result = check(
             root.path(),
             mise.as_os_str(),
             cargo.as_os_str(),
             &environment,
         );
         assert!(
-            matches!(
-                said,
-                Err(super::ToolsError::WrongVersion {
-                    ref answered,
-                    ref pinned,
-                    ..
-                }) if answered == "0.9.146" && pinned == "0.9.140"
-            ),
-            "the version that answered is refused against the pin: {said:?}"
+            matches!(result, Err(super::ToolsError::WrongVersion {
+            ref answered, ref pinned, ..
+        }) if answered == "0.9.146" && pinned == "0.9.140"),
+            "the actual protocol answer is checked against its pin: {result:?}"
         );
     }
 
     #[test]
     fn an_unresolved_pin_is_refused_with_what_mise_said() {
         let root = tempfile::tempdir().expect("a scratch repository");
-        std::fs::write(
-            root.path().join("mise.toml"),
+        repository(
+            root.path(),
             "[tools]\n\"cargo:cargo-mutants\" = \"27.1.0\"\n",
-        )
-        .expect("the pins");
+        );
         let mise = scripted(
             root.path(),
             "mise",
-            "echo 'mise ERROR cargo-mutants is not active here' >&2; exit 1",
+            "echo 'cargo-mutants is not active here' >&2; exit 1",
         );
-        let environment = environment(&[]);
-        let said = check(
+        let result = check(
             root.path(),
             mise.as_os_str(),
-            std::ffi::OsStr::new("cargo"),
+            "cargo".as_ref(),
+            &environment(&[]),
+        );
+        assert!(
+            matches!(result, Err(super::ToolsError::Unresolved { ref tool, .. })
+            if tool == "cargo-mutants"),
+            "the missing pin is named: {result:?}"
+        );
+    }
+
+    #[test]
+    fn the_real_cargo_protocol_selects_the_pin_over_path_and_cargo_home() {
+        let root = tempfile::tempdir().expect("a scratch repository");
+        let poisoned = root.path().join("poisoned");
+        let pinned = root.path().join("pinned");
+        let home = root.path().join("cargo-home");
+        for directory in [&poisoned, &pinned, &home.join("bin")] {
+            std::fs::create_dir_all(directory).expect("a plugin directory");
+        }
+        repository(
+            root.path(),
+            "[tools]\n\"cargo:cargo-nextest\" = \"9.9.9\"\n",
+        );
+        let plugin = scripted(
+            &pinned,
+            "cargo-nextest",
+            "test \"$1\" = nextest; test -n \"$CARGO\"; echo 'cargo-nextest 9.9.9'",
+        );
+        scripted(
+            &poisoned,
+            "cargo-nextest",
+            "echo 'cargo-nextest 0.0.0-path'",
+        );
+        scripted(
+            &home.join("bin"),
+            "cargo-nextest",
+            "echo 'cargo-nextest 0.0.0-home'",
+        );
+        let wrong_cargo = scripted(&poisoned, "cargo", "echo 'cargo-nextest 0.0.0-cargo'");
+        let mise = selector(root.path(), &plugin);
+        let path = search_path(&[&poisoned, &pinned]);
+        let environment =
+            environment(&[("PATH", &path), ("CARGO_HOME", &home.display().to_string())]);
+        let result = check(
+            root.path(),
+            mise.as_os_str(),
+            wrong_cargo.as_os_str(),
             &environment,
         );
         assert!(
-            matches!(said, Err(super::ToolsError::Unresolved { ref tool, .. }) if tool == "cargo-mutants"),
-            "a pin mise cannot resolve is refused naming the tool: {said:?}"
+            result.is_ok(),
+            "mise selects the actual Cargo and plugin despite all shadows: {result:?}"
         );
     }
 }

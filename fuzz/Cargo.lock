@@ -1425,6 +1425,8 @@ dependencies = [
  "cargo_metadata",
  "hex",
  "njutest-fixture-tree",
+ "njutest-process",
+ "notify",
  "rustix",
  "serde",
  "serde_json",
@@ -1448,6 +1450,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.6",
+]
+
+[[package]]
+name = "njutest-process"
+version = "0.1.0"
+dependencies = [
+ "kqueue",
+ "rust-mutants-decision",
+ "rustix",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1992,6 +2004,7 @@ dependencies = [
  "jiff",
  "njutest-fixture-tree",
  "njutest-macros",
+ "njutest-process",
  "notify",
  "proc-macro2",
  "rust-mutants-adapt",

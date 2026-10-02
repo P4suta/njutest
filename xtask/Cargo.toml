@@ -22,6 +22,7 @@ testkit = []
 [dependencies]
 notify = { workspace = true }
 njutest-fixture-tree = { workspace = true }
+njutest-process = { workspace = true }
 njutest-macros = { workspace = true }
 rust-mutants-decision = { workspace = true }
 serde = { workspace = true }

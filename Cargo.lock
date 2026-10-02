@@ -440,6 +440,7 @@ dependencies = [
  "njutest-devkit",
  "njutest-fixture-tree",
  "njutest-macros",
+ "njutest-process",
  "notify",
  "proc-macro2",
  "proptest",
@@ -1733,6 +1734,8 @@ dependencies = [
  "cargo_metadata",
  "hex",
  "njutest-fixture-tree",
+ "njutest-process",
+ "notify",
  "rustix",
  "serde",
  "serde_json",
@@ -1757,6 +1760,16 @@ dependencies = [
  "quote",
  "syn 3.0.6",
  "trybuild",
+]
+
+[[package]]
+name = "njutest-process"
+version = "0.1.0"
+dependencies = [
+ "kqueue",
+ "rust-mutants-decision",
+ "rustix",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2520,6 +2533,7 @@ dependencies = [
  "njutest-devkit",
  "njutest-fixture-tree",
  "njutest-macros",
+ "njutest-process",
  "notify",
  "proc-macro2",
  "proptest",
@@ -3895,6 +3909,7 @@ dependencies = [
  "njutest-devkit",
  "njutest-fixture-tree",
  "njutest-macros",
+ "njutest-process",
  "notify",
  "proc-macro2",
  "regex",

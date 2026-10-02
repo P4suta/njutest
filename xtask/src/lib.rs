@@ -101,8 +101,14 @@ enum Task {
         #[arg(last = true, required = true)]
         command: Vec<OsString>,
     },
-    /// Every pinned cargo plugin, selected by mise, unshadowed on the path, and answering through Cargo's external-subcommand protocol with the pinned version.
+    /// Every pinned cargo plugin, selected by mise and answering through Cargo's complete external-subcommand protocol.
     Tools,
+    /// Runs a mise-selected Cargo plugin through Cargo's complete external-subcommand protocol.
+    Tool {
+        /// The pinned Cargo subcommand and every original argument, after `--`.
+        #[arg(last = true, required = true)]
+        arguments: Vec<OsString>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -286,9 +292,79 @@ where
         Task::PrePush => return pre_push(process, &mut *streams.input, stderr),
         Task::Tidy { command } => return tidy(&command, process, stderr),
         Task::Tools => return tools(process, stderr),
+        Task::Tool { arguments } => return tool(&arguments, process, stderr),
         Task::Execution(gate) => return run_execution(gate, &root, process, (stdout, stderr)),
     };
     report(outcome, stdout, stderr)
+}
+
+/// Executes the selected Cargo command from the caller's directory under its inherited owner.
+fn tool(arguments: &[OsString], process: &Process<'_>, stderr: &mut dyn Write) -> ExitCode {
+    let command = tools::command(
+        &gates::workspace_root(),
+        "mise".as_ref(),
+        arguments,
+        process.environment,
+    );
+    let mut command = match command {
+        Ok(command) => command,
+        Err(failure) => {
+            return after_output(
+                writeln!(stderr, "tool: {}", failure.coded()),
+                ExitCode::FAILURE,
+            );
+        }
+    };
+    command.current_dir(process.directory);
+    execute_tool(&mut command, process.environment, stderr)
+}
+
+/// Hands the selected command to the inherited Unix process group without starting another group.
+#[cfg(unix)]
+fn execute_tool(
+    command: &mut Command,
+    _environment: &environment::Environment,
+    stderr: &mut dyn Write,
+) -> ExitCode {
+    use std::os::unix::process::CommandExt as _;
+    let failure = command.exec();
+    after_output(writeln!(stderr, "tool: {failure}"), ExitCode::FAILURE)
+}
+
+/// Retains task completion on Windows through the existing owned work boundary.
+#[cfg(windows)]
+fn execute_tool(
+    command: &mut Command,
+    environment: &environment::Environment,
+    stderr: &mut dyn Write,
+) -> ExitCode {
+    let stops = match work::Stops::arm() {
+        Ok(stops) => stops,
+        Err(failure) => {
+            return after_output(
+                writeln!(stderr, "tool: {}", failure.coded()),
+                ExitCode::FAILURE,
+            );
+        }
+    };
+    match tools::run(
+        tools::Request {
+            command,
+            bound: None,
+            stops: &stops,
+            environment,
+            output: tools::Output::Inherited,
+        },
+        |_leader| Ok(()),
+    ) {
+        Ok(work::Ended::Exited(status)) => ExitCode::from(exit_status(status)),
+        Ok(work::Ended::Interrupted { signal }) => ExitCode::from(signalled_code(signal)),
+        Ok(work::Ended::OverBudget { .. } | work::Ended::Quiet { .. }) => ExitCode::from(124),
+        Err(failure) => after_output(
+            writeln!(stderr, "tool: {}", failure.coded()),
+            ExitCode::FAILURE,
+        ),
+    }
 }
 
 /// Validates the pinned tools the gates invoke, writing what it established or the refusal that says why.
@@ -567,11 +643,24 @@ fn slot(
         .args(arguments)
         .env(lanes::HELD, lanes.held_with(named))
         .stdin(std::process::Stdio::null());
-    let ran = work::run(&mut running, None, &stops, |leader| held.working_on(leader));
+    let ran = tools::run(
+        tools::Request {
+            command: &mut running,
+            bound: None,
+            stops: &stops,
+            environment: process.environment,
+            output: tools::Output::Inherited,
+        },
+        |leader| held.working_on(leader),
+    );
     if ran.is_err() {
         held.left_work_running();
     }
     drop(held);
+    slot_outcome(ran, stderr)
+}
+
+fn slot_outcome(ran: Result<work::Ended, work::WorkError>, stderr: &mut dyn Write) -> ExitCode {
     match ran {
         Ok(work::Ended::Exited(status)) => ExitCode::from(exit_status(status)),
         Ok(work::Ended::Interrupted { signal }) => ExitCode::from(signalled_code(signal)),
@@ -657,10 +746,19 @@ fn tidy(command: &[OsString], process: &Process<'_>, stderr: &mut dyn Write) -> 
         Ok(lanes) => lanes.inside(lanes::Lane::Heavy),
         Err(_no_lanes) => None,
     };
-    let ran = work::run(&mut running, None, &stops, |leader| match &inside {
-        Some(held) => held.working_on(leader),
-        None => Ok(()),
-    });
+    let ran = tools::run(
+        tools::Request {
+            command: &mut running,
+            bound: None,
+            stops: &stops,
+            environment: process.environment,
+            output: tools::Output::Inherited,
+        },
+        |leader| match &inside {
+            Some(held) => held.working_on(leader),
+            None => Ok(()),
+        },
+    );
     if ran.is_err()
         && let Some(held) = &inside
     {

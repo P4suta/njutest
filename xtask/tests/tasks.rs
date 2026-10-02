@@ -1834,7 +1834,6 @@ fn tidy_prevents_compiler_wrappers_from_retaining_its_temporary_context() {
         .expect("the actual tidy child runs");
     assert!(
         output.status.success(),
-        "a nested compiler can retain an expiring wrapper context: {:?}",
-        output
+        "a nested compiler can retain an expiring wrapper context: {output:?}"
     );
 }

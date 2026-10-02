@@ -24,6 +24,26 @@ fn edge(from: &str, to: &str, kind: EdgeKind) -> Edge {
 }
 
 #[test]
+fn native_completion_is_shared_without_an_engine_runtime_edge() {
+    let allowed = [
+        edge("rust-mutants", "njutest-process", EdgeKind::Normal),
+        edge("njutest-devkit", "njutest-process", EdgeKind::Normal),
+        edge("xtask", "njutest-process", EdgeKind::Normal),
+        edge("compiler-surfaces", "njutest-process", EdgeKind::Normal),
+        edge("njutest-process", "rust-mutants-decision", EdgeKind::Normal),
+    ];
+    assert!(check(&allowed).is_empty(), "{:?}", check(&allowed));
+    let refused = [
+        edge("njutest-process", "rust-mutants", EdgeKind::Normal),
+        edge("njutest-process", "njutest-devkit", EdgeKind::Normal),
+        edge("njutest-process", "xtask", EdgeKind::Normal),
+        edge("njutest-devkit", "rust-mutants", EdgeKind::Normal),
+        edge("xtask", "rust-mutants", EdgeKind::Normal),
+    ];
+    assert_eq!(check(&refused), refused);
+}
+
+#[test]
 fn the_runner_may_depend_on_the_engine_but_not_the_reverse() {
     let allowed = [
         edge("njutest", "rust-mutants", EdgeKind::Normal),

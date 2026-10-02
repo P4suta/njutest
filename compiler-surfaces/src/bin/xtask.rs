@@ -22,7 +22,7 @@ pub(crate) use product::{
     devgates, drift, engineaudit, environment, error, faults, fixtures, gates, invariants,
     kaniaudit, knobs, lanes, layers, lexed, lints, milestones, modelaudit, observation, proofaudit,
     receipt, release, repair, reportdiff, repository, route, run_from, sbom, schemas, sentinel,
-    shapes, specimen, strictjson, surface, wire, work,
+    shapes, specimen, strictjson, surface, tools, wire, work,
 };
 
 #[path = "../../../xtask/src/main.rs"]

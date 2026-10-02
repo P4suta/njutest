@@ -489,11 +489,8 @@ impl Run<'_> {
             ceiling,
         } = stage;
         let log = log.as_path();
-        let written = std::fs::File::create(log).map_err(|source| io_error(log, source))?;
-        let also = written
-            .try_clone()
-            .map_err(|source| io_error(log, source))?;
-        command.stdin(Stdio::null()).stdout(written).stderr(also);
+        let output = crate::tools::log(log).map_err(|source| io_error(log, source))?;
+        command.stdin(Stdio::null());
         let mut reading = std::fs::File::open(log).map_err(|source| io_error(log, source))?;
         let mut heard = || -> std::io::Result<bool> {
             let mut said = Vec::new();
@@ -507,9 +504,16 @@ impl Run<'_> {
             heard: &mut heard,
         };
         let held = self.held;
-        let ran = work::run(command, Some(&mut bound), self.stops, |leader| {
-            held.iter().try_for_each(|lane| lane.working_on(leader))
-        });
+        let ran = crate::tools::run(
+            crate::tools::Request {
+                command,
+                bound: Some(&mut bound),
+                stops: self.stops,
+                environment: self.tools.environment,
+                output,
+            },
+            |leader| held.iter().try_for_each(|lane| lane.working_on(leader)),
+        );
         if ran.is_err() {
             for lane in held {
                 lane.left_work_running();

@@ -18,6 +18,8 @@ surface = "test-support"
 
 [dependencies]
 njutest-fixture-tree = { workspace = true }
+njutest-process = { workspace = true }
+notify = { workspace = true }
 cargo_metadata = { workspace = true }
 hex = { workspace = true }
 serde = { workspace = true }
