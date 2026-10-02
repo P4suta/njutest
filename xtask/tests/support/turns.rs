@@ -8,7 +8,7 @@ const UNTIL_GO: &str = "turn=\"$TURNS/go.$$\"; mkfifo -m 600 \"$turn\" || exit 1
 ///
 /// # Errors
 /// The complete endpoint inventory, a FIFO identity or its nonblocking publication is unreadable.
-pub(crate) fn release_turns(turns: &std::path::Path) -> std::io::Result<()> {
+fn release_turns(turns: &std::path::Path) -> std::io::Result<()> {
     use std::os::unix::fs::FileTypeExt as _;
 
     std::fs::write(turns.join("go"), "released\n")?;
