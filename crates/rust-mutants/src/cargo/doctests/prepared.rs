@@ -210,7 +210,7 @@ fn read(directory: &Path, request: &Request, kind: Kind, spec: &Spec) -> io::Res
         .as_deref()
         .ok_or_else(|| io::Error::other("capture source identity"))?;
     let units = super::super::units_of(&messages, dir).map_err(io::Error::other)?;
-    if !request.covers(&units) {
+    if !request.covers(&units)? {
         return Err(io::Error::other("unverified captured compiler inputs"));
     }
     verify(kind, &record.report, &directory)?;
@@ -380,7 +380,7 @@ fn products(
             .capture_files(&mut messages, staging.path())
             .map_err(refused)?;
         let units = super::super::units_of(&messages, driver.dir)?;
-        if !request.covers(&units) {
+        if !request.covers(&units).map_err(refused)? {
             return Err(refused(io::Error::other(
                 "doctest compilation read outside its bound graph",
             )));

@@ -48,10 +48,56 @@ struct Augmentation {
     paths: Vec<PathBuf>,
 }
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct InputPath(PathBuf);
+
+impl InputPath {
+    fn of(path: &Path) -> io::Result<Self> {
+        std::fs::canonicalize(path).map(Self)
+    }
+}
+
+struct BoundInputs(BTreeMap<InputPath, File>);
+
+impl BoundInputs {
+    fn of(files: BTreeMap<PathBuf, File>) -> io::Result<Self> {
+        let mut held = Self(BTreeMap::new());
+        for (path, state) in files {
+            held.insert(&path, state)?;
+        }
+        Ok(held)
+    }
+
+    fn insert(&mut self, path: &Path, state: File) -> io::Result<()> {
+        let identity = InputPath::of(path)?;
+        if identity.0 != path && file(&identity.0)? != state {
+            return Err(io::Error::other(
+                "compiler input changed while binding its identity",
+            ));
+        }
+        let expected = state.clone();
+        match self.0.insert(identity, state) {
+            Some(previous) if previous != expected => Err(io::Error::other(
+                "one compiler input was observed with conflicting content",
+            )),
+            Some(_) | None => Ok(()),
+        }
+    }
+
+    fn covers(&self, units: &[super::Unit]) -> io::Result<bool> {
+        for path in units.iter().flat_map(|unit| &unit.inputs) {
+            if !self.0.contains_key(&InputPath::of(path)?) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+}
+
 pub(super) struct Request {
     pub(super) key: String,
     record: PathBuf,
-    inputs: BTreeMap<PathBuf, File>,
+    inputs: BoundInputs,
     target: PathBuf,
     environment: Variables,
     augmentation: Option<Augmentation>,
@@ -94,6 +140,7 @@ impl Request {
             fingerprint_link_inputs(&inputs, env)?;
         }
         classified?;
+        let inputs = BoundInputs::of(inputs)?;
         let mut digest = Sha256::new();
         field(&mut digest, SCHEMA.as_bytes());
         field(
@@ -109,8 +156,8 @@ impl Request {
             field(&mut digest, argument.as_encoded_bytes());
         }
         field(&mut digest, root.as_os_str().as_encoded_bytes());
-        for (path, state) in &inputs {
-            field(&mut digest, path.as_os_str().as_encoded_bytes());
+        for (path, state) in &inputs.0 {
+            field(&mut digest, path.0.as_os_str().as_encoded_bytes());
             field(&mut digest, state.digest.as_bytes());
             field(&mut digest, &state.mode.to_be_bytes());
         }
@@ -180,11 +227,7 @@ impl Request {
         }
         self.replay(&mut messages, &record.files, &products)?;
         let units = super::units_of(&messages, driver.dir).map_err(io::Error::other)?;
-        if units
-            .iter()
-            .flat_map(|unit| &unit.inputs)
-            .any(|path| !self.inputs.contains_key(path))
-        {
+        if !self.inputs.covers(&units)? {
             return Err(io::Error::other("compiler read outside the bound inputs"));
         }
         let names: std::collections::BTreeSet<&String> =
@@ -253,13 +296,7 @@ impl Request {
         (stdout, env, target): (&[u8], &Variables, &Path),
         (exit, preparation): (Exited, &Preparation),
     ) -> io::Result<()> {
-        if !plain_messages(&compiled.messages)
-            || compiled
-                .units
-                .iter()
-                .flat_map(|unit| &unit.inputs)
-                .any(|path| !self.inputs.contains_key(path))
-        {
+        if !plain_messages(&compiled.messages) || !self.inputs.covers(&compiled.units)? {
             return Err(io::Error::other("incomplete or opaque compiler inputs"));
         }
         let names = compiled.units.iter().flat_map(|unit| unit.env.keys());
@@ -416,7 +453,7 @@ impl Request {
             field(&mut digest, path.as_os_str().as_encoded_bytes());
             field(&mut digest, state.digest.as_bytes());
             field(&mut digest, &state.mode.to_be_bytes());
-            self.inputs.insert(path.clone(), state);
+            self.inputs.insert(path, state)?;
         }
         for (name, value) in self.environment.canonical() {
             field(&mut digest, name.as_encoded_bytes());
@@ -432,11 +469,8 @@ impl Request {
         Ok(self)
     }
 
-    pub(super) fn covers(&self, units: &[super::Unit]) -> bool {
-        units
-            .iter()
-            .flat_map(|unit| &unit.inputs)
-            .all(|path| self.inputs.contains_key(path))
+    pub(super) fn covers(&self, units: &[super::Unit]) -> io::Result<bool> {
+        self.inputs.covers(units)
     }
 
     pub(super) fn capture_files(
@@ -507,9 +541,10 @@ impl Request {
 
     pub(super) fn sources(&self) -> impl Iterator<Item = &Path> {
         self.inputs
+            .0
             .keys()
+            .map(|path| path.0.as_path())
             .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
-            .map(PathBuf::as_path)
     }
 
     pub(super) fn independent(mut self, observation: &str) -> Self {

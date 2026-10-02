@@ -31,6 +31,11 @@ Two programs collecting the same class of state cannot agree about liveness from
 4. `njutest cache` neither reports nor collects compiled artifacts.
    The retired `build_dir` and `build_max_bytes` keys are rejected as unknown fields, and an upgrade removes them.
 
+Compiler inputs are held by canonical filesystem identity before the complete key is minted.
+Every actual dep-info path is resolved through that same identity boundary before graph coverage is accepted.
+An included source's climbing spelling and a shared target spelling therefore name the same verified input.
+Resolution failures and genuinely external inputs remain refusals with their original I/O cause.
+
 ## Consequences
 
 - There is one owner and one command surface for persistent compiled state.
