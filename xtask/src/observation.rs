@@ -26,7 +26,7 @@ pub enum Event {
 }
 
 /// The executing host on which a measured wait took place.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 pub struct Machine {
     /// The operating system that executed the wait.
     pub os: &'static str,
