@@ -8,6 +8,10 @@ use std::process::{ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Ou
 use crate::thread::{JoinError, ScopedThread};
 use njutest_process::GroupChild;
 
+mod ready;
+
+pub use ready::{ReadyPath, ReadyState};
+
 /// Interprets a test protocol's bytes as UTF-8 without replacing invalid input.
 ///
 /// # Panics
