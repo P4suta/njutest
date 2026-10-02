@@ -652,6 +652,7 @@ fn tidy(command: &[OsString], process: &Process<'_>, stderr: &mut dyn Write) -> 
     for name in TEMPORARY_VARIABLES {
         running.env(name, scratch.path());
     }
+    clear_wrappers(&mut running);
     let inside = match lanes::Lanes::from_environment(process.environment) {
         Ok(lanes) => lanes.inside(lanes::Lane::Heavy),
         Err(_no_lanes) => None,
@@ -666,6 +667,17 @@ fn tidy(command: &[OsString], process: &Process<'_>, stderr: &mut dyn Write) -> 
         held.left_work_running();
     }
     tidy_outcome(ran, scratch, cache, stderr)
+}
+
+fn clear_wrappers(running: &mut Command) {
+    for name in [
+        "RUSTC_WRAPPER",
+        "RUSTC_WORKSPACE_WRAPPER",
+        "CARGO_BUILD_RUSTC_WRAPPER",
+        "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER",
+    ] {
+        running.env(name, "");
+    }
 }
 
 /// Finishes tidy after the work owner reports its actual outcome, retaining unknown completion.

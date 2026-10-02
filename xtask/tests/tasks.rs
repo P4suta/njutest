@@ -1816,3 +1816,25 @@ struct TidySaid {
     status: std::process::ExitStatus,
     text: String,
 }
+
+#[test]
+fn tidy_prevents_compiler_wrappers_from_retaining_its_temporary_context() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["tidy", "--"])
+        .arg(njutest_devkit::paths::posix_sh())
+        .args(["-c", "test -z \"$RUSTC_WRAPPER\" && test -z \"$RUSTC_WORKSPACE_WRAPPER\" && test -z \"$CARGO_BUILD_RUSTC_WRAPPER\" && test -z \"$CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER\" && test \"$WRAPPER_CONTROL\" = retained"])
+        .envs([
+            ("RUSTC_WRAPPER", "expired-rustc-wrapper"),
+            ("RUSTC_WORKSPACE_WRAPPER", "expired-workspace-wrapper"),
+            ("CARGO_BUILD_RUSTC_WRAPPER", "expired-cargo-wrapper"),
+            ("CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER", "expired-cargo-workspace-wrapper"),
+            ("WRAPPER_CONTROL", "retained"),
+        ])
+        .output()
+        .expect("the actual tidy child runs");
+    assert!(
+        output.status.success(),
+        "a nested compiler can retain an expiring wrapper context: {:?}",
+        output
+    );
+}
