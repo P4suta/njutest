@@ -61,17 +61,39 @@ pub struct ProveOptions {
 #[derive(Debug)]
 pub struct Prover {
     workspace: Workspace,
-    original: Option<Artifacts>,
-    settled: bool,
+    original: Option<Built>,
+    reproducible: Option<Reproducibility>,
     withdrawn: Option<&'static str>,
     options: ProveOptions,
 }
 
 /// What one build of the tree produced: the executables, every unit with whether cargo compiled it, and how the products were established.
+#[derive(Debug)]
 struct Built {
     artifacts: Artifacts,
     units: Vec<crate::cargo::Unit>,
     provenance: crate::cargo::Provenance,
+    observation: crate::cargo::CompilerObservation,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct Reproducibility {
+    original: crate::cargo::CompilerObservation,
+    independent: crate::cargo::CompilerObservation,
+    #[serde(skip)]
+    units: Vec<crate::cargo::Unit>,
+}
+
+impl Reproducibility {
+    fn covers(&self, identity: &crate::cargo::InputIdentity, path: &Path) -> bool {
+        identity.complete_key().is_some()
+            && self.original.identity() == identity
+            && self.independent.identity() == identity
+            && self.original.id() != self.independent.id()
+            && self.independent.purpose() == crate::cargo::CompilerPurpose::IndependentControl
+            && artifacts::recompiled(&self.units, path, crate::cargo::Provenance::Compiler)
+                == Recompiled::Every
+    }
 }
 
 impl Prover {
@@ -92,7 +114,7 @@ impl Prover {
         let mut prover = Self {
             workspace,
             original: None,
-            settled: false,
+            reproducible: None,
             withdrawn: None,
             options: options.clone(),
         };
@@ -102,11 +124,9 @@ impl Prover {
             None => Vec::new(),
         };
         prover.original = if kept.is_empty() {
-            first.map(|built| built.artifacts)
+            first
         } else {
-            prover
-                .build(cancel, Witness::Any)?
-                .map(|built| built.artifacts)
+            prover.build(cancel, Witness::Any)?
         };
         Ok(prover)
     }
@@ -123,9 +143,9 @@ impl Prover {
         if let Some(why) = self.withdrawn {
             return Ok(Identity::NotEstablished(why));
         }
-        let Some(original) = self.original.as_ref() else {
+        if self.original.is_none() {
             return Ok(Identity::NotEstablished(DID_NOT_BUILD));
-        };
+        }
         let path = self.workspace.snapshot_root().join(&candidate.path);
         let Ok(source) = std::fs::read(&path) else {
             return Ok(Identity::NotEstablished(NO_SUCH_FILE));
@@ -152,32 +172,100 @@ impl Prover {
         let Some(mutated) = mutated? else {
             return Ok(Identity::NotEstablished(DOES_NOT_BUILD));
         };
-        match artifacts::recompiled(&mutated.units, &path, mutated.provenance) {
+        self.compare(&mutated, &path, cancel)
+    }
+
+    fn compare(
+        &mut self,
+        mutated: &Built,
+        path: &Path,
+        cancel: &Cancel,
+    ) -> Result<Identity, EngineError> {
+        match artifacts::recompiled(&mutated.units, path, mutated.provenance) {
             Recompiled::Every => {}
             Recompiled::Reused => return Ok(Identity::NotEstablished(NOT_RECOMPILED)),
             Recompiled::Unread => return Ok(Identity::NotEstablished(SPLICE_UNREAD)),
         }
-        let answer = artifacts::compare(original, &mutated.artifacts);
-        if matches!(answer, Identity::NotEstablished(_))
-            || (answer == Identity::Differs && self.settled)
+        let restored =
+            crate::cargo::input_identity(&self.workspace.driver(cancel), &self.compile_options())?;
+        let Some(original) = &self.original else {
+            return Ok(Identity::NotEstablished(DID_NOT_BUILD));
+        };
+        if original.observation.identity().complete_key().is_some()
+            && original.observation.identity() != &restored
         {
+            return Ok(self.withdraw(CONTROL_DRIFTED));
+        }
+        let answer = artifacts::compare(&original.artifacts, &mutated.artifacts);
+        if matches!(answer, Identity::NotEstablished(_)) {
             return Ok(answer);
         }
+        if let Some(proof) = &self.reproducible
+            && proof.covers(&restored, path)
+        {
+            self.record_control("compiler-reproducibility-reuse", proof, cancel)?;
+            return Ok(answer);
+        }
+        self.establish((answer, path), &restored, cancel)
+    }
+
+    fn establish(
+        &mut self,
+        (answer, path): (Identity, &Path),
+        restored: &crate::cargo::InputIdentity,
+        cancel: &Cancel,
+    ) -> Result<Identity, EngineError> {
+        let Some(original) = &self.original else {
+            return Ok(Identity::NotEstablished(DID_NOT_BUILD));
+        };
         let Some(control) = self.build(cancel, Witness::Compiler)? else {
             return Ok(self.withdraw(CONTROL_DRIFTED));
         };
-        match artifacts::recompiled(&control.units, &path, control.provenance) {
+        match artifacts::recompiled(&control.units, path, control.provenance) {
             Recompiled::Every => {}
             Recompiled::Reused | Recompiled::Unread => {
                 return Ok(self.withdraw(CONTROL_NOT_RECOMPILED));
             }
         }
-        if &control.artifacts == original {
-            self.settled = true;
+        if control.observation.id() == original.observation.id()
+            || control.observation.purpose() != crate::cargo::CompilerPurpose::IndependentControl
+            || control.provenance != crate::cargo::Provenance::Compiler
+        {
+            return Ok(self.withdraw(CONTROL_NOT_RECOMPILED));
+        }
+        if control.artifacts == original.artifacts {
+            let proof = Reproducibility {
+                original: original.observation.clone(),
+                independent: control.observation,
+                units: control.units,
+            };
+            if restored.complete_key().is_some()
+                && (!proof.covers(restored, path) || proof.original.identity() != restored)
+            {
+                return Ok(self.withdraw(CONTROL_DRIFTED));
+            }
+            self.record_control("compiler-reproducibility-pair", &proof, cancel)?;
+            self.reproducible = Some(proof);
             Ok(answer)
         } else {
             Ok(self.withdraw(CONTROL_DRIFTED))
         }
+    }
+
+    fn record_control(
+        &self,
+        kind: &str,
+        proof: &Reproducibility,
+        cancel: &Cancel,
+    ) -> Result<(), crate::cargo::CargoError> {
+        let detail = serde_json::to_string(proof).map_err(|source| {
+            crate::cargo::CargoError::new(
+                crate::cargo::CargoErrorKind::MessageUnparsable,
+                source.to_string(),
+            )
+        })?;
+        self.workspace.driver(cancel).trace.note(kind, &detail);
+        Ok(())
     }
 
     /// Withdraws every answer from here on for `why`, and answers this one with it.
@@ -206,16 +294,9 @@ impl Prover {
 
     /// What one build of the tree produced, or nothing when the tree did not build.
     ///
-    /// `witness` is what the answer may be established by: the engine's verified record answers an ordinary build, while a control, whose job is to catch a machine that builds one tree two ways, must be an actual compiler process of this call.
+    /// `witness` permits verified complete products for an ordinary build and requires an actual independent compiler process when establishing a reproducibility pair.
     fn build(&self, cancel: &Cancel, witness: Witness) -> Result<Option<Built>, EngineError> {
-        let options = CompileOptions {
-            kind: CompileKind::Tests,
-            locked: self.options.open.locked,
-            offline: self.options.open.offline,
-            timeout: self.options.timeout,
-            build: self.options.build.clone(),
-            ..CompileOptions::new(self.workspace.build_dir().nested("equivalence"))
-        };
+        let options = self.compile_options();
         let built = compile_with(&self.workspace.driver(cancel), &options, witness)?;
         match built.completion() {
             crate::cargo::Completion::Built => {}
@@ -232,8 +313,20 @@ impl Prover {
             .collect();
         Ok(Some(Built {
             artifacts: artifacts::digests(executables)?,
+            observation: built.observation().clone(),
             units: built.units,
             provenance: built.provenance,
         }))
+    }
+
+    fn compile_options(&self) -> CompileOptions {
+        CompileOptions {
+            kind: CompileKind::Tests,
+            locked: self.options.open.locked,
+            offline: self.options.open.offline,
+            timeout: self.options.timeout,
+            build: self.options.build.clone(),
+            ..CompileOptions::new(self.workspace.build_dir().nested("equivalence"))
+        }
     }
 }

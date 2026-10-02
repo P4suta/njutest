@@ -13,14 +13,16 @@ use sha2::{Digest as _, Sha256};
 use super::{CompileOptions, Compiled, Completion, Driver, Exited, Message};
 use crate::vars::Variables;
 
+mod failure;
 pub(super) mod toolchain;
+pub(super) use failure::FailedStage;
 
-const SCHEMA: &str = "rust-mutants-compilation-v1";
+const SCHEMA: &str = "rust-mutants-compilation-v3";
 const DIRECTORY: &str = "rust-mutants-compilations";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct File {
+pub(super) struct File {
     size: u64,
     digest: String,
     mode: u32,
@@ -35,12 +37,17 @@ struct Record {
     stdout_digest: String,
     files: BTreeMap<PathBuf, File>,
     environment: BTreeMap<String, Option<String>>,
+    exit: i32,
+    generation: String,
+    observation: super::CompilerObservation,
 }
 
 pub(super) struct Request {
     pub(super) key: String,
     record: PathBuf,
     inputs: BTreeMap<PathBuf, File>,
+    target: PathBuf,
+    environment: Variables,
 }
 
 impl Request {
@@ -59,6 +66,7 @@ impl Request {
         {
             return Err(io::Error::other("unlocked or unbound build inputs"));
         }
+        let environment = env.clone();
         let mut inputs = BTreeMap::new();
         tree(root, options.target_dir.path(), &mut inputs)?;
         match options.target_dir.cache_roots() {
@@ -125,6 +133,8 @@ impl Request {
                 .join(format!("{key}.json")),
             key,
             inputs,
+            target: options.target_dir.path().to_path_buf(),
+            environment,
         })
     }
 
@@ -132,55 +142,44 @@ impl Request {
         &self,
         driver: &Driver<'_>,
         options: &CompileOptions,
-        env: &Variables,
+        (env, preparation): (&Variables, &Preparation),
     ) -> io::Result<Compiled> {
         let record: Record = crate::strictjson::decode_slice(&std::fs::read(&self.record)?)
             .map_err(io::Error::other)?;
-        if record.schema != SCHEMA
+        if options.target_dir.path() != self.target
+            || record.schema != SCHEMA
             || record.key != self.key
             || record.stdout_digest != crate::id::HexDigest::of(&record.stdout).as_str()
+            || !record
+                .observation
+                .verifies(&record.stdout, &self.key, record.exit)
         {
             return Err(io::Error::other("unverified compilation record"));
+        }
+        let mut messages = super::parse_messages(&record.stdout).map_err(io::Error::other)?;
+        let completion =
+            Completion::of(&messages, Exited::from_code(record.exit)).map_err(io::Error::other)?;
+        if !plain_messages(&messages) {
+            return Err(io::Error::other("opaque compilation"));
+        }
+        if completion == Completion::Refused
+            && (!preparation.shares(&record.generation)
+                || complete_environment(env)? != record.environment)
+        {
+            return Err(io::Error::other(
+                "a compiler refusal belongs to an earlier request",
+            ));
         }
         for (name, value) in &record.environment {
             if &environment_value(env, name) != value {
                 return Err(io::Error::other("compiler environment changed"));
             }
         }
-        verified_files(&record.files, options.target_dir.path())?;
-        let mut messages = super::parse_messages(&record.stdout).map_err(io::Error::other)?;
-        let completion = Completion::of(
-            &messages,
-            Exited::of(&crate::runner::Termination::Exited(
-                crate::runner::ProcessExit::Code(0),
-            ))
-            .ok_or_else(|| io::Error::other("successful exit"))?,
-        )
-        .map_err(io::Error::other)?;
-        if completion != Completion::Built || !plain_messages(&messages) {
-            return Err(io::Error::other("incomplete or opaque compilation"));
+        let products = self.products(record.observation.id());
+        if completion == Completion::Built || !record.files.is_empty() {
+            verified_files(&record.files, &products)?;
         }
-        for message in &mut messages {
-            if let Message::CompilerArtifact(artifact) = message {
-                artifact.fresh = true;
-                if artifact
-                    .filenames
-                    .iter()
-                    .chain(&artifact.executable)
-                    .any(|path| !record.files.contains_key(path))
-                {
-                    return Err(io::Error::other("unverified artifact in Cargo messages"));
-                }
-                for path in artifact.filenames.iter().chain(&artifact.executable) {
-                    if let Some(depinfo) = super::dep_info_path(path, &artifact.target.name)
-                        && held(&depinfo)?
-                        && !record.files.contains_key(&depinfo)
-                    {
-                        return Err(io::Error::other("unverified compiler dependency record"));
-                    }
-                }
-            }
-        }
+        self.replay(&mut messages, &record.files, &products)?;
         let units = super::units_of(&messages, driver.dir).map_err(io::Error::other)?;
         if units
             .iter()
@@ -191,10 +190,11 @@ impl Request {
         }
         let names: std::collections::BTreeSet<&String> =
             units.iter().flat_map(|unit| unit.env.keys()).collect();
-        if names != record.environment.keys().collect()
-            || names
-                .iter()
-                .any(|name| !cargo_variable(env.spelling(), std::ffi::OsStr::new(name)))
+        if completion == Completion::Built
+            && (names != record.environment.keys().collect()
+                || names
+                    .iter()
+                    .any(|name| !cargo_variable(env.spelling(), std::ffi::OsStr::new(name))))
         {
             return Err(io::Error::other(
                 "unverified compiler environment dependencies",
@@ -202,20 +202,59 @@ impl Request {
         }
         Ok(Compiled {
             completion,
+            observation: record.observation,
             messages,
             units,
-            provenance: super::Provenance::VerifiedReuse,
+            provenance: match completion {
+                Completion::Built => super::Provenance::VerifiedReuse,
+                Completion::Refused => super::Provenance::SharedRefusal,
+            },
         })
+    }
+
+    fn replay(
+        &self,
+        messages: &mut [Message],
+        files: &BTreeMap<PathBuf, File>,
+        products: &Path,
+    ) -> io::Result<()> {
+        for message in messages {
+            if let Message::CompilerArtifact(artifact) = message {
+                for path in artifact
+                    .filenames
+                    .iter_mut()
+                    .chain(&mut artifact.executable)
+                {
+                    *path = self.product(path, products)?;
+                }
+                if artifact
+                    .filenames
+                    .iter()
+                    .chain(&artifact.executable)
+                    .any(|path| !files.contains_key(path))
+                {
+                    return Err(io::Error::other("unverified artifact in Cargo messages"));
+                }
+                for path in artifact.filenames.iter().chain(&artifact.executable) {
+                    if let Some(depinfo) = super::dep_info_path(path, &artifact.target.name)
+                        && held(&depinfo)?
+                        && !files.contains_key(&depinfo)
+                    {
+                        return Err(io::Error::other("unverified compiler dependency record"));
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn write(
         &self,
-        compiled: &Compiled,
-        stdout: &[u8],
-        (env, target): (&Variables, &Path),
+        compiled: &mut Compiled,
+        (stdout, env, target): (&[u8], &Variables, &Path),
+        (exit, preparation): (Exited, &Preparation),
     ) -> io::Result<()> {
-        if compiled.completion() != Completion::Built
-            || !plain_messages(&compiled.messages)
+        if !plain_messages(&compiled.messages)
             || compiled
                 .units
                 .iter()
@@ -224,6 +263,68 @@ impl Request {
         {
             return Err(io::Error::other("incomplete or opaque compiler inputs"));
         }
+        let names = compiled.units.iter().flat_map(|unit| unit.env.keys());
+        if names
+            .clone()
+            .any(|name| !cargo_variable(env.spelling(), std::ffi::OsStr::new(name)))
+        {
+            return Err(io::Error::other(
+                "the compiler reads a volatile diagnostic variable",
+            ));
+        }
+        let environment = match compiled.completion() {
+            Completion::Built => names
+                .map(|name| (name.clone(), environment_value(env, name)))
+                .collect(),
+            Completion::Refused => complete_environment(env)?,
+        };
+        let frozen = self.freeze_products(compiled, target)?;
+        let parent = self
+            .record
+            .parent()
+            .ok_or_else(|| io::Error::other("cache record parent"))?;
+        let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+        let generation = temporary
+            .path()
+            .file_name()
+            .ok_or_else(|| io::Error::other("publication identity"))?
+            .to_str()
+            .ok_or_else(|| io::Error::other("publication identity is not text"))?
+            .to_owned();
+        let record = Record {
+            schema: SCHEMA.to_owned(),
+            key: self.key.clone(),
+            stdout: stdout.to_vec(),
+            stdout_digest: crate::id::HexDigest::of(stdout).as_str().to_owned(),
+            files: frozen,
+            environment,
+            exit: exit.code(),
+            generation: generation.clone(),
+            observation: compiled.observation().clone(),
+        };
+        temporary.write_all(&serde_json::to_vec(&record).map_err(io::Error::other)?)?;
+        temporary.persist(&self.record).map_err(io::Error::other)?;
+        preparation.publish(&generation)?;
+        let products = self.products(compiled.observation().id());
+        for message in &mut compiled.messages {
+            if let Message::CompilerArtifact(artifact) = message {
+                for path in artifact
+                    .filenames
+                    .iter_mut()
+                    .chain(&mut artifact.executable)
+                {
+                    *path = self.product(path, &products)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn freeze_products(
+        &self,
+        compiled: &Compiled,
+        target: &Path,
+    ) -> io::Result<BTreeMap<PathBuf, File>> {
         let mut files = BTreeMap::new();
         for message in &compiled.messages {
             if let Message::CompilerArtifact(artifact) = message {
@@ -242,39 +343,159 @@ impl Request {
                 }
             }
         }
-        let names = compiled.units.iter().flat_map(|unit| unit.env.keys());
-        if names
-            .clone()
-            .any(|name| !cargo_variable(env.spelling(), std::ffi::OsStr::new(name)))
-        {
-            return Err(io::Error::other(
-                "the compiler reads a volatile diagnostic variable",
-            ));
-        }
-        let environment = names
-            .map(|name| (name.clone(), environment_value(env, name)))
-            .collect();
-        let record = Record {
-            schema: SCHEMA.to_owned(),
-            key: self.key.clone(),
-            stdout: stdout.to_vec(),
-            stdout_digest: crate::id::HexDigest::of(stdout).as_str().to_owned(),
-            files,
-            environment,
-        };
         let parent = self
             .record
             .parent()
             .ok_or_else(|| io::Error::other("cache record parent"))?;
         std::fs::create_dir_all(parent)?;
-        let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
-        temporary.write_all(&serde_json::to_vec(&record).map_err(io::Error::other)?)?;
-        temporary.persist(&self.record).map_err(io::Error::other)?;
+        let staging = tempfile::Builder::new()
+            .prefix("products-")
+            .tempdir_in(parent)?;
+        let mut frozen = BTreeMap::new();
+        let products = self.products(compiled.observation().id());
+        for (path, state) in files {
+            let relative = product_relative(&path, target)?;
+            let copied = staging.path().join(relative);
+            let destination = copied
+                .parent()
+                .ok_or_else(|| io::Error::other("product parent"))?;
+            std::fs::create_dir_all(destination)?;
+            std::fs::copy(&path, &copied)?;
+            if file(&path)? != state || file(&copied)? != state {
+                return Err(io::Error::other(
+                    "compiler products changed during publication",
+                ));
+            }
+            frozen.insert(self.product(&path, &products)?, state);
+        }
+        if held(&products)? {
+            if !frozen.is_empty() {
+                verified_files(&frozen, &products)?;
+            }
+        } else {
+            std::fs::rename(staging.path(), &products)?;
+        }
+        Ok(frozen)
+    }
+
+    pub(super) fn unchanged(
+        &self,
+        driver: &Driver<'_>,
+        options: &CompileOptions,
+    ) -> io::Result<()> {
+        let mut env = self.environment.clone();
+        let current = Self::of(driver, options, &mut env)?;
+        if current.key != self.key {
+            return Err(io::Error::other(
+                "compiler inputs changed while preparing their products",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) fn independent(mut self, observation: &str) -> Self {
+        self.record
+            .set_file_name(format!("{}.witness-{observation}.json", self.key));
+        self
+    }
+
+    fn products(&self, observation: &str) -> PathBuf {
+        self.record
+            .with_file_name(format!("{}.{observation}.products", self.key))
+    }
+
+    fn product(&self, original: &Path, products: &Path) -> io::Result<PathBuf> {
+        if !bound_artifact(original, &self.target) {
+            return Err(io::Error::other("unbound compiler product"));
+        }
+        Ok(products.join(product_relative(original, &self.target)?))
+    }
+}
+
+fn complete_environment(env: &Variables) -> io::Result<BTreeMap<String, Option<String>>> {
+    env.canonical()
+        .into_iter()
+        .map(|(name, value)| {
+            let name = name
+                .to_str()
+                .ok_or_else(|| io::Error::other("non-textual compiler environment identity"))?;
+            Ok((
+                name.to_owned(),
+                Some(
+                    crate::id::HexDigest::of(value.as_encoded_bytes())
+                        .as_str()
+                        .to_owned(),
+                ),
+            ))
+        })
+        .collect()
+}
+
+pub(super) struct Preparation {
+    _lease: std::fs::File,
+    publication: PathBuf,
+    prior: Option<Vec<u8>>,
+    current: Option<Vec<u8>>,
+}
+
+impl Preparation {
+    pub(super) fn own(target: &Path, trace: &crate::trace::Recorder) -> io::Result<Self> {
+        std::fs::create_dir_all(target)?;
+        let publication = target.join("rust-mutants-preparation-publication");
+        let read = || match std::fs::read(&publication) {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(source) => Err(source),
+        };
+        let prior = read()?;
+        let lease = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(target.join("rust-mutants-preparation.lock"))?;
+        let started = std::time::Instant::now();
+        let result = lease.lock();
+        let elapsed_ns = u64::try_from(started.elapsed().as_nanos()).map_err(io::Error::other)?;
+        let cpus = std::thread::available_parallelism()?.get();
+        trace.note(
+            "host-wait",
+            &serde_json::json!({
+                "owner": target.display().to_string(), "cause": "compiler preparation lease",
+                "elapsed_ns": elapsed_ns,
+                "machine": {"os": std::env::consts::OS, "cpus": cpus}
+            })
+            .to_string(),
+        );
+        result?;
+        let current = read()?;
+        Ok(Self {
+            _lease: lease,
+            publication,
+            prior,
+            current,
+        })
+    }
+
+    fn shares(&self, generation: &str) -> bool {
+        self.prior != self.current && self.current.as_deref() == Some(generation.as_bytes())
+    }
+
+    fn publish(&self, generation: &str) -> io::Result<()> {
+        let parent = self
+            .publication
+            .parent()
+            .ok_or_else(|| io::Error::other("publication parent"))?;
+        let mut staged = tempfile::NamedTempFile::new_in(parent)?;
+        staged.write_all(generation.as_bytes())?;
+        staged
+            .persist(&self.publication)
+            .map_err(io::Error::other)?;
         Ok(())
     }
 }
 
-fn file(path: &Path) -> io::Result<File> {
+pub(super) fn file(path: &Path) -> io::Result<File> {
     let metadata = std::fs::symlink_metadata(path)?;
     if !metadata.is_file() {
         return Err(io::Error::other(
@@ -309,11 +530,15 @@ fn file(path: &Path) -> io::Result<File> {
     })
 }
 
-fn tree(root: &Path, target: &Path, files: &mut BTreeMap<PathBuf, File>) -> io::Result<()> {
+pub(super) fn tree(
+    root: &Path,
+    target: &Path,
+    files: &mut BTreeMap<PathBuf, File>,
+) -> io::Result<()> {
     for entry in std::fs::read_dir(root)? {
         let entry = entry?;
         let path = entry.path();
-        if path.starts_with(target) {
+        if !target.as_os_str().is_empty() && path.starts_with(target) {
             continue;
         }
         if entry.file_type()?.is_dir() {
@@ -325,7 +550,22 @@ fn tree(root: &Path, target: &Path, files: &mut BTreeMap<PathBuf, File>) -> io::
     Ok(())
 }
 
-fn plain_manifest(path: &Path) -> bool {
+fn product_relative(path: &Path, target: &Path) -> io::Result<PathBuf> {
+    let path = njutest_fixture_tree::filesystem_spelling(path);
+    let target = njutest_fixture_tree::filesystem_spelling(target);
+    let relative = path.strip_prefix(target).map_err(io::Error::other)?;
+    if relative
+        .components()
+        .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(io::Error::other(
+            "a compiler product has an unbound relative path",
+        ));
+    }
+    Ok(relative.to_path_buf())
+}
+
+pub(super) fn plain_manifest(path: &Path) -> bool {
     let Ok(source) = std::fs::read_to_string(path) else {
         return false;
     };
@@ -365,7 +605,7 @@ fn dependencies(value: &toml::Value) -> bool {
     }
 }
 
-fn configurations(
+pub(super) fn configurations(
     root: &Path,
     env: &Variables,
     files: &mut BTreeMap<PathBuf, File>,
@@ -579,15 +819,41 @@ fn linked(
         return Err(io::Error::other("an unsupported linker switch"));
     }
     let path = dir.join(value);
-    let bound = file(&path)?;
+    let bound = file(&path).map_err(|source| link_input_refused(&path, source))?;
     files.insert(path.clone(), bound);
     indirect(&path)?;
     Ok(())
 }
 
+/// A refused compiler input with its exact identity and underlying typed cause.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+#[error("{code}: the link input {} could not be bound ({:?})", path.display(), source.kind(), code = LinkInputError::code().code)]
+struct LinkInputError {
+    path: PathBuf,
+    source: io::Error,
+}
+
+/// Preserves the I/O kind and attaches the input's identity without using localized prose.
+impl LinkInputError {
+    const fn code() -> crate::error::ErrorCode {
+        crate::error::COMPILER_INPUT_UNREADABLE
+    }
+}
+
+fn link_input_refused(path: &Path, source: io::Error) -> io::Error {
+    io::Error::new(
+        source.kind(),
+        LinkInputError {
+            path: path.to_path_buf(),
+            source,
+        },
+    )
+}
+
 /// Refuses every format and metadata variant outside the engine's self-contained WebAssembly object.
 fn indirect(path: &Path) -> io::Result<()> {
-    let bytes = std::fs::read(path)?;
+    let bytes = std::fs::read(path).map_err(|source| link_input_refused(path, source))?;
     if bytes.starts_with(b"!<") {
         return Err(io::Error::other(
             "an archive link input whose members the record does not bind",
@@ -798,9 +1064,35 @@ mod tests {
             &flags,
         )
         .expect_err("the plain protocol splits a path with spaces into arguments rustc refuses");
-        assert!(
-            refused.to_string().contains("No such file"),
-            "the refusal names the path half it tried to bind: {refused}"
+        assert_refused_input(
+            &refused,
+            &directory.path().join("with"),
+            io::ErrorKind::NotFound,
+        );
+    }
+
+    #[test]
+    fn a_self_contained_webassembly_platform_object_is_bound_by_its_content() {
+        let directory = tempfile::tempdir().expect("an owned input root");
+        let path = directory.path().join("platform.o");
+        let module = [
+            b"\0asm\x01\0\0\0".as_slice(),
+            b"\x00\x09\x07linking\x02".as_slice(),
+        ]
+        .concat();
+        std::fs::write(&path, module).expect("a valid core module with linking metadata");
+        let files = bound(
+            directory.path(),
+            Some(crate::sealed::TARGET),
+            "CARGO_ENCODED_RUSTFLAGS",
+            "-Clink-arg=platform.o",
+        )
+        .unwrap_or_else(|error| panic!("the engine's own platform object is admitted: {error}"));
+        assert_eq!(
+            files.keys().collect::<Vec<_>>(),
+            [&path],
+            "the object is bound by its content, which is the positive control for every \
+             refusal the format checks make"
         );
     }
 
@@ -1023,10 +1315,45 @@ mod tests {
             "-Clink-arg=/no/such/object.o",
         )
         .expect_err("a file that is not there cannot be bound");
-        assert!(
-            refused.to_string().contains("No such file"),
-            "the refusal names what it could not read: {refused}"
+        assert_refused_input(
+            &refused,
+            Path::new("/no/such/object.o"),
+            io::ErrorKind::NotFound,
         );
+    }
+
+    fn assert_refused_input(refused: &io::Error, path: &Path, kind: io::ErrorKind) {
+        assert_eq!(refused.kind(), kind);
+        let input = refused
+            .get_ref()
+            .and_then(|source| source.downcast_ref::<super::LinkInputError>())
+            .expect("a refusal exposes the named input and typed cause");
+        assert_eq!(input.path, path);
+        assert_eq!(input.source.kind(), kind);
+        assert!(refused.to_string().contains(&path.display().to_string()));
+    }
+
+    #[test]
+    fn localized_input_failures_keep_their_kind_identity_and_original_source() {
+        for kind in [
+            io::ErrorKind::NotFound,
+            io::ErrorKind::PermissionDenied,
+            io::ErrorKind::Other,
+        ] {
+            let path = Path::new("/compiler/input.o");
+            let source = io::Error::new(kind, "指定されたファイルを読み取れません。");
+            let refused = super::link_input_refused(path, source);
+            assert_refused_input(&refused, path, kind);
+            let input = refused.get_ref().expect("the source");
+            assert_eq!(
+                input
+                    .source()
+                    .expect("the original I/O failure")
+                    .to_string(),
+                "指定されたファイルを読み取れません。"
+            );
+            assert!(!refused.to_string().contains("指定された"));
+        }
     }
 
     #[test]

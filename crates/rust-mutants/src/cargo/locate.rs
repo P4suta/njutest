@@ -59,6 +59,20 @@ impl Toolchain {
             Some(rustc) => rustc,
             None => resolve_executable(Path::new("rustc"), options.search_path.as_deref())?,
         };
+        super::observed::locate((options, dir), (&cargo, &rustc), watch, |observed| {
+            Self::fresh(
+                (options, dir, &name),
+                (cargo.clone(), rustc.clone()),
+                observed,
+            )
+        })
+    }
+
+    fn fresh<W: crate::runner::Watch + ?Sized>(
+        (options, dir, name): (&LocateOptions, &Path, &Path),
+        (cargo, rustc): (PathBuf, PathBuf),
+        watch: &W,
+    ) -> Result<Self, CargoError> {
         let cargo_banner = |program: &Path| -> Result<VersionInfo, CargoError> {
             probed((program, "cargo-probe"), dir, options.env.as_ref(), watch)
         };
@@ -94,6 +108,28 @@ impl Toolchain {
         })
     }
 
+    pub(super) fn observed(
+        located: super::observed::Located,
+        env: Option<crate::vars::Variables>,
+    ) -> Result<Self, CargoError> {
+        let env = match env {
+            Some(env) if located.chosen != located.cargo => {
+                Some(with_toolchain(env, &located.rustc, Some(&located.sysroot))?)
+            }
+            env => env,
+        };
+        Ok(Self {
+            cargo: located.cargo,
+            chosen: located.chosen,
+            rustc: located.rustc,
+            sysroot: Some(located.sysroot),
+            cargo_version: located.cargo_version,
+            rustc_version: located.rustc_version,
+            env,
+            identities: super::build_cache::toolchain::Identities::empty(),
+        })
+    }
+
     /// What `rustc --print cfg` says of `target`, or of the host where there is none, kept to the names a target alone decides (ADR 0042).
     ///
     /// # Errors
@@ -117,11 +153,10 @@ impl Toolchain {
         spec.dir = Some(dir.to_path_buf());
         spec.env.clone_from(&self.env);
         spec.structured_stdout = Some(PROBE_OUTPUT_LIMIT);
-        let result = run(&spec, cancel);
-        if !result.succeeded() {
-            return Err(command_failed(&spec, &result));
-        }
-        let said = std::str::from_utf8(&result.stdout).map_err(|source| {
+        let trace = crate::trace::Recorder::disabled();
+        let watch = crate::runner::Watched::new(cancel, &trace);
+        let stdout = super::observed::run(&spec, self, super::observed::Role::RustcCfg, &watch)?;
+        let said = std::str::from_utf8(&stdout).map_err(|source| {
             CargoError::new(
                 CargoErrorKind::VersionUnreadable,
                 format!("{} printed a non-UTF-8 cfg", self.rustc.display()),
@@ -197,7 +232,7 @@ impl Toolchain {
         let this = Bare::Is(self.cargo_version.clone());
         let Some(said) = [&env, &confined]
             .into_iter()
-            .map(|asked| bare_banner(asked, dir, cancel))
+            .map(|asked| bare_banner(self, (asked, dir), cancel))
             .find(|answered| *answered != this)
             .map(|answered| answered.told())
         else {
@@ -218,7 +253,7 @@ impl Toolchain {
         let pinned = first_on_search_path(env, &bin)?;
         let again = [pinned.clone(), first_on_search_path(confined, &bin)?]
             .iter()
-            .map(|asked| bare_banner(asked, dir, cancel))
+            .map(|asked| bare_banner(self, (asked, dir), cancel))
             .find(|answered| *answered != this);
         match again {
             None => Ok(ForTests {
@@ -346,7 +381,7 @@ fn diagnostic_os(value: &OsStr) -> String {
 }
 
 /// Runs one toolchain probe under the run's watch, so its actual start and duration are counted by its named role.
-fn probed_run<W: crate::runner::Watch>(
+fn probed_run<W: crate::runner::Watch + ?Sized>(
     spec: &Spec,
     watch: &W,
     role: &str,
@@ -363,7 +398,7 @@ fn probed_run<W: crate::runner::Watch>(
 }
 
 /// Reads one program's version banner through the run's watch.
-fn probed<W: crate::runner::Watch>(
+fn probed<W: crate::runner::Watch + ?Sized>(
     (program, role): (&Path, &str),
     dir: &Path,
     env: Option<&crate::vars::Variables>,
@@ -469,7 +504,11 @@ impl Bare {
 }
 
 /// What a `cargo` found by its bare name on `env`'s search path answers from `dir`, with `env` as its whole environment.
-fn bare_banner(env: &crate::vars::Variables, dir: &Path, cancel: &Cancel) -> Bare {
+fn bare_banner(
+    toolchain: &Toolchain,
+    (env, dir): (&crate::vars::Variables, &Path),
+    cancel: &Cancel,
+) -> Bare {
     let cargo = match resolve_executable(Path::new("cargo"), env.search_path()) {
         Ok(cargo) => cargo,
         Err(error) => return Bare::Said(error.to_string()),
@@ -478,14 +517,14 @@ fn bare_banner(env: &crate::vars::Variables, dir: &Path, cancel: &Cancel) -> Bar
     spec.dir = Some(dir.to_path_buf());
     spec.env = Some(env.clone());
     spec.structured_stdout = Some(PROBE_OUTPUT_LIMIT);
-    let result = run(&spec, cancel);
-    if !result.succeeded() {
-        return Bare::Said(match std::str::from_utf8(&result.output) {
-            Ok(text) => format!("{} said: {}", cargo.display(), text.trim()),
-            Err(_not_utf8) => format!("{} failed and said nothing readable", cargo.display()),
-        });
-    }
-    match std::str::from_utf8(&result.stdout).map(parse_version) {
+    let trace = crate::trace::Recorder::disabled();
+    let watch = crate::runner::Watched::new(cancel, &trace);
+    let stdout =
+        match super::observed::run(&spec, toolchain, super::observed::Role::CargoBanner, &watch) {
+            Ok(stdout) => stdout,
+            Err(error) => return Bare::Said(error.to_string()),
+        };
+    match std::str::from_utf8(&stdout).map(parse_version) {
         Ok(Ok(banner)) => Bare::Is(banner),
         Ok(Err(error)) => Bare::Said(error.to_string()),
         Err(_not_utf8) => Bare::Said(format!(
@@ -637,7 +676,7 @@ fn executable_variants(dir: &Path, name: &Path) -> Vec<PathBuf> {
 }
 
 /// What `rustc --print sysroot` says, when it will say anything: a path this run may use and never one it needs.
-fn sysroot_of<W: crate::runner::Watch>(
+fn sysroot_of<W: crate::runner::Watch + ?Sized>(
     rustc: &Path,
     dir: &Path,
     env: Option<&crate::vars::Variables>,

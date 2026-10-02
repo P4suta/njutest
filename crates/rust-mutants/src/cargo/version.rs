@@ -6,7 +6,8 @@
 use super::{CargoError, CargoErrorKind};
 
 /// What `cargo -vV` or `rustc -vV` said about itself.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct VersionInfo {
     /// The first line, e.g. `rustc 1.98.1 (48a229cea 2026-09-01)`.
     pub summary: String,

@@ -55,6 +55,7 @@ pub struct BuildDir {
     members: Vec<Member>,
     root: Option<PathBuf>,
     graph: Option<Vec<PathBuf>>,
+    graph_names: Vec<String>,
 }
 
 /// The record a target directory keeps: every member's files as the last build that could write its fingerprints found them.
@@ -83,6 +84,7 @@ impl BuildDir {
             members,
             root: None,
             graph: None,
+            graph_names: Vec::new(),
         }
     }
 
@@ -109,6 +111,7 @@ impl BuildDir {
             members: self.members.clone(),
             root: self.root.clone(),
             graph: self.graph.clone(),
+            graph_names: self.graph_names.clone(),
         }
     }
 
@@ -206,12 +209,18 @@ impl BuildDir {
             members: self.members.clone(),
             root: self.root.clone(),
             graph: self.graph.clone(),
+            graph_names: self.graph_names.clone(),
         }
     }
 
     /// Binds reuse to the complete Cargo graph, refusing arbitrary build scripts and procedural macros.
     #[must_use]
     pub fn with_graph(mut self, metadata: &super::Metadata) -> Self {
+        self.graph_names = metadata
+            .packages
+            .iter()
+            .map(|package| package.name.clone())
+            .collect();
         self.graph = if metadata
             .packages
             .iter()
@@ -241,6 +250,16 @@ impl BuildDir {
 
     pub(super) fn root(&self) -> Option<&Path> {
         self.root.as_deref()
+    }
+
+    pub(super) fn independent(&self) -> Result<(), CargoError> {
+        let members: Vec<&str> = self
+            .members
+            .iter()
+            .map(|member| member.name.as_str())
+            .chain(self.graph_names.iter().map(String::as_str))
+            .collect();
+        invalidate(&self.path, &members)
     }
 
     /// Makes cargo compile again every unit of a member whose files differ from what this directory last built it from, and dates every member's files back to when their bytes last moved, never forward.

@@ -97,7 +97,10 @@ pub fn recompiled(
     provenance: crate::cargo::Provenance,
 ) -> Recompiled {
     let named = crate::cargo::resolved(changed);
-    let verified_reuse = provenance == crate::cargo::Provenance::VerifiedReuse;
+    let verified_reuse = match provenance {
+        crate::cargo::Provenance::VerifiedReuse => true,
+        crate::cargo::Provenance::Compiler | crate::cargo::Provenance::SharedRefusal => false,
+    };
     let mut read = false;
     for unit in units {
         let reads = unit.inputs.iter().any(|input| {

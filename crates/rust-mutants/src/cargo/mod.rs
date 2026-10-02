@@ -11,11 +11,14 @@ pub mod config;
 mod cost;
 mod depinfo;
 mod doctests;
+mod execution_products;
 mod locate;
 pub mod manifest;
 mod messages;
 mod metadata;
+mod observed;
 mod outside;
+mod provenance;
 mod version;
 
 use std::fmt;
@@ -25,6 +28,7 @@ use crate::error::{self, ErrorCode};
 use crate::runner::Cancel;
 use crate::trace::Recorder;
 
+pub use crate::trace::{ProbeRole, ProbeSite, record_probe};
 pub use build_identity::{BUILD_SELECTION_DOMAIN, BuildSelection, BuildSelectionDigest};
 pub use built::{BuildDir, LEDGER_NAME, LEDGER_SCHEMA, Member, MemberFile, fingerprint_of};
 pub use compile::{
@@ -39,6 +43,8 @@ pub use depinfo::{
 pub use doctests::{
     DoctestCapture, build_capture, capture_arguments, capture_doctests, empty_capture,
 };
+pub use execution_products::ExecutionProducts;
+pub use provenance::{CompilerObservation, CompilerPurpose, InputIdentity};
 
 pub use locate::{
     ForTests, LocateOptions, Selecting, Toolchain, command_failed, resolve_executable,
@@ -67,8 +73,25 @@ pub struct Driver<'a> {
     pub trace: &'a Recorder,
 }
 
+pub(crate) fn input_identity(
+    driver: &Driver<'_>,
+    options: &CompileOptions,
+) -> Result<InputIdentity, CargoError> {
+    compile::input_identity((driver, options))
+}
+
 /// The failure modes of this module, each with a stable code.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, njutest_macros::AllVariants)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    njutest_macros::AllVariants,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub enum CargoErrorKind {
     /// The cargo or rustc executable could not be found.
     ToolchainNotFound,

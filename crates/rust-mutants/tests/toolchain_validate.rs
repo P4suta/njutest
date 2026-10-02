@@ -114,6 +114,7 @@ impl Compile for CargoScripted {
         Ok(Attempt {
             files,
             completion: checked.completion(),
+            stderr: checked.stderr().to_vec(),
             messages: checked.messages,
             written,
         })

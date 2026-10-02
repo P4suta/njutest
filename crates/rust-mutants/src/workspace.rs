@@ -1006,11 +1006,9 @@ impl Workspace {
         let toolchain = Self::located(&root, &options, &locating)?;
         let build_dir = Self::reachable(&root, &toolchain, &options, cancel)?;
 
-        let mut rules = Self::rules_for(&root, build_dir, parent.path(), &options)?;
-        let snapshot = Self::copy(&root, &rules, &options, now)?;
+        let rules = Self::rules_for(&root, build_dir, parent.path(), &options)?;
         let (snapshot, build_owner) = Self::shared(
-            snapshot,
-            &mut rules,
+            &rules,
             &options,
             &Driver {
                 toolchain: &toolchain,
@@ -1100,37 +1098,28 @@ impl Workspace {
         })
     }
 
-    /// Claims shared compiled content while recreating every run's source and execution state.
+    /// Makes each editable copy from the one verified immutable source graph.
     fn shared(
-        mut snapshot: Snapshot,
-        rules: &mut SnapshotOptions,
+        rules: &SnapshotOptions,
         options: &OpenOptions,
         driver: &Driver<'_>,
     ) -> Result<(Snapshot, Option<std::sync::Arc<crate::sealed::BuildClaim>>), crate::EngineError>
     {
         let now = jiff::Timestamp::now();
         if options.env.holds("NJUTEST_FIXTURE_BUILD_CACHE") {
-            let content =
-                pool::content(&snapshot, rules).map_err(|source| SessionError::WriteFailed {
-                    path: "shared fixture content identity".to_owned(),
-                    source,
+            let graph = pool::Graph::open(rules, options, now)?;
+            let owner = pool::claim(&options.env, (graph.key(), driver.toolchain), now)
+                .map_err(pool::unavailable)?
+                .ok_or_else(|| {
+                    pool::unavailable(std::io::Error::other(
+                        "a retained source graph needs an editable lease",
+                    ))
                 })?;
-            let build_owner = pool::claim(&options.env, (&content, driver.toolchain), now)
-                .map_err(|source| SessionError::WriteFailed {
-                    path: "shared fixture build directory".to_owned(),
-                    source,
-                })?;
-            let build_owner = build_owner
-                .map(|owner| std::sync::Arc::new(crate::sealed::BuildClaim::new(owner, None)));
-            if let Some(owner) = &build_owner {
-                rules.dest_parent = owner.dir().to_path_buf();
-                let shared = Self::copy(driver.dir, rules, options, now)?;
-                snapshot.cleanup()?;
-                snapshot = shared;
-            }
-            return Ok((snapshot, build_owner));
+            let snapshot = graph.copy((driver.dir, owner.dir().to_path_buf()), options, now)?;
+            let owner = std::sync::Arc::new(crate::sealed::BuildClaim::new(owner, None));
+            return Ok((snapshot, Some(owner)));
         }
-        Ok((snapshot, None))
+        Ok((Self::copy(driver.dir, rules, options, now)?, None))
     }
 
     /// The opening event, with the original temporary area's complete sweep counts.

@@ -62,7 +62,7 @@ pub fn digest(path: &Path) -> String {
 fn built(root: &Path, target: &Path) -> Built {
     let mut command = std::process::Command::new(crate::paths::cargo_binary());
     configure_build_command(&mut command, root, target);
-    let Ok(said) = command.output() else {
+    let Ok(said) = crate::cost::cargo(command, "reproducible::built compiler witness") else {
         return Built::new();
     };
     if !said.status.success() {

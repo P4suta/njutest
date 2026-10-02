@@ -7,10 +7,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::locate::command_failed;
 use super::{CargoError, CargoErrorKind, Driver};
-use crate::runner::run;
-use crate::trace::ExecRecord;
 
 /// How much `cargo metadata` output is kept.
 /// A workspace whose metadata is larger than this is not one the engine is going to instrument anyway.
@@ -396,26 +393,14 @@ impl Metadata {
             env.set("CARGO_CACHE_RUSTC_INFO", "0");
         }
         spec.structured_stdout = Some(METADATA_OUTPUT_LIMIT);
-        let result = run(&spec, driver.cancel);
-        driver.trace.exec_result(ExecRecord::of(&spec, &result));
-        if result.leader.is_some() {
-            match u64::try_from(result.duration.as_millis()) {
-                Ok(millis) => driver.trace.note("cargo-metadata", &millis.to_string()),
-                Err(_outside_wire) => driver
-                    .trace
-                    .note("cargo-metadata", "duration outside the wire"),
-            }
-        }
-        if !result.succeeded() {
-            return Err(command_failed(&spec, &result));
-        }
-        if result.stdout_truncated {
-            return Err(CargoError::new(
-                CargoErrorKind::MetadataUnparsable,
-                "cargo metadata printed more than the engine keeps",
-            ));
-        }
-        Self::parse(&result.stdout)
+        let watch = crate::runner::Watched::new(driver.cancel, driver.trace);
+        let stdout = super::observed::run(
+            &spec,
+            driver.toolchain,
+            super::observed::Role::Metadata,
+            &watch,
+        )?;
+        Self::parse(&stdout)
     }
 
     /// Every package whose code goes into `id`'s test binary: `id` itself, everything it depends on through normal and build edges transitively, and its own development dependencies.

@@ -198,23 +198,11 @@ fn sorted(dir: &Path) -> Vec<std::fs::DirEntry> {
     entries
 }
 
-/// `path` resolved, in the one spelling the products hold a directory in.
-///
-/// Windows answers `canonicalize` with the extended form, `\\?\C:\...`, and the products put what they resolved back into the plain one: the engine states the rule in `rust_mutants::canonical`, and the dependency direction `cargo xtask deps` holds keeps this crate below it rather than above, so the rule is stated again here for the suites.
-/// A fixture that handed a run the extended spelling would have the run answer in a name no assertion here writes.
+/// `path` resolved through the shared filesystem-root spelling used by fixtures and snapshots.
 fn canonical(path: &Path) -> PathBuf {
-    let resolved = path.canonicalize().expect("the fixture path exists");
-    #[cfg(windows)]
-    {
-        let text = resolved.to_str().expect("fixture paths are UTF-8");
-        if let Some(rest) = text.strip_prefix(r"\\?\")
-            && !rest.starts_with("UNC\\")
-            && Path::new(rest).is_absolute()
-        {
-            return PathBuf::from(rest);
-        }
-    }
-    resolved
+    njutest_fixture_tree::filesystem_spelling(
+        &path.canonicalize().expect("the fixture path exists"),
+    )
 }
 
 /// The fence that opens the block of a fixture's README stating what a run of it establishes.

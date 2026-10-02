@@ -102,3 +102,62 @@ pub fn discover_fixtures<E>(
     found.sort();
     Ok(found)
 }
+
+/// One filesystem-root spelling for ordinary and Windows extended paths, preserving every real root.
+#[must_use]
+pub fn filesystem_spelling(path: &Path) -> PathBuf {
+    #[cfg(windows)]
+    {
+        use std::path::{Component, Prefix};
+        if let Some(Component::Prefix(prefix)) = path.components().next() {
+            let mut normalized = match prefix.kind() {
+                Prefix::Disk(drive) | Prefix::VerbatimDisk(drive) => {
+                    PathBuf::from(format!("{}:", char::from(drive).to_ascii_uppercase()))
+                }
+                Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) => {
+                    let mut name = std::ffi::OsString::from(r"\\");
+                    name.push(server);
+                    name.push(r"\");
+                    name.push(share);
+                    PathBuf::from(name)
+                }
+                Prefix::Verbatim(_) | Prefix::DeviceNS(_) => return path.to_path_buf(),
+            };
+            normalized.extend(path.components().skip(1));
+            return normalized;
+        }
+    }
+    path.to_path_buf()
+}
+
+#[cfg(all(test, windows))]
+mod filesystem_tests {
+    use super::filesystem_spelling;
+    use std::path::Path;
+
+    #[test]
+    fn extended_disk_and_unc_prefixes_name_the_same_roots() {
+        for (extended, ordinary) in [
+            (r"\\?\c:\trees\root", r"C:\trees\root"),
+            (r"\\?\UNC\server\share\root", r"\\server\share\root"),
+        ] {
+            assert_eq!(
+                filesystem_spelling(Path::new(extended)),
+                Path::new(ordinary)
+            );
+        }
+    }
+
+    #[test]
+    fn different_disks_and_unc_shares_remain_different_roots() {
+        for (one, other) in [
+            (r"\\?\C:\root", r"D:\root"),
+            (r"\\?\UNC\server\one\root", r"\\server\two\root"),
+        ] {
+            assert_ne!(
+                filesystem_spelling(Path::new(one)),
+                filesystem_spelling(Path::new(other))
+            );
+        }
+    }
+}

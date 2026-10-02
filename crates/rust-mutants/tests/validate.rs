@@ -297,6 +297,7 @@ fn a_pristine_tree_that_does_not_compile_is_not_the_mutants_fault() {
         ) -> Result<Attempt, ValidateError> {
             Ok(Attempt {
                 files: Vec::new(),
+                stderr: Vec::new(),
                 messages: vec![
                     diagnostic_at("src/lib.rs", 0, 1, 0),
                     Message::BuildFinished(rust_mutants::cargo::Finished::new(false)),

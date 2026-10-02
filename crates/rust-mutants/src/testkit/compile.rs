@@ -196,6 +196,7 @@ impl Compile for ScriptedCompile {
         Ok(Attempt {
             files: vec![file],
             messages,
+            stderr: Vec::new(),
             completion,
             written: 1,
         })

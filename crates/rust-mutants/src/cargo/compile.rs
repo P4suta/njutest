@@ -9,7 +9,7 @@ use std::time::Duration;
 use super::depinfo::{Unit, units_of};
 use super::locate::command_failed;
 use super::messages::{Message, parse_messages};
-use super::{CargoError, CargoErrorKind, Driver};
+use super::{CargoError, CargoErrorKind, CompilerObservation, Driver, InputIdentity};
 use crate::error::{self, ErrorCode};
 use crate::runner::{ProcessExit, Termination, run};
 use crate::trace::ExecRecord;
@@ -210,13 +210,14 @@ pub enum Provenance {
     Compiler,
     /// The engine's content-addressed record answered, after verifying every bound input and artifact digest against the tree as it stands, so the products are a verified reuse of a real compiler run, not a compiler run of this call.
     VerifiedReuse,
+    /// A waiting request shares the completed producer refusal, without certifying complete products or an independent compiler witness.
+    SharedRefusal,
 }
 
 /// What a compilation's answer may be established by.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Witness {
     /// Any complete establishment: an actual compiler process, or the engine's verified record of one.
-    #[default]
     Any,
     /// An actual compiler process must run: a verified record of an earlier process is reuse, not an independent witness, and may not answer.
     Compiler,
@@ -226,6 +227,7 @@ pub enum Witness {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Compiled {
     pub(super) completion: Completion,
+    pub(super) observation: CompilerObservation,
     /// Every message, in order, for attribution.
     pub messages: Vec<Message>,
     /// The units that produced an artifact, with their sources.
@@ -241,6 +243,18 @@ impl Compiled {
     pub const fn completion(&self) -> Completion {
         self.completion
     }
+
+    /// The retained actual producer and raw streams that established these products.
+    #[must_use]
+    pub const fn observation(&self) -> &CompilerObservation {
+        &self.observation
+    }
+
+    /// The raw stderr from this result's original actual producer.
+    #[must_use]
+    pub fn stderr(&self) -> &[u8] {
+        self.observation.stderr()
+    }
 }
 
 /// The exit code a cargo process ended with by itself, which is the one thing its `build-finished` record is held to.
@@ -250,6 +264,14 @@ pub struct Exited {
 }
 
 impl Exited {
+    pub(super) const fn from_code(code: i32) -> Self {
+        Self { code }
+    }
+
+    pub(super) const fn code(self) -> i32 {
+        self.code
+    }
+
     /// The code cargo ended `termination` with, or nothing where it ended some other way: a signal, a status nothing classified, a launch or supervision that failed, or a stop the run imposed, none of which is the compiler's answer about the build.
     #[must_use]
     pub const fn of(termination: &Termination) -> Option<Self> {
@@ -407,7 +429,184 @@ pub fn compile_with(
     options: &CompileOptions,
     witness: Witness,
 ) -> Result<Compiled, CargoError> {
+    let mut spec = compilation_spec(driver, options)?;
+    let trace = match driver.toolchain.env() {
+        Some(vars) => driver.trace.costed(vars, driver.dir).map_err(|source| {
+            CargoError::new(
+                CargoErrorKind::CommandFailed,
+                format!("test cost diagnostic: {source}"),
+            )
+        })?,
+        None => driver.trace.clone(),
+    };
+    if driver.cancel.is_cancelled() {
+        return Err(CargoError::new(
+            CargoErrorKind::Cancelled,
+            "the compilation was cancelled",
+        ));
+    }
+    let preparation = super::build_cache::Preparation::own(options.target_dir.path(), &trace)
+        .map_err(|source| {
+            CargoError::new(
+                CargoErrorKind::BuildLedger,
+                format!(
+                    "cannot own compiler preparation in {}",
+                    options.target_dir.path().display()
+                ),
+            )
+            .with_source(source)
+        })?;
+    if driver.cancel.is_cancelled() {
+        return Err(CargoError::new(
+            CargoErrorKind::Cancelled,
+            "the compilation was cancelled",
+        ));
+    }
+    let (identity, request, reused) = cached(
+        (driver, options),
+        witness,
+        (&mut spec, &trace),
+        &preparation,
+    );
+    if let Some(compiled) = reused {
+        if driver.cancel.is_cancelled() {
+            return Err(CargoError::new(
+                CargoErrorKind::Cancelled,
+                "the compilation was cancelled",
+            ));
+        }
+        return compiled;
+    }
+    produce(
+        (driver, options),
+        witness,
+        (&spec, &trace, &preparation),
+        (identity, request),
+    )
+}
+
+fn produce(
+    (driver, options): (&Driver<'_>, &CompileOptions),
+    witness: Witness,
+    (spec, trace, preparation): (
+        &crate::runner::Spec,
+        &crate::trace::Recorder,
+        &super::build_cache::Preparation,
+    ),
+    (identity, request): (InputIdentity, Option<super::build_cache::Request>),
+) -> Result<Compiled, CargoError> {
+    if let Err(error) = prepare(options, witness, request.is_some()) {
+        failed(
+            (driver, options, request.as_ref()),
+            (spec, None),
+            (&error, super::build_cache::FailedStage::Preparation),
+            (preparation, trace),
+        );
+        return Err(error);
+    }
+    let result = run(spec, driver.cancel);
+    if result.leader.is_some() {
+        trace.note("fixture-build-process", identity.detail());
+    } else {
+        let cause = match result.termination.error() {
+            Some(failure) => failure.to_string(),
+            None => "cancelled before start".to_owned(),
+        };
+        let failed = serde_json::json!({"identity": identity.detail(), "cause": cause});
+        trace.note("fixture-build-failed", &failed.to_string());
+    }
+    let mut compiled = match completed((driver, options), (spec, &result, trace), identity, witness)
+    {
+        Ok(compiled) => compiled,
+        Err(error) => {
+            failed(
+                (driver, options, request.as_ref()),
+                (spec, Some(&result)),
+                (&error, super::build_cache::FailedStage::Process),
+                (preparation, trace),
+            );
+            return Err(error);
+        }
+    };
+    let request = request.map(|request| match witness {
+        Witness::Any => request,
+        Witness::Compiler => request.independent(compiled.observation().id()),
+    });
+    if let (Some(request), Some(env)) = (request, &spec.env)
+        && let Err(source) = request.unchanged(driver, options).and_then(|()| {
+            let exit = Exited::of(&result.termination)
+                .ok_or_else(|| std::io::Error::other("compiler exit is not observed"))?;
+            request.write(
+                &mut compiled,
+                (&result.stdout, env, options.target_dir.path()),
+                (exit, preparation),
+            )
+        })
+    {
+        trace.note(
+            "build-cache-unavailable",
+            &format!("{} {source}", request.key),
+        );
+        trace.note("fixture-build-uncacheable", &source.to_string());
+        let error = CargoError::new(
+            CargoErrorKind::BuildLedger,
+            format!(
+                "cannot publish immutable compiler products for {}",
+                request.key
+            ),
+        )
+        .with_source(source);
+        failed(
+            (driver, options, Some(&request)),
+            (spec, Some(&result)),
+            (&error, super::build_cache::FailedStage::Publication),
+            (preparation, trace),
+        );
+        return Err(error);
+    }
+    Ok(compiled)
+}
+
+fn prepare(options: &CompileOptions, witness: Witness, bound: bool) -> Result<(), CargoError> {
     options.target_dir.settle()?;
+    if witness == Witness::Compiler || bound {
+        options.target_dir.independent()?;
+    }
+    Ok(())
+}
+
+fn failed(
+    (driver, options, request): (
+        &Driver<'_>,
+        &CompileOptions,
+        Option<&super::build_cache::Request>,
+    ),
+    (spec, result): (&crate::runner::Spec, Option<&crate::runner::RunResult>),
+    (error, stage): (&CargoError, super::build_cache::FailedStage),
+    (preparation, trace): (&super::build_cache::Preparation, &crate::trace::Recorder),
+) {
+    let Some(request) = request else {
+        return;
+    };
+    let published = request
+        .unchanged(driver, options)
+        .and_then(|()| request.fail((error, stage), (spec, result), preparation));
+    match published {
+        Ok(()) => trace.note(
+            "compiler-preparation-failed",
+            &serde_json::json!({
+                "identity": request.key, "stage": stage, "cause": error.message(),
+            })
+            .to_string(),
+        ),
+        Err(source) => trace.note("compiler-failure-publication-refused", &source.to_string()),
+    }
+}
+
+fn compilation_spec(
+    driver: &Driver<'_>,
+    options: &CompileOptions,
+) -> Result<crate::runner::Spec, CargoError> {
     let mut spec = driver
         .toolchain
         .command(driver.dir, compile_arguments(options));
@@ -425,102 +624,63 @@ pub fn compile_with(
     }
     spec.structured_stdout = Some(MESSAGE_OUTPUT_LIMIT);
     spec.timeout = options.timeout;
-    let trace = match driver.toolchain.env() {
-        Some(vars) => driver.trace.costed(vars, driver.dir).map_err(|source| {
-            CargoError::new(
-                CargoErrorKind::CommandFailed,
-                format!("test cost diagnostic: {source}"),
-            )
-        })?,
-        None => driver.trace.clone(),
-    };
-    if driver.cancel.is_cancelled() {
-        return Err(CargoError::new(
-            CargoErrorKind::Cancelled,
-            "the compilation was cancelled",
-        ));
-    }
-    let (identity, request, reused) = cached(driver, options, witness, (&mut spec, &trace));
-    if let Some(compiled) = reused {
-        if driver.cancel.is_cancelled() {
-            return Err(CargoError::new(
-                CargoErrorKind::Cancelled,
-                "the compilation was cancelled",
-            ));
-        }
-        return Ok(compiled);
-    }
-    let result = run(&spec, driver.cancel);
-    if result.leader.is_some() {
-        trace.note("fixture-build-process", identity.detail());
-    } else {
-        let cause = match result.termination.error() {
-            Some(failure) => failure.to_string(),
-            None => "cancelled before start".to_owned(),
-        };
-        let failed = serde_json::json!({"identity": identity.detail(), "cause": cause});
-        trace.note("fixture-build-failed", &failed.to_string());
-    }
-    let compiled = completed(driver, options, (&spec, &result, &trace))?;
-    if let (Some(request), Some(env)) = (request, &spec.env)
-        && let Err(source) =
-            request.write(&compiled, &result.stdout, (env, options.target_dir.path()))
-    {
-        trace.note(
-            "build-cache-unavailable",
-            &format!("{} {source}", request.key),
-        );
-        trace.note("fixture-build-uncacheable", &source.to_string());
-    }
-    Ok(compiled)
+    Ok(spec)
 }
 
-/// What one compilation asked the cache for: its complete input key, or the concrete reason it has none.
-#[derive(Debug, Clone)]
-enum Identity {
-    /// The complete content-addressed input key this compilation is bound to.
-    Key(String),
-    /// Why no complete key exists, spelled `unbound: ` before the cause.
-    Unbound(String),
-}
-
-impl Identity {
-    fn detail(&self) -> &str {
-        match self {
-            Self::Key(key) => key,
-            Self::Unbound(reason) => reason,
-        }
-    }
+pub(super) fn input_identity(
+    (driver, options): (&Driver<'_>, &CompileOptions),
+) -> Result<InputIdentity, CargoError> {
+    let mut spec = compilation_spec(driver, options)?;
+    Ok(match &mut spec.env {
+        Some(env) => match super::build_cache::Request::of(driver, options, env) {
+            Ok(request) => InputIdentity::Complete(request.key),
+            Err(source) => InputIdentity::Unbound(format!("unbound: {source}")),
+        },
+        None => InputIdentity::Unbound("unbound: inherited environment".to_owned()),
+    })
 }
 
 fn cached(
-    driver: &Driver<'_>,
-    options: &CompileOptions,
+    (driver, options): (&Driver<'_>, &CompileOptions),
     witness: Witness,
     (spec, trace): (&mut crate::runner::Spec, &crate::trace::Recorder),
+    preparation: &super::build_cache::Preparation,
 ) -> (
-    Identity,
+    InputIdentity,
     Option<super::build_cache::Request>,
-    Option<Compiled>,
+    Option<Result<Compiled, CargoError>>,
 ) {
-    if witness == Witness::Compiler {
-        let identity = Identity::Unbound("unbound: an independent compiler witness".to_owned());
-        trace.note("fixture-build-request", identity.detail());
-        trace.note("fixture-build-uncacheable", identity.detail());
-        trace.note("build-cache-miss", identity.detail());
-        return (identity, None, None);
-    }
     match &mut spec.env {
         Some(env) => match super::build_cache::Request::of(driver, options, env) {
             Ok(request) => {
-                let identity = Identity::Key(request.key.clone());
+                let identity = InputIdentity::Complete(request.key.clone());
                 trace.note("fixture-build-request", identity.detail());
                 trace.note("build-cache-bound", &request.key);
-                match request.read(driver, options, env) {
+                if witness == Witness::Compiler {
+                    trace.note("compiler-witness", identity.detail());
+                    trace.note(
+                        "build-cache-miss",
+                        &format!("{} independent-control", request.key),
+                    );
+                    return (identity, Some(request), None);
+                }
+                match request.failure((env, preparation)) {
+                    Ok(error) => {
+                        trace.note("compiler-failure-shared", &request.key);
+                        return (identity, Some(request), Some(Err(error)));
+                    }
+                    Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(source) => trace.note("compiler-failure-not-shared", &source.to_string()),
+                }
+                match request.read(driver, options, (env, preparation)) {
                     Ok(compiled) => {
-                        trace.note("build-cache-hit", &request.key);
+                        let kind = match compiled.completion() {
+                            Completion::Built => "build-cache-hit",
+                            Completion::Refused => "build-cache-refusal",
+                        };
+                        trace.note(kind, &request.key);
                         trace.note("cargo-built-units", "0");
-                        return (identity, Some(request), Some(compiled));
+                        return (identity, Some(request), Some(Ok(compiled)));
                     }
                     Err(source) => {
                         let class = if source.kind() == std::io::ErrorKind::NotFound {
@@ -537,31 +697,38 @@ fn cached(
                 (identity, Some(request), None)
             }
             Err(source) => {
-                let identity = Identity::Unbound(format!("unbound: {source}"));
+                let identity = InputIdentity::Unbound(format!("unbound: {source}"));
                 trace.note("fixture-build-request", identity.detail());
                 trace.note("fixture-build-uncacheable", &source.to_string());
                 trace.note("build-cache-miss", identity.detail());
+                if witness == Witness::Compiler {
+                    trace.note("compiler-witness", identity.detail());
+                }
                 (identity, None, None)
             }
         },
         None => {
-            let identity = Identity::Unbound("unbound: inherited environment".to_owned());
+            let identity = InputIdentity::Unbound("unbound: inherited environment".to_owned());
             trace.note("fixture-build-request", identity.detail());
             trace.note("fixture-build-uncacheable", identity.detail());
             trace.note("build-cache-miss", identity.detail());
+            if witness == Witness::Compiler {
+                trace.note("compiler-witness", identity.detail());
+            }
             (identity, None, None)
         }
     }
 }
 
 fn completed(
-    driver: &Driver<'_>,
-    options: &CompileOptions,
+    (driver, options): (&Driver<'_>, &CompileOptions),
     (spec, result, trace): (
         &crate::runner::Spec,
         &crate::runner::RunResult,
         &crate::trace::Recorder,
     ),
+    identity: InputIdentity,
+    witness: Witness,
 ) -> Result<Compiled, CargoError> {
     let millis = u64::try_from(result.duration.as_millis()).map_err(|_overflow| {
         CargoError::new(
@@ -613,6 +780,7 @@ fn completed(
     options.target_dir.record_reads(&units)?;
     Ok(Compiled {
         completion,
+        observation: CompilerObservation::actual((spec, result), identity, witness)?,
         messages,
         units,
         provenance: Provenance::Compiler,

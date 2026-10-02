@@ -79,7 +79,8 @@ The fixture reproduction is two runs of `fixture-witness-downstream` sharing a t
 ## Amendment, 2026-10-01: identical fixture copies share compiled content
 
 An explicit `NJUTEST_FIXTURE_BUILD_CACHE` root allows copied fixtures to claim an engine-owned build slot addressed by the complete snapshot digest, toolchain identity and build environment.
-The source snapshot is recreated for each claim, and every member still passes through the existing content-settling protocol before Cargo may judge its units fresh.
+One verified immutable source graph is published under its owned event lease, and every claim creates a separate mutable copy from that graph.
+An arbitrary number of claims uses the same graph without a four-slot fallback or a second semantic source survey.
 The final copied graph is loaded once, and build scripts and procedural macros require the full environment in the target directory identity; ordinary graphs rely on Cargo's dep-info for compile-time environment dependencies while diagnostic and scratch names do not fragment the pool.
 The engine's owner lock holds the slot through execution, cleanup and the lifetime of every shared set of sealed modules.
 Every invocation keeps its own scratch, runtime records and verdict state.
@@ -109,29 +110,49 @@ A native target's link arguments remain refused, because its system linker is no
 This layer applies to users' repeated runs as well as leased fixture slots, and its hit/miss notes always identify the key.
 The suite count gate budgets unique bound build keys plus uncacheable requests per binary, rather than allowing a warm cache to hide new build requests.
 
-## Amendment, 2026-10-02: a verified reuse is not a compiler witness and repairs nothing
+## Amendment, 2026-10-02: complete products and independent witnesses have distinct owners
 
 ### Context
 
-A cache hit answered every unit as cargo marks a unit it did not rebuild, and the one place that asks what cargo actually compiled read that mark as cargo having reused a stale artifact.
-The equivalence layer, whose control build restores the tree and asks the machine to build it again, was answered by the run's own record of the build it started with: a cache entry served as its own independent reproducibility control, and the layer withdrew from every question on a warm cache.
-The same read deleted an artifact whose digest had changed and let cargo rebuild it, handing a later reader bytes no compiler and no alteration produced, so a prepare that found an altered executable silently restored the remembered program instead of measuring what stood there.
+A content key alone did not own the mutable paths Cargo returned.
+Another compilation could overwrite those paths, concurrent cold requests could each prepare them, and Cargo's fresh bit could be mistaken for complete source provenance.
+An equivalence control could also receive its original cache entry as an independent reproducibility witness.
+A later prepare must measure an altered execution copy without changing the immutable products used as compiler proof.
 
 ### Decision
 
-1. A compilation's answer carries a typed provenance: `Compiler`, an actual cargo process of this call, or `VerifiedReuse`, the engine's record answering after verifying every bound input and artifact digest.
-2. The fresh bit keeps its meaning: what the answering process itself did not rebuild.
-   Only a `Compiler` answer may be read as cargo's own word about reuse; a `VerifiedReuse` answer was produced by a real compiler run over exactly the bound bytes, so its units were compiled from them however they are marked.
-3. A caller that needs an independent witness — the equivalence control, which exists to catch a machine that builds one tree two ways — asks for a compiler process explicitly, and the record may not answer it.
-   The request publishes an `unbound: an independent compiler witness` identity, so cost records keep its actual processes under their own reason.
-4. A hit whose recorded artifact digests no longer match refuses the reuse and changes nothing.
-   Cargo is asked, and judges what it built by its own record of what it read; an artifact a later process altered is measured as it stands rather than silently rebuilt to the remembered bytes.
-5. One control that passes settles the machine for differs answers, and an identical answer keeps one paired control.
-   No other build of the layer starts a compiler process: the original and the mutated builds rest on the verified record where it can answer.
+1. One kernel preparation lease covers input binding, settling, the actual process and publication into a target directory.
+   A bound cold miss invalidates fingerprints for every package in the complete graph before the actual compiler runs.
+   Publication owns a distinct immutable product inventory for each actual producer, rather than borrowing Cargo's mutable output paths.
+   Source, dependency, configuration, executable, argument and environment inputs are checked again before publication and every reuse.
+   Opaque input graphs continue through actual Cargo and cannot certify a complete bound identity.
+2. The original actual producer has a private-constructor `CompilerObservation`.
+   It retains complete or unbound input identity, typed product or independent-control purpose, actual execution and leader identity, raw stderr and stream digests.
+   Reuse retains that observation and the original Cargo fresh bits without publishing another execution.
+   `Compiler`, `VerifiedReuse` and `SharedRefusal` distinguish actual work, verified products and a waiting cohort's failed producer.
+3. Preparation, process and publication failures have exhaustive typed stages.
+   A publication generation lets requests that waited for the same producer share its actual refusal.
+   A later request may recover, including after input A, input B and restored input A.
+   A failed product publication never returns a bound mutable result.
+4. Equivalence keeps an owned reproducibility pair for one complete input identity.
+   The independent control must run a distinct actual compiler process, force the graph's fingerprints, recompile every source-reading unit and match the original immutable products.
+   A pair retains both original observations and may answer further identical questions only while their complete identities still match the restored tree.
+   An unbound graph requires another actual independent control, and a changed identity withdraws the old pair.
+   A cache entry cannot witness itself, and a process that reused a source-reading unit still establishes no independent control.
+5. Native execution receives separate `ExecutionProducts` copied only from the explicit compiler inventory under the same preparation lease.
+   Their marker binds the immutable origin, while later prepares observe existing execution bytes without repairing them.
+   Compiler proof continues to read the immutable inventory, so another compilation or an altered execution copy cannot change its witness.
+6. Toolchain banners, target facts and locked metadata are reusable owned observations only for their exact executable bytes, environment, complete graph and configuration.
+   The retained result carries the original actual process and raw captures.
+   A hit starts no process, and actual standalone probes are counted once at their producer.
+   Unknown executable selectors and incomplete metadata graphs use actual processes.
+7. Unreadable compiler flag inputs expose a typed I/O cause and named input path.
+   Refusal tests inspect that cause and identity rather than localized operating-system display text.
 
 ### Consequences
 
-- The equivalence layer answers on a warm cache again: a withdrawn control is a machine question, not a cache state.
-- A run that meets an altered executable re-measures it, and the trace shows the repair miss with its concrete reason while the bytes stay what they were.
-- Freshness and independence checks are unchanged where they were honest: a real cargo run that says it reused a unit's artifact still establishes nothing for a comparison.
-
+- Warm complete-input builds and repeated equivalence questions reuse verified products and one genuine independent pair.
+- Freshness, source-reading and independent-process requirements remain enforced for actual compiler witnesses.
+- An altered execution copy is remeasured without changing its compiler proof.
+- Waiting failed requests retain the actual refusal, and later complete requests may recover.
+- No target directory is copied, no repeated-build waiver is granted, and no reuse fabricates work.

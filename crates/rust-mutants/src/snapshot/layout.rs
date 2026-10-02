@@ -199,7 +199,7 @@ fn settled(path: &Path, kind: SnapshotErrorKind) -> Result<PathBuf, SnapshotErro
             "a path that still climbs names no one place, so a copy cannot say where it put it",
         ));
     }
-    Ok(path.to_path_buf())
+    Ok(crate::canonical::plainly(path))
 }
 
 /// The longest run of components `one` and `other` begin with, when they begin with any.

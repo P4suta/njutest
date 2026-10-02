@@ -18,6 +18,7 @@ use std::time::Duration;
 use jiff::Timestamp;
 use sha2::{Digest as _, Sha256};
 
+mod frozen;
 mod layout;
 
 pub use layout::{Layout, Placed, Placement};
@@ -94,7 +95,8 @@ impl Options {
 }
 
 /// One regular file in a snapshot's manifest.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Entry {
     /// The path relative to the snapshot root, with forward slashes on every platform.
     pub rel_path: String,
@@ -105,7 +107,8 @@ pub struct Entry {
 }
 
 /// One entry the snapshot did not copy because it is not a regular file.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PassedOver {
     /// The path relative to the tree, with forward slashes.
     pub rel_path: String,
@@ -210,7 +213,7 @@ impl Drift {
 }
 
 /// The failure modes of this module, each with a stable code.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum SnapshotErrorKind {
     /// [`Options`] that cannot be honoured, such as a report directory that is absolute or climbs out of the source root.
     InvalidOptions,
@@ -399,6 +402,18 @@ enum State {
     Kept,
     /// An explicit cleanup ran, whatever its outcome; `Drop` does nothing.
     Released,
+}
+
+/// The private retained representation of one immutable complete source graph.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FrozenGraph {
+    directory: PathBuf,
+    root: PathBuf,
+    beside: Vec<PathBuf>,
+    manifest: Vec<Entry>,
+    passed_over: Vec<PassedOver>,
+    inventory: Survey,
 }
 
 /// A disposable copy of a source tree.

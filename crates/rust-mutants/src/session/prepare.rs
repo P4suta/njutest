@@ -70,7 +70,7 @@ pub(super) fn pristine(
     match checked.completion() {
         crate::cargo::Completion::Built => Ok(checked),
         crate::cargo::Completion::Refused => Err(EngineError::from(SessionError::PristineBroken {
-            first: crate::validate::first_error_of(&checked.messages),
+            first: crate::validate::first_error_with_stderr(&checked.messages, checked.stderr()),
         })),
     }
 }
@@ -498,8 +498,9 @@ fn built_untraced(building: &Building<'_>) -> Result<Built, EngineError> {
         options,
         ..
     } = *building;
+    let execution = crate::cargo::ExecutionProducts::of(last_build, &workspace.build_dir(), trace)?;
     let mut targets = execute::targets_of(
-        last_build,
+        execution.messages(),
         &workspace.metadata.packages,
         &workspace.target_dir,
     )?;
@@ -1331,13 +1332,14 @@ pub(super) fn compiled_build(
         return Err(ValidateError::AttemptFailed {
             message: format!(
                 "accepted compile-time mutant {index} no longer builds: {}",
-                crate::validate::first_error_of(&built.messages)
+                crate::validate::first_error_with_stderr(&built.messages, built.stderr())
             ),
         }
         .into());
     }
+    let execution = crate::cargo::ExecutionProducts::of(&built.messages, &dir, session.trace())?;
     let mut targets = execute::targets_of(
-        &built.messages,
+        execution.messages(),
         &session.workspace.metadata.packages,
         dir.path(),
     )?;
@@ -2026,7 +2028,7 @@ impl TreeCompiler<'_> {
             return Err(ValidateError::AttemptFailed {
                 message: format!(
                     "the tree refused after removing invalid const initializers: {}",
-                    crate::validate::first_error_of(&attempt.messages)
+                    crate::validate::first_error_with_stderr(&attempt.messages, &attempt.stderr)
                 ),
             }
             .into());
@@ -2189,6 +2191,7 @@ impl Compile for TreeCompiler<'_> {
         }
         Ok(Attempt {
             files,
+            stderr: compiled.stderr().to_vec(),
             messages: compiled.messages,
             completion,
             written,
@@ -2207,7 +2210,7 @@ fn compiled_rejection(
         .ok_or_else(|| ValidateError::AttemptFailed {
             message: format!("const initializer {index} is absent from its catalog"),
         })?;
-    let diagnostic = crate::validate::first_error_of(&built.messages);
+    let diagnostic = crate::validate::first_error_with_stderr(&built.messages, built.stderr());
     let code = built.messages.iter().find_map(|message| match message {
         crate::cargo::Message::CompilerMessage(message) if message.message.level == "error" => {
             message.message.code.clone()
