@@ -350,6 +350,22 @@ impl Layer {
 #[derive(Debug)]
 struct Decided(());
 
+/// The complete catalog decision a shard explicitly defers to its merge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum DeferredScope {
+    Hollow,
+    Drift,
+}
+
+impl DeferredScope {
+    const fn layer(self) -> Layer {
+        match self {
+            Self::Hollow => Layer::Hollow,
+            Self::Drift => Layer::Drift,
+        }
+    }
+}
+
 /// One thing the re-decision has to say about one part of one recording.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Remark {
@@ -361,6 +377,7 @@ pub struct Remark {
     pub subject: String,
     /// One sentence a person can act on.
     pub detail: String,
+    deferred: Option<DeferredScope>,
 }
 
 impl fmt::Display for Remark {
@@ -473,6 +490,16 @@ impl<'a> Notes<'a> {
         self.note(Standing::Unaudited, subject, detail);
     }
 
+    fn deferred(&mut self, scope: DeferredScope, subject: &str, detail: String) {
+        self.audit.remarks.push(Remark {
+            layer: self.layer,
+            standing: Standing::Unaudited,
+            subject: subject.to_owned(),
+            detail,
+            deferred: Some(scope),
+        });
+    }
+
     /// The layer looked at everything the recording owes it, and its remarks say what it found.
     fn looked(self) -> Decided {
         let partly = self
@@ -503,6 +530,7 @@ impl<'a> Notes<'a> {
             standing,
             subject: subject.to_owned(),
             detail,
+            deferred: None,
         });
     }
 
@@ -1325,7 +1353,8 @@ fn drift(
     let derived = crate::drift::standings(touched);
     held_to_records(&derived, &recorded, &mut notes);
     if recording.shard.is_some() {
-        notes.unaudited(
+        notes.deferred(
+            DeferredScope::Drift,
             "drift",
             "this shard does not hold the whole catalog, so which moved targets are owed \
              unstable-baseline and which unmeasured ones drift-not-measured is decided over the \
@@ -3287,7 +3316,8 @@ fn model_columns(recording: &Recording<'_>, notes: &mut Notes<'_>) {
 fn hollow(recording: &Recording<'_>, executions: &Executions<'_>, audit: &mut Audit) -> Decided {
     let mut notes = Notes::on(audit, Layer::Hollow);
     if recording.shard.is_some() {
-        notes.unaudited(
+        notes.deferred(
+            DeferredScope::Hollow,
             "hollow",
             "this shard does not hold the whole catalog, so which targets answered about a \
              mutation and noticed none is decided over the combined parts when they are merged"

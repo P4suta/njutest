@@ -4587,6 +4587,13 @@ fn a_merge_does_not_affirm_the_sealed_rows_of_a_part_whose_run_kept_no_engine_re
         "a merged row resting on sealed executions is believed only where the run that measured \
          its part is seen to have run them (ADR 0046): {said:?}"
     );
+    for layer in [Layer::Hollow, Layer::Drift] {
+        assert_eq!(
+            audit.coverage.get(&layer),
+            Some(&Coverage::Partly),
+            "{audit}"
+        );
+    }
 }
 
 #[test]
@@ -4844,6 +4851,7 @@ fn a_real_run_measured_in_two_shards_and_merged_is_re_decided_clean_shard_by_sha
             ),
             "{recording}: every shard the merge names was given and re-decided: {audit}"
         );
+        assert_eq!(audit.unaudited(), 0, "{recording}: {audit}");
     }
 }
 

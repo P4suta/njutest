@@ -188,6 +188,15 @@ a part without its siblings, a claim without a ledger, a route without its recor
 
 ## After the run
 
+A merged audit closes a shard's deferred hollow or drift scope only after every named shard, catalog row, sealed execution and baseline control has been independently read and reconciled.
+The deferral carries its scope as a private type; an unreadable input or another unfinished decision cannot be discharged by matching diagnostic text.
+A complete inventory that owes no subject proves absence, while a missing shard, engine recording or control leaves the layer partly audited.
+
+The committed engine and sharded recordings preserve the exact source and configuration copied before each real producer ran.
+Their shape checks retain optional physical module work, compilation attempts and every field of each keyed module observation.
+Only a validated SHA-256 map key is normalized when comparing shape; the observation object's keys and value types remain mandatory.
+Updates run the actual compiler and product again, and the audit readers rederive the resulting reports against their preserved originals and traces.
+
 `--equivalence` asks the compiler whether each survivor's mutation is one it renders at all: the tree the user wrote is built once, the mutation is spliced in, and the two builds' executables are compared byte for byte.
 An answer of `identical` says the compiler produced the same program, and the control is built again to check that the tree builds reproducibly at all — a tree whose build is not reproducible proves nothing, and one such answer withdraws every answer afterwards.
 

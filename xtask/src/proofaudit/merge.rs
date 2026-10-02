@@ -3,7 +3,7 @@
 
 //! Whether a merged report is the shards it names: a complete division of one catalog, each part the one its re-decided shard measured, under the same run.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -164,7 +164,10 @@ pub struct AuditedShard {
 #[derive(Debug)]
 enum Witnessed {
     /// Every sealed execution its engine recordings hold, with the mutation each ran, in the order recorded.
-    Held(Vec<(String, super::SealedRun)>),
+    Held {
+        runs: Vec<(String, super::SealedRun)>,
+        touches: Vec<crate::drift::Touched>,
+    },
     /// Its recording keeps no engine recording.
     Unrecorded,
     /// An engine recording holds a sealed execution this audit cannot read.
@@ -181,6 +184,7 @@ impl Witnessed {
             return Ok(Self::Unrecorded);
         }
         let mut held = Vec::new();
+        let mut touches = Vec::new();
         for (recording_path, text) in engines {
             let checked =
                 crate::route::Checked::<crate::schemas::EngineLines>::read(text, checkers)
@@ -192,8 +196,12 @@ impl Witnessed {
                 Some(runs) => held.extend(runs),
                 None => return Ok(Self::Unreadable),
             }
+            touches.push(crate::drift::read(&checked));
         }
-        Ok(Self::Held(held))
+        Ok(Self::Held {
+            runs: held,
+            touches,
+        })
     }
 }
 
@@ -268,7 +276,7 @@ pub fn merged_with(
             .map(|shard| shard.audit.targets)
             .fold(0, usize::max),
         remarks: Vec::new(),
-        coverage: std::collections::BTreeMap::new(),
+        coverage: BTreeMap::new(),
     };
     let mut notes = Notes::on(&mut audit, Layer::Merge);
     divided(&merged, sources, &mut notes);
@@ -299,6 +307,7 @@ pub fn merged_with(
     moved(&merged, kept, &mut notes);
     let Decided(()) = notes.looked();
     let whole = shards.len() == sources.len();
+    let closed = ClosedMerge::of(&merged, shards, &audit, whole);
     for layer in Layer::ALL
         .into_iter()
         .filter(|layer| *layer != Layer::Merge)
@@ -310,15 +319,191 @@ pub fn merged_with(
     }
     for shard in shards {
         for remark in &shard.audit.remarks {
+            if remark
+                .deferred
+                .is_some_and(|scope| closed.contains_key(&scope))
+            {
+                continue;
+            }
             audit.remarks.push(Remark {
                 subject: format!("{}: {}", shard.report.run_id, remark.subject),
                 ..remark.clone()
             });
         }
     }
+    for (scope, absence) in closed {
+        let layer = scope.layer();
+        if !audit
+            .remarks
+            .iter()
+            .any(|remark| remark.layer == layer && remark.standing == super::Standing::Unaudited)
+        {
+            audit
+                .coverage
+                .insert(layer, Coverage::Absent(absence.reason()));
+        }
+    }
     audit.remarks.sort();
     audit.remarks.dedup();
     Ok(audit)
+}
+
+/// Only a complete, independently audited merge can discharge a typed shard deferral.
+struct ClosedMerge;
+
+impl ClosedMerge {
+    fn of(
+        merged: &Complete,
+        shards: &[AuditedShard],
+        audit: &Audit,
+        whole: bool,
+    ) -> BTreeMap<super::DeferredScope, crate::layers::Absence> {
+        let mut closed = BTreeMap::new();
+        if !whole
+            || audit
+                .remarks
+                .iter()
+                .any(|remark| remark.layer == Layer::Merge)
+            || shards.iter().any(|shard| shard.audit.violations() != 0)
+        {
+            return closed;
+        }
+        for scope in [super::DeferredScope::Hollow, super::DeferredScope::Drift] {
+            if shards.iter().any(|shard| {
+                shard
+                    .audit
+                    .remarks
+                    .iter()
+                    .any(|remark| remark.layer == scope.layer() && remark.deferred != Some(scope))
+            }) {
+                continue;
+            }
+            let counted = match scope {
+                super::DeferredScope::Hollow => hollow_subjects(merged, shards),
+                super::DeferredScope::Drift => drift_subjects(merged, shards),
+            };
+            let Some((declared, subjects, observed)) = counted else {
+                continue;
+            };
+            let reason = match scope {
+                super::DeferredScope::Hollow => {
+                    "every shard and its actual sealed executions are held, and no target answered without noticing a mutation"
+                }
+                super::DeferredScope::Drift => {
+                    "every shard's complete baseline and control inventory holds the same reach, so no merged drift finding is owed"
+                }
+            };
+            match crate::layers::Closed::empty(
+                crate::layers::Inventory {
+                    declared: Some(declared),
+                    subjects: Some(subjects),
+                    observed: crate::layers::ObservedSubjects::Counted(observed),
+                },
+                reason,
+            ) {
+                crate::layers::Closed::NothingOwed(absence) => {
+                    closed.insert(scope, absence);
+                }
+                crate::layers::Closed::Missing => {}
+            }
+        }
+        closed
+    }
+}
+
+fn drift_subjects(merged: &Complete, shards: &[AuditedShard]) -> Option<(u64, u64, u64)> {
+    let declared = merged.builds.iter().try_fold(0_u64, |sum, build| {
+        let Ok(moves) = Moves::of(build) else {
+            return None;
+        };
+        let Ok(count) = u64::try_from(moves.moved.len()) else {
+            return None;
+        };
+        sum.checked_add(count)
+    })?;
+    let mut subjects = 0_u64;
+    for shard in shards {
+        let Witnessed::Held { touches, .. } = &shard.witnessed else {
+            return None;
+        };
+        for touched in touches {
+            let derived = crate::drift::standings(touched);
+            let named: BTreeSet<&str> = derived.keys().map(String::as_str).collect();
+            let passing: BTreeSet<&str> = touched.passing.iter().map(String::as_str).collect();
+            if touched.unreadable != 0 || named != passing {
+                return None;
+            }
+            for standing in derived.values() {
+                match standing {
+                    crate::drift::Standing::Held => {}
+                    crate::drift::Standing::Moved => subjects = subjects.checked_add(1)?,
+                    crate::drift::Standing::NotMeasured => return None,
+                }
+            }
+        }
+    }
+    Some((declared, subjects, subjects))
+}
+
+fn hollow_subjects(merged: &Complete, shards: &[AuditedShard]) -> Option<(u64, u64, u64)> {
+    let lists = match Lists::of(merged) {
+        Ok(lists) => lists,
+        Err(_unlisted) => return None,
+    };
+    let Ok(declared) = u64::try_from(
+        lists
+            .found
+            .iter()
+            .filter(|(kind, _)| kind == "hollow-target")
+            .count(),
+    ) else {
+        return None;
+    };
+    let mut answers: BTreeMap<String, (u64, bool)> = BTreeMap::new();
+    for shard in shards {
+        let Witnessed::Held { runs, .. } = &shard.witnessed else {
+            return None;
+        };
+        for build in &shard.report.builds {
+            for row in build.source.get("mutants")?.as_array()? {
+                if !matches!(
+                    super::Rests::read(row.get("evidence")?)?,
+                    super::Rests::Sealed(_)
+                ) {
+                    continue;
+                }
+                let names = [row.get("id")?.as_str()?, row.get("display_id")?.as_str()?];
+                let mut said: BTreeMap<&str, super::SealedAnswer> = BTreeMap::new();
+                for (_, run) in runs
+                    .iter()
+                    .filter(|(mutant, _)| names.contains(&mutant.as_str()))
+                {
+                    let now = super::SealedAnswer::of(&run.came_to)?;
+                    let answer = said.entry(run.target.as_str()).or_insert(now);
+                    *answer = (*answer).max(now);
+                }
+                for (target, answer) in said {
+                    let noticed = match answer {
+                        super::SealedAnswer::Detected => true,
+                        super::SealedAnswer::Passed => false,
+                        super::SealedAnswer::Doubted | super::SealedAnswer::SetAside => continue,
+                    };
+                    let held = answers.entry(target.to_owned()).or_insert((0, false));
+                    held.0 = held.0.checked_add(1)?;
+                    held.1 |= noticed;
+                }
+            }
+        }
+    }
+    let Ok(owed) = u64::try_from(
+        answers
+            .values()
+            .filter(|(count, noticed)| *count > 0 && !noticed)
+            .count(),
+    ) else {
+        return None;
+    };
+    Some((declared, owed, owed))
 }
 
 /// How far `layer` got over the whole catalog: re-decided only where every part was given and none fell short, and absent only where it was absent from every part.
@@ -1011,7 +1196,7 @@ fn witnessed(part: &Value, (run_id, witnessed): (&str, &Witnessed), notes: &mut 
         return;
     }
     let recorded = match witnessed {
-        Witnessed::Held(recorded) => recorded,
+        Witnessed::Held { runs, .. } => runs,
         Witnessed::Unrecorded => {
             notes.unaudited(
                 run_id,
