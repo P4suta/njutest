@@ -3,6 +3,8 @@
 
 //! Every integration test of this crate that needs no toolchain, as one binary rather than one binary per file.
 
+#[path = "cost.rs"]
+mod cost;
 #[path = "docs.rs"]
 mod docs;
 #[path = "fake_cargo.rs"]

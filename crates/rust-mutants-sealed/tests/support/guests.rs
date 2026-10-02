@@ -38,14 +38,11 @@ fn succeeded(mut command: std::process::Command, what: &str) -> std::process::Ou
     if build {
         let millis =
             u64::try_from(started.elapsed().as_millis()).expect("a measured build duration");
-        njutest_devkit::cost::record(std::path::Path::new("sealed-guests"),
-            &serde_json::json!({"builds": 1, "build_ms": millis, "units": 0, "platform": [], "platform_requests": 0, "error": null,
-                "build_requests": 1, "build_hits": 0, "build_misses": 0, "build_keys": {},
-                "unbound": {"direct: a guest's own cargo test build": {"requests": 1, "misses": 0, "processes": 1, "failed_launches": 0, "launch_causes": {}}},
-                "launch_failures": 0, "observed_cargo_starts": 0,
-                "cargo_probes": 0, "cargo_probe_ms": 0, "cargo_metadata": 0, "cargo_metadata_ms": 0, "rustc_probes": 0, "rustc_probe_ms": 0,
-                "unobserved_cargo": njutest_devkit::cost::UNOBSERVED_CARGO}),
-            &serde_json::Value::Null).expect("the direct fixture build's cost record");
+        njutest_devkit::cost::guest_build(
+            std::path::Path::new("sealed-guests"),
+            millis,
+        )
+        .expect("the direct fixture build's cost record");
     }
     assert!(
         output.status.success(),

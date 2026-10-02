@@ -444,6 +444,17 @@ fn a_run_asked_for_faults_says_which_failed_calls_the_suite_noticed() {
         "an absorbed fault is asked again of every target that reached it"
     );
     audited(&fixture);
+    if let Some(retain) = std::env::var_os("NJUTEST_RETAIN_RUNS") {
+        let into = Path::new(&retain).join("a_run_asked_for_faults");
+        std::fs::create_dir_all(&into).expect("the retention directory");
+        for tree in ["reports", ".njutest"] {
+            let from = fixture.root.join(tree);
+            match std::fs::read_dir(&from) {
+                Ok(_present) => copy_tree(&from, &into.join(tree)),
+                Err(_absent) => {}
+            }
+        }
+    }
 }
 
 #[test]

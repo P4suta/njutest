@@ -176,6 +176,16 @@ impl AccountingError {
     }
 }
 
+/// One failed launch, losslessly: the identity the request carried and why nothing started.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FailedLaunch {
+    /// The bound key or unbound identity the attempted request carried.
+    identity: String,
+    /// Why no child started.
+    cause: String,
+}
+
 /// A complete input key is 64 hexadecimal characters; anything else is an unbound reason.
 fn bound(detail: &str) -> bool {
     detail.len() == 64 && detail.bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -363,22 +373,19 @@ fn launched(work: &mut Work, note: &crate::trace::NoteRecord) -> Result<(), Acco
         }
         return Ok(());
     }
-    let split = note.detail.split_once(' ');
-    let (identity, cause) = match split {
-        Some((identity, cause)) => (identity, cause.to_owned()),
-        None => {
-            return Err(AccountingError::Invalid {
-                problem: "a failed launch names neither an identity nor a cause".to_owned(),
-            });
+    let failed = crate::strictjson::decode_str::<FailedLaunch>(&note.detail).map_err(|source| {
+        AccountingError::Invalid {
+            problem: format!("a failed launch note is not its typed record: {source}"),
         }
-    };
-    if bound(identity) {
-        let held = work.build_keys.entry(identity.to_owned()).or_default();
+    })?;
+    let FailedLaunch { identity, cause } = failed;
+    if bound(identity.as_str()) {
+        let held = work.build_keys.entry(identity).or_default();
         held.failed_launches = raised(held.failed_launches, "bound failure accounting")?;
         let counted = held.launch_causes.entry(cause).or_default();
         *counted = raised(*counted, "launch cause accounting")?;
     } else {
-        let held = work.unbound.entry(identity.to_owned()).or_default();
+        let held = work.unbound.entry(identity).or_default();
         held.failed_launches = raised(held.failed_launches, "unbound failure accounting")?;
         let counted = held.launch_causes.entry(cause).or_default();
         *counted = raised(*counted, "unbound launch cause accounting")?;
@@ -607,6 +614,64 @@ mod tests {
                 .get("the record could not be written")
                 .copied(),
             Some(1),
+        );
+    }
+
+    #[test]
+    fn a_failed_launch_keeps_exactly_its_requests_identity() {
+        let identity = "unbound: inherited environment";
+        let key = "ab".repeat(32);
+        let mut work = Work::default();
+        for payload in [
+            note("fixture-build-request", identity),
+            note("build-cache-miss", identity),
+            note(
+                "fixture-build-failed",
+                &serde_json::json!({"identity": identity, "cause": "no such executable: it was removed"}).to_string(),
+            ),
+        ] {
+            apply(&mut work, &payload).expect("the failed launch folds");
+        }
+        assert_eq!(
+            work.unbound.len(),
+            1,
+            "a failed launch invents no second identity: {:?}",
+            work.unbound.keys().collect::<Vec<_>>()
+        );
+        let held = work.unbound.get(identity).expect("the request's identity");
+        assert_eq!(
+            (
+                held.requests,
+                held.misses,
+                held.processes,
+                held.failed_launches
+            ),
+            (1, 1, 0, 1)
+        );
+        let mut bound = Work::default();
+        for payload in [
+            note("fixture-build-request", &key),
+            note(
+                "build-cache-miss",
+                &format!("{key} cold: the compilation record is absent"),
+            ),
+            note(
+                "fixture-build-failed",
+                &serde_json::json!({"identity": key, "cause": "cancelled before start"})
+                    .to_string(),
+            ),
+        ] {
+            apply(&mut bound, &payload).expect("the bound failure folds");
+        }
+        let held = bound.build_keys.get(&key).expect("the bound identity");
+        assert_eq!(
+            (
+                held.requests,
+                held.misses,
+                held.processes,
+                held.failed_launches
+            ),
+            (1, 1, 0, 1)
         );
     }
 

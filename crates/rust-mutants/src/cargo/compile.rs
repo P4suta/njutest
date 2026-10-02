@@ -425,10 +425,8 @@ pub fn compile(driver: &Driver<'_>, options: &CompileOptions) -> Result<Compiled
             Some(failure) => failure.to_string(),
             None => "cancelled before start".to_owned(),
         };
-        trace.note(
-            "fixture-build-failed",
-            &format!("{} {cause}", identity.detail()),
-        );
+        let failed = serde_json::json!({"identity": identity.detail(), "cause": cause});
+        trace.note("fixture-build-failed", &failed.to_string());
     }
     let compiled = completed(driver, options, (&spec, &result, &trace))?;
     if let (Some(request), Some(env)) = (request, &spec.env)

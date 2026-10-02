@@ -118,9 +118,9 @@ pub fn capture_doctests(
     let result = run(&spec, driver.cancel);
     driver.trace.exec_result(ExecRecord::of(&spec, &result));
     let capture_identity = "unbound: the doctests' capture build";
+    driver.trace.note("fixture-build-request", capture_identity);
+    driver.trace.note("build-cache-miss", capture_identity);
     if result.leader.is_some() {
-        driver.trace.note("fixture-build-request", capture_identity);
-        driver.trace.note("build-cache-miss", capture_identity);
         driver.trace.note("fixture-build-process", capture_identity);
         match u64::try_from(result.duration.as_millis()) {
             Ok(millis) => driver
@@ -130,6 +130,15 @@ pub fn capture_doctests(
                 .trace
                 .note("fixture-cargo-build", "duration outside the wire"),
         }
+    } else {
+        let cause = match result.termination.error() {
+            Some(failure) => failure.to_string(),
+            None => "cancelled before start".to_owned(),
+        };
+        let failed = serde_json::json!({"identity": capture_identity, "cause": cause});
+        driver
+            .trace
+            .note("fixture-build-failed", &failed.to_string());
     }
     let cancelled = matches!(&result.termination, Termination::Cancelled { .. });
     if driver.cancel.is_cancelled() || cancelled {

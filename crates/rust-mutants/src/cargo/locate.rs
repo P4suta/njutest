@@ -345,10 +345,6 @@ fn diagnostic_os(value: &OsStr) -> String {
     }
 }
 
-/// The executable `name` in the toolchain directory `sysroot` where it says exactly what `located` said, which is the same program without whatever chose it, and otherwise `located`.
-///
-/// A shim that chooses a toolchain by the directory it runs in, as mise and direnv do, is asked once, in the directory the run was asked in; every later command runs in a snapshot, which such a shim may refuse or answer differently.
-/// Only a cargo found by its bare name is pinned: one named by its path is somebody's choice, a wrapper perhaps, and is run as named.
 /// Runs one toolchain probe under the run's watch, so its actual start and duration are counted by its named role.
 fn probed_run<W: crate::runner::Watch>(
     spec: &Spec,
@@ -395,6 +391,10 @@ fn probed<W: crate::runner::Watch>(
     parse_version(banner)
 }
 
+/// The executable `name` in the toolchain directory `sysroot` where it says exactly what `located` said, which is the same program without whatever chose it, and otherwise `located`.
+///
+/// A shim that chooses a toolchain by the directory it runs in, as mise and direnv do, is asked once, in the directory the run was asked in; every later command runs in a snapshot, which such a shim may refuse or answer differently.
+/// Only a cargo found by its bare name is pinned: one named by its path is somebody's choice, a wrapper perhaps, and is run as named.
 fn pinned(
     (located, name): (&Path, &str),
     sysroot: Option<&Path>,

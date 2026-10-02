@@ -1592,8 +1592,7 @@ impl<'a> Watching<'a> {
         now.saturating_duration_since(self.started)
     }
 
-    /// Looks at the files and returns the moment they count as stalled; a failed read is not a change, since a child that is not writing never causes one.
-    /// Samples the signals at `now`, which a declared wait advanced only after the change it samples happened.
+    /// Samples the signals at `now`, first seen under an advanced clock at the previous sample, and returns when they count as stalled; a failed read is not a change.
     fn look(&mut self, now: Instant, advanced: bool) -> Option<Instant> {
         let mut changed = false;
         for (path, seen) in self.progress.signals().into_iter().zip(&mut self.seen) {
