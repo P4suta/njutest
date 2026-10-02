@@ -106,8 +106,130 @@ fn finished_within(limit: Duration, child: &mut SupervisedChild) -> Option<ExitS
     None
 }
 
+struct BlockedWriter(Option<rustix::process::Pid>);
+
+impl Drop for BlockedWriter {
+    fn drop(&mut self) {
+        let Some(writer) = self.0 else {
+            return;
+        };
+        match rustix::process::kill_process(writer, rustix::process::Signal::KILL) {
+            Ok(()) | Err(rustix::io::Errno::SRCH) => {}
+            Err(_unstopped) => std::process::abort(),
+        }
+    }
+}
+
+#[test]
+fn completed_work_ends_its_blocked_writer_before_the_parent_disposes_its_cache() {
+    let turns = tempfile::tempdir().expect("the producer's cache and rendezvous");
+    let gate = turns.path().join("go");
+    assert!(
+        Command::new("mkfifo")
+            .arg(&gate)
+            .status()
+            .expect("the explicit producer gate")
+            .success()
+    );
+    let mut command = Command::new("sh");
+    command.args(["-c", "sh -c 'read released < \"$TURNS/go\"; printf late > \"$TURNS/cache\"' & printf '%s\\n' $! > \"$TURNS/writer\"; exit 0"])
+        .env("TURNS", turns.path());
+    let stops = xtask::work::Stops::arm().expect("owned stop observations");
+    let leader = std::cell::Cell::new(None);
+    let ended = xtask::work::run(&mut command, None, &stops, |pid| {
+        leader.set(Some(pid));
+        Ok(())
+    })
+    .expect("the work's complete result");
+    assert!(matches!(ended, xtask::work::Ended::Exited(status) if status.success()));
+    let writer: i32 = std::fs::read_to_string(turns.path().join("writer"))
+        .expect("the exact writer identity")
+        .trim()
+        .parse()
+        .expect("the writer pid");
+    let writer = rustix::process::Pid::from_raw(writer).expect("a positive writer pid");
+    let alive = xtask::work::listed()
+        .expect("the executing host's actual processes")
+        .iter()
+        .any(|one| {
+            one.pid == u32::try_from(writer.as_raw_nonzero().get()).expect("the writer pid fits")
+                && Some(one.group) == leader.get()
+                && !one.ended
+        });
+    let _cleanup = BlockedWriter(alive.then_some(writer));
+    assert!(
+        !alive,
+        "a successful leader exit must settle its producer group before cache disposal; the gated late writer is still alive"
+    );
+}
+
 fn text(bytes: &[u8]) -> String {
     String::from_utf8(bytes.to_vec()).expect("a run's output is UTF-8")
+}
+
+fn callback_refusal(from_started: bool) {
+    let mut command = Command::new("sh");
+    command.args(["-c", "read gate"]).stdin(Stdio::piped());
+    let leader = std::cell::Cell::new(None);
+    let stops = xtask::work::Stops::arm().expect("the signal producer");
+    let mut heard = || {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::BrokenPipe,
+            "the actual output consumer refused",
+        ))
+    };
+    let mut bound = xtask::work::Bound {
+        ceiling: Duration::from_secs(60),
+        quiet: Duration::from_secs(60),
+        heard: &mut heard,
+    };
+    let refused = xtask::work::run(
+        &mut command,
+        (!from_started).then_some(&mut bound),
+        &stops,
+        |pid| {
+            leader.set(Some(pid));
+            if from_started {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "the actual start observer refused",
+                ))
+            } else {
+                Ok(())
+            }
+        },
+    )
+    .expect_err("the observer failure remains a failure");
+    assert!(
+        matches!(refused, xtask::work::WorkError::Watch { source } if source.kind() == if from_started { std::io::ErrorKind::PermissionDenied } else { std::io::ErrorKind::BrokenPipe })
+    );
+    assert!(
+        !xtask::work::listed()
+            .expect("the actual process inventory")
+            .iter()
+            .any(|one| Some(one.pid) == leader.get() && !one.ended),
+        "the callback failure returned only after the producer ended"
+    );
+    let waits = stops.take_waits();
+    assert!(
+        waits.iter().any(|wait| wait.owner
+            == format!(
+                "process-group:{}",
+                leader.get().expect("the actual launched leader")
+            )
+            && wait.machine.cpus > 0),
+        "the cleanup retains its measured executing-host wait"
+    );
+}
+
+#[test]
+fn a_start_callback_failure_returns_after_its_producer_is_reaped() {
+    callback_refusal(true);
+}
+
+#[test]
+fn an_output_callback_failure_returns_after_its_producer_is_reaped() {
+    callback_refusal(false);
 }
 
 #[test]

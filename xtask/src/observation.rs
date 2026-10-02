@@ -51,7 +51,7 @@ pub struct WaitNote {
 #[derive(Debug)]
 pub struct Waited {
     /// The event received or deadline reached.
-    pub event: Event,
+    pub event: io::Result<Event>,
     /// The independently measured host wait.
     pub note: WaitNote,
 }
@@ -166,16 +166,16 @@ impl Observation {
         let started = Instant::now();
         let event = loop {
             match self.received.try_recv() {
-                Ok(event) => break event?,
+                Ok(event) => break event,
                 Err(TryRecvError::Disconnected) => {
-                    return Err(io::Error::other("the observation producers disconnected"));
+                    break Err(io::Error::other("the observation producers disconnected"));
                 }
                 Err(TryRecvError::Empty) => {}
             }
             match deadline {
                 Some(deadline) => match deadline.checked_duration_since(Instant::now()) {
-                    Some(left) => thread::park_timeout(left),
-                    None => break Event::Deadline,
+                    Some(left) if !left.is_zero() => thread::park_timeout(left),
+                    Some(_) | None => break Ok(Event::Deadline),
                 },
                 None => thread::park(),
             }
