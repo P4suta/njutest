@@ -36,6 +36,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 - [Item reach](engine/item-reach.md)
 - [Deciding an execution](engine/verdicts.md)
 - [Sealed execution](engine/sealed.md)
+- [Module reuse](engine/module-reuse.md)
 - [Suite cost](engine/suite-cost.md)
 - [Carrying an answer](engine/carry.md)
 - [The sealed host](engine/sealed-host.md)
