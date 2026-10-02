@@ -1,20 +1,6 @@
 
 running 1 test
-test tests::max_picks_the_larger ... FAILED
+test even_numbers_are_even ... ok
 
-failures:
-
----- tests::max_picks_the_larger stdout ----
-
-thread 'tests::max_picks_the_larger' (101403346) panicked at src/lib.rs:38:9:
-assertion `left == right` failed
-  left: 1
- right: 2
-note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
-
-
-failures:
-    tests::max_picks_the_larger
-
-test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 

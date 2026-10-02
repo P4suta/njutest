@@ -1,0 +1,2 @@
+    Checking fixture-simple v0.1.0 (/Users/yasunobu/njutest-oc/evidence/13/fixup/cost/record-final/fixture-builds/a078e2c0e89701176c881e0a6d072499e0d0b7615a6d2547043321fca19f2308/0/rust-mutants-snap-ea282ba88dd5384c/tree)
+    Finished `dev` profile [unoptimized] target(s) in 0.27s

@@ -10,6 +10,7 @@
     reason = "a test reports a setup failure by panicking, asserts with panics and reads a report as a table"
 )]
 
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::Output;
@@ -159,6 +160,7 @@ fn a_whole_run_that_seals_nothing_is_held_by_a_retained_recording_the_audit_re_d
         return;
     }
     let binding = bound(&root);
+    let source = materialized(&root, &binding);
     let run = root.join("run").join(&binding.run_id);
     let mut report = njutest_devkit::strictjson::decode_str::<serde_json::Value>(
         &std::fs::read_to_string(run.join(njutest::app::reports::DOCUMENT_NAME))
@@ -177,7 +179,7 @@ fn a_whole_run_that_seals_nothing_is_held_by_a_retained_recording_the_audit_re_d
         "with nothing sealed, every answer is a native lead and the mutation column is a hole, \
          which the report names: {holes:?}"
     );
-    let audit = audited(&run, &root.join("trace"));
+    let audit = audited(&run, &root.join("trace"), Some(source.path()));
     let said = njutest_devkit::process::strict_utf8(&audit.stdout);
     assert!(
         audit.status.success()
@@ -212,12 +214,13 @@ fn a_whole_run_that_seals_nothing_is_held_by_a_retained_recording_the_audit_re_d
         serde_json::to_string(&report).expect("the tampered report"),
     )
     .expect("the tampered report");
-    let refused = audited(&tampered_run, &tampered_trace);
+    let refused = audited(&tampered_run, &tampered_trace, Some(source.path()));
     let answer = njutest_devkit::process::strict_utf8(&refused.stdout);
     assert!(
         !(refused.status.success() && answer.contains("; 0 violations, 0 unaudited")),
         "a recording whose report drops the hole it held is refused rather than re-decided: {answer}"
     );
+    source_refusals(&root, tampered.path());
 }
 
 /// The retained recording's binding, held to the fixture, the contract, the options and the claim it names.
@@ -253,12 +256,11 @@ fn bound(root: &std::path::Path) -> Binding {
         binding.source_digest,
         "the recording is bound to the source it was run of: re-record it with {UPDATE}=1"
     );
-    let retained =
-        njutest_devkit::strictjson::decode_str::<std::collections::BTreeMap<String, String>>(
-            &std::fs::read_to_string(root.join("fixture").join("manifests.json"))
-                .expect("the retained manifests"),
-        )
-        .expect("the retained manifests are JSON");
+    let retained = njutest_devkit::strictjson::decode_str::<BTreeMap<String, String>>(
+        &std::fs::read_to_string(root.join("fixture").join("manifests.json"))
+            .expect("the retained manifests"),
+    )
+    .expect("the retained manifests are JSON");
     assert_eq!(
         retained.keys().collect::<Vec<_>>(),
         ["Cargo.lock", "Cargo.toml"],
@@ -276,7 +278,42 @@ fn bound(root: &std::path::Path) -> Binding {
         WHOLE.as_bytes(),
         "the retained contract is the one the run verified"
     );
+    let mut expected = source_bytes(&source);
+    expected.insert(".njutest.toml".to_owned(), WHOLE.as_bytes().to_vec());
+    assert!(
+        retained_sources(root) == expected,
+        "the retained original root preserves every source path and byte, manifests and contract"
+    );
     binding
+}
+
+/// Every original fixture file's exact bytes under its original relative path.
+fn retained_sources(root: &std::path::Path) -> BTreeMap<String, Vec<u8>> {
+    njutest_devkit::strictjson::decode_str(
+        &std::fs::read_to_string(root.join("fixture/sources.json"))
+            .expect("the retained original source envelope"),
+    )
+    .expect("the retained original source envelope is JSON")
+}
+
+/// Materializes the bound original fixture, including its manifests and contract, for the audit.
+fn materialized(root: &std::path::Path, binding: &Binding) -> tempfile::TempDir {
+    let original = tempfile::Builder::new()
+        .prefix("njutest-matrix-original-")
+        .tempdir()
+        .expect("a temporary directory");
+    for (name, bytes) in retained_sources(root) {
+        let path = original.path().join(name);
+        std::fs::create_dir_all(path.parent().expect("a source file's parent"))
+            .expect("the original source directory");
+        std::fs::write(path, bytes).expect("the original source bytes");
+    }
+    assert_eq!(
+        source_digest(original.path()),
+        binding.source_digest,
+        "the materialized original root agrees with the recording's source binding"
+    );
+    original
 }
 
 #[test]
@@ -319,7 +356,7 @@ fn a_fabricated_recording_is_never_audit_clean() {
     let trace = dir.path().join("trace");
     std::fs::create_dir_all(&trace).expect("the fabricated trace directory");
     std::fs::write(trace.join("trace.jsonl"), "").expect("the fabricated recording");
-    let audit = audited(&run, &trace);
+    let audit = audited(&run, &trace, None);
     let said = njutest_devkit::process::strict_utf8(&audit.stdout);
     assert!(
         !(audit.status.success() && said.contains("; 0 violations, 0 unaudited")),
@@ -358,12 +395,21 @@ struct Binding {
 }
 
 /// The audit of one run directory with its recording, as the retained one is asked for.
-fn audited(run: &std::path::Path, trace: &std::path::Path) -> Output {
-    njutest_devkit::paths::command(&njutest_devkit::paths::cargo_binary())
+fn audited(
+    run: &std::path::Path,
+    trace: &std::path::Path,
+    source: Option<&std::path::Path>,
+) -> Output {
+    let mut command = njutest_devkit::paths::command(&njutest_devkit::paths::cargo_binary());
+    command
         .args(["xtask", "proofaudit"])
         .arg(run)
         .arg("--trace")
-        .arg(trace)
+        .arg(trace);
+    if let Some(source) = source {
+        command.arg("--root").arg(source);
+    }
+    command
         .current_dir(njutest_devkit::paths::workspace_root())
         .output()
         .expect("the audit starts")
@@ -414,18 +460,34 @@ fn walked(root: &std::path::Path, prefix: &str, into: &mut Vec<String>) {
     }
 }
 
-/// The content digest of a source tree: every file's path and bytes, sorted and length-prefixed.
-fn source_digest(root: &std::path::Path) -> String {
+/// Every source file's exact bytes, keyed by its sorted relative path.
+fn source_bytes(root: &std::path::Path) -> BTreeMap<String, Vec<u8>> {
     let mut files = Vec::new();
     walked(root, "", &mut files);
-    files.sort();
+    files
+        .into_iter()
+        .map(|file| {
+            let bytes = std::fs::read(root.join(&file)).expect("a file of the source tree");
+            (file, bytes)
+        })
+        .collect()
+}
+
+/// The source digest excludes the contract, whose exact bytes are bound separately.
+fn source_digest(root: &std::path::Path) -> String {
+    let mut files = source_bytes(root);
+    files.remove(".njutest.toml");
+    digest_sources(&files)
+}
+
+/// Every file's path and bytes, sorted and length-prefixed, in the existing source digest.
+fn digest_sources(files: &BTreeMap<String, Vec<u8>>) -> String {
     let mut digest = Sha256::new();
-    for file in files {
-        let bytes = std::fs::read(root.join(&file)).expect("a file of the source tree");
+    for (file, bytes) in files {
         let size = u64::try_from(bytes.len()).expect("a readable file size");
         digest.update(file.as_bytes());
         digest.update(size.to_be_bytes());
-        digest.update(&bytes);
+        digest.update(bytes);
     }
     hex::encode(digest.finalize())
 }
@@ -433,15 +495,142 @@ fn source_digest(root: &std::path::Path) -> String {
 /// Records the committed recording from one real whole run of `fixture-simple` that seals nothing.
 fn record(into: &PathBuf) {
     let fixture = fixture("fixture-simple", WHOLE);
+    let sources = source_bytes(&fixture.root);
+    let source_digest = source_digest(&fixture.root);
     let trace = fixture.root.join("recorded");
     let traced = format!("--trace={}", trace.display());
     let output = verify_with(&fixture, &["--no-seal", "--no-cache", &traced]);
     let said = njutest_devkit::process::strict_utf8(&output.stdout);
+    println!(
+        "original verify: {}\n{said}\n{}",
+        output.status,
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    assert_eq!(output.status.code(), Some(2), "the actual native whole run");
+    for (name, bytes) in &sources {
+        assert_eq!(
+            std::fs::read(fixture.root.join(name)).expect("the original source after verify"),
+            *bytes,
+            "the real verify leaves the original {name} unchanged"
+        );
+    }
     assert!(
         said.contains("FINDING\tdimension-not-measured\tmutation\t"),
         "a recording is kept from a run whose mutation column is a hole of native leads: {said}\n{}",
         njutest_devkit::process::strict_utf8(&output.stderr)
     );
+    let (run, run_id) = recorded_run(&fixture);
+    let original_audit = checked_audit(&run, &trace, &fixture.root);
+    retain_source(into, &fixture.root, &sources);
+    let recorded_run = into.join("run").join(&run_id);
+    let recorded_trace = into.join("trace");
+    copy_tree(&run, &recorded_run);
+    copy_tree(&trace, &recorded_trace);
+    std::fs::write(
+        into.join("binding.json"),
+        format!(
+            "{}\n",
+            serde_json::to_string(&serde_json::json!({
+                "schema": SCHEMA,
+                "fixture": "fixture-simple",
+                "config": WHOLE,
+                "arguments": ["--no-seal", "--no-cache"],
+                "source_digest": source_digest,
+                "run_id": run_id,
+                "claim": "a whole run that seals nothing leaves every answer a native lead, so the \
+                          mutation column is a hole the runner names and the audit re-decides with \
+                          nothing to say against it",
+            }))
+            .expect("the binding document")
+        ),
+    )
+    .expect("the binding document");
+    let original = materialized(into, &bound(into));
+    let retained_audit = checked_audit(&recorded_run, &recorded_trace, original.path());
+    assert_eq!(
+        retained_audit.stdout, original_audit.stdout,
+        "the original and materialized roots have identical proofaudit answers"
+    );
+    keep_original(fixture);
+}
+
+/// Retains the original source bytes, manifests and contract without nested Cargo manifests.
+fn retain_source(into: &PathBuf, root: &std::path::Path, sources: &BTreeMap<String, Vec<u8>>) {
+    let stale = std::fs::remove_dir_all(into);
+    assert!(
+        stale.is_ok()
+            || stale
+                .as_ref()
+                .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
+        "the committed recording could not be replaced: {stale:?}"
+    );
+    std::fs::create_dir_all(into.join("fixture")).expect("the retained fixture directory");
+    std::fs::write(
+        into.join("fixture/sources.json"),
+        serde_json::to_vec(&sources).expect("the original source envelope"),
+    )
+    .expect("the original source envelope");
+    let manifests = ["Cargo.toml", "Cargo.lock"]
+        .into_iter()
+        .map(|name| {
+            (
+                name.to_owned(),
+                std::fs::read_to_string(root.join(name)).expect("the manifest the run verified"),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    std::fs::write(
+        into.join("fixture").join("manifests.json"),
+        format!(
+            "{}\n",
+            serde_json::to_string(&manifests).expect("the retained manifests")
+        ),
+    )
+    .expect("the retained manifests");
+    std::fs::copy(
+        root.join(".njutest.toml"),
+        into.join("fixture").join(".njutest.toml"),
+    )
+    .expect("the retained contract");
+}
+
+/// Refuses damaged original bytes and a binding retargeted to incompatible source.
+fn source_refusals(root: &std::path::Path, into: &std::path::Path) {
+    let damaged = into.join("damaged-source");
+    copy_tree(root, &damaged);
+    let mut sources = retained_sources(&damaged);
+    sources
+        .get_mut("src/lib.rs")
+        .expect("the real library's retained bytes")
+        .extend_from_slice(b"\npub fn changed_source() -> u32 { 13 }\n");
+    std::fs::write(
+        damaged.join("fixture/sources.json"),
+        serde_json::to_vec(&sources).expect("the damaged original source"),
+    )
+    .expect("the damaged original source");
+    assert!(
+        std::panic::catch_unwind(|| bound(&damaged)).is_err(),
+        "damaged original source bytes cannot satisfy the recording's binding"
+    );
+    sources.remove(".njutest.toml");
+    let mut incompatible = njutest_devkit::strictjson::decode_str::<serde_json::Value>(
+        &std::fs::read_to_string(damaged.join("binding.json")).expect("the real binding"),
+    )
+    .expect("the real binding is JSON");
+    incompatible["source_digest"] = serde_json::Value::String(digest_sources(&sources));
+    std::fs::write(
+        damaged.join("binding.json"),
+        serde_json::to_vec(&incompatible).expect("the incompatible source binding"),
+    )
+    .expect("the incompatible source binding");
+    assert!(
+        std::panic::catch_unwind(|| bound(&damaged)).is_err(),
+        "a source binding updated to incompatible bytes cannot hold today's fixture claim"
+    );
+}
+
+/// The one report directory and identity the real verify wrote.
+fn recorded_run(fixture: &Fixture) -> (PathBuf, String) {
     let runs: Vec<PathBuf> = std::fs::read_dir(
         fixture
             .root
@@ -458,7 +647,7 @@ fn record(into: &PathBuf) {
     .map(|(path, _)| path)
     .collect();
     assert_eq!(runs.len(), 1, "one run, one report: {runs:?}");
-    let run = runs.first().expect("the run's report");
+    let run = runs.first().expect("the run's report").clone();
     let report = njutest_devkit::strictjson::decode_str::<serde_json::Value>(
         &std::fs::read_to_string(run.join(njutest::app::reports::DOCUMENT_NAME))
             .expect("the run's report"),
@@ -468,61 +657,43 @@ fn record(into: &PathBuf) {
         .as_str()
         .expect("the run's identity")
         .to_owned();
-    let stale = std::fs::remove_dir_all(into);
-    assert!(
-        stale.is_ok()
-            || stale
-                .as_ref()
-                .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
-        "the committed recording could not be replaced: {stale:?}"
+    (run, run_id)
+}
+
+/// Keeps the complete original run owner when real-run evidence retention was requested.
+fn keep_original(fixture: Fixture) {
+    if let Some(retain) = std::env::var_os("NJUTEST_RETAIN_RUNS") {
+        std::fs::create_dir_all(&retain).expect("the original root retention directory");
+        std::fs::write(
+            PathBuf::from(retain).join("original-root.txt"),
+            format!("{}\n", fixture.root.display()),
+        )
+        .expect("the retained original root's location");
+        println!(
+            "original owner retained at {}",
+            fixture.dir.keep().display()
+        );
+    }
+}
+
+/// A clean proof audit of one actual report, trace and source root.
+fn checked_audit(
+    run: &std::path::Path,
+    trace: &std::path::Path,
+    source: &std::path::Path,
+) -> Output {
+    let audit = audited(run, trace, Some(source));
+    let said = njutest_devkit::process::strict_utf8(&audit.stdout);
+    println!(
+        "audit report={} trace={} root={}\n{said}\n{}",
+        run.display(),
+        trace.display(),
+        source.display(),
+        njutest_devkit::process::strict_utf8(&audit.stderr)
     );
-    std::fs::create_dir_all(into.join("fixture")).expect("the retained fixture directory");
-    let manifests = ["Cargo.toml", "Cargo.lock"]
-        .into_iter()
-        .map(|name| {
-            (
-                name.to_owned(),
-                std::fs::read_to_string(fixture.root.join(name))
-                    .expect("the manifest the run verified"),
-            )
-        })
-        .collect::<std::collections::BTreeMap<_, _>>();
-    std::fs::write(
-        into.join("fixture").join("manifests.json"),
-        format!(
-            "{}\n",
-            serde_json::to_string(&manifests).expect("the retained manifests")
-        ),
-    )
-    .expect("the retained manifests");
-    std::fs::copy(
-        fixture.root.join(".njutest.toml"),
-        into.join("fixture").join(".njutest.toml"),
-    )
-    .expect("the retained contract");
-    let recorded_run = into.join("run").join(&run_id);
-    let recorded_trace = into.join("trace");
-    copy_tree(run, &recorded_run);
-    copy_tree(&trace, &recorded_trace);
-    std::fs::write(
-        into.join("binding.json"),
-        format!(
-            "{}\n",
-            serde_json::to_string(&serde_json::json!({
-                "schema": SCHEMA,
-                "fixture": "fixture-simple",
-                "config": WHOLE,
-                "arguments": ["--no-seal", "--no-cache"],
-                "source_digest": source_digest(
-                    &njutest_devkit::paths::fixtures_dir().join("fixture-simple")
-                ),
-                "run_id": run_id,
-                "claim": "a whole run that seals nothing leaves every answer a native lead, so the \
-                          mutation column is a hole the runner names and the audit re-decides with \
-                          nothing to say against it",
-            }))
-            .expect("the binding document")
-        ),
-    )
-    .expect("the binding document");
+    assert!(
+        audit.status.success() && said.contains("; 0 violations, 0 unaudited"),
+        "the exact report, trace and original source root are audited before their owner drops"
+    );
+    audit
 }

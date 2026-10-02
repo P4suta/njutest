@@ -1,5 +1,5 @@
-   Compiling fixture-simple v0.1.0 (/private/var/folders/fc/7n9brj6130v28hbk8xb9fw5h0000gn/T/njutest-matrix-kMFyWN/fixture-simple)
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.36s
+   Compiling fixture-simple v0.1.0 (/private/var/folders/fc/7n9brj6130v28hbk8xb9fw5h0000gn/T/njutest-matrix-js385E/fixture-simple)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.44s
      Running unittests src/lib.rs (target/miri/aarch64-apple-darwin/debug/build/fixture-simple/ea4e63255093bc35/out/fixture_simple-ea4e63255093bc35)
 
 running 1 test

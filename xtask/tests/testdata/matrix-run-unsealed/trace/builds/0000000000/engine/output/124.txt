@@ -6,7 +6,7 @@ failures:
 
 ---- tests::max_picks_the_larger stdout ----
 
-thread 'tests::max_picks_the_larger' (101403384) panicked at src/lib.rs:39:9:
+thread 'tests::max_picks_the_larger' (102282326) panicked at src/lib.rs:39:9:
 assertion `left == right` failed
   left: 0
  right: 3

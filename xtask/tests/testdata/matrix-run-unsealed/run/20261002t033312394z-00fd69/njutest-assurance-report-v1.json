@@ -3,7 +3,7 @@
   "report": {
     "schema": "njutest-assurance-report-v1",
     "schema_version": 3,
-    "run_id": "20261002t025016124z-00ba7e",
+    "run_id": "20261002t033312394z-00fd69",
     "run_kind": "full",
     "contract": "whole-v1",
     "tool": {
@@ -15,7 +15,7 @@
       "packages": [
         "fixture-simple"
       ],
-      "workspace_digest": "3caa3f4d2e23a12e5d4e4b1c1290f4ac834402f183fb083804703fe4c59fbb5d",
+      "workspace_digest": "1edec2e974efb5b4ce3782eff8b25afe0439a07513af3d066a687dcbc653664c",
       "configuration_digest": "5a89dd74e8ec1aa425c45badf56d3db55e3a58104fa0a9e33325f346c254c533",
       "git": {
         "available": false,
@@ -27,7 +27,7 @@
       }
     },
     "provenance": {
-      "identity": "7a19e706a265fc9cde608fff6aac9d60bc9834cc7348bfbbdfd3ab3c0c2e75d3",
+      "identity": "885c4578dc475eb17f4393d6d698e491649a13366195647bb597f519dcbc3dff",
       "cached": false,
       "source_run_id": null
     },
@@ -60,7 +60,7 @@
         },
         "parts": [
           {
-            "run_id": "20261002t025016124z-00ba7e-b0000000000",
+            "run_id": "20261002t033312394z-00fd69-b0000000000",
             "part": {
               "kind": "whole"
             },
@@ -72,9 +72,9 @@
               "arch": "aarch64"
             },
             "timing": {
-              "started": "2026-10-02T02:50:16.124595Z",
-              "finished": "2026-10-02T02:50:28.038173Z",
-              "duration_ms": 11913
+              "started": "2026-10-02T03:33:12.394514Z",
+              "finished": "2026-10-02T03:33:43.565873Z",
+              "duration_ms": 31171
             },
             "accounting": {
               "targets": {
@@ -150,7 +150,7 @@
                 "name": "fixture-simple/lib/fixture_simple",
                 "package": "fixture-simple",
                 "status": "passed",
-                "duration_ms": 225,
+                "duration_ms": 230,
                 "message": null
               },
               {
@@ -158,7 +158,7 @@
                 "name": "fixture-simple/test/parity",
                 "package": "fixture-simple",
                 "status": "passed",
-                "duration_ms": 223,
+                "duration_ms": 225,
                 "message": null
               }
             ],
@@ -636,7 +636,7 @@
                 "origin": {
                   "scope": "source",
                   "build": "default",
-                  "run_id": "20261002t025016124z-00ba7e-b0000000000",
+                  "run_id": "20261002t033312394z-00fd69-b0000000000",
                   "part": {
                     "kind": "whole"
                   }
@@ -655,7 +655,7 @@
                 "origin": {
                   "scope": "source",
                   "build": "default",
-                  "run_id": "20261002t025016124z-00ba7e-b0000000000",
+                  "run_id": "20261002t033312394z-00fd69-b0000000000",
                   "part": {
                     "kind": "whole"
                   }
@@ -674,7 +674,7 @@
                 "origin": {
                   "scope": "source",
                   "build": "default",
-                  "run_id": "20261002t025016124z-00ba7e-b0000000000",
+                  "run_id": "20261002t033312394z-00fd69-b0000000000",
                   "part": {
                     "kind": "whole"
                   }
@@ -693,7 +693,7 @@
                 "origin": {
                   "scope": "source",
                   "build": "default",
-                  "run_id": "20261002t025016124z-00ba7e-b0000000000",
+                  "run_id": "20261002t033312394z-00fd69-b0000000000",
                   "part": {
                     "kind": "whole"
                   }
@@ -712,7 +712,7 @@
                 "origin": {
                   "scope": "source",
                   "build": "default",
-                  "run_id": "20261002t025016124z-00ba7e-b0000000000",
+                  "run_id": "20261002t033312394z-00fd69-b0000000000",
                   "part": {
                     "kind": "whole"
                   }
@@ -731,7 +731,7 @@
                 "origin": {
                   "scope": "source",
                   "build": "default",
-                  "run_id": "20261002t025016124z-00ba7e-b0000000000",
+                  "run_id": "20261002t033312394z-00fd69-b0000000000",
                   "part": {
                     "kind": "whole"
                   }
@@ -750,7 +750,7 @@
                 "origin": {
                   "scope": "source",
                   "build": "default",
-                  "run_id": "20261002t025016124z-00ba7e-b0000000000",
+                  "run_id": "20261002t033312394z-00fd69-b0000000000",
                   "part": {
                     "kind": "whole"
                   }
@@ -769,7 +769,7 @@
                 "origin": {
                   "scope": "source",
                   "build": "default",
-                  "run_id": "20261002t025016124z-00ba7e-b0000000000",
+                  "run_id": "20261002t033312394z-00fd69-b0000000000",
                   "part": {
                     "kind": "whole"
                   }
@@ -788,7 +788,7 @@
                 "origin": {
                   "scope": "source",
                   "build": "default",
-                  "run_id": "20261002t025016124z-00ba7e-b0000000000",
+                  "run_id": "20261002t033312394z-00fd69-b0000000000",
                   "part": {
                     "kind": "whole"
                   }
@@ -807,7 +807,7 @@
                 "origin": {
                   "scope": "source",
                   "build": "default",
-                  "run_id": "20261002t025016124z-00ba7e-b0000000000",
+                  "run_id": "20261002t033312394z-00fd69-b0000000000",
                   "part": {
                     "kind": "whole"
                   }
@@ -826,7 +826,7 @@
                 "origin": {
                   "scope": "source",
                   "build": "default",
-                  "run_id": "20261002t025016124z-00ba7e-b0000000000",
+                  "run_id": "20261002t033312394z-00fd69-b0000000000",
                   "part": {
                     "kind": "whole"
                   }
@@ -841,7 +841,7 @@
                 "origin": {
                   "scope": "source",
                   "build": "default",
-                  "run_id": "20261002t025016124z-00ba7e-b0000000000",
+                  "run_id": "20261002t033312394z-00fd69-b0000000000",
                   "part": {
                     "kind": "whole"
                   }

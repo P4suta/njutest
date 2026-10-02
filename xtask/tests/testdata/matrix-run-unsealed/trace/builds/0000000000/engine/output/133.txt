@@ -1,18 +1,6 @@
 
 running 1 test
-test even_numbers_are_even ... FAILED
+test even_numbers_are_even ... ok
 
-failures:
-
----- even_numbers_are_even stdout ----
-
-thread 'even_numbers_are_even' (101403395) panicked at tests/parity.rs:9:5:
-assertion failed: !fixture_simple::is_even(3)
-note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
-
-
-failures:
-    even_numbers_are_even
-
-test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
