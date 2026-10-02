@@ -329,8 +329,10 @@ fn build_the_example(profile: &Path) {
     } else {
         profile_name.to_owned()
     };
-    let manifest = crate::paths::workspace_root().join("Cargo.toml");
-    let said = std::process::Command::new(crate::paths::cargo_binary())
+    let workspace = crate::paths::workspace_root();
+    let manifest = workspace.join("Cargo.toml");
+    let mut command = std::process::Command::new(crate::paths::cargo_binary());
+    command
         .args(["build", "--offline", "--examples", "-p", "rust-mutants"])
         .arg("--profile")
         .arg(cargo_profile)
@@ -338,7 +340,11 @@ fn build_the_example(profile: &Path) {
         .arg(&manifest)
         .arg("--target-dir")
         .arg(target)
-        .output();
+        .current_dir(workspace);
+    let said = crate::cost::cargo(
+        command,
+        "the actual shared scripted-toolchain example build",
+    );
     match said {
         Ok(output) if !output.status.success() => {
             let stderr = String::from_utf8(output.stderr)
