@@ -12,7 +12,7 @@
 use std::ffi::OsString;
 use std::io::Write as _;
 use std::os::unix::fs::PermissionsExt as _;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
@@ -42,10 +42,10 @@ struct Repository {
 
 impl Repository {
     fn new(check: &str) -> Self {
-        Self::new_from(check, Path::new(env!("CARGO_BIN_EXE_xtask")))
+        Self::new_from(check, std::path::Path::new(env!("CARGO_BIN_EXE_xtask")))
     }
 
-    fn new_from(check: &str, binary: &Path) -> Self {
+    fn new_from(check: &str, binary: &std::path::Path) -> Self {
         let directory = tempfile::tempdir().expect("a temporary repository");
         git_in(directory.path(), &["init", "--quiet"]);
         git_in(directory.path(), &["config", "user.name", "pre-push-test"]);
@@ -172,7 +172,7 @@ impl Repository {
         self.push_with(self.directory.path(), &update(local, remote, end), &[])
     }
 
-    fn push_from(&self, directory: &Path, local: &str) -> Output {
+    fn push_from(&self, directory: &std::path::Path, local: &str) -> Output {
         self.push_with(directory, &update(local, &"0".repeat(40), "\n"), &[])
     }
 
@@ -187,7 +187,7 @@ impl Repository {
 
     fn push_with(
         &self,
-        directory: &Path,
+        directory: &std::path::Path,
         line: &str,
         handed: &[(&str, &std::ffi::OsStr)],
     ) -> Output {
@@ -198,20 +198,20 @@ impl Repository {
 
     fn launch(
         &self,
-        directory: &Path,
+        directory: &std::path::Path,
         line: &str,
         handed: &[(&str, &std::ffi::OsStr)],
     ) -> SupervisedChild {
         Self::start(self.command(directory, handed, Stdio::piped()), line)
     }
 
-    fn launch_to(&self, directory: &Path, line: &str, told: Stdio) -> SupervisedChild {
+    fn launch_to(&self, directory: &std::path::Path, line: &str, told: Stdio) -> SupervisedChild {
         Self::start(self.command(directory, &[], told), line)
     }
 
     fn command(
         &self,
-        directory: &Path,
+        directory: &std::path::Path,
         handed: &[(&str, &std::ffi::OsStr)],
         told: Stdio,
     ) -> Command {
@@ -258,7 +258,7 @@ impl Repository {
     }
 }
 
-fn scripted_cargo(cargo: &Path) {
+fn scripted_cargo(cargo: &std::path::Path) {
     std::fs::write(
         cargo,
         "#!/usr/bin/env bash\nset -eo pipefail\n\
@@ -280,7 +280,7 @@ fn scripted_cargo(cargo: &Path) {
 }
 
 /// Every directory under `root` that holds a checkout the gate made for itself.
-fn gate_trees(root: &Path) -> Vec<PathBuf> {
+fn gate_trees(root: &std::path::Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     let mut pending = vec![(root.to_path_buf(), 0_u8)];
     while let Some((directory, depth)) = pending.pop() {
@@ -316,11 +316,11 @@ fn until(limit: Duration, mut ready: impl FnMut() -> bool) -> bool {
     ready()
 }
 
-fn present(path: &Path) -> bool {
+fn present(path: &std::path::Path) -> bool {
     path.try_exists().expect("a marker can be looked for")
 }
 
-fn waiting_in(slots: &Path) -> bool {
+fn waiting_in(slots: &std::path::Path) -> bool {
     if !slots
         .try_exists()
         .expect("the lane directory can be looked for")
@@ -341,7 +341,7 @@ fn update(local: &str, remote: &str, end: &str) -> String {
     format!("refs/heads/local {local} refs/heads/remote {remote}{end}")
 }
 
-fn symbolic_head(directory: &Path) -> String {
+fn symbolic_head(directory: &std::path::Path) -> String {
     String::from_utf8(
         git_in_the(directory)
             .args(["symbolic-ref", "--quiet", "HEAD"])
@@ -354,7 +354,7 @@ fn symbolic_head(directory: &Path) -> String {
     .to_owned()
 }
 
-fn object_id(directory: &Path, revision: &str) -> String {
+fn object_id(directory: &std::path::Path, revision: &str) -> String {
     String::from_utf8(
         git_in_the(directory)
             .args(["rev-parse", revision])
@@ -380,7 +380,7 @@ fn isolated(program: impl AsRef<std::ffi::OsStr>) -> Command {
 }
 
 /// Git in `directory` as a test starts it, reading the tree itself, with none of the `GIT_*` variables a hook hands down and none of the user's configuration.
-fn git_in_the(directory: &Path) -> Command {
+fn git_in_the(directory: &std::path::Path) -> Command {
     let mut git = njutest_devkit::repo::git(directory);
     for (name, _) in std::env::vars_os() {
         if name.as_encoded_bytes().starts_with(b"GIT_") {
@@ -391,7 +391,7 @@ fn git_in_the(directory: &Path) -> Command {
     git
 }
 
-fn git_in(directory: &Path, arguments: &[&str]) {
+fn git_in(directory: &std::path::Path, arguments: &[&str]) {
     let status = git_in_the(directory)
         .args(arguments)
         .status()
@@ -399,7 +399,7 @@ fn git_in(directory: &Path, arguments: &[&str]) {
     assert!(status.success(), "git {arguments:?}: {status}");
 }
 
-fn executable(path: &Path) {
+fn executable(path: &std::path::Path) {
     let mut permissions = std::fs::metadata(path)
         .expect("the scripted check")
         .permissions();
@@ -692,7 +692,7 @@ fn a_remembered_warm_pass_still_requires_a_new_cold_check() {
     );
     for target in targets {
         assert!(
-            !present(Path::new(&target)),
+            !present(std::path::Path::new(&target)),
             "the cold target was not removed"
         );
     }
@@ -742,7 +742,7 @@ fn a_remembered_warm_pass_cannot_hide_a_cold_failure() {
     assert_eq!(targets.len(), 2);
     for target in targets {
         assert!(
-            !present(Path::new(&target)),
+            !present(std::path::Path::new(&target)),
             "the failed cold target was not removed"
         );
     }
@@ -812,7 +812,7 @@ fn a_cold_check_that_goes_quiet_is_stopped() {
     assert!(stderr(&failed).contains("said nothing"));
     let targets = repository.cold_targets();
     assert_eq!(targets.len(), 1);
-    assert!(!present(Path::new(
+    assert!(!present(std::path::Path::new(
         targets.first().expect("the cold target")
     )));
 }
@@ -886,7 +886,7 @@ fn two_gates_take_turns_on_one_machine() {
             || present(&second.turns.join("overlapped"))),
         "the second gate neither waited nor ran"
     );
-    std::fs::write(first.turns.join("go"), "").expect("the first check's release");
+    release_turns(&first.turns).expect("the first check's release");
 
     let first_answer = running.wait_with_output().expect("the first gate's answer");
     let second_answer = queued.wait_with_output().expect("the second gate's answer");
@@ -972,7 +972,7 @@ fn takes_turns() -> String {
 }
 
 /// Whether any file under `root` is a run waiting for the lane `lane`.
-fn waiting_under(root: &Path, lane: &str) -> bool {
+fn waiting_under(root: &std::path::Path, lane: &str) -> bool {
     let prefix = format!("{lane}.waiting.");
     let mut pending = vec![root.to_path_buf()];
     while let Some(directory) = pending.pop() {
@@ -1010,7 +1010,7 @@ fn a_second_push_of_a_commit_that_passed_while_it_waited_is_not_checked_again() 
         until(Duration::from_secs(120), || waiting_in(&repository.slots)),
         "the second gate did not queue behind the first"
     );
-    std::fs::write(repository.turns.join("go"), "").expect("the first check's release");
+    release_turns(&repository.turns).expect("the first check's release");
     let first = first.wait_with_output().expect("the first gate's answer");
     let calls = repository.calls();
     let second = second.wait_with_output().expect("the second gate's answer");
@@ -1053,7 +1053,7 @@ fn two_gates_of_one_repository_take_turns_even_inside_a_held_lane() {
         }),
         "the second gate neither waited nor ran"
     );
-    std::fs::write(repository.turns.join("go"), "").expect("the first check's release");
+    release_turns(&repository.turns).expect("the first check's release");
     let first = first.wait_with_output().expect("the first gate's answer");
     let second = second.wait_with_output().expect("the second gate's answer");
     assert!(
