@@ -37,6 +37,7 @@ const STARTED: u64 = 1_750_000_000_000_000_000;
 fn runner() -> MeasuredRunner {
     MeasuredRunner(
         SealedRunner::cached(
+            &rust_mutants_sealed::ModuleOwner::default(),
             WATCHDOG,
             &njutest_devkit::paths::workspace_root().join("target/wasmtime-modules-v1"),
         )
@@ -52,6 +53,60 @@ impl MeasuredRunner {
     fn prepare(&self, bytes: &[u8]) -> Result<SealedModule<'_>, rust_mutants_sealed::SealedError> {
         self.0.prepare(bytes)
     }
+}
+
+#[test]
+fn actual_rust_guest_requests_share_one_preparation_across_compatible_runners() {
+    let modules = rust_mutants_sealed::ModuleOwner::default();
+    let directory = tempfile::tempdir().expect("an owned cold module cache");
+    let first = MeasuredRunner(
+        SealedRunner::cached(&modules, WATCHDOG, directory.path())
+            .expect("the first compatible runner"),
+    );
+    let second = MeasuredRunner(
+        SealedRunner::cached(&modules, WATCHDOG, directory.path())
+            .expect("the second compatible runner"),
+    );
+    let bytes = program_bytes();
+    let asked = invocation(&["read", &format!("{SANDBOX}/data/hello.txt")]);
+    let mut control = None;
+    for (case, runner) in [("cold", &first), ("repeat", &first), ("separate", &second)] {
+        let transcript = run(
+            &runner.prepare(&bytes).expect("the actual Rust guest"),
+            &asked,
+        );
+        assert_eq!(transcript.stop(), SealedStop::Returned);
+        assert_eq!(stdout(&transcript), "hello, sealed world");
+        if let Some(control) = &control {
+            assert_eq!(&transcript, control);
+        } else {
+            control = Some(transcript);
+        }
+        eprintln!(
+            "module-work case=physical-rust-guest-{case} module={} configuration={} spent={}",
+            rust_mutants_sealed::SealedDigest::of(&bytes),
+            runner.0.configuration(),
+            serde_json::to_string(&runner.0.spent()).expect("actual work diagnostics")
+        );
+    }
+    let first_work = first
+        .0
+        .spent()
+        .expect("actual preparation requests")
+        .compilation
+        .expect("actual preparation work");
+    let second_work = second
+        .0
+        .spent()
+        .expect("the separate runner's request")
+        .compilation
+        .expect("actual process reuse");
+    assert_eq!(
+        (first_work.attempts, first_work.process),
+        (Some(1), Some(1))
+    );
+    assert_eq!((second_work.attempts, second_work.process), (None, Some(1)));
+    assert_eq!(second_work.duration_ns, 0);
 }
 
 #[test]
@@ -852,7 +907,13 @@ fn compiler_tiers_preserve_the_recursive_guests_full_observation_or_keep_the_opt
     let bytes = program_bytes();
     let observation = |tier| {
         let runner = MeasuredRunner(
-            SealedRunner::with_compiler(WATCHDOG, tier, None).expect("the compiler tier"),
+            SealedRunner::with_compiler(
+                &rust_mutants_sealed::ModuleOwner::default(),
+                WATCHDOG,
+                tier,
+                None,
+            )
+            .expect("the compiler tier"),
         );
         let module = runner.prepare(&bytes).expect("the same guest bytes");
         let transcript = run(&module, &invocation(&["recurse"]));

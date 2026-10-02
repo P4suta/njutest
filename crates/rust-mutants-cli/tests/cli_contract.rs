@@ -44,6 +44,7 @@ fn environment() -> Environment {
         Err(error) => panic!("the test process has no working directory: {error}"),
     };
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: njutest_devkit::paths::environment_for_a_run()
             .into_iter()
             .collect(),
@@ -417,6 +418,7 @@ fn with(switch: Option<&str>, root: &Path) -> (rust_mutants_cli::config::Config,
         panic!("`list` parses as List")
     };
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: rust_mutants::vars::Variables::empty(),
         temp_directory: PathBuf::from("/tmp"),
         program: PathBuf::from("this test never runs it"),

@@ -75,6 +75,7 @@ impl MeasureError {
 #[must_use]
 pub fn opening(measuring: &Measuring<'_>) -> OpenOptions {
     OpenOptions {
+        module_owner: measuring.environment.module_owner.clone(),
         allow_outside: measuring.config.project.outside(measuring.root),
         cargo: None,
         search_path: measuring

@@ -1566,6 +1566,7 @@ fn prove_equivalence(
         &equivalence::Proving {
             root: &request.root,
             open: rust_mutants::workspace::OpenOptions {
+                module_owner: mutating.environment.module_owner.clone(),
                 allow_outside: request.config.project.outside(&request.root),
                 cargo: None,
                 search_path: mutating
@@ -1641,6 +1642,7 @@ pub fn opening(
     environment: &Environment,
 ) -> rust_mutants::workspace::OpenOptions {
     rust_mutants::workspace::OpenOptions {
+        module_owner: environment.module_owner.clone(),
         allow_outside: request.config.project.outside(&request.root),
         cargo: None,
         search_path: environment.var("PATH").map(std::ffi::OsStr::to_owned),

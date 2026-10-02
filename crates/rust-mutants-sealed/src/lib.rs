@@ -39,13 +39,13 @@ pub use invocation::{
     Start,
 };
 pub use redirect::{Redirect, Redirected, names_std_env, redirected};
-pub use runner::{CompilerTier, SealedModule, SealedRunner, WASMTIME_VERSION};
+pub use runner::{CompilerTier, ModuleOwner, SealedModule, SealedRunner, WASMTIME_VERSION};
 pub use snapshot::{Snapshot, SnapshotBuilder};
 pub use transcript::{
     Captured, Denials, OverlayEntry, OverlayState, Refusal, RefusalReason, SealedStop, Transcript,
     TrapKind,
 };
 pub use transcripts::{
-    Compilation, Counted, LAYOUT as TRANSCRIPTS_LAYOUT, SCHEMA as TRANSCRIPTS_SCHEMA, Spent,
+    Compilation, Counted, LAYOUT as TRANSCRIPTS_LAYOUT, Reuse, SCHEMA as TRANSCRIPTS_SCHEMA, Spent,
     Transcripts,
 };

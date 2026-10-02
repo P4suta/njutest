@@ -6,8 +6,13 @@ use super::{HOME_DIR, TEMP_DIR, flags, unanswered};
 #[test]
 fn a_probe_that_holds_neither_function_does_not_answer_and_says_why() {
     let empty_module = b"\0asm\x01\0\0\0";
-    let said = unanswered(empty_module, &crate::trace::Recorder::disabled(), None)
-        .expect("an empty module answers nothing");
+    let said = unanswered(
+        &rust_mutants_sealed::ModuleOwner::default(),
+        empty_module,
+        &crate::trace::Recorder::disabled(),
+        None,
+    )
+    .expect("an empty module answers nothing");
     assert!(
         said.contains("holds no function of the standard library's"),
         "a toolchain whose probe the rewrite finds nothing in is refused with the count it found: \

@@ -118,6 +118,8 @@ fn claim_scratch(
 /// Configures [`Workspace::open`].
 #[derive(Debug, Clone, Default)]
 pub struct OpenOptions {
+    /// The explicit compiled-module owner retained across compatible preparation paths.
+    pub module_owner: crate::sealed::ModuleOwner,
     /// The cargo to use: a path, or a bare name to find on `search_path`.
     pub cargo: Option<PathBuf>,
     /// The `PATH` a bare cargo name is searched on.
@@ -232,6 +234,7 @@ const WATCHED_NAME: &str = "watched";
 /// A read-only source tree and the disposable copy of it this run works in.
 #[derive(Debug)]
 pub struct Workspace {
+    pub(crate) module_owner: crate::sealed::ModuleOwner,
     pub(crate) snapshot: Snapshot,
     /// The rules the snapshot was copied under, which a survey of the source must follow to say what a copy would hold.
     pub(crate) rules: SnapshotOptions,
@@ -1048,6 +1051,7 @@ impl Workspace {
         phase.end();
         Ok(Self {
             snapshot,
+            module_owner: options.module_owner,
             rules,
             watched,
             toolchain,

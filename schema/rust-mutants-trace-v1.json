@@ -2552,9 +2552,18 @@
                       "properties": {
                         "hits": { "type": "integer", "minimum": 0 },
                         "misses": { "type": "integer", "minimum": 0 },
-                        "duration_ns": { "type": "integer", "minimum": 0 }
+                        "duration_ns": { "type": "integer", "minimum": 0 },
+                        "process": { "type": "integer", "minimum": 0 },
+                        "attempts": { "type": "integer", "minimum": 0 },
+                        "failed_cold": { "type": "integer", "minimum": 0 },
+                        "failed_disk": { "type": "integer", "minimum": 0 }
                       },
                       "description": "Measured compiled-module cache hits, misses and module preparation time; absent in older recordings."
+                    },
+                    "failures": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Refused preparation requests; absent in older recordings and when none occurred."
                     },
                     "execution_ns": {
                       "type": "integer",

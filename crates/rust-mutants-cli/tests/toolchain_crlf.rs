@@ -165,6 +165,7 @@ fn the_fates_a_crlf_tree_reaches_are_the_ones_its_readme_states() {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: njutest_devkit::paths::environment_for_a_run()
             .into_iter()
             .collect(),

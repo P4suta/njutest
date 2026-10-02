@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use crate::cargo::{CargoError, Compiled, Package, Unit};
 use crate::execute::TestTarget;
 
-pub use rust_mutants_sealed::{CompilerTier, SealedRunner};
+pub use rust_mutants_sealed::{CompilerTier, ModuleOwner, SealedRunner};
 
 /// The target a sealed build compiles for.
 pub const TARGET: &str = "wasm32-wasip1";

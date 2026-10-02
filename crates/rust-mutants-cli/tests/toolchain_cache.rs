@@ -50,6 +50,7 @@ fn environment(fixture: &Fixture) -> Environment {
         fixture.temp().join("shared-builds"),
     );
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars,
         temp_directory: fixture.temp().to_path_buf(),
         program: std::env::current_exe().expect(

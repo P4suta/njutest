@@ -20,6 +20,7 @@ const RUN: &str = "20260101T000000Z-aaaaaa";
 
 fn environment(root: &Path) -> Environment {
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: rust_mutants::vars::Variables::empty(),
         working_directory: root.to_path_buf(),
         temp_directory: root.join("tmp"),

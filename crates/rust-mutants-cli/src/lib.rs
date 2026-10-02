@@ -38,6 +38,8 @@ pub const EXIT_USAGE: u8 = run::Exit::Failed.code();
 /// Everything the command line needs from the process it runs in.
 #[derive(Debug, Clone)]
 pub struct Environment {
+    /// The explicit compiled-module owner retained across this composition's preparation paths.
+    pub module_owner: rust_mutants::sealed::ModuleOwner,
     /// The process environment, which the engine hands to every command and test process it starts.
     pub vars: rust_mutants::vars::Variables,
     /// The directory snapshots and target directories are created in.

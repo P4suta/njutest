@@ -3,10 +3,11 @@
 
 //! The runner: one deterministic engine, a module validated and compiled once, and a fresh store and instance for every invocation.
 
+use std::collections::BTreeMap;
 use std::hash::{Hash as _, Hasher};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -22,6 +23,7 @@ use crate::imports::{IMPORT_MODULE, WasiFunction};
 use crate::interrupt::Interrupt;
 use crate::invocation::Invocation;
 use crate::transcript::{KEPT_REQUESTS, Parts, SealedStop, Transcript, TrapClass, classify};
+use crate::transcripts::Reuse;
 use crate::validate;
 
 /// The wasmtime every digest of this crate is taken under, which `Cargo.toml` pins exactly.
@@ -119,51 +121,249 @@ impl Drop for EpochTicker {
     }
 }
 
-/// The one engine sealed guests are compiled and run by, with the host linked once.
+/// The epoch ticker of one shared engine, which the last runner alive on that engine stops and joins, so no periodic thread outlives the runners whose watchdogs stand on it.
 #[derive(Debug)]
-pub struct SealedRunner {
+struct Ticking {
+    /// The engine whose ticker slot stays occupied until stop and join complete.
+    owner: Arc<Owner>,
+    /// The thread, until the last runner sharing it drops this.
+    ticker: Option<EpochTicker>,
+}
+
+impl Drop for Ticking {
+    fn drop(&mut self) {
+        {
+            let live = self.owner.ticking.lock();
+            if let Some(mut ticker) = self.ticker.take() {
+                ticker.stop();
+            }
+            match live {
+                Ok(mut live) => {
+                    *live = None;
+                    drop(live);
+                }
+                Err(poisoned) => drop(poisoned),
+            }
+        }
+        self.owner.ticker_changed.notify_all();
+    }
+}
+
+/// The requested compiler settings and operational disk-cache domain.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Identity {
+    /// The Cranelift level the engine compiles at.
+    tier: CompilerTier,
+    /// The directory Wasmtime's compiled-module cache lives in, or none where the engine keeps no cache.
+    directory: Option<PathBuf>,
+}
+
+/// An owner key derived from the actual configured engine and host, plus its disk-cache domain.
+#[derive(Debug, PartialEq, Eq)]
+struct OwnerKey {
+    configuration: SealedDigest,
+    directory: Option<PathBuf>,
+}
+
+/// One engine compatible runners of an explicit module owner share, holding its modules prepared once.
+#[derive(Debug)]
+struct Owner {
     /// The deterministic engine.
     engine: Engine,
     /// Every function of the table, linked.
     linker: Linker<Host>,
     /// The digest of everything about the engine and the host that a transcript depends on.
     configuration: SealedDigest,
-    /// How long a guest may run by the wall clock before the watchdog stops it.
-    watchdog: Duration,
-    /// The thread advancing the epoch the watchdog is checked at.
-    ticker: EpochTicker,
-    counted: crate::Counted,
+    /// Wasmtime's compiled-module cache, where the identity names one.
     cache: Option<Cache>,
-    preparation: Mutex<()>,
+    /// The modules this process prepared on the engine, by the digest of their exact bytes, one preparation at a time.
+    slots: Mutex<BTreeMap<SealedDigest, Slot>>,
+    /// Wakes every waiter for a slot of `slots` that changed.
+    changed: Condvar,
+    /// One actual preparation at a time, which owns the engine's whole observation of the shared cache counter.
+    preparing: Mutex<()>,
+    /// The ticker the engine's live runners share, which no runner outlives.
+    ticking: Mutex<Option<Weak<Ticking>>>,
+    /// Wakes a successor after the previous last-runner ticker has stopped and joined.
+    ticker_changed: Condvar,
 }
 
-impl SealedRunner {
-    /// The runner, its watchdog stopping a guest `watchdog` after it starts.
-    ///
-    /// # Errors
-    /// [`SealedError::Engine`] where wasmtime refuses the configuration, [`SealedError::Link`] where the host cannot be linked, [`SealedError::WatchdogUnavailable`] where its thread cannot start.
-    pub fn new(watchdog: Duration) -> Result<Self, SealedError> {
-        Self::with_compiler(watchdog, CompilerTier::faithful(), None)
+/// One module's place on an owner: held for every compatible request, or being prepared by one request.
+#[derive(Debug)]
+enum Slot {
+    /// A preparation this process started, which no waiter may use yet.
+    Preparing(Arc<Preparation>),
+    /// The module one actual preparation made, for every compatible request.
+    Held(Arc<Prepared>),
+}
+
+/// The identity of a live preparation claim, distinct from a waiter's later retry.
+#[derive(Debug)]
+struct Preparation;
+
+/// Events at the owned preparation boundary, observable through immutable argument hooks.
+#[derive(Clone, Copy)]
+enum PreparationStage {
+    /// The request is about to wait on an existing claim.
+    Waiting,
+    /// This operation has sampled the disk-cache counter before calling `Module::new`.
+    Observed,
+}
+
+/// An argument hook for observing preparation events without replacing compilation.
+struct PreparationHooks<F> {
+    observe: F,
+}
+
+impl PreparationHooks<fn(PreparationStage)> {
+    /// A preparation with no observer beyond its owned work meter.
+    fn quiet() -> Self {
+        Self {
+            observe: |_stage| {},
+        }
+    }
+}
+
+/// A module one compatible engine prepared once, ready to instantiate, with what its one preparation cost.
+struct Prepared {
+    /// The module with the host linked.
+    pre: InstancePre<Host>,
+    /// Whether Wasmtime's cache held the compiled code when this module's one preparation ran.
+    disk: bool,
+    /// How long the one actual preparation of this module took.
+    preparation: Duration,
+}
+
+impl std::fmt::Debug for Prepared {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Prepared")
+            .field("disk", &self.disk)
+            .field("preparation", &self.preparation)
+            .finish_non_exhaustive()
+    }
+}
+
+/// One refused preparation: the refusal the caller is told, and the actual preparation work it had done when it failed, which is nothing where it was refused before an attempt began.
+#[derive(Debug)]
+struct Refused {
+    /// The refusal.
+    error: SealedError,
+    /// The elapsed work of an attempt that had reached `Module::new`, or nothing where none did.
+    attempted: Option<Attempt>,
+}
+
+/// The physical work and disk-cache observation of one actual preparation attempt.
+#[derive(Debug)]
+struct Attempt {
+    duration: Duration,
+    disk: bool,
+}
+
+/// Compatible engines retained by one explicit preparation owner.
+type Owners = Vec<(OwnerKey, Arc<Owner>)>;
+
+/// Explicit process-local compiled-module ownership, shared by compatible runners and retained by their composition.
+#[derive(Debug, Clone, Default)]
+pub struct ModuleOwner {
+    owners: Arc<Mutex<Owners>>,
+}
+
+/// An owner's lock, or a sticky host failure where a panic interrupted its protected state.
+fn held<T>(lock: std::sync::LockResult<T>) -> Result<T, SealedError> {
+    lock.map_err(|poisoned| {
+        drop(poisoned);
+        broken(Invariant::ModuleOwnerPoisoned)
+    })
+}
+
+/// The claim one request holds on a digest's slot while it performs the actual preparation, settled exactly once however the preparation ends: with the module held, with the slot released, or by its own drop where the preparation unwinds.
+struct Claim<'owner> {
+    /// The owner whose slot is claimed.
+    owner: &'owner Owner,
+    /// The digest of the bytes being prepared.
+    digest: SealedDigest,
+    /// The operation whose slot this claim settles.
+    preparation: Arc<Preparation>,
+    /// Whether the claim still owes a settlement.
+    unsettled: bool,
+}
+
+impl Claim<'_> {
+    /// Settles the claim with the prepared module held for every compatible request.
+    fn held(mut self, prepared: &Arc<Prepared>) -> Result<(), SealedError> {
+        self.settle(Some(Arc::clone(prepared)))
     }
 
-    /// The default compiler with Wasmtime's content-addressed cache shared across processes.
-    ///
-    /// # Errors
-    /// The cache, engine, linker or watchdog cannot be configured.
-    pub fn cached(watchdog: Duration, directory: &Path) -> Result<Self, SealedError> {
-        Self::with_compiler(watchdog, CompilerTier::faithful(), Some(directory))
+    /// Settles the claim with the slot released, so a later request attempts the preparation again.
+    fn released(mut self) -> Result<(), SealedError> {
+        self.settle(None)
     }
 
-    /// An explicit compiler tier and optional Wasmtime cache, with the same deterministic host.
-    ///
-    /// # Errors
-    /// The cache, engine, linker or watchdog cannot be configured.
-    pub fn with_compiler(
-        watchdog: Duration,
-        tier: CompilerTier,
-        directory: Option<&Path>,
-    ) -> Result<Self, SealedError> {
-        let cache = directory
+    /// Settles the claim once: `held` names the module to keep, and every waiter is woken either way.
+    fn settle(&mut self, prepared: Option<Arc<Prepared>>) -> Result<(), SealedError> {
+        if !self.unsettled {
+            return Ok(());
+        }
+        let mut slots = match held(self.owner.slots.lock()) {
+            Ok(slots) => slots,
+            Err(error) => {
+                self.unsettled = false;
+                self.owner.changed.notify_all();
+                return Err(error);
+            }
+        };
+        if !matches!(slots.get(&self.digest), Some(Slot::Preparing(preparation)) if Arc::ptr_eq(preparation, &self.preparation))
+        {
+            return Ok(());
+        }
+        match prepared {
+            Some(prepared) => {
+                slots.insert(self.digest, Slot::Held(prepared));
+            }
+            None => {
+                slots.remove(&self.digest);
+            }
+        }
+        self.unsettled = false;
+        drop(slots);
+        self.owner.changed.notify_all();
+        Ok(())
+    }
+}
+
+impl Drop for Claim<'_> {
+    fn drop(&mut self) {
+        if let Err(error) = self.settle(None) {
+            drop(error);
+        }
+    }
+}
+
+impl ModuleOwner {
+    /// The compatible engine for `identity`, retained by this explicit owner for its runners.
+    fn shared(&self, identity: &Identity) -> Result<Arc<Owner>, SealedError> {
+        let candidate = Owner::built(identity)?;
+        let key = OwnerKey {
+            configuration: candidate.configuration,
+            directory: identity.directory.clone(),
+        };
+        let mut owners = held(self.owners.lock())?;
+        if let Some((_known, owner)) = owners.iter().find(|(known, _owner)| known == &key) {
+            return Ok(Arc::clone(owner));
+        }
+        let owner = Arc::new(candidate);
+        owners.push((key, Arc::clone(&owner)));
+        drop(owners);
+        Ok(owner)
+    }
+}
+
+impl Owner {
+    /// Builds the engine of `identity`, its linked host, its configuration digest and its empty module memory.
+    fn built(identity: &Identity) -> Result<Self, SealedError> {
+        let cache = identity
+            .directory
+            .as_deref()
             .map(|directory| {
                 let mut configuration = CacheConfig::new();
                 configuration.with_directory(directory.to_path_buf());
@@ -177,7 +377,7 @@ impl SealedRunner {
             .consume_fuel(true)
             .epoch_interruption(true)
             .cranelift_nan_canonicalization(true)
-            .cranelift_opt_level(tier.level())
+            .cranelift_opt_level(identity.tier.level())
             .relaxed_simd_deterministic(true)
             .max_wasm_stack(MAX_WASM_STACK)
             .memory_init_cow(false)
@@ -185,21 +385,223 @@ impl SealedRunner {
         let engine = Engine::new(&config).map_err(|source| SealedError::Engine { source })?;
         let linker = link(&engine)?;
         let configuration = configuration(&engine);
-        let ticker = EpochTicker::start(engine.clone())
-            .map_err(|source| SealedError::WatchdogUnavailable { source })?;
         Ok(Self {
             engine,
             linker,
             configuration,
-            watchdog,
-            ticker,
-            counted: crate::Counted::default(),
             cache,
-            preparation: Mutex::new(()),
+            slots: Mutex::new(BTreeMap::new()),
+            changed: Condvar::new(),
+            preparing: Mutex::new(()),
+            ticking: Mutex::new(None),
+            ticker_changed: Condvar::new(),
         })
     }
 
-    /// Prepares a module and records the compilation work on the run's counters.
+    /// The ticker this engine's live runners share, started where none is alive, so the thread lives exactly as long as the runners whose watchdogs stand on it.
+    fn ticking(self: &Arc<Self>) -> Result<Arc<Ticking>, SealedError> {
+        let mut live = held(self.ticking.lock())?;
+        while let Some(ticking) = live.as_ref() {
+            if let Some(alive) = ticking.upgrade() {
+                return Ok(alive);
+            }
+            live = held(self.ticker_changed.wait(live))?;
+        }
+        let ticking = Arc::new(Ticking {
+            owner: Arc::clone(self),
+            ticker: Some(
+                EpochTicker::start(self.engine.clone())
+                    .map_err(|source| SealedError::WatchdogUnavailable { source })?,
+            ),
+        });
+        *live = Some(Arc::downgrade(&ticking));
+        drop(live);
+        Ok(ticking)
+    }
+
+    /// Claims or waits for these bytes, exposing boundary events through `hooks`.
+    fn acquire_with_hooks(
+        &self,
+        digest: &SealedDigest,
+        bytes: &[u8],
+        hooks: &PreparationHooks<impl Fn(PreparationStage)>,
+    ) -> Result<(Arc<Prepared>, Reuse), Refused> {
+        let refused = |error| Refused {
+            error,
+            attempted: None,
+        };
+        let mut slots = held(self.slots.lock()).map_err(refused)?;
+        let preparation = loop {
+            match slots.get(digest) {
+                Some(Slot::Held(prepared)) => {
+                    return Ok((Arc::clone(prepared), Reuse::Process));
+                }
+                Some(Slot::Preparing(_preparation)) => {
+                    (hooks.observe)(PreparationStage::Waiting);
+                    slots = held(self.changed.wait(slots)).map_err(refused)?;
+                }
+                None => {
+                    let preparation = Arc::new(Preparation);
+                    slots.insert(*digest, Slot::Preparing(Arc::clone(&preparation)));
+                    break preparation;
+                }
+            }
+        };
+        drop(slots);
+        let claim = Claim {
+            owner: self,
+            digest: *digest,
+            preparation,
+            unsettled: true,
+        };
+        let answer = self.compile_with_hooks(bytes, hooks);
+        match answer {
+            Ok(prepared) => {
+                let prepared = Arc::new(prepared);
+                claim.held(&prepared).map_err(|error| Refused {
+                    error,
+                    attempted: Some(Attempt {
+                        duration: prepared.preparation,
+                        disk: prepared.disk,
+                    }),
+                })?;
+                let reuse = if prepared.disk {
+                    Reuse::Disk
+                } else {
+                    Reuse::Cold
+                };
+                Ok((prepared, reuse))
+            }
+            Err(mut refused) => {
+                if let Err(error) = claim.released() {
+                    refused.error = error;
+                }
+                Err(refused)
+            }
+        }
+    }
+
+    /// Validates and compiles `bytes` on this engine, the one actual preparation a module's exact bytes get from this process, one at a time so the shared cache counter is observed by the preparation that moves it.
+    fn compile_with_hooks(
+        &self,
+        bytes: &[u8],
+        hooks: &PreparationHooks<impl Fn(PreparationStage)>,
+    ) -> Result<Prepared, Refused> {
+        let preparing = held(self.preparing.lock()).map_err(|error| Refused {
+            error,
+            attempted: None,
+        })?;
+        let answer = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.compile_owned(bytes, hooks)
+        }));
+        drop(preparing);
+        match answer {
+            Ok(answer) => answer,
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
+    }
+
+    /// Performs preparation under the caller's meter lock, which is released before any panic resumes.
+    fn compile_owned(
+        &self,
+        bytes: &[u8],
+        hooks: &PreparationHooks<impl Fn(PreparationStage)>,
+    ) -> Result<Prepared, Refused> {
+        let started = Instant::now();
+        validate::shape(bytes).map_err(|error| Refused {
+            error,
+            attempted: None,
+        })?;
+        let hits = self.cache.as_ref().map(Cache::cache_hits);
+        (hooks.observe)(PreparationStage::Observed);
+        let answer = (|| {
+            let module = Module::new(&self.engine, bytes)
+                .map_err(|source| SealedError::Compile { source })?;
+            validate::interface(&module)?;
+            self.linker
+                .instantiate_pre(&module)
+                .map_err(|source| SealedError::Link { source })
+        })();
+        let preparation = started.elapsed();
+        let disk = self
+            .cache
+            .as_ref()
+            .zip(hits)
+            .is_some_and(|(cache, before)| cache.cache_hits() > before);
+        match answer {
+            Ok(pre) => Ok(Prepared {
+                pre,
+                disk,
+                preparation,
+            }),
+            Err(error) => Err(Refused {
+                error,
+                attempted: Some(Attempt {
+                    duration: preparation,
+                    disk,
+                }),
+            }),
+        }
+    }
+}
+
+/// The engine sealed guests run on, shared by compatible runners of the explicit module owner.
+#[derive(Debug)]
+pub struct SealedRunner {
+    /// The engine owner: the engine, the host linked on it and the modules this process holds on it.
+    owner: Arc<Owner>,
+    /// The engine's epoch ticker, alive exactly as long as the runners sharing it: this runner's own share, whose stop runs when the last sharing runner drops it.
+    _ticking: Arc<Ticking>,
+    /// How long a guest may run by the wall clock before the watchdog stops it.
+    watchdog: Duration,
+    counted: crate::Counted,
+}
+
+impl SealedRunner {
+    /// The runner, its watchdog stopping a guest `watchdog` after it starts.
+    ///
+    /// # Errors
+    /// [`SealedError::Engine`] where wasmtime refuses the configuration, [`SealedError::Link`] where the host cannot be linked, [`SealedError::WatchdogUnavailable`] where its thread cannot start.
+    pub fn new(modules: &ModuleOwner, watchdog: Duration) -> Result<Self, SealedError> {
+        Self::with_compiler(modules, watchdog, CompilerTier::faithful(), None)
+    }
+
+    /// The default compiler with Wasmtime's content-addressed cache shared across processes.
+    ///
+    /// # Errors
+    /// The cache, engine, linker or watchdog cannot be configured.
+    pub fn cached(
+        modules: &ModuleOwner,
+        watchdog: Duration,
+        directory: &Path,
+    ) -> Result<Self, SealedError> {
+        Self::with_compiler(modules, watchdog, CompilerTier::faithful(), Some(directory))
+    }
+
+    /// The compiler tier and disk-cache domain, sharing one engine and preparations with compatible runners of `modules`.
+    ///
+    /// # Errors
+    /// The cache, engine, linker or watchdog cannot be configured.
+    pub fn with_compiler(
+        modules: &ModuleOwner,
+        watchdog: Duration,
+        tier: CompilerTier,
+        directory: Option<&Path>,
+    ) -> Result<Self, SealedError> {
+        let owner = modules.shared(&Identity {
+            tier,
+            directory: directory.map(Path::to_path_buf),
+        })?;
+        let ticking = owner.ticking()?;
+        Ok(Self {
+            owner,
+            _ticking: ticking,
+            watchdog,
+            counted: crate::Counted::default(),
+        })
+    }
+
+    /// Prepares a module, recording the request, its answer and any failure on the run's counters.
     ///
     /// # Errors
     /// The validation, compilation and linking failures of [`Self::prepare`], or a count overflow.
@@ -208,9 +610,7 @@ impl SealedRunner {
         bytes: &[u8],
         counted: &crate::Counted,
     ) -> Result<SealedModule<'runner>, SealedError> {
-        let module = self.prepare(bytes)?;
-        counted.prepared(module.preparation, module.cached)?;
-        Ok(module)
+        self.obtain(bytes, Some(counted))
     }
 
     /// The work performed by this runner, without transcript-cache answers.
@@ -221,8 +621,8 @@ impl SealedRunner {
 
     /// The digest of everything about the engine and the host a transcript depends on.
     #[must_use]
-    pub const fn configuration(&self) -> &SealedDigest {
-        &self.configuration
+    pub fn configuration(&self) -> &SealedDigest {
+        &self.owner.configuration
     }
 
     /// Validates and compiles `bytes` once, for as many invocations as are asked of it.
@@ -230,44 +630,60 @@ impl SealedRunner {
     /// # Errors
     /// A module that is not a core WASI command with one plain memory importing only the table, or one wasmtime refuses to compile or link.
     pub fn prepare(&self, bytes: &[u8]) -> Result<SealedModule<'_>, SealedError> {
-        let preparing = self
-            .preparation
-            .lock()
-            .map_err(|_poisoned| SealedError::Engine {
-                source: wasmtime::Error::msg("the module preparation lock was poisoned"),
-            })?;
-        let started = Instant::now();
-        let hits = self.cache.as_ref().map(Cache::cache_hits);
-        validate::shape(bytes)?;
-        let module =
-            Module::new(&self.engine, bytes).map_err(|source| SealedError::Compile { source })?;
-        validate::interface(&module)?;
-        let pre = self
-            .linker
-            .instantiate_pre(&module)
-            .map_err(|source| SealedError::Link { source })?;
-        let preparation = started.elapsed();
-        self.counted.assembled();
-        let cached = self
-            .cache
-            .as_ref()
-            .zip(hits)
-            .is_some_and(|(cache, before)| cache.cache_hits() > before);
-        self.counted.prepared(preparation, cached)?;
-        drop(preparing);
-        Ok(SealedModule {
-            preparation,
-            cached,
-            runner: self,
-            pre,
-            digest: SealedDigest::of(bytes),
-        })
+        self.obtain(bytes, None)
     }
-}
 
-impl Drop for SealedRunner {
-    fn drop(&mut self) {
-        self.ticker.stop();
+    /// Prepares `bytes`, recording the request, its answer and any refusal on this runner's counters and `run`'s.
+    fn obtain(
+        &self,
+        bytes: &[u8],
+        run: Option<&crate::Counted>,
+    ) -> Result<SealedModule<'_>, SealedError> {
+        self.obtain_with_hooks(bytes, run, &PreparationHooks::quiet())
+    }
+
+    /// Prepares and meters a request with immutable preparation event hooks.
+    fn obtain_with_hooks(
+        &self,
+        bytes: &[u8],
+        run: Option<&crate::Counted>,
+        hooks: &PreparationHooks<impl Fn(PreparationStage)>,
+    ) -> Result<SealedModule<'_>, SealedError> {
+        self.counted.assembled();
+        let digest = SealedDigest::of(bytes);
+        let answer = self.owner.acquire_with_hooks(&digest, bytes, hooks);
+        match answer {
+            Ok((prepared, reuse)) => {
+                let worked = match reuse {
+                    Reuse::Process => Duration::ZERO,
+                    Reuse::Cold | Reuse::Disk => prepared.preparation,
+                };
+                self.counted.prepared(worked, reuse)?;
+                if let Some(run) = run {
+                    run.prepared(worked, reuse)?;
+                }
+                Ok(SealedModule {
+                    preparation: prepared.preparation,
+                    reuse,
+                    runner: self,
+                    pre: prepared.pre.clone(),
+                    digest,
+                })
+            }
+            Err(refused) => {
+                if let Some(work) = refused.attempted {
+                    self.counted.attempt_failed(work.duration, work.disk)?;
+                    if let Some(run) = run {
+                        run.attempt_failed(work.duration, work.disk)?;
+                    }
+                }
+                self.counted.failed()?;
+                if let Some(run) = run {
+                    run.failed()?;
+                }
+                Err(refused.error)
+            }
+        }
     }
 }
 
@@ -325,8 +741,8 @@ impl Hasher for Fingerprint<'_> {
 /// A module validated and compiled once by a runner, every invocation of it a fresh store and instance.
 pub struct SealedModule<'runner> {
     preparation: Duration,
-    cached: bool,
-    /// The runner that compiled it.
+    reuse: Reuse,
+    /// The runner that prepared it.
     runner: &'runner SealedRunner,
     /// The module with the host linked, ready to instantiate.
     pre: InstancePre<Host>,
@@ -338,7 +754,7 @@ impl std::fmt::Debug for SealedModule<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SealedModule")
             .field("digest", &self.digest)
-            .field("configuration", &self.runner.configuration)
+            .field("configuration", &self.runner.owner.configuration)
             .finish_non_exhaustive()
     }
 }
@@ -350,9 +766,21 @@ impl SealedModule<'_> {
         &self.digest
     }
 
+    /// How the preparation request that returned this module was answered.
+    #[must_use]
+    pub const fn reuse(&self) -> Reuse {
+        self.reuse
+    }
+
+    /// How long the one actual preparation of this module's bytes took.
+    #[must_use]
+    pub const fn preparation(&self) -> Duration {
+        self.preparation
+    }
+
     /// The digest of everything about the engine and the host that a transcript of an invocation of this module depends on.
     #[must_use]
-    pub const fn configuration(&self) -> &SealedDigest {
+    pub fn configuration(&self) -> &SealedDigest {
         self.runner.configuration()
     }
 
@@ -386,12 +814,12 @@ impl SealedModule<'_> {
             return Err(SealedError::Interrupted);
         }
         let began = Instant::now();
-        let digest = invocation.digest(&self.digest, &self.runner.configuration);
+        let digest = invocation.digest(&self.digest, &self.runner.owner.configuration);
         let watchdog = self.runner.watchdog;
         let deadline = Instant::now().checked_add(watchdog);
         let halt = invocation.halting()?;
         let host = Host::new((invocation, halt), (deadline, interrupt.clone())).map_err(broken)?;
-        let mut store = Store::new(&self.runner.engine, host);
+        let mut store = Store::new(&self.runner.owner.engine, host);
         store.limiter(|host| &mut host.limiter);
         store
             .set_fuel(invocation.fuel)
@@ -587,4 +1015,311 @@ const fn runtime(during: RuntimeStep, source: wasmtime::Error) -> SealedError {
 /// The error for an invariant of the host that did not hold.
 const fn broken(invariant: Invariant) -> SealedError {
     SealedError::HostInvariant { invariant }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::num::NonZeroU64;
+    use std::sync::TryLockError;
+    use std::sync::mpsc;
+
+    use std::sync::{Arc, Weak};
+    use std::time::Duration;
+
+    use super::{
+        CompilerTier, Identity, ModuleOwner, Owner, PreparationHooks, PreparationStage,
+        SealedRunner, Slot,
+    };
+    use crate::{Interrupt, Invocation, Reuse, SealedDigest, SealedStop};
+
+    /// A test's owned synchronization state, whose failure is a setup failure.
+    fn held<T>(lock: std::sync::LockResult<T>) -> T {
+        super::held(lock).expect("the owner lock is intact")
+    }
+
+    /// A WASI command that prints its exact module marker and returns.
+    fn command(mark: &str) -> Vec<u8> {
+        wat::parse_str(format!(
+            r#"(module
+                (import "wasi_snapshot_preview1" "fd_write"
+                    (func $write (param i32 i32 i32 i32) (result i32)))
+                (memory (export "memory") 1)
+                (data (i32.const 100) "{mark}")
+                (func (export "_start")
+                    (i32.store (i32.const 0) (i32.const 100))
+                    (i32.store (i32.const 4) (i32.const {}))
+                    (drop (call $write (i32.const 1) (i32.const 0)
+                        (i32.const 1) (i32.const 8)))))"#,
+            mark.len()
+        ))
+        .expect("the WAT is valid")
+    }
+
+    /// An invocation with no preopens and independent host state.
+    fn invocation() -> Invocation {
+        Invocation {
+            arguments: crate::Arguments::new(vec!["command".to_owned()]).expect("valid"),
+            environment: crate::Environment::new(Vec::new()).expect("valid"),
+            preopens: crate::Preopens::new(Vec::new()).expect("valid"),
+            seed: 11,
+            fuel: 1_000_000,
+            limits: crate::Limits {
+                memory: 1 << 20,
+                stdout: 1 << 16,
+                stderr: 1 << 16,
+                overlay: 1 << 20,
+            },
+            clock: crate::ClockPolicy {
+                realtime_origin: 1,
+                monotonic_origin: 1,
+                nanos_per_fuel: NonZeroU64::MIN,
+            },
+            halt: None,
+        }
+    }
+
+    #[test]
+    fn the_last_runner_stops_and_joins_its_shared_ticker() {
+        let modules = ModuleOwner::default();
+        let directory = tempfile::tempdir().expect("a cache directory");
+        let first = SealedRunner::cached(&modules, Duration::from_secs(60), directory.path())
+            .expect("the first runner");
+        let last = SealedRunner::cached(&modules, Duration::from_secs(60), directory.path())
+            .expect("the compatible runner");
+        let ticker = Weak::clone(
+            held(last.owner.ticking.lock())
+                .as_ref()
+                .expect("the live ticker slot"),
+        );
+        let first_ticker = Weak::clone(
+            held(first.owner.ticking.lock())
+                .as_ref()
+                .expect("the first ticker slot"),
+        );
+        assert!(
+            Weak::ptr_eq(&first_ticker, &ticker),
+            "one ticker serves both runners"
+        );
+        let owner = Arc::clone(&last.owner);
+        drop(first);
+        assert!(
+            ticker.upgrade().is_some(),
+            "the remaining watchdog still has its ticker"
+        );
+        drop(last);
+        assert!(
+            ticker.upgrade().is_none(),
+            "the last ticker owner was dropped"
+        );
+        assert!(
+            held(owner.ticking.lock()).is_none(),
+            "stop and join settled the ticker slot"
+        );
+        let successor = SealedRunner::cached(&modules, Duration::from_secs(60), directory.path())
+            .expect("a later runner restarts the ticker");
+        assert!(
+            Arc::ptr_eq(&owner, &successor.owner),
+            "the module engine outlives the ticker"
+        );
+        let transcript = successor
+            .prepare(&command("successor"))
+            .expect("a real succeeding module")
+            .invoke(&invocation(), &Interrupt::of(Vec::new()))
+            .expect("a fresh host execution");
+        assert_eq!(transcript.stop(), SealedStop::Returned);
+        assert_eq!(transcript.stdout().bytes(), b"successor");
+        let released = Arc::downgrade(&owner);
+        drop(owner);
+        drop(successor);
+        drop(modules);
+        assert!(
+            released.upgrade().is_none(),
+            "the explicit context releases its engine and module memory"
+        );
+    }
+
+    #[test]
+    fn a_panicking_preparation_releases_its_claim_and_owned_waiters() {
+        let modules = ModuleOwner::default();
+        let directory = tempfile::tempdir().expect("a cache directory");
+        let runner = SealedRunner::cached(&modules, Duration::from_secs(60), directory.path())
+            .expect("the runner");
+        let bytes = command("recovered");
+        let digest = SealedDigest::of(&bytes);
+        let (observed, observation) = mpsc::sync_channel(0);
+        let (release, released) = mpsc::sync_channel(0);
+        let (waiting, waiter_entered) = mpsc::sync_channel(0);
+        let (stranded, answer) = std::thread::scope(|scope| {
+            let runner = &runner;
+            let bytes = &bytes;
+            let panicking = njutest_devkit::thread::ScopedThread::launch(scope, move || {
+                let hooks = PreparationHooks {
+                    observe: |stage| match stage {
+                        PreparationStage::Observed => {
+                            observed.send(()).expect("the owner event is observed");
+                            released.recv().expect("the owner is released");
+                            panic!("injected panic at the actual preparation boundary");
+                        }
+                        PreparationStage::Waiting => {}
+                    },
+                };
+                runner.obtain_with_hooks(bytes, None, &hooks)
+            });
+            observation
+                .recv()
+                .expect("the real owner reached preparation");
+            let pending = match held(runner.owner.slots.lock()).get(&digest) {
+                Some(Slot::Preparing(pending)) => Arc::clone(pending),
+                Some(Slot::Held(_)) | None => panic!("the real claim is preparing"),
+            };
+            let waiter = njutest_devkit::thread::ScopedThread::launch(scope, move || {
+                let hooks = PreparationHooks {
+                    observe: |stage| match stage {
+                        PreparationStage::Waiting => {
+                            waiting.send(()).expect("the waiter event is observed");
+                        }
+                        PreparationStage::Observed => {}
+                    },
+                };
+                runner
+                    .obtain_with_hooks(bytes, None, &hooks)
+                    .and_then(|module| module.invoke(&invocation(), &Interrupt::of(Vec::new())))
+            });
+            waiter_entered
+                .recv()
+                .expect("the owned waiter reached the keyed wait");
+            release.send(()).expect("the owner is allowed to unwind");
+            let panicked = panicking.join().is_err();
+            let stranded = {
+                let mut slots = held(runner.owner.slots.lock());
+                let stranded = matches!(slots.get(&digest), Some(Slot::Preparing(live)) if Arc::ptr_eq(live, &pending));
+                if stranded {
+                    slots.remove(&digest);
+                }
+                drop(slots);
+                if stranded {
+                    runner.owner.changed.notify_all();
+                }
+                stranded
+            };
+            let answer = waiter.join().expect("the owned waiter is joined");
+            assert!(panicked, "the injected owner panic is caught and joined");
+            (stranded, answer)
+        });
+        let transcript = answer.expect("the waiter actually prepares and executes the guest");
+        assert_eq!(transcript.stop(), SealedStop::Returned);
+        assert_eq!(transcript.stdout().bytes(), b"recovered");
+        assert!(
+            !stranded,
+            "the panicking owner left its original claim Preparing"
+        );
+    }
+
+    /// Completes a real different-module disk load inside an unowned observation, or lets the cold owner finish first.
+    fn overlap_if_unowned(owner: &Owner, start: &mpsc::SyncSender<()>, done: &mpsc::Receiver<()>) {
+        let exclusive = match owner.preparing.try_lock() {
+            Ok(guard) => {
+                drop(guard);
+                false
+            }
+            Err(TryLockError::WouldBlock) => true,
+            Err(TryLockError::Poisoned(_poisoned)) => panic!("no operation has panicked"),
+        };
+        start
+            .send(())
+            .expect("the different module requests preparation");
+        if !exclusive {
+            done.recv()
+                .expect("the disk load completes inside the unowned observation");
+        }
+    }
+
+    /// Publishes real compiled code through a compatible temporary engine before the concurrent disk control.
+    fn warm_disk(identity: &Identity, bytes: &[u8]) {
+        let warming = Owner::built(identity).expect("the disk-warming engine");
+        let prepared = warming
+            .compile_with_hooks(bytes, &PreparationHooks::quiet())
+            .expect("actual preparation publishes disk code synchronously");
+        assert!(!prepared.disk, "the warming preparation is truly cold");
+    }
+
+    #[test]
+    fn concurrent_cold_and_disk_warm_modules_have_exact_work_attribution() {
+        let modules = ModuleOwner::default();
+        let directory = tempfile::tempdir().expect("a cache directory");
+        let identity = Identity {
+            tier: CompilerTier::faithful(),
+            directory: Some(directory.path().to_path_buf()),
+        };
+        let cold = command("cold");
+        let warm = command("disk");
+        warm_disk(&identity, &warm);
+        let runner = SealedRunner::cached(&modules, Duration::from_secs(60), directory.path())
+            .expect("the runner");
+        let (start_warm, warm_requested) = mpsc::sync_channel(0);
+        let (done, warm_done) = mpsc::sync_channel(1);
+        let (cold_answer, warm_answer) = std::thread::scope(|scope| {
+            let runner = &runner;
+            let warm = &warm;
+            let warming = njutest_devkit::thread::ScopedThread::launch(scope, move || {
+                warm_requested.recv().expect("the cold counter was sampled");
+                let answer = runner.prepare(warm).and_then(|module| {
+                    let reuse = module.reuse();
+                    module
+                        .invoke(&invocation(), &Interrupt::of(Vec::new()))
+                        .map(|transcript| (reuse, transcript))
+                });
+                done.send(()).expect("the warm completion has an owner");
+                answer
+            });
+            let hooks = PreparationHooks {
+                observe: |stage| match stage {
+                    PreparationStage::Observed => {
+                        overlap_if_unowned(&runner.owner, &start_warm, &warm_done);
+                    }
+                    PreparationStage::Waiting => {}
+                },
+            };
+            let cold_answer = runner
+                .obtain_with_hooks(&cold, None, &hooks)
+                .and_then(|module| {
+                    let reuse = module.reuse();
+                    module
+                        .invoke(&invocation(), &Interrupt::of(Vec::new()))
+                        .map(|transcript| (reuse, transcript))
+                });
+            let warm_answer = warming
+                .join()
+                .expect("the concurrent warm worker is joined");
+            (cold_answer, warm_answer)
+        });
+        let (cold_reuse, cold_transcript) = cold_answer.expect("actual cold guest execution");
+        let (warm_reuse, warm_transcript) = warm_answer.expect("actual disk-warm guest execution");
+        assert_eq!(cold_transcript.stop(), SealedStop::Returned);
+        assert_eq!(cold_transcript.stdout().bytes(), b"cold");
+        assert_eq!(warm_transcript.stop(), SealedStop::Returned);
+        assert_eq!(warm_transcript.stdout().bytes(), b"disk");
+        let spent = runner.spent().expect("the requests are measured");
+        eprintln!(
+            "attribution configuration={} cold={} warm={} spent={spent:?}",
+            runner.configuration(),
+            SealedDigest::of(&cold),
+            SealedDigest::of(&warm)
+        );
+        assert_eq!(
+            warm_reuse,
+            Reuse::Disk,
+            "the actual disk cache answered the warm module"
+        );
+        assert_eq!(
+            cold_reuse,
+            Reuse::Cold,
+            "another digest's disk hit must not erase actual cold work"
+        );
+        let compilation = spent.compilation.expect("actual preparation is measured");
+        assert_eq!(
+            (compilation.hits, compilation.misses, compilation.attempts),
+            (1, 1, Some(2))
+        );
+    }
 }

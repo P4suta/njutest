@@ -67,6 +67,7 @@ fn verified(knobs: bool) -> (serde_json::Value, njutest::report::Report) {
 
 fn environment(root: &Path) -> Environment {
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: njutest_devkit::paths::cache_beside(root).expect("a cache directory"),
         working_directory: root.to_path_buf(),
         temp_directory: njutest_devkit::paths::temp_beside(root).expect("a temporary directory"),

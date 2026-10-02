@@ -66,6 +66,7 @@ fn environment(root: &Path) -> Environment {
             .collect();
     vars.set("NJUTEST_TEST_CLOCK", events.as_os_str());
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: root.join(".cache"),
         working_directory: root.to_path_buf(),
         temp_directory: njutest_devkit::paths::temp_beside(root).expect("a temporary directory"),

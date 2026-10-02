@@ -1225,7 +1225,11 @@ fn sealed_flags(
         ..
     } = *building;
     let root = directory.path().join("platform");
-    let object = match crate::sealed::platform::ready(&workspace.driver(cancel), &root)? {
+    let object = match crate::sealed::platform::ready(
+        &workspace.module_owner,
+        &workspace.driver(cancel),
+        &root,
+    )? {
         crate::sealed::platform::Readied::Object(object) => object,
         crate::sealed::platform::Readied::Unanswered(said) => {
             trace.note("sealed-build", &format!("platform-unanswered: {said}"));

@@ -35,6 +35,7 @@ fn against(fixture: &Fixture, args: &[&str]) -> Said {
         .collect();
     vars.set("RUST_MUTANTS_NOTHING", UNPUBLISHED_FIXTURE_VALUE);
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars,
         temp_directory: fixture.temp().to_path_buf(),
         program: std::path::PathBuf::from("this test never runs it"),

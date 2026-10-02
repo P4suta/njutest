@@ -96,6 +96,7 @@ pub fn check(
     let workspace = Workspace::open(
         checking.root,
         OpenOptions {
+            module_owner: checking.environment.module_owner.clone(),
             allow_outside: Vec::new(),
             cargo: None,
             search_path: checking

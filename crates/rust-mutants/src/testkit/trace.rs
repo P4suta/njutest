@@ -422,6 +422,7 @@ pub fn every_payload() -> Vec<Payload> {
                     answered: 3,
                     compilation: None,
                     execution_ns: None,
+                    failures: None,
                 }),
             },
         },

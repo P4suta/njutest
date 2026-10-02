@@ -50,6 +50,7 @@ fn environment(directory: &Path, named: &[(&str, &str)]) -> Environment {
         vars.set(*name, *value);
     }
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: directory.join("njutest-cache"),
         working_directory: directory.to_path_buf(),
         temp_directory: directory.join("njutest-temp"),

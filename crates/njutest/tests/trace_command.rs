@@ -378,6 +378,7 @@ fn asked(root: &std::path::Path, args: &[&str]) -> (u8, String, String) {
     let scratch = root.join("scratch");
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
     let environment = njutest::cli::Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: root.join("cache"),
         working_directory: root.to_path_buf(),
         temp_directory: scratch,

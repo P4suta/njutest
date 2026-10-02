@@ -249,6 +249,7 @@ fn verify(fixture: &Fixture) -> std::process::Output {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),
         temp_directory: fixture.temp().to_path_buf(),

@@ -133,8 +133,69 @@ fn the_counters_say_what_the_host_spent_only_where_a_bench_assembled() {
             answered: 3,
             compilation: None,
             execution_ns: None,
+            failures: None,
         }),
         "the counts are what the host spent, shared by every bench of one run"
+    );
+}
+
+#[test]
+fn historical_spent_fields_keep_their_identity_and_absent_work() {
+    let historical = r#"{"compiles":2,"instances":3,"answered":0,"compilation":{"hits":1,"misses":1,"duration_ns":125}}"#;
+    let spent: rust_mutants_sealed::Spent =
+        njutest_devkit::strictjson::decode_slice(historical.as_bytes())
+            .expect("the historical diagnostic document is still accepted");
+    assert_eq!(
+        spent.failures, None,
+        "an older record observed no failure meter"
+    );
+    let compilation = spent
+        .compilation
+        .expect("the historical measured preparation");
+    assert_eq!(
+        (
+            compilation.process,
+            compilation.attempts,
+            compilation.failed_cold,
+            compilation.failed_disk
+        ),
+        (None, None, None, None)
+    );
+    let before: serde_json::Value =
+        njutest_devkit::strictjson::decode_slice(historical.as_bytes()).expect("historical JSON");
+    assert_eq!(
+        serde_json::to_value(spent).expect("the retained historical fields"),
+        before
+    );
+}
+
+#[test]
+fn actual_reused_preparation_diagnostics_read_back_without_losing_work() {
+    let directory = tempfile::tempdir().expect("an owned empty disk-cache domain");
+    let runner = rust_mutants_sealed::SealedRunner::cached(
+        &rust_mutants_sealed::ModuleOwner::default(),
+        std::time::Duration::from_secs(60),
+        directory.path(),
+    )
+    .expect("the actual runner");
+    let bytes = command(&[], "", "(call $emit (i32.const 3) (i32.const 0))");
+    for _request in 0..2 {
+        let transcript = runner
+            .prepare(&bytes)
+            .expect("the actual module")
+            .invoke(&invocation(), &crate::common::uninterrupted())
+            .expect("actual host execution");
+        assert_eq!(transcript.stop(), rust_mutants_sealed::SealedStop::Returned);
+    }
+    let spent = runner.spent().expect("the physical work was measured");
+    let recorded = serde_json::to_vec(&spent).expect("actual diagnostic JSON");
+    let read: rust_mutants_sealed::Spent = njutest_devkit::strictjson::decode_slice(&recorded)
+        .expect("the strict recorded-spent boundary accepts actual diagnostics");
+    assert_eq!(read, spent);
+    let compilation = read.compilation.expect("the one measured preparation");
+    assert_eq!(
+        (compilation.attempts, compilation.process),
+        (Some(1), Some(1))
     );
 }
 
@@ -145,6 +206,7 @@ fn the_compiled_module_cache_distinguishes_bytes_and_compiler_configuration() {
     let directory = tempfile::tempdir().expect("a shared compiled cache");
     let bytes = command(&[], "", "(call $emit (i32.const 3) (i32.const 0))");
     let changed = command(&[], "", "(call $emit (i32.const 4) (i32.const 0))");
+    let modules = rust_mutants_sealed::ModuleOwner::default();
     for (tier, module, hit) in [
         (CompilerTier::Optimized, &bytes, false),
         (CompilerTier::Optimized, &bytes, true),
@@ -153,6 +215,7 @@ fn the_compiled_module_cache_distinguishes_bytes_and_compiler_configuration() {
         (CompilerTier::Unoptimized, &bytes, true),
     ] {
         let runner = SealedRunner::with_compiler(
+            &modules,
             std::time::Duration::from_secs(120),
             tier,
             Some(directory.path()),

@@ -264,6 +264,7 @@ fn a_run_that_could_not_ask_git_says_so_before_it_compiles_anything() {
     let cancel = rust_mutants::runner::Cancel::new();
     let trace = njutest::trace::Recorder::disabled();
     let environment = njutest::cli::Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: njutest_devkit::paths::environment_for_a_run()
             .into_iter()
             .collect(),
@@ -348,6 +349,7 @@ fn every_limitation_a_report_states_before_it_runs_is_a_finished_sentence() {
     let cancel = rust_mutants::runner::Cancel::new();
     let trace = njutest::trace::Recorder::disabled();
     let environment = njutest::cli::Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: rust_mutants::vars::Variables::empty(),
         working_directory: root.path().to_owned(),
         temp_directory: parent.path().to_owned(),

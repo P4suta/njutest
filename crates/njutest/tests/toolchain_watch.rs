@@ -77,6 +77,7 @@ fn working_in(root: &std::path::Path, scratch: std::path::PathBuf) -> Environmen
         .into_iter()
         .collect::<rust_mutants::vars::Variables>();
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: Environment::cache_directory_of(&vars),
         working_directory: root.to_owned(),
         temp_directory: scratch,
@@ -177,6 +178,7 @@ fn a_run_with_nowhere_to_work_stops_before_it_says_it_looked() {
     std::fs::write(&occupied, "not a directory").expect("a file where a scratch goes");
 
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: root.path().to_owned(),
         working_directory: root.path().to_owned(),
         temp_directory: occupied,
@@ -270,6 +272,7 @@ fn a_run_told_where_to_look_for_a_toolchain_looks_there_and_nowhere_else() {
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
 
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: root.path().to_owned(),
         working_directory: root.path().to_owned(),
         temp_directory: scratch,
@@ -307,6 +310,7 @@ fn a_run_told_where_to_look_for_a_toolchain_looks_there_and_nowhere_else() {
     let scratch = root.path().join("scratch-again");
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
     let told = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: root.path().to_owned(),
         working_directory: root.path().to_owned(),
         temp_directory: scratch,
@@ -668,6 +672,7 @@ fn a_second_run_of_one_tree_reads_back_what_the_first_established_and_says_whose
         .into_iter()
         .collect::<rust_mutants::vars::Variables>();
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: dir.path().join("cache"),
         working_directory: root.clone(),
         temp_directory: scratch,
@@ -807,6 +812,7 @@ fn fuzz_targets_a_run_was_not_asked_to_drive_are_a_gap_it_states_rather_than_pas
         .into_iter()
         .collect::<rust_mutants::vars::Variables>();
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: dir.path().join("cache"),
         working_directory: root.clone(),
         temp_directory: scratch,
@@ -874,6 +880,7 @@ fn a_mutation_the_compiler_renders_identically_is_only_equivalent_where_the_test
         .into_iter()
         .collect::<rust_mutants::vars::Variables>();
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: dir.path().join("cache"),
         working_directory: root.clone(),
         temp_directory: scratch,
@@ -997,6 +1004,7 @@ fn a_run_that_held_something_says_what_it_held_and_lets_go_of_it() {
         r#"{"version":1,"status":"stopped","instance":"pg-1"}"#,
     );
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: dir.path().join("cache"),
         working_directory: root.clone(),
         temp_directory: scratch,
@@ -1111,6 +1119,7 @@ fn a_candidate_offered_for_a_gap_is_put_to_the_tests_before_it_is_recorded() {
             r#"{{"version":1,"candidates":[{{"kind":"patch","path":"tests/zero.rs","preimage_sha256":null,"content_base64":"{OFFERED}"}}]}}"#
         ));
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: dir.path().join("cache"),
         working_directory: root.clone(),
         temp_directory: scratch,
@@ -1334,6 +1343,7 @@ fn a_run_that_was_stopped_leaves_what_it_established_for_the_next_one() {
         .into_iter()
         .collect::<rust_mutants::vars::Variables>();
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: dir.path().join("cache"),
         working_directory: root.clone(),
         temp_directory: scratch,
@@ -1473,6 +1483,7 @@ fn once(
         .into_iter()
         .collect::<rust_mutants::vars::Variables>();
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: dir.join(format!("{name}-cache")),
         working_directory: root.clone(),
         temp_directory: scratch,
@@ -1562,6 +1573,7 @@ fn part(root: &std::path::Path, dir: &std::path::Path, shard: &str) -> serde_jso
         .into_iter()
         .collect::<rust_mutants::vars::Variables>();
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: dir.join("parts-cache"),
         working_directory: root.to_path_buf(),
         temp_directory: scratch,
@@ -1671,6 +1683,7 @@ fn refused(fixture: &str, dir: &std::path::Path, name: &str, configured: &str) -
     let scratch = dir.join(format!("{name}-scratch"));
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: dir.join(format!("{name}-cache")),
         working_directory: root,
         temp_directory: scratch,
@@ -1810,6 +1823,7 @@ fn a_target_the_fuzzer_could_not_drive_is_a_gap_and_never_a_target_that_found_no
         .into_iter()
         .collect::<rust_mutants::vars::Variables>();
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: dir.path().join("cache"),
         working_directory: root.clone(),
         temp_directory: scratch,
@@ -1895,6 +1909,7 @@ fn verified_in_process(
         vars.set(*name, *value);
     }
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: Environment::cache_directory_of(&vars),
         working_directory: root.clone(),
         temp_directory: scratch,
@@ -2016,6 +2031,7 @@ fn a_run_in_this_process_writes_what_it_learned_before_it_compiled_anything() {
         .into_iter()
         .collect::<rust_mutants::vars::Variables>();
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: Environment::cache_directory_of(&vars),
         working_directory: root.clone(),
         temp_directory: scratch,

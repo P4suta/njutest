@@ -62,8 +62,13 @@ fn observe(
     store: &Path,
     cancel: &Cancel,
 ) -> Observation {
-    let runner = SealedRunner::with_compiler(Duration::from_secs(120), tier, None)
-        .expect("the deterministic compiler tier");
+    let runner = SealedRunner::with_compiler(
+        &rust_mutants::sealed::ModuleOwner::default(),
+        Duration::from_secs(120),
+        tier,
+        None,
+    )
+    .expect("the deterministic compiler tier");
     let bench = session
         .bench(&runner, cancel)
         .expect("the tier assembles the same sealed targets");
@@ -153,6 +158,7 @@ fn compare(name: &str) {
         .collect();
     let fixture = Fixture::copy_with_siblings(name, &siblings);
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: njutest_devkit::paths::environment_for_a_toolchain_run(&[])
             .into_iter()
             .collect(),

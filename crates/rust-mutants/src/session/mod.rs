@@ -1398,6 +1398,11 @@ impl Session {
         crate::sealed::module_cache(&self.workspace.target_dir, Some(&self.workspace.base_env))
     }
 
+    /// The explicit compiled-module owner shared by this session's preparation paths.
+    pub(crate) const fn module_owner(&self) -> &crate::sealed::ModuleOwner {
+        &self.workspace.module_owner
+    }
+
     /// The root of the copy everything runs in.
     #[must_use]
     pub fn snapshot_root(&self) -> &std::path::Path {

@@ -1213,7 +1213,11 @@ fn one_module_answers_the_same_on_many_threads_at_once() {
 #[test]
 fn the_watchdog_stops_a_runaway_guest_as_an_error_and_never_as_a_stop() {
     let bytes = command(&[], "", "(loop $again (br $again))");
-    let runner = SealedRunner::new(Duration::from_millis(100)).expect("the runner starts");
+    let runner = SealedRunner::new(
+        &rust_mutants_sealed::ModuleOwner::default(),
+        Duration::from_millis(100),
+    )
+    .expect("the runner starts");
     let module = runner.prepare(&bytes).expect("the command is valid");
     let mut endless = invocation();
     endless.fuel = u64::MAX;
@@ -1228,7 +1232,11 @@ fn the_watchdog_stops_a_runaway_guest_as_an_error_and_never_as_a_stop() {
 #[test]
 fn an_interrupt_stops_a_runaway_guest_as_an_error_before_its_watchdog_would() {
     let bytes = command(&[], "", "(loop $again (br $again))");
-    let runner = SealedRunner::new(Duration::from_secs(5)).expect("the runner starts");
+    let runner = SealedRunner::new(
+        &rust_mutants_sealed::ModuleOwner::default(),
+        Duration::from_secs(5),
+    )
+    .expect("the runner starts");
     let module = runner.prepare(&bytes).expect("the command is valid");
     let mut endless = invocation();
     endless.fuel = u64::MAX;

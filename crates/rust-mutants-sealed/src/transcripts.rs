@@ -107,7 +107,18 @@ fn write_once(path: &Path, bytes: &[u8]) -> io::Result<()> {
         .map_err(|source| source.error)
 }
 
-/// Shared counts of modules compiled, instances started, and invocations a record answered.
+/// How one module preparation request was answered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reuse {
+    /// An actual preparation compiled the module, because no held code answered.
+    Cold,
+    /// Wasmtime's content-addressed cache held the compiled code, which the preparation loaded.
+    Disk,
+    /// The process's own held module, prepared on a compatible engine, answered.
+    Process,
+}
+
+/// Shared counts of modules prepared, instances started, and invocations a record answered.
 #[derive(Debug, Clone, Default)]
 pub struct Counted {
     inner: Arc<Countings>,
@@ -118,11 +129,21 @@ pub struct Counted {
 struct Countings {
     /// Whether any bench of the run assembled, which is what says a run that counted nothing sealed anything at all.
     assembled: AtomicBool,
-    /// Modules compiled for the sealed target.
+    /// Module preparation requests this run's preparations answered, including every kind of reuse.
     compiles: AtomicU64,
     compilation_measured: AtomicBool,
+    /// Preparations answered by compiled code already held, on Wasmtime's cache or by this process.
     hits: AtomicU64,
+    /// Of the hits, the ones this process's own held module answered.
+    process: AtomicU64,
+    /// Preparations that compiled the module because no held code answered.
     misses: AtomicU64,
+    /// Actual `Module::new` preparation attempts, including ones that then failed.
+    attempts: AtomicU64,
+    failed_cold: AtomicU64,
+    failed_disk: AtomicU64,
+    /// Preparation attempts that failed, which hold nothing reusable.
+    failures: AtomicU64,
     compile_ns: AtomicU64,
     execution_measured: AtomicBool,
     execution_ns: AtomicU64,
@@ -138,7 +159,7 @@ impl Counted {
         self.inner.assembled.store(true, Ordering::Relaxed);
     }
 
-    /// Says the host compiled one sealed module.
+    /// Says one module preparation request was answered.
     ///
     /// # Errors
     /// [`crate::SealedError::HostInvariant`] if the count exceeds its recorded width.
@@ -146,22 +167,57 @@ impl Counted {
         counted(&self.inner.compiles)
     }
 
-    /// Records a module preparation, including whether compiled code was reused and its elapsed time.
+    /// Records one module preparation request: the work its answer cost and how it was answered.
     ///
     /// # Errors
     /// [`crate::SealedError::HostInvariant`] if a count or elapsed time exceeds its recorded width.
-    pub fn prepared(&self, duration: Duration, cached: bool) -> Result<(), crate::SealedError> {
-        self.compiled()?;
-        if cached {
-            counted(&self.inner.hits)?;
-        } else {
-            counted(&self.inner.misses)?;
+    pub fn prepared(&self, duration: Duration, reuse: Reuse) -> Result<(), crate::SealedError> {
+        counted(&self.inner.compiles)?;
+        match reuse {
+            Reuse::Cold => {
+                counted(&self.inner.misses)?;
+                counted(&self.inner.attempts)?;
+            }
+            Reuse::Disk => {
+                counted(&self.inner.hits)?;
+                counted(&self.inner.attempts)?;
+            }
+            Reuse::Process => {
+                counted(&self.inner.hits)?;
+                counted(&self.inner.process)?;
+            }
         }
         elapsed(&self.inner.compile_ns, duration)?;
         self.inner
             .compilation_measured
             .store(true, Ordering::Relaxed);
         Ok(())
+    }
+
+    /// Records one actual preparation attempt that failed, with the work it had done when it failed.
+    ///
+    /// # Errors
+    /// [`crate::SealedError::HostInvariant`] if a count or elapsed time exceeds its recorded width.
+    pub fn attempt_failed(&self, work: Duration, disk: bool) -> Result<(), crate::SealedError> {
+        counted(&self.inner.attempts)?;
+        if disk {
+            counted(&self.inner.failed_disk)?;
+        } else {
+            counted(&self.inner.failed_cold)?;
+        }
+        elapsed(&self.inner.compile_ns, work)?;
+        self.inner
+            .compilation_measured
+            .store(true, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// Says one module preparation request was refused, however far it had gone.
+    ///
+    /// # Errors
+    /// [`crate::SealedError::HostInvariant`] if the count exceeds its recorded width.
+    pub fn failed(&self) -> Result<(), crate::SealedError> {
+        counted(&self.inner.failures)
     }
 
     /// Records elapsed host time for an invocation that actually executed.
@@ -196,6 +252,11 @@ impl Counted {
         if !self.inner.assembled.load(Ordering::Relaxed) {
             return None;
         }
+        let process = self.inner.process.load(Ordering::Relaxed);
+        let failures = self.inner.failures.load(Ordering::Relaxed);
+        let attempts = self.inner.attempts.load(Ordering::Relaxed);
+        let failed_cold = self.inner.failed_cold.load(Ordering::Relaxed);
+        let failed_disk = self.inner.failed_disk.load(Ordering::Relaxed);
         Some(Spent {
             compiles: self.inner.compiles.load(Ordering::Relaxed),
             instances: self.inner.instances.load(Ordering::Relaxed),
@@ -208,12 +269,17 @@ impl Counted {
                     hits: self.inner.hits.load(Ordering::Relaxed),
                     misses: self.inner.misses.load(Ordering::Relaxed),
                     duration_ns: self.inner.compile_ns.load(Ordering::Relaxed),
+                    process: (process > 0).then_some(process),
+                    attempts: (attempts > 0).then_some(attempts),
+                    failed_cold: (failed_cold > 0).then_some(failed_cold),
+                    failed_disk: (failed_disk > 0).then_some(failed_disk),
                 }),
             execution_ns: self
                 .inner
                 .execution_measured
                 .load(Ordering::Relaxed)
                 .then(|| self.inner.execution_ns.load(Ordering::Relaxed)),
+            failures: (failures > 0).then_some(failures),
         })
     }
 }
@@ -247,11 +313,11 @@ fn counted(counter: &AtomicU64) -> Result<(), crate::SealedError> {
         })
 }
 
-/// What the host spent on sealed executions, as a recording writes it: the modules compiled, the instances started, and the invocations a record answered instead.
+/// What the host spent on sealed executions, as a recording writes it: the module preparations answered, the instances started, and the invocations a record answered instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Spent {
-    /// Modules compiled for the sealed target.
+    /// Module preparation requests answered, including every kind of reuse.
     pub compiles: u64,
     /// Instances started on the host.
     pub instances: u64,
@@ -263,16 +329,31 @@ pub struct Spent {
     /// Elapsed host time of fresh invocations, absent where execution was not timed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution_ns: Option<u64>,
+    /// Module preparation attempts that failed, absent in older recordings and where none did.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failures: Option<u64>,
 }
 
 /// The compiled-module cache's hits and misses, and the elapsed time spent preparing modules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Compilation {
-    /// Modules loaded from wasmtime's cache.
+    /// Requests answered by compiled code already held, on Wasmtime's cache or by this process.
     pub hits: u64,
-    /// Modules compiled because no cached code answered.
+    /// Requests that performed an actual preparation because no held code answered.
     pub misses: u64,
-    /// Nanoseconds spent validating, loading or compiling, and linking modules.
+    /// Nanoseconds spent validating, loading or compiling, and linking modules: the actual preparations, never a reused answer.
     pub duration_ns: u64,
+    /// Of the hits, the ones this process's own held module answered, absent in older recordings and where none did.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub process: Option<u64>,
+    /// Actual `Module::new` preparation attempts, including ones that then failed, absent in older recordings and where none did.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attempts: Option<u64>,
+    /// Actual cold preparation attempts that failed, absent in older recordings and where none did.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failed_cold: Option<u64>,
+    /// Actual disk-load preparation attempts that failed, absent in older recordings and where none did.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failed_disk: Option<u64>,
 }

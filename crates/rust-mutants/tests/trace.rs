@@ -126,6 +126,76 @@ fn the_schema_is_frozen() {
 }
 
 #[test]
+fn actual_module_preparation_work_validates_against_the_published_trace_schema() {
+    let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(include_str!(
+        "../../../schema/rust-mutants-trace-v1.json"
+    ))
+    .expect("the published schema is JSON");
+    let sealed = schema["properties"]["payload"]["oneOf"]
+        .as_array()
+        .expect("the payload alternatives")
+        .iter()
+        .find(|alternative| alternative["properties"]["type"]["const"] == "run-end")
+        .map(|end| &end["properties"]["run"]["properties"]["sealed"])
+        .expect("the actual run-end sealed diagnostics");
+    let validator = jsonschema::validator_for(sealed).expect("the published boundary compiles");
+    let directory = tempfile::tempdir().expect("an owned cold disk-cache domain");
+    let modules = rust_mutants_sealed::ModuleOwner::default();
+    let runner = rust_mutants_sealed::SealedRunner::cached(
+        &modules,
+        std::time::Duration::from_secs(60),
+        directory.path(),
+    )
+    .expect("an actual preparation owner");
+    let command = b"\0asm\x01\0\0\0\x01\x04\x01\x60\0\0\x03\x02\x01\0\x05\x03\x01\0\x01\x07\x13\x02\x06memory\x02\0\x06_start\0\0\x0a\x04\x01\x02\0\x0b";
+    let invocation = rust_mutants_sealed::Invocation {
+        arguments: rust_mutants_sealed::Arguments::new(vec!["command".to_owned()])
+            .expect("valid arguments"),
+        environment: rust_mutants_sealed::Environment::new(Vec::new()).expect("valid environment"),
+        preopens: rust_mutants_sealed::Preopens::new(Vec::new()).expect("valid preopens"),
+        seed: 11,
+        fuel: 1_000_000,
+        limits: rust_mutants_sealed::Limits {
+            memory: 1 << 20,
+            stdout: 1 << 16,
+            stderr: 1 << 16,
+            overlay: 1 << 20,
+        },
+        clock: rust_mutants_sealed::ClockPolicy {
+            realtime_origin: 1_000_000_000_000_000_000,
+            monotonic_origin: 5_000_000_000,
+            nanos_per_fuel: std::num::NonZeroU64::MIN,
+        },
+        halt: None,
+    };
+    for _request in 0..2 {
+        let transcript = runner
+            .prepare(command)
+            .expect("the actual WASI command")
+            .invoke(&invocation, &rust_mutants_sealed::Interrupt::of(Vec::new()))
+            .expect("actual independent host execution");
+        assert_eq!(transcript.stop(), rust_mutants_sealed::SealedStop::Returned);
+        runner
+            .prepare(b"\0asm\x01\0\0\0\x05\x03\x01\0\x01")
+            .expect_err("a compiled core module without the command interface is refused");
+    }
+    let spent = runner.spent().expect("the actual preparation work");
+    let compilation = spent.compilation.expect("measured physical preparations");
+    assert_eq!(spent.failures, Some(2));
+    assert_eq!(
+        (
+            compilation.attempts,
+            compilation.process,
+            compilation.failed_cold,
+            compilation.failed_disk
+        ),
+        (Some(3), Some(1), Some(1), Some(1))
+    );
+    let recorded = serde_json::to_value(spent).expect("the actual diagnostic document");
+    assert!(validator.is_valid(&recorded), "{recorded}");
+}
+
+#[test]
 fn nested_trace_context_is_a_closed_self_consistent_build_binding() {
     let final_run_id =
         rust_mutants::id::RunId::try_from("run").expect("the fixed final run id is canonical");

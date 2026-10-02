@@ -63,6 +63,7 @@ fn verify_with(fixture: &Fixture, extra: &[&str]) -> Output {
         .chain(extra.iter().copied())
         .map(OsString::from),
         &Environment {
+            module_owner: rust_mutants::sealed::ModuleOwner::default(),
             cache_directory: fixture.root.join(".cache"),
             working_directory: fixture.root.clone(),
             temp_directory: njutest_devkit::paths::temp_beside(&fixture.root)

@@ -142,7 +142,11 @@ pub fn command(imports: &[&str], data: &str, body: &str) -> Vec<u8> {
 /// The runner cannot start on this machine.
 #[must_use]
 pub fn runner() -> SealedRunner {
-    SealedRunner::new(Duration::from_secs(60)).expect("the sealed runner starts")
+    SealedRunner::new(
+        &rust_mutants_sealed::ModuleOwner::default(),
+        Duration::from_secs(60),
+    )
+    .expect("the sealed runner starts")
 }
 
 /// A snapshot holding one file and one empty directory.

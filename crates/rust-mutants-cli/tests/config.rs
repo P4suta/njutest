@@ -490,6 +490,7 @@ fn a_root_a_command_names_is_resolved_against_where_the_command_was_told_it_is()
     let inside = here.path().join("tree");
     std::fs::create_dir_all(&inside).expect("a tree below it");
     let environment = rust_mutants_cli::Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: rust_mutants::vars::Variables::empty(),
         temp_directory: PathBuf::from("/tmp"),
         program: PathBuf::from("this test never runs it"),
@@ -560,6 +561,7 @@ fn listing() -> rust_mutants_cli::cli::Scope {
 /// An environment rooted at `root`, asking the process for nothing.
 fn nowhere(root: &Path) -> rust_mutants_cli::Environment {
     rust_mutants_cli::Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: rust_mutants::vars::Variables::empty(),
         temp_directory: std::path::PathBuf::from("/tmp"),
         program: std::path::PathBuf::from("this test never runs it"),

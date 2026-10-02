@@ -1518,6 +1518,7 @@ fn a_proof_removing_a_mutation_and_nothing_reaching_it_are_two_answers() {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: njutest_devkit::paths::environment_for_a_run()
             .into_iter()
             .collect(),
@@ -1555,6 +1556,7 @@ fn asked(environment: &Environment, args: &[&str]) -> Output {
 /// The environment of a tree a test laid out itself rather than copied as a fixture.
 fn environment_at(root: &Path, temp: &Path, cache: &Path) -> Environment {
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: njutest_devkit::paths::environment_for_a_run()
             .into_iter()
             .collect(),

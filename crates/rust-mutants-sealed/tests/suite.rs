@@ -17,6 +17,8 @@ mod host;
 mod invocation;
 #[path = "laws.rs"]
 mod laws;
+#[path = "owner.rs"]
+mod owner;
 #[path = "pins.rs"]
 mod pins;
 #[path = "redirect.rs"]

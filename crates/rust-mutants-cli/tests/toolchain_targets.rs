@@ -112,6 +112,7 @@ fn a_path_that_is_not_ascii_is_snapshotted_named_and_hashed() {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: njutest_devkit::paths::environment_for_a_run()
             .into_iter()
             .collect(),

@@ -26,6 +26,7 @@ type RefusalCase<'a> = (&'a str, Vec<(&'a str, &'a str)>, Option<&'a str>);
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: njutest_devkit::paths::environment_for_a_run()
             .into_iter()
             .collect(),

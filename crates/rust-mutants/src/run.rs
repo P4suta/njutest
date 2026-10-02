@@ -1746,6 +1746,7 @@ pub fn sealed_runner(
         return Ok(None);
     }
     match rust_mutants_sealed::SealedRunner::cached(
+        session.module_owner(),
         crate::sealed::bench::WATCHDOG,
         &session.module_cache(),
     ) {

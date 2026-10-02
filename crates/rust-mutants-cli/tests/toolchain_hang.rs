@@ -44,6 +44,7 @@ fn run_clocked(fixture: &Fixture, env: &[(&str, String)]) -> Output {
         vars.set(*name, value);
     }
     let environment = rust_mutants_cli::Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars,
         temp_directory: fixture.temp().to_path_buf(),
         program: Path::new(env!("CARGO_BIN_EXE_rust-mutants")).to_path_buf(),

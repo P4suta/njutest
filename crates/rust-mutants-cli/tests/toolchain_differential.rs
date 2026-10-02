@@ -356,6 +356,7 @@ fn a_remembered_measurement_routes_a_run_exactly_as_a_fresh_one_would() {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: njutest_devkit::paths::environment_for_a_run()
             .into_iter()
             .collect(),

@@ -85,6 +85,7 @@ fn an_allowed_sibling_is_copied_beside_the_tree_and_the_run_measures() {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: njutest_devkit::paths::environment_for_a_run()
             .into_iter()
             .collect(),

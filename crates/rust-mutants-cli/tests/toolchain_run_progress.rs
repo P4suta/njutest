@@ -106,6 +106,7 @@ fn colour_is_off_unless_it_is_asked_for_and_the_stream_can_take_it() {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: njutest_devkit::paths::environment_for_a_run()
             .into_iter()
             .collect(),

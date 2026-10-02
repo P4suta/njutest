@@ -657,6 +657,7 @@ fn a_mutation_a_run_puts_to_the_tests_leaves_the_execution_that_ran_it() {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: njutest_devkit::paths::environment_for_a_run()
             .into_iter()
             .collect(),

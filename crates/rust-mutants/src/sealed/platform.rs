@@ -91,7 +91,11 @@ pub fn flags(object: &str) -> Vec<String> {
 ///
 /// # Errors
 /// A `rustc` that could not be started, or a run that was cancelled.
-pub fn ready(driver: &Driver<'_>, root: &Path) -> Result<Readied, CargoError> {
+pub fn ready(
+    modules: &rust_mutants_sealed::ModuleOwner,
+    driver: &Driver<'_>,
+    root: &Path,
+) -> Result<Readied, CargoError> {
     let trace = match driver.toolchain.env() {
         Some(vars) => driver
             .trace
@@ -157,6 +161,7 @@ pub fn ready(driver: &Driver<'_>, root: &Path) -> Result<Readied, CargoError> {
     }
     let bytes = std::fs::read(&module).map_err(|error| failed(&module, error))?;
     if let Some(said) = unanswered(
+        modules,
         &bytes,
         &trace,
         Some(&super::module_cache(root, driver.toolchain.env())),
@@ -227,6 +232,7 @@ fn compiled(
 
 /// Why the probe module `bytes` does not answer the two directories from the environment, or nothing where it does.
 fn unanswered(
+    modules: &rust_mutants_sealed::ModuleOwner,
     bytes: &[u8],
     trace: &crate::trace::Recorder,
     cache: Option<&Path>,
@@ -243,6 +249,7 @@ fn unanswered(
         Err(error) => return Some(format!("the probe could not be rewritten: {error}")),
     };
     let runner = match SealedRunner::with_compiler(
+        modules,
         super::bench::WATCHDOG,
         rust_mutants_sealed::CompilerTier::faithful(),
         cache,

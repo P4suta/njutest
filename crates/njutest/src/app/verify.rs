@@ -1931,6 +1931,7 @@ mod tests {
             .expect("replacement document");
 
             let environment = Environment {
+                module_owner: rust_mutants::sealed::ModuleOwner::default(),
                 vars: rust_mutants::vars::Variables::empty(),
                 working_directory: project.path().to_path_buf(),
                 temp_directory: project.path().join("tmp"),

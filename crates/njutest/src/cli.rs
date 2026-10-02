@@ -61,6 +61,8 @@ pub fn exit_codes() -> String {
 /// What the machine is, as an argument.
 #[derive(Debug, Clone)]
 pub struct Environment {
+    /// The explicit compiled-module owner retained across this composition's preparation paths.
+    pub module_owner: rust_mutants::sealed::ModuleOwner,
     /// The whole environment, as names and values.
     pub vars: rust_mutants::vars::Variables,
     /// Where the process was started.

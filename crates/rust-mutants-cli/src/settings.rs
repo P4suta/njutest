@@ -99,6 +99,7 @@ impl Settings {
         let report_directory = rust_mutants::id::slashed(&self.config.reports.directory)
             .map_err(rust_mutants::workspace::SessionError::from)?;
         Ok(OpenOptions {
+            module_owner: environment.module_owner.clone(),
             cargo: environment.cargo.clone(),
             search_path: environment.vars.search_path().map(ToOwned::to_owned),
             env: environment.vars.clone(),

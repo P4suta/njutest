@@ -785,8 +785,11 @@ fn every_mutant_a_fixture_kills_natively_is_detected_by_a_sealed_execution_of_a_
         &Cancel::new(),
     )
     .expect("prepare");
-    let runner = rust_mutants_sealed::SealedRunner::new(rust_mutants::sealed::bench::WATCHDOG)
-        .expect("the sealed runner starts");
+    let runner = rust_mutants_sealed::SealedRunner::new(
+        &rust_mutants_sealed::ModuleOwner::default(),
+        rust_mutants::sealed::bench::WATCHDOG,
+    )
+    .expect("the sealed runner starts");
     let bench = session
         .bench(&runner, &Cancel::new())
         .expect("the bench is assembled");
@@ -852,8 +855,11 @@ fn every_mutant_of_a_sealable_fixture_stands_on_sealed_executions_alone() {
         &Cancel::new(),
     )
     .expect("prepare");
-    let runner = rust_mutants_sealed::SealedRunner::new(rust_mutants::sealed::bench::WATCHDOG)
-        .expect("the sealed runner starts");
+    let runner = rust_mutants_sealed::SealedRunner::new(
+        &rust_mutants_sealed::ModuleOwner::default(),
+        rust_mutants::sealed::bench::WATCHDOG,
+    )
+    .expect("the sealed runner starts");
     let bench = session
         .bench(&runner, &Cancel::new())
         .expect("the bench is assembled");
@@ -1032,8 +1038,11 @@ fn a_run_cancelled_once_its_bench_stands_decides_no_mutant_a_sealed_test_would()
         &Cancel::new(),
     )
     .expect("prepare");
-    let runner = rust_mutants_sealed::SealedRunner::new(rust_mutants::sealed::bench::WATCHDOG)
-        .expect("the sealed runner starts");
+    let runner = rust_mutants_sealed::SealedRunner::new(
+        &rust_mutants_sealed::ModuleOwner::default(),
+        rust_mutants::sealed::bench::WATCHDOG,
+    )
+    .expect("the sealed runner starts");
     let cancel = Cancel::new();
     let bench = session
         .bench(&runner, &cancel)
@@ -1096,8 +1105,11 @@ fn a_sealed_control_passes_under_every_harness_option_a_run_may_be_configured_wi
         &Cancel::new(),
     )
     .expect("prepare");
-    let runner = rust_mutants_sealed::SealedRunner::new(rust_mutants::sealed::bench::WATCHDOG)
-        .expect("the sealed runner starts");
+    let runner = rust_mutants_sealed::SealedRunner::new(
+        &rust_mutants_sealed::ModuleOwner::default(),
+        rust_mutants::sealed::bench::WATCHDOG,
+    )
+    .expect("the sealed runner starts");
     let bench = session
         .bench(&runner, &Cancel::new())
         .expect("the bench is assembled");
@@ -1175,8 +1187,11 @@ fn a_test_that_reads_the_tree_by_a_path_its_build_gave_it_passes_its_control_sea
         &Cancel::new(),
     )
     .expect("prepare");
-    let runner = rust_mutants_sealed::SealedRunner::new(rust_mutants::sealed::bench::WATCHDOG)
-        .expect("the sealed runner starts");
+    let runner = rust_mutants_sealed::SealedRunner::new(
+        &rust_mutants_sealed::ModuleOwner::default(),
+        rust_mutants::sealed::bench::WATCHDOG,
+    )
+    .expect("the sealed runner starts");
     let bench = session
         .bench(&runner, &Cancel::new())
         .expect("the bench is assembled");
@@ -1235,8 +1250,11 @@ fn a_test_that_writes_where_cargo_gives_an_integration_test_to_write_passes_its_
         &Cancel::new(),
     )
     .expect("prepare");
-    let runner = rust_mutants_sealed::SealedRunner::new(rust_mutants::sealed::bench::WATCHDOG)
-        .expect("the sealed runner starts");
+    let runner = rust_mutants_sealed::SealedRunner::new(
+        &rust_mutants_sealed::ModuleOwner::default(),
+        rust_mutants::sealed::bench::WATCHDOG,
+    )
+    .expect("the sealed runner starts");
     let bench = session
         .bench(&runner, &Cancel::new())
         .expect("the bench is assembled");
@@ -1275,8 +1293,11 @@ fn a_test_that_reads_where_its_build_script_wrote_passes_its_control_sealed() {
         &Cancel::new(),
     )
     .expect("prepare");
-    let runner = rust_mutants_sealed::SealedRunner::new(rust_mutants::sealed::bench::WATCHDOG)
-        .expect("the sealed runner starts");
+    let runner = rust_mutants_sealed::SealedRunner::new(
+        &rust_mutants_sealed::ModuleOwner::default(),
+        rust_mutants::sealed::bench::WATCHDOG,
+    )
+    .expect("the sealed runner starts");
     let bench = session
         .bench(&runner, &Cancel::new())
         .expect("the bench is assembled");
@@ -1317,8 +1338,11 @@ fn a_test_that_keeps_files_in_the_temporary_directory_passes_sealed_however_it_a
         &Cancel::new(),
     )
     .expect("prepare");
-    let runner = rust_mutants_sealed::SealedRunner::new(rust_mutants::sealed::bench::WATCHDOG)
-        .expect("the sealed runner starts");
+    let runner = rust_mutants_sealed::SealedRunner::new(
+        &rust_mutants_sealed::ModuleOwner::default(),
+        rust_mutants::sealed::bench::WATCHDOG,
+    )
+    .expect("the sealed runner starts");
     let bench = session
         .bench(&runner, &Cancel::new())
         .expect("the bench is assembled");
@@ -1366,8 +1390,11 @@ fn a_test_that_keeps_a_setting_under_the_home_directory_passes_its_control_seale
     .expect("open")
     .prepare(&every_rule(), &Cancel::new())
     .expect("prepare");
-    let runner = rust_mutants_sealed::SealedRunner::new(rust_mutants::sealed::bench::WATCHDOG)
-        .expect("the sealed runner starts");
+    let runner = rust_mutants_sealed::SealedRunner::new(
+        &rust_mutants_sealed::ModuleOwner::default(),
+        rust_mutants::sealed::bench::WATCHDOG,
+    )
+    .expect("the sealed runner starts");
     let bench = session
         .bench(&runner, &Cancel::new())
         .expect("the bench is assembled");
@@ -1402,8 +1429,11 @@ fn a_mutant_that_sends_a_test_to_an_absolute_path_meets_a_refusal_rather_than_th
     .expect("open")
     .prepare(&every_rule(), &Cancel::new())
     .expect("prepare");
-    let runner = rust_mutants_sealed::SealedRunner::new(rust_mutants::sealed::bench::WATCHDOG)
-        .expect("the sealed runner starts");
+    let runner = rust_mutants_sealed::SealedRunner::new(
+        &rust_mutants_sealed::ModuleOwner::default(),
+        rust_mutants::sealed::bench::WATCHDOG,
+    )
+    .expect("the sealed runner starts");
     let bench = session
         .bench(&runner, &Cancel::new())
         .expect("the bench is assembled");
@@ -1473,8 +1503,11 @@ fn recorded_by_a_run(fixture: &njutest_devkit::fixture::Fixture) -> Vec<Recorded
     .expect("open")
     .prepare(&every_rule(), &Cancel::new())
     .expect("prepare");
-    let runner = rust_mutants_sealed::SealedRunner::new(rust_mutants::sealed::bench::WATCHDOG)
-        .expect("the sealed runner starts");
+    let runner = rust_mutants_sealed::SealedRunner::new(
+        &rust_mutants_sealed::ModuleOwner::default(),
+        rust_mutants::sealed::bench::WATCHDOG,
+    )
+    .expect("the sealed runner starts");
     let bench = session
         .bench(&runner, &Cancel::new())
         .expect("the bench is assembled");

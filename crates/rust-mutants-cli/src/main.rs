@@ -33,6 +33,7 @@ pub(crate) fn main() -> ExitCode {
         }
     };
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         temp_directory: std::env::temp_dir(),
         program,
         cache_directory: Environment::cache_directory_of(&vars),

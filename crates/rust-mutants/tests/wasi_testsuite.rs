@@ -583,7 +583,8 @@ fn every_preview1_test_ends_as_the_expectations_say() {
         &held.keys().map(String::as_str).collect(),
         &expectations.commit,
     );
-    let runner = SealedRunner::new(WATCHDOG).expect("the sealed runner starts");
+    let runner = SealedRunner::new(&rust_mutants_sealed::ModuleOwner::default(), WATCHDOG)
+        .expect("the sealed runner starts");
     for (name, module) in &held {
         let observed = observe(&runner, name, module);
         match expectations.tests.get(name) {
