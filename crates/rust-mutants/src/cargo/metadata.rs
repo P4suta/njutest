@@ -394,12 +394,7 @@ impl Metadata {
         }
         spec.structured_stdout = Some(METADATA_OUTPUT_LIMIT);
         let watch = crate::runner::Watched::new(driver.cancel, driver.trace);
-        let stdout = super::observed::run(
-            &spec,
-            driver.toolchain,
-            super::observed::Role::Metadata,
-            &watch,
-        )?;
+        let stdout = super::observed::metadata(&spec, driver.toolchain, &watch)?;
         Self::parse(&stdout)
     }
 

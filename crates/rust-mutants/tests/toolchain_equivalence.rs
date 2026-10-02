@@ -316,6 +316,7 @@ fn an_original_that_does_not_build_cannot_establish_a_mutation() {
 
 fn compiler_workspace(fixture: &Fixture, trace: &Recorder) -> rust_mutants::workspace::Workspace {
     let mut open = opening(&njutest_devkit::paths::cargo_binary(), fixture.temp());
+    open.env = toolchain_env();
     open.trace = trace.clone();
     open.env.remove("NJUTEST_FIXTURE_BUILD_CACHE");
     rust_mutants::workspace::Workspace::open(fixture.root(), open, &Cancel::new())
@@ -614,6 +615,75 @@ fn a_bound_toolchain_observation_answers_twice_without_another_process() {
     );
 }
 
+#[test]
+fn an_opaque_loader_graph_always_keeps_its_actual_toolchain_processes() {
+    for name in ["LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"] {
+        let fixture = Fixture::copy("fixture-equivalent");
+        let trace = rust_mutants::testkit::trace::memory_recorder();
+        let cancel = Cancel::new();
+        let mut env = toolchain_env();
+        env.set("NJUTEST_FIXTURE_BUILD_CACHE", fixture.cache());
+        env.set(name, fixture.temp());
+        let options = rust_mutants::cargo::LocateOptions {
+            cargo: Some(njutest_devkit::paths::cargo_binary()),
+            env: Some(env),
+            ..rust_mutants::cargo::LocateOptions::default()
+        };
+        let watch = rust_mutants::runner::Watched::new(&cancel, &trace);
+        for _question in 0..2 {
+            rust_mutants::cargo::Toolchain::locate(&options, fixture.root(), &watch)
+                .expect("the real toolchain still runs under an opaque loader graph");
+        }
+        assert_eq!(
+            trace
+                .events()
+                .iter()
+                .filter(|event| { matches!(event.payload, Payload::Exec { .. }) })
+                .count(),
+            6,
+            "{name} binds no reusable executable or loader graph"
+        );
+    }
+}
+
+#[test]
+fn a_changed_observation_command_cannot_certify_its_old_actual_result() {
+    let fixture = Fixture::copy("fixture-equivalent");
+    let trace = rust_mutants::testkit::trace::memory_recorder();
+    let cancel = Cancel::new();
+    let first = observed_toolchain(&fixture, &cancel, &trace);
+    let root = fixture.cache().join("rust-mutants-tool-observations-v1");
+    let record = std::fs::read_dir(&root)
+        .expect("the bound observation owner")
+        .map(|entry| entry.expect("an observation").path().join("located.json"))
+        .find(|path| std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file()))
+        .expect("the actual located record");
+    let mut value: serde_json::Value = njutest_devkit::strictjson::decode_slice(
+        &std::fs::read(&record).expect("the actual observation"),
+    )
+    .expect("the complete strict observation");
+    *value
+        .pointer_mut("/processes/0/exec/argv/0")
+        .expect("the actual command identity") =
+        serde_json::Value::String("a-command-that-did-not-make-this-observation".to_owned());
+    std::fs::write(
+        record,
+        serde_json::to_vec(&value).expect("retain the changed provenance"),
+    )
+    .expect("the planted observation corruption");
+    let recovered = observed_toolchain(&fixture, &cancel, &trace);
+    assert_eq!(recovered.cargo_version(), first.cargo_version());
+    assert_eq!(
+        trace
+            .events()
+            .iter()
+            .filter(|event| { matches!(event.payload, Payload::Exec { .. }) })
+            .count(),
+        6,
+        "changed causal provenance requires new actual compiler observations"
+    );
+}
+
 fn metadata_processes(trace: &Recorder) -> usize {
     trace
         .events()
@@ -709,7 +779,7 @@ fn an_independent_compiler_witness_retains_its_complete_input_identity() {
     assert_eq!(
         request.len(),
         64,
-        "an independent witness has the same complete input identity as ordinary compilation"
+        "an independent witness retains its complete input identity: {request}"
     );
     assert!(request.bytes().all(|byte| byte.is_ascii_hexdigit()));
     workspace.close().expect("the compiler owner closes");

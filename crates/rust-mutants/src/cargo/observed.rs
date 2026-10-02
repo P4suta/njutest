@@ -17,7 +17,7 @@ use crate::runner::{Cancel, RunResult, Spec, Watch};
 use crate::trace::ExecRecord;
 use crate::vars::Variables;
 
-const SCHEMA: &str = "rust-mutants-tool-observation-v1";
+const SCHEMA: &str = "rust-mutants-tool-observation-v2";
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -79,6 +79,36 @@ impl Process {
                     exit: crate::runner::ProcessExit::Code(0)
                 }
             )
+    }
+
+    fn matches(&self, spec: &Spec) -> bool {
+        if self.exec.argv.len() != spec.argv.len()
+            || !self
+                .exec
+                .argv
+                .iter()
+                .zip(&spec.argv)
+                .all(|(actual, expected)| std::ffi::OsStr::new(actual) == expected)
+            || self.exec.dir.as_deref() != spec.dir.as_deref().and_then(Path::to_str)
+        {
+            return false;
+        }
+        let Some(env) = &spec.env else {
+            return false;
+        };
+        let mut names: Vec<_> = self
+            .exec
+            .env_names
+            .iter()
+            .map(|name| env.spelling().canonical(std::ffi::OsStr::new(name)))
+            .collect();
+        names.sort();
+        names
+            == env
+                .canonical()
+                .into_iter()
+                .map(|(name, _value)| name)
+                .collect::<Vec<_>>()
     }
 }
 
@@ -191,7 +221,7 @@ impl Owner {
                 "the executable, environment or graph observation inputs changed",
             ));
         }
-        validate_processes(&observed, &record.processes)?;
+        validate_processes(&observed, dir, &record.processes)?;
         Ok(observed)
     }
 
@@ -206,7 +236,7 @@ impl Owner {
                 "complete tool observation inputs changed while the actual processes ran",
             ));
         }
-        validate_processes(toolchain, &processes)?;
+        validate_processes(toolchain, dir, &processes)?;
         let record = Record {
             schema: SCHEMA.to_owned(),
             key: self.key.clone(),
@@ -317,6 +347,7 @@ fn observation_inputs(
     (cargo, rustc, selecting): (&Path, &Path, &Path),
     (sysroot, dir, env): (&Path, &Path, &Variables),
 ) -> io::Result<BTreeMap<PathBuf, File>> {
+    super::build_cache::toolchain::environment(sysroot, rustc, env)?;
     let mut inputs = BTreeMap::new();
     for program in <[&Path; 3]>::from((cargo, rustc, selecting)) {
         known_program(program, sysroot, env)?;
@@ -386,30 +417,35 @@ fn present(path: &Path, inputs: &mut BTreeMap<PathBuf, File>) -> io::Result<()> 
     Ok(())
 }
 
-fn validate_processes(toolchain: &Toolchain, processes: &[Process]) -> io::Result<()> {
+fn validate_processes(toolchain: &Toolchain, dir: &Path, processes: &[Process]) -> io::Result<()> {
     let mut cargo = false;
     let mut rustc = false;
     let mut sysroot = false;
     for process in processes {
-        if !process.verified() {
+        if !process.verified() || process.exec.dir.as_deref() != dir.to_str() {
             return Err(io::Error::other(
                 "a bound observation lacks a successful actual process",
             ));
         }
-        if process.exec.argv.last().is_some_and(|arg| arg == "-vV") {
-            let said = std::str::from_utf8(&process.stdout).map_err(io::Error::other)?;
-            let banner = super::parse_version(said).map_err(io::Error::other)?;
-            cargo |= &banner == toolchain.cargo_version();
-            rustc |= &banner == toolchain.rustc_version();
-        } else if process
-            .exec
-            .argv
-            .ends_with(&["--print".to_owned(), "sysroot".to_owned()])
-        {
-            let said = std::str::from_utf8(&process.stdout)
-                .map_err(io::Error::other)?
-                .trim();
-            sysroot |= toolchain.sysroot() == Some(Path::new(said));
+        let role = located_role(toolchain, &process.exec.argv)?;
+        match role {
+            LocatedRole::CargoBanner | LocatedRole::RustcBanner => {
+                let said = std::str::from_utf8(&process.stdout).map_err(io::Error::other)?;
+                let banner = super::parse_version(said).map_err(io::Error::other)?;
+                match role {
+                    LocatedRole::CargoBanner => cargo |= &banner == toolchain.cargo_version(),
+                    LocatedRole::RustcBanner => rustc |= &banner == toolchain.rustc_version(),
+                    LocatedRole::Sysroot => {
+                        return Err(io::Error::other("a sysroot cannot supply a banner"));
+                    }
+                }
+            }
+            LocatedRole::Sysroot => {
+                let said = std::str::from_utf8(&process.stdout)
+                    .map_err(io::Error::other)?
+                    .trim();
+                sysroot |= toolchain.sysroot() == Some(Path::new(said));
+            }
         }
     }
     if !cargo || !rustc || !sysroot {
@@ -418,6 +454,39 @@ fn validate_processes(toolchain: &Toolchain, processes: &[Process]) -> io::Resul
         ));
     }
     Ok(())
+}
+
+enum LocatedRole {
+    CargoBanner,
+    RustcBanner,
+    Sysroot,
+}
+
+fn located_role(toolchain: &Toolchain, argv: &[String]) -> io::Result<LocatedRole> {
+    let program = argv
+        .first()
+        .ok_or_else(|| io::Error::other("an unnamed observation"))?;
+    let program = Path::new(program);
+    let cargo = [toolchain.cargo(), toolchain.selecting().path()].contains(&program);
+    let selected_rustc = toolchain
+        .selecting()
+        .path()
+        .with_file_name(format!("rustc{}", std::env::consts::EXE_SUFFIX));
+    let rustc = [toolchain.rustc(), selected_rustc.as_path()].contains(&program);
+    if argv.len() == 2 && argv.last().is_some_and(|arg| arg == "-vV") {
+        if cargo {
+            return Ok(LocatedRole::CargoBanner);
+        }
+        if rustc {
+            return Ok(LocatedRole::RustcBanner);
+        }
+    }
+    if rustc && argv.len() == 3 && argv.ends_with(&["--print".to_owned(), "sysroot".to_owned()]) {
+        return Ok(LocatedRole::Sysroot);
+    }
+    Err(io::Error::other(
+        "the actual executable and observation purpose differ from the bound toolchain",
+    ))
 }
 
 fn field(digest: &mut Sha256, bytes: &[u8]) -> io::Result<()> {
@@ -432,7 +501,7 @@ fn field(digest: &mut Sha256, bytes: &[u8]) -> io::Result<()> {
 
 /// The observation purpose, exhaustively separated from compiler artifact and independent witness caches.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub(super) enum Role {
+enum Role {
     Metadata,
     CargoBanner,
     RustcCfg,
@@ -449,7 +518,7 @@ struct Answer {
 }
 
 /// A single owner of one complete reusable command observation.
-pub(super) struct Response {
+struct Response {
     key: String,
     record: PathBuf,
     role: Role,
@@ -459,7 +528,7 @@ pub(super) struct Response {
 }
 
 impl Response {
-    pub(super) fn open<W: Watch>(
+    fn open<W: Watch>(
         spec: &Spec,
         toolchain: &Toolchain,
         role: Role,
@@ -517,7 +586,7 @@ impl Response {
         })
     }
 
-    pub(super) fn read(&self) -> io::Result<Vec<u8>> {
+    fn read(&self, spec: &Spec) -> io::Result<Vec<u8>> {
         let answer: Answer = crate::strictjson::decode_slice(&std::fs::read(&self.record)?)
             .map_err(io::Error::other)?;
         if answer.schema != SCHEMA
@@ -525,6 +594,7 @@ impl Response {
             || answer.role != self.role
             || answer.inputs != self.inputs
             || !answer.process.verified()
+            || !answer.process.matches(spec)
         {
             return Err(io::Error::other(
                 "an observation has no complete successful original process",
@@ -533,7 +603,7 @@ impl Response {
         Ok(answer.process.stdout)
     }
 
-    pub(super) fn publish(&self, spec: &Spec, result: &RunResult) -> io::Result<()> {
+    fn publish(&self, spec: &Spec, result: &RunResult) -> io::Result<()> {
         if !result.succeeded() || result.stdout_truncated || result.leader.is_none() {
             return Err(io::Error::other("an incomplete actual observation"));
         }
@@ -556,7 +626,7 @@ impl Response {
         .map_err(|error| error.source)
     }
 
-    pub(super) fn key(&self) -> &str {
+    fn key(&self) -> &str {
         &self.key
     }
 }
@@ -638,7 +708,7 @@ fn response_inputs(
 }
 
 /// Obtains a typed reusable observation or records the complete actual command that answered it.
-pub(super) fn run<W: Watch>(
+fn run<W: Watch>(
     spec: &Spec,
     toolchain: &Toolchain,
     role: Role,
@@ -658,7 +728,7 @@ pub(super) fn run<W: Watch>(
         ));
     }
     if let Some(owned) = &owned {
-        match owned.read() {
+        match owned.read(spec) {
             Ok(stdout) => {
                 watch.note("tool-observation-reuse", owned.key());
                 return Ok(stdout);
@@ -715,6 +785,37 @@ pub(super) fn run<W: Watch>(
         }
     }
     Ok(result.stdout)
+}
+
+/// Obtains metadata under the caller's actual execution recorder, with no second standalone publication.
+pub(super) fn metadata<W: Watch>(
+    spec: &Spec,
+    toolchain: &Toolchain,
+    watch: &W,
+) -> Result<Vec<u8>, CargoError> {
+    run(spec, toolchain, Role::Metadata, watch)
+}
+
+/// A standalone probe has one actual process publisher and cannot carry a costed execution watch.
+#[derive(Clone, Copy)]
+pub(super) enum Standalone {
+    CargoBanner,
+    RustcCfg,
+}
+
+pub(super) fn standalone(
+    spec: &Spec,
+    toolchain: &Toolchain,
+    purpose: Standalone,
+    cancel: &Cancel,
+) -> Result<Vec<u8>, CargoError> {
+    let trace = crate::trace::Recorder::disabled();
+    let watch = crate::runner::Watched::new(cancel, &trace);
+    let role = match purpose {
+        Standalone::CargoBanner => Role::CargoBanner,
+        Standalone::RustcCfg => Role::RustcCfg,
+    };
+    run(spec, toolchain, role, &watch)
 }
 
 fn selecting_root((cargo, rustc): (&Path, &Path), env: &Variables) -> io::Result<PathBuf> {

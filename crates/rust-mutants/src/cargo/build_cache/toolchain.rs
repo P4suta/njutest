@@ -48,20 +48,7 @@ pub(super) fn inputs(
     let root = toolchain
         .sysroot()
         .ok_or_else(|| io::Error::other("unbound compiler sysroot"))?;
-    for (name, value) in env.canonical() {
-        let Some(name) = name.to_str() else {
-            return Err(io::Error::other("non-textual environment name"));
-        };
-        let known_compiler = name == "RUSTC" && Path::new(&value) == toolchain.rustc()
-            || name == "RUSTDOC"
-                && Path::new(&value)
-                    == root
-                        .join("bin")
-                        .join(format!("rustdoc{}", std::env::consts::EXE_SUFFIX));
-        if !value.is_empty() && !known_compiler && opaque_variable(name) {
-            return Err(io::Error::other("an opaque compiler or linker program"));
-        }
-    }
+    environment(root, toolchain.rustc(), env)?;
     for path in [toolchain.cargo(), toolchain.rustc()] {
         files.insert(path.to_path_buf(), identity(path, toolchain.identities())?);
     }
@@ -104,6 +91,26 @@ pub(super) fn inputs(
     Ok(())
 }
 
+pub(in crate::cargo) fn environment(root: &Path, rustc: &Path, env: &Variables) -> io::Result<()> {
+    for (name, value) in env.canonical() {
+        let Some(name) = name.to_str() else {
+            return Err(io::Error::other("non-textual environment name"));
+        };
+        let known_compiler = name == "RUSTC" && Path::new(&value) == rustc
+            || name == "RUSTDOC"
+                && Path::new(&value)
+                    == root
+                        .join("bin")
+                        .join(format!("rustdoc{}", std::env::consts::EXE_SUFFIX));
+        if !value.is_empty() && !known_compiler && opaque_variable(name) {
+            return Err(io::Error::other(format!(
+                "the {name} input names an opaque compiler, linker or loader graph"
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn opaque_variable(name: &str) -> bool {
     matches!(
         name,
@@ -112,7 +119,15 @@ fn opaque_variable(name: &str) -> bool {
             | "RUSTC"
             | "RUSTDOC"
             | "LD_PRELOAD"
+            | "LD_LIBRARY_PATH"
             | "DYLD_INSERT_LIBRARIES"
+            | "DYLD_LIBRARY_PATH"
+            | "DYLD_FRAMEWORK_PATH"
+            | "DYLD_FALLBACK_LIBRARY_PATH"
+            | "DYLD_FALLBACK_FRAMEWORK_PATH"
+            | "COMPILER_PATH"
+            | "GCC_EXEC_PREFIX"
+            | "LIBRARY_PATH"
     ) || name.starts_with("CARGO_")
         && [
             "_LINKER",

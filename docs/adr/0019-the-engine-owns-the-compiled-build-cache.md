@@ -145,6 +145,9 @@ A later prepare must measure an altered execution copy without changing the immu
 6. Toolchain banners, target facts and locked metadata are reusable owned observations only for their exact executable bytes, environment, complete graph and configuration.
    The retained result carries the original actual process and raw captures.
    A hit starts no process, and actual standalone probes are counted once at their producer.
+   Private standalone purpose types own an uncosted watch, while metadata retains its caller's actual execution recorder.
+   Retained commands must match the executable, purpose, arguments, working directory and environment identity they claim.
+   External dynamic-loader search graphs remain opaque inputs and always use actual probes.
    Unknown executable selectors and incomplete metadata graphs use actual processes.
 7. Unreadable compiler flag inputs expose a typed I/O cause and named input path.
    Refusal tests inspect that cause and identity rather than localized operating-system display text.

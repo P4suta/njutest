@@ -153,9 +153,12 @@ impl Toolchain {
         spec.dir = Some(dir.to_path_buf());
         spec.env.clone_from(&self.env);
         spec.structured_stdout = Some(PROBE_OUTPUT_LIMIT);
-        let trace = crate::trace::Recorder::disabled();
-        let watch = crate::runner::Watched::new(cancel, &trace);
-        let stdout = super::observed::run(&spec, self, super::observed::Role::RustcCfg, &watch)?;
+        let stdout = super::observed::standalone(
+            &spec,
+            self,
+            super::observed::Standalone::RustcCfg,
+            cancel,
+        )?;
         let said = std::str::from_utf8(&stdout).map_err(|source| {
             CargoError::new(
                 CargoErrorKind::VersionUnreadable,
@@ -517,13 +520,15 @@ fn bare_banner(
     spec.dir = Some(dir.to_path_buf());
     spec.env = Some(env.clone());
     spec.structured_stdout = Some(PROBE_OUTPUT_LIMIT);
-    let trace = crate::trace::Recorder::disabled();
-    let watch = crate::runner::Watched::new(cancel, &trace);
-    let stdout =
-        match super::observed::run(&spec, toolchain, super::observed::Role::CargoBanner, &watch) {
-            Ok(stdout) => stdout,
-            Err(error) => return Bare::Said(error.to_string()),
-        };
+    let stdout = match super::observed::standalone(
+        &spec,
+        toolchain,
+        super::observed::Standalone::CargoBanner,
+        cancel,
+    ) {
+        Ok(stdout) => stdout,
+        Err(error) => return Bare::Said(error.to_string()),
+    };
     match std::str::from_utf8(&stdout).map(parse_version) {
         Ok(Ok(banner)) => Bare::Is(banner),
         Ok(Err(error)) => Bare::Said(error.to_string()),
