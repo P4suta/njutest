@@ -176,11 +176,17 @@ fn a_machine_is_asked_only_which_commits_its_clone_has() {
 fn native_checks_dispatch_through_the_owned_domyjob_transport() {
     let source = include_str!("../src/remote.rs");
     assert!(
-        source.contains("\"domyjob\"") && source.contains("\"--fresh\""),
+        source.contains("\"domyjob\"")
+            && source.contains("\"--submission\"")
+            && source.contains("\"--wait\""),
         "native proof must run through domyjob with an owned source landing"
     );
     assert!(
         !source.contains("run(\"scp\"") && !source.contains("\"ssh\",\n"),
         "native checks must not start untracked SSH or shared home bundle uploads"
+    );
+    assert!(
+        !source.contains("\"--fresh\"") && !source.contains("\"--root\""),
+        "native dispatch must use the installed CLI's immutable snapshot submission contract"
     );
 }

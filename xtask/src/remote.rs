@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::thread::JoinHandle;
 
+use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
 /// Why a commit could not be put to the other machines, or what they said about it.
@@ -389,6 +390,7 @@ fn ask(asked: &Asked) -> Result<Answer, RemoteError> {
         &[
             "on",
             &asked.machine.host,
+            "--wait",
             "--",
             &invocation(asked.machine.shell, &known(&asked.machine)),
         ],
@@ -411,9 +413,6 @@ fn ask(asked: &Asked) -> Result<Answer, RemoteError> {
     let bundle_path = bundle.to_str().ok_or(RemoteError::NotText {
         step: "bundle path",
     })?;
-    let packet_path = packet.path().to_str().ok_or(RemoteError::NotText {
-        step: "source packet path",
-    })?;
     let mut arguments = vec!["bundle", "create", "-q", bundle_path, "HEAD"];
     if !assumed.is_empty() && !assumed.contains(&asked.sha) {
         arguments.push("--not");
@@ -424,14 +423,27 @@ fn ask(asked: &Asked) -> Result<Answer, RemoteError> {
         asked.machine.shell,
         &script(&asked.fleet, &asked.machine, &asked.sha),
     );
+    let mut identity = Sha256::new();
+    for part in [
+        asked.sha.as_bytes(),
+        asked.machine.host.as_bytes(),
+        line.as_bytes(),
+        packet.path().as_os_str().as_encoded_bytes(),
+    ] {
+        identity.update(part);
+        identity.update(b"\0");
+    }
+    let identity = hex::encode(identity.finalize());
+    let submission = identity.get(..32).ok_or(RemoteError::NotText {
+        step: "native submission identity",
+    })?;
     let ran = run(
         "domyjob",
         &[
             "run",
             &asked.machine.host,
-            "--fresh",
-            "--root",
-            packet_path,
+            "--submission",
+            submission,
             "--wait",
             "--",
             &line,
