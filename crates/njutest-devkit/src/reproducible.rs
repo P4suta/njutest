@@ -8,6 +8,8 @@ use std::path::Path;
 
 use sha2::{Digest as _, Sha256};
 
+mod witness;
+
 /// What one build produced, by target name, each executable digested.
 type Built = BTreeMap<String, String>;
 
@@ -17,6 +19,16 @@ type Built = BTreeMap<String, String>;
 /// When the fixture cannot be copied, which is a setup failure rather than an answer.
 #[must_use]
 pub fn builds_a_reverted_change_to_the_same_bytes() -> bool {
+    match witness::answer() {
+        Ok(answer) => answer,
+        Err(source) => {
+            eprintln!("reproducibility-unbound: {source}");
+            actual_reverted_change()
+        }
+    }
+}
+
+fn actual_reverted_change() -> bool {
     let fixture = crate::fixture::Fixture::copy("fixture-equivalent");
     let target = fixture.temp().join("twice");
     let source = fixture.root().join("src/lib.rs");
@@ -117,4 +129,63 @@ fn configure_build_command(command: &mut std::process::Command, root: &Path, tar
         .arg("--target-dir")
         .arg(target)
         .current_dir(root);
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn identical_reproducibility_questions_share_one_actual_independent_pair() {
+        const CHILD: &str = "NJUTEST_REPRODUCIBILITY_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            assert!(super::builds_a_reverted_change_to_the_same_bytes());
+            assert!(super::builds_a_reverted_change_to_the_same_bytes());
+            return;
+        }
+        let directory = tempfile::tempdir().expect("the actual work owner");
+        let cost = directory.path().join("cost");
+        std::fs::create_dir_all(&cost).expect("the private actual-work inventory");
+        let status = std::process::Command::new(std::env::current_exe().expect("this binary"))
+            .args([
+                "--exact",
+                "reproducible::tests::identical_reproducibility_questions_share_one_actual_independent_pair",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env("NJUTEST_TEST_COST_DIR", &cost)
+            .env("NJUTEST_FIXTURE_BUILD_CACHE", directory.path().join("cache"))
+            .status()
+            .expect("the actual paired compiler child");
+        assert!(
+            status.success(),
+            "the unchanged compiler questions: {status}"
+        );
+        let mut builds = 0_u64;
+        for entry in std::fs::read_dir(&cost).expect("the original actual cost records") {
+            let path = entry.expect("one actual record").path();
+            let record: serde_json::Value = crate::strictjson::decode_slice(
+                &std::fs::read(&path).expect("the complete actual record"),
+            )
+            .expect("strict original work");
+            let work = record.get("work").expect("actual work");
+            let actual = work
+                .get("builds")
+                .and_then(serde_json::Value::as_u64)
+                .expect("the complete actual build count");
+            builds = builds.checked_add(actual).expect("the measured total fits");
+            let root = record
+                .get("root")
+                .and_then(serde_json::Value::as_str)
+                .expect("the original compiler source root");
+            crate::cost::record(
+                std::path::Path::new(root),
+                work,
+                record.get("sealed").expect("the original sealed work"),
+            )
+            .expect("charge only the actual current compiler work once");
+        }
+        assert_eq!(
+            builds, 3,
+            "two identical questions retain the original, changed and independent restored processes"
+        );
+    }
 }

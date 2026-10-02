@@ -199,3 +199,18 @@ Both placements retain one immutable complete source graph and separate editable
 The unchanged FNV 1.0.7 Rust 2015 control binds every original source digest, the complete catalog and every report row to its actual trace.
 Both actual compiler tiers must pass all original sealed baselines and agree on all eleven outcomes.
 Its one declared doubt remains the exact typed StackOverflow mutation, while all nine killed and one unreached outcomes remain established.
+
+## Amendment, 2026-10-03: repeated reproducibility questions retain their actual pair
+
+The devkit's fixed reproducibility fixture retains an immutable source owner and three actual compiler observations.
+Original, changed and restored stages have exhaustive identities and distinct retained kernel generations, process IDs and publication nonces.
+Every stage invalidates Cargo's source fingerprints and requires non-fresh source-reading units.
+The restored stage cannot borrow the original observation as its independent control.
+Original Cargo output, exact arguments, environment, source graph and artifact inventories remain verified on reuse.
+
+Semantic input identity contains verified bytes and modes, while filesystem change stamps only guard observation reuse.
+Restored A inputs therefore recover the original A pair after a different B pair without treating timestamps as content.
+One owned kernel lease covers preparation, all three actual processes and publication.
+Concurrent questions retain that one pair, and a corrupt record or artifact requires new actual work.
+Opaque source macros, build scripts, compiler selectors and configuration inputs retain the original actual compiler fallback.
+No cache entry manufactures an independent compiler process or changes Cargo's original freshness evidence.
