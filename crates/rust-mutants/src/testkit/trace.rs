@@ -417,6 +417,7 @@ pub fn every_payload() -> Vec<Payload> {
                 events_emitted: 22,
                 events_dropped: 1,
                 sealed: Some(rust_mutants_sealed::Spent {
+                    modules: None,
                     compiles: 1,
                     instances: 2,
                     answered: 3,
