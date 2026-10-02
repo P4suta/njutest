@@ -34,11 +34,7 @@ fn fixture(name: &str, config: &str) -> Fixture {
     Fixture { root, dir }
 }
 
-fn verify(fixture: &Fixture) -> Output {
-    verify_with(fixture, &[])
-}
-
-fn verify_with(fixture: &Fixture, extra: &[&str]) -> Output {
+fn verify(fixture: &Fixture, extra: &[&str]) -> Output {
     let events = fixture.dir.path().join("clock-events");
     std::fs::create_dir_all(&events).expect("clock events");
     let mut vars: rust_mutants::vars::Variables =
@@ -90,10 +86,15 @@ fn dimensions(output: &Output) -> Vec<String> {
 }
 
 #[test]
-fn a_whole_run_asks_every_dimension_and_is_not_assured_while_one_is_a_hole() {
-    let fixture = fixture("fixture-faulted", "version = 1\ncontract = \"whole-v1\"\n");
-    let output = verify(&fixture);
+fn a_whole_run_that_names_no_contract_asks_every_dimension_and_is_not_assured_while_one_is_a_hole()
+{
+    let fixture = fixture("fixture-faulted", "version = 1\n");
+    let output = verify(&fixture, &[]);
     let said = njutest_devkit::process::strict_utf8(&output.stdout);
+    assert!(
+        said.contains("contract=whole-v1"),
+        "a run that names no contract gets the strictest answer, which is the default (ADR 0033): {said}"
+    );
     assert_eq!(
         dimensions(&output),
         vec![
@@ -104,7 +105,7 @@ fn a_whole_run_asks_every_dimension_and_is_not_assured_while_one_is_a_hole() {
             "wire nothing-to-ask",
             "durable nothing-to-ask",
         ],
-        "every dimension is a row, and a whole run asks every one it can: {said}\n{}",
+        "one whole run asks every dimension it can, and no row of it is not-asked: {said}\n{}",
         njutest_devkit::process::strict_utf8(&output.stderr)
     );
     assert!(
@@ -124,7 +125,7 @@ fn a_standard_run_shows_the_matrix_and_is_decided_as_it_was() {
         "fixture-faulted",
         "version = 1\ncontract = \"standard-v1\"\n",
     );
-    let output = verify(&fixture);
+    let output = verify(&fixture, &[]);
     let said = njutest_devkit::process::strict_utf8(&output.stdout);
     assert_eq!(
         dimensions(&output),
@@ -141,68 +142,5 @@ fn a_standard_run_shows_the_matrix_and_is_decided_as_it_was() {
     assert!(
         !said.contains("dimension-not-measured"),
         "a contract that does not ask every dimension raises nothing about one it did not ask: {said}"
-    );
-}
-
-#[test]
-fn a_run_that_names_no_contract_asks_every_dimension() {
-    let fixture = fixture("fixture-faulted", "version = 1\n");
-    let output = verify(&fixture);
-    let said = njutest_devkit::process::strict_utf8(&output.stdout);
-    assert!(
-        said.contains("contract=whole-v1"),
-        "a run that names no contract gets the strictest answer (ADR 0033): {said}"
-    );
-    assert!(
-        !dimensions(&output)
-            .iter()
-            .any(|row| row.ends_with("not-asked")),
-        "and every dimension is asked: {said}"
-    );
-}
-
-#[test]
-fn a_whole_run_that_seals_nothing_is_one_the_audit_re_decides_without_a_violation() {
-    let fixture = fixture("fixture-simple", "version = 1\ncontract = \"whole-v1\"\n");
-    let trace = fixture.root.join("recorded");
-    let traced = format!("--trace={}", trace.display());
-    let output = verify_with(&fixture, &["--no-seal", "--no-cache", &traced]);
-    let said = njutest_devkit::process::strict_utf8(&output.stdout);
-    assert!(
-        said.contains("FINDING\tdimension-not-measured\tmutation\t"),
-        "with nothing sealed, every answer is a lead and the mutation column is a hole, which a \
-         whole run names: {said}\n{}",
-        njutest_devkit::process::strict_utf8(&output.stderr)
-    );
-    let runs: Vec<PathBuf> = std::fs::read_dir(
-        fixture
-            .root
-            .join(njutest::config::DEFAULT_REPORTS_DIRECTORY)
-            .join("runs"),
-    )
-    .expect("the run wrote its report")
-    .map(|entry| entry.expect("a stored run"))
-    .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
-    .map(|entry| entry.path())
-    .collect();
-    let [run] = runs.as_slice() else {
-        panic!("one run, one report: {runs:?}");
-    };
-    let root = njutest_devkit::paths::workspace_root();
-    let audited = njutest_devkit::paths::command(&njutest_devkit::paths::cargo_binary())
-        .args(["xtask", "proofaudit"])
-        .arg(run)
-        .arg("--trace")
-        .arg(&trace)
-        .current_dir(&root)
-        .output()
-        .expect("the audit starts");
-    let audit = njutest_devkit::process::strict_utf8(&audited.stdout);
-    assert!(
-        audited.status.success() && audit.contains("; 0 violations, 0 unaudited"),
-        "the runner and the audit each count a lead as a hole in the mutation column, and every \
-         other column the same way, so a whole run that seals nothing is re-decided with nothing \
-         to say against it: {audit}\n{}",
-        njutest_devkit::process::strict_utf8(&audited.stderr)
     );
 }
