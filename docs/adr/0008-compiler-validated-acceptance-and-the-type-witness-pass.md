@@ -50,3 +50,12 @@ The engine already asks the compiler directly whether a candidate compiles: ever
   The trace records every round and which diagnostic condemned which mutant, so a slow validation can be read.
 - Type-directed operator families are impossible without types, so the operator table splits by syntax, not by type: `add-to-sub` covers integers and floats alike and the compiler rejects what does not type-check.
 - Whether a fact was proved is always visible: `Mutant.branch` and `Mutant.probed` say what the compiler agreed to, and their absence says only that nothing was claimed.
+
+## Generated paths across editions
+
+The generated runtime anchors lexical imports to `self::`, where its aliases live.
+The expression identity macro uses a digest-specific exported name and a `crate::` invocation.
+It needs no module-local macro re-export, which Rust 2015 cannot resolve.
+The guard composer uses that same path at every inline-module depth and for every guard form.
+The source parser blanks both the earlier module path and the exported path without moving bytes.
+Native and wasm32-wasip1 compiler controls exercise editions 2015, 2018, 2021 and 2024.
