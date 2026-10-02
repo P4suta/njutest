@@ -14,7 +14,7 @@ use rust_mutants::equivalence::artifacts::Identity;
 use rust_mutants::equivalence::{ProveOptions, Prover};
 use rust_mutants::runner::Cancel;
 use rust_mutants::testkit::opening::opening;
-use rust_mutants::trace::Recorder;
+use rust_mutants::trace::{Payload, Recorder};
 use rust_mutants::workspace::OpenOptions;
 
 static REGISTRY: rust_mutants::rule::Registry = rust_mutants::rule::Registry::canonical();
@@ -178,7 +178,24 @@ fn a_file_a_member_reads_from_outside_its_directory_is_compiled_again_whatever_i
 fn a_mutation_the_compiler_renders_identically_is_identical_and_one_it_renders_is_not() {
     let fixture = Fixture::copy("fixture-equivalent");
     let cancel = Cancel::new();
-    let mut prover = prover(&fixture, &cancel);
+    let recorder = rust_mutants::testkit::trace::memory_recorder();
+    let mut prover = Prover::open(
+        fixture.root(),
+        &ProveOptions {
+            open: OpenOptions {
+                cargo: Some(njutest_devkit::paths::cargo_binary()),
+                env: toolchain_env(),
+                temp_directory: fixture.temp().to_path_buf(),
+                locked: true,
+                offline: true,
+                ..OpenOptions::default()
+            },
+            ..ProveOptions::default()
+        },
+        &cancel,
+        &recorder,
+    )
+    .expect("the tree is copied and built");
     let selection = rust_mutants::syntax::Selection::tier(&REGISTRY, rust_mutants::rule::Tier::All);
     let source = std::fs::read(fixture.root().join("src/lib.rs")).expect("the library");
     let discovery =
@@ -215,6 +232,21 @@ fn a_mutation_the_compiler_renders_identically_is_identical_and_one_it_renders_i
     }
 
     assert_eq!(rendered, Identity::Differs, "`n * 2` and `n / 2` are not");
+    let independent = |recorder: &Recorder| {
+        recorder
+            .events()
+            .iter()
+            .filter(|event| {
+                matches!(
+                    &event.payload,
+                    Payload::Note { note }
+                        if note.kind == "fixture-build-request"
+                            && note.detail.contains("an independent compiler witness")
+                )
+            })
+            .count()
+    };
+    let first_witnesses = independent(&recorder);
     assert_eq!(
         prover
             .identical(&by_rule("add-to-sub"), &cancel)
@@ -225,6 +257,17 @@ fn a_mutation_the_compiler_renders_identically_is_identical_and_one_it_renders_i
     assert!(
         !prover.withdrawn(),
         "and the original built to the same bytes every time it was asked to"
+    );
+    assert_eq!(
+        first_witnesses, 1,
+        "the first question's control is one independent compiler witness: the original and \
+         the mutated builds never start one, the engine's verified record answering them"
+    );
+    assert_eq!(
+        independent(&recorder),
+        first_witnesses + 1,
+        "an identical answer keeps its own paired control and starts nothing else, and a \
+         machine already settled asks no further witness of a later differs answer"
     );
     prover.close().expect("the tree goes away");
 }

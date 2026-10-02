@@ -204,6 +204,7 @@ impl Request {
             completion,
             messages,
             units,
+            provenance: super::Provenance::VerifiedReuse,
         })
     }
 
@@ -722,28 +723,20 @@ fn bound_artifact(path: &Path, target: &Path) -> bool {
     }
 }
 
+/// Holds the record's products to what the tree holds now, refusing the reuse without touching anything the tree or the target directory keeps: a file the record verified has changed is a state a later process made, and removing it would hand a later reader bytes no compiler and no alteration produced, so cargo itself is asked and judges what it built by its own record of what it read.
 fn verified_files(files: &BTreeMap<PathBuf, File>, target: &Path) -> io::Result<()> {
     if files.is_empty() || files.keys().any(|path| !bound_artifact(path, target)) {
         return Err(io::Error::other("unbound compilation artifacts"));
     }
-    let changed: Vec<&PathBuf> = files
-        .iter()
-        .filter_map(|(path, recorded)| match file(path) {
-            Ok(current) if current == *recorded => None,
-            Ok(_) | Err(_) => Some(path),
-        })
-        .collect();
-    if changed.is_empty() {
-        return Ok(());
-    }
-    for path in changed {
-        match std::fs::remove_file(path) {
-            Ok(()) => {}
-            Err(source) if source.kind() == io::ErrorKind::NotFound => {}
-            Err(source) => return Err(source),
+    for (path, recorded) in files {
+        match file(path) {
+            Ok(current) if current == *recorded => {}
+            Ok(_) | Err(_) => {
+                return Err(io::Error::other("compilation artifact digest changed"));
+            }
         }
     }
-    Err(io::Error::other("compilation artifact digest changed"))
+    Ok(())
 }
 
 #[cfg(test)]

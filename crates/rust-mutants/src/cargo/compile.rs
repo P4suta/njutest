@@ -203,6 +203,25 @@ pub fn compile_arguments(options: &CompileOptions) -> Vec<OsString> {
     args
 }
 
+/// How the products one compilation answered with were established.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Provenance {
+    /// An actual cargo process ran and printed these messages, so the compiler itself is the witness of what it built.
+    Compiler,
+    /// The engine's content-addressed record answered, after verifying every bound input and artifact digest against the tree as it stands, so the products are a verified reuse of a real compiler run, not a compiler run of this call.
+    VerifiedReuse,
+}
+
+/// What a compilation's answer may be established by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Witness {
+    /// Any complete establishment: an actual compiler process, or the engine's verified record of one.
+    #[default]
+    Any,
+    /// An actual compiler process must run: a verified record of an earlier process is reuse, not an independent witness, and may not answer.
+    Compiler,
+}
+
 /// What a compilation produced.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Compiled {
@@ -212,6 +231,8 @@ pub struct Compiled {
     /// The units that produced an artifact, with their sources.
     /// A failed unit produces none, so on a failed check this is partial.
     pub units: Vec<Unit>,
+    /// How these products were established.
+    pub provenance: Provenance,
 }
 
 impl Compiled {
@@ -374,6 +395,18 @@ impl Compilation {
 /// # Errors
 /// [`CargoErrorKind::BuildLedger`] when the target directory cannot be settled, [`CargoErrorKind::CommandFailed`] when cargo itself could not run or timed out, [`CargoErrorKind::MessageUnparsable`] for a stream that is not messages, and the dep-info errors of [`units_of`].
 pub fn compile(driver: &Driver<'_>, options: &CompileOptions) -> Result<Compiled, CargoError> {
+    compile_with(driver, options, Witness::Any)
+}
+
+/// Compiles the tree and reads what it said, established as `witness` allows.
+///
+/// # Errors
+/// As [`compile`], and a `Witness::Compiler` build is one the engine's verified record may not answer, so it always starts a process.
+pub fn compile_with(
+    driver: &Driver<'_>,
+    options: &CompileOptions,
+    witness: Witness,
+) -> Result<Compiled, CargoError> {
     options.target_dir.settle()?;
     let mut spec = driver
         .toolchain
@@ -407,7 +440,7 @@ pub fn compile(driver: &Driver<'_>, options: &CompileOptions) -> Result<Compiled
             "the compilation was cancelled",
         ));
     }
-    let (identity, request, reused) = cached(driver, options, (&mut spec, &trace));
+    let (identity, request, reused) = cached(driver, options, witness, (&mut spec, &trace));
     if let Some(compiled) = reused {
         if driver.cancel.is_cancelled() {
             return Err(CargoError::new(
@@ -463,12 +496,20 @@ impl Identity {
 fn cached(
     driver: &Driver<'_>,
     options: &CompileOptions,
+    witness: Witness,
     (spec, trace): (&mut crate::runner::Spec, &crate::trace::Recorder),
 ) -> (
     Identity,
     Option<super::build_cache::Request>,
     Option<Compiled>,
 ) {
+    if witness == Witness::Compiler {
+        let identity = Identity::Unbound("unbound: an independent compiler witness".to_owned());
+        trace.note("fixture-build-request", identity.detail());
+        trace.note("fixture-build-uncacheable", identity.detail());
+        trace.note("build-cache-miss", identity.detail());
+        return (identity, None, None);
+    }
     match &mut spec.env {
         Some(env) => match super::build_cache::Request::of(driver, options, env) {
             Ok(request) => {
@@ -574,6 +615,7 @@ fn completed(
         completion,
         messages,
         units,
+        provenance: Provenance::Compiler,
     })
 }
 

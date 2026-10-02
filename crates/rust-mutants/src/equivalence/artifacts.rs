@@ -88,9 +88,16 @@ pub enum Recompiled {
 }
 
 /// Whether every unit of `units` that read the file at `changed` was compiled rather than reused, a file named however its dep-info spells it.
+///
+/// `provenance` separates the two ways a build's products may have been established: an actual compiler process, whose own fresh bit is the honesty this check exists to hold, and the engine's verified record, whose key covers `changed`'s bytes and whose artifacts a real compiler run produced, so a reading unit of that record was compiled from those bytes however the record marks them.
 #[must_use]
-pub fn recompiled(units: &[crate::cargo::Unit], changed: &Path) -> Recompiled {
+pub fn recompiled(
+    units: &[crate::cargo::Unit],
+    changed: &Path,
+    provenance: crate::cargo::Provenance,
+) -> Recompiled {
     let named = crate::cargo::resolved(changed);
+    let verified_reuse = provenance == crate::cargo::Provenance::VerifiedReuse;
     let mut read = false;
     for unit in units {
         let reads = unit.inputs.iter().any(|input| {
@@ -99,7 +106,7 @@ pub fn recompiled(units: &[crate::cargo::Unit], changed: &Path) -> Recompiled {
         if !reads {
             continue;
         }
-        if unit.fresh {
+        if unit.fresh && !verified_reuse {
             return Recompiled::Reused;
         }
         read = true;

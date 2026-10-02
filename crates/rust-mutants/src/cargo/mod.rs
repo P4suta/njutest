@@ -29,7 +29,7 @@ pub use build_identity::{BUILD_SELECTION_DOMAIN, BuildSelection, BuildSelectionD
 pub use built::{BuildDir, LEDGER_NAME, LEDGER_SCHEMA, Member, MemberFile, fingerprint_of};
 pub use compile::{
     BuildConfig, Compilation, CompileKind, CompileOptions, Compiled, Completion, CompletionError,
-    Exited, compile, compile_arguments,
+    Exited, Provenance, Witness, compile, compile_arguments, compile_with,
 };
 pub use cost::{DirectBuild, record_build};
 pub use depinfo::{

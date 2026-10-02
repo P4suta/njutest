@@ -9,7 +9,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use crate::EngineError;
-use crate::cargo::{CompileKind, CompileOptions, compile};
+use crate::cargo::{CompileKind, CompileOptions, Witness, compile_with};
 use crate::catalog::Candidate;
 use crate::execute::targets_of;
 use crate::runner::Cancel;
@@ -67,10 +67,11 @@ pub struct Prover {
     options: ProveOptions,
 }
 
-/// What one build of the tree produced: the executables, and every unit with whether cargo compiled it.
+/// What one build of the tree produced: the executables, every unit with whether cargo compiled it, and how the products were established.
 struct Built {
     artifacts: Artifacts,
     units: Vec<crate::cargo::Unit>,
+    provenance: crate::cargo::Provenance,
 }
 
 impl Prover {
@@ -95,7 +96,7 @@ impl Prover {
             withdrawn: None,
             options: options.clone(),
         };
-        let first = prover.build(cancel)?;
+        let first = prover.build(cancel, Witness::Any)?;
         let kept = match &first {
             Some(built) => prover.workspace.keep_includes_verbatim(&built.units)?,
             None => Vec::new(),
@@ -103,7 +104,9 @@ impl Prover {
         prover.original = if kept.is_empty() {
             first.map(|built| built.artifacts)
         } else {
-            prover.build(cancel)?.map(|built| built.artifacts)
+            prover
+                .build(cancel, Witness::Any)?
+                .map(|built| built.artifacts)
         };
         Ok(prover)
     }
@@ -142,14 +145,14 @@ impl Prover {
         if std::fs::write(&path, &spliced).is_err() {
             return Ok(Identity::NotEstablished(NO_SUCH_FILE));
         }
-        let mutated = self.build(cancel);
+        let mutated = self.build(cancel, Witness::Any);
         if std::fs::write(&path, &source).is_err() {
             return Ok(self.withdraw(CONTROL_DRIFTED));
         }
         let Some(mutated) = mutated? else {
             return Ok(Identity::NotEstablished(DOES_NOT_BUILD));
         };
-        match artifacts::recompiled(&mutated.units, &path) {
+        match artifacts::recompiled(&mutated.units, &path, mutated.provenance) {
             Recompiled::Every => {}
             Recompiled::Reused => return Ok(Identity::NotEstablished(NOT_RECOMPILED)),
             Recompiled::Unread => return Ok(Identity::NotEstablished(SPLICE_UNREAD)),
@@ -160,10 +163,10 @@ impl Prover {
         {
             return Ok(answer);
         }
-        let Some(control) = self.build(cancel)? else {
+        let Some(control) = self.build(cancel, Witness::Compiler)? else {
             return Ok(self.withdraw(CONTROL_DRIFTED));
         };
-        match artifacts::recompiled(&control.units, &path) {
+        match artifacts::recompiled(&control.units, &path, control.provenance) {
             Recompiled::Every => {}
             Recompiled::Reused | Recompiled::Unread => {
                 return Ok(self.withdraw(CONTROL_NOT_RECOMPILED));
@@ -202,7 +205,9 @@ impl Prover {
     }
 
     /// What one build of the tree produced, or nothing when the tree did not build.
-    fn build(&self, cancel: &Cancel) -> Result<Option<Built>, EngineError> {
+    ///
+    /// `witness` is what the answer may be established by: the engine's verified record answers an ordinary build, while a control, whose job is to catch a machine that builds one tree two ways, must be an actual compiler process of this call.
+    fn build(&self, cancel: &Cancel, witness: Witness) -> Result<Option<Built>, EngineError> {
         let options = CompileOptions {
             kind: CompileKind::Tests,
             locked: self.options.open.locked,
@@ -211,7 +216,7 @@ impl Prover {
             build: self.options.build.clone(),
             ..CompileOptions::new(self.workspace.build_dir().nested("equivalence"))
         };
-        let built = compile(&self.workspace.driver(cancel), &options)?;
+        let built = compile_with(&self.workspace.driver(cancel), &options, witness)?;
         match built.completion() {
             crate::cargo::Completion::Built => {}
             crate::cargo::Completion::Refused => return Ok(None),
@@ -228,6 +233,7 @@ impl Prover {
         Ok(Some(Built {
             artifacts: artifacts::digests(executables)?,
             units: built.units,
+            provenance: built.provenance,
         }))
     }
 }

@@ -108,3 +108,30 @@ Cargo's absent uplifted library dep-info is tolerated only when the remaining co
 A native target's link arguments remain refused, because its system linker is no toolchain input.
 This layer applies to users' repeated runs as well as leased fixture slots, and its hit/miss notes always identify the key.
 The suite count gate budgets unique bound build keys plus uncacheable requests per binary, rather than allowing a warm cache to hide new build requests.
+
+## Amendment, 2026-10-02: a verified reuse is not a compiler witness and repairs nothing
+
+### Context
+
+A cache hit answered every unit as cargo marks a unit it did not rebuild, and the one place that asks what cargo actually compiled read that mark as cargo having reused a stale artifact.
+The equivalence layer, whose control build restores the tree and asks the machine to build it again, was answered by the run's own record of the build it started with: a cache entry served as its own independent reproducibility control, and the layer withdrew from every question on a warm cache.
+The same read deleted an artifact whose digest had changed and let cargo rebuild it, handing a later reader bytes no compiler and no alteration produced, so a prepare that found an altered executable silently restored the remembered program instead of measuring what stood there.
+
+### Decision
+
+1. A compilation's answer carries a typed provenance: `Compiler`, an actual cargo process of this call, or `VerifiedReuse`, the engine's record answering after verifying every bound input and artifact digest.
+2. The fresh bit keeps its meaning: what the answering process itself did not rebuild.
+   Only a `Compiler` answer may be read as cargo's own word about reuse; a `VerifiedReuse` answer was produced by a real compiler run over exactly the bound bytes, so its units were compiled from them however they are marked.
+3. A caller that needs an independent witness — the equivalence control, which exists to catch a machine that builds one tree two ways — asks for a compiler process explicitly, and the record may not answer it.
+   The request publishes an `unbound: an independent compiler witness` identity, so cost records keep its actual processes under their own reason.
+4. A hit whose recorded artifact digests no longer match refuses the reuse and changes nothing.
+   Cargo is asked, and judges what it built by its own record of what it read; an artifact a later process altered is measured as it stands rather than silently rebuilt to the remembered bytes.
+5. One control that passes settles the machine for differs answers, and an identical answer keeps one paired control.
+   No other build of the layer starts a compiler process: the original and the mutated builds rest on the verified record where it can answer.
+
+### Consequences
+
+- The equivalence layer answers on a warm cache again: a withdrawn control is a machine question, not a cache state.
+- A run that meets an altered executable re-measures it, and the trace shows the repair miss with its concrete reason while the bytes stay what they were.
+- Freshness and independence checks are unchanged where they were honest: a real cargo run that says it reused a unit's artifact still establishes nothing for a comparison.
+
