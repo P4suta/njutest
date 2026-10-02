@@ -61,16 +61,26 @@ impl Wake {
 pub struct ExitSubscription {
     received: mpsc::Receiver<ExitNotice>,
     wake: Arc<Wake>,
+    state: Arc<State>,
 }
 
 impl ExitSubscription {
-    /// Waits for the producer's terminal publication, including an already published event.
+    /// Reads the retained terminal result after a publication, including an already published refusal.
     ///
     /// # Errors
     /// The producer disconnected before publishing its terminal observation.
     pub fn wait(&self) -> io::Result<bool> {
         match self.received.recv().map_err(io::Error::other)? {
-            ExitNotice::Completed => Ok(true),
+            ExitNotice::Completed => {
+                let completion = self.state.completion.lock().map_err(poisoned)?;
+                match &completion.answer {
+                    Some(Ok(())) => Ok(true),
+                    Some(Err(source)) => Err(io::Error::new(source.kind(), Arc::clone(source))),
+                    None => Err(io::Error::other(
+                        "the exit publication preceded its retained terminal result",
+                    )),
+                }
+            }
             ExitNotice::ObservationStopped => Ok(false),
         }
     }
@@ -141,7 +151,11 @@ impl ChildEvent {
             ));
         }
         drop(completion);
-        Ok(ExitSubscription { received, wake })
+        Ok(ExitSubscription {
+            received,
+            wake,
+            state: Arc::clone(&self.state),
+        })
     }
 
     /// Waits for the owned exit event or its semantic completion backstop.
@@ -259,4 +273,36 @@ impl Drop for Publishing {
 
 fn poisoned<T>(_source: std::sync::PoisonError<T>) -> io::Error {
     io::Error::other("the owned process completion event was poisoned")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn an_observer_lost_before_publication_cannot_be_a_successful_exit_wake() {
+        let child = super::ChildEvent {
+            state: Arc::new(super::State::pending()),
+            worker: Mutex::new(super::EventThread { handle: None }),
+        };
+        let subscribed = child
+            .subscribe()
+            .expect("the actual publication subscriber");
+        let lost = super::Publishing(Arc::clone(&child.state));
+        drop(lost);
+        let error = subscribed
+            .wait()
+            .expect_err("the lost observer publication must retain its terminal refusal");
+        assert!(
+            error.to_string().contains("ended before publishing"),
+            "{error}"
+        );
+        let late = child.subscribe().expect("the late terminal subscriber");
+        assert_eq!(
+            late.wait()
+                .expect_err("the retained refusal is sticky")
+                .to_string(),
+            error.to_string()
+        );
+    }
 }
