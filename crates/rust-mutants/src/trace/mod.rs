@@ -15,6 +15,8 @@ use std::sync::{Arc, Mutex};
 use jiff::Timestamp;
 use sha2::{Digest as _, Sha256};
 
+pub use cost::{Origin as CostOrigin, ProbeRole, ProbeSite, Product as CostProduct, record_probe};
+
 pub use event::{
     AttributionRecord, BisectRecord, BuildRecord, CacheRecord, DelayRecord, DischargeRecord,
     DiscoverFileRecord, EVERY_TYPE, Event, EvidenceRecord, ExecRecord, IdenticalRecord,

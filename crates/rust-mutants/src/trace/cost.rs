@@ -17,11 +17,205 @@ use super::Payload;
 #[derive(Debug)]
 pub(super) struct Costs {
     output: File,
-    binary: String,
-    test: String,
+    origin: Origin,
+    machine: Machine,
     root: String,
     sealed: rust_mutants_sealed::Counted,
     work: Mutex<Work>,
+}
+
+/// The actual producer of one cost record, without assigning product work a nextest identity.
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum Origin {
+    /// A test running under the matching nextest suite identity.
+    Suite {
+        /// The actual nextest binary identity.
+        binary: String,
+        /// The actual nextest test identity.
+        test: String,
+    },
+    /// A product composition root running outside nextest.
+    Product {
+        /// The product that owns the command.
+        program: Product,
+        /// The actual product arguments recorded by its composition root.
+        command: Vec<String>,
+    },
+}
+
+/// The two product composition roots that can publish standalone work.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Product {
+    /// The engine command line.
+    RustMutants,
+    /// The assurance command line.
+    Njutest,
+}
+
+/// The executing host observed when a cost recorder starts.
+#[derive(Debug, Serialize)]
+struct Machine {
+    os: &'static str,
+    arch: &'static str,
+    cpus: usize,
+}
+
+/// The actual toolchain operation whose result the producer observed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProbeRole {
+    /// Cargo's actual toolchain banner.
+    CargoBanner,
+    /// Rustc's actual target configuration.
+    RustcCfg,
+    /// A direct Rustc compilation.
+    RustcBuild,
+}
+
+/// One actual keyed probe result, with no fabricated nextest identity.
+#[derive(Debug, Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Probe {
+    identity: String,
+    role: ProbeRole,
+    started: bool,
+    duration_ns: u64,
+}
+
+/// Actual requests and launches under one toolchain invocation identity.
+#[derive(Debug, Serialize)]
+struct ProbeWork {
+    role: ProbeRole,
+    requests: u64,
+    processes: u64,
+    failed_launches: u64,
+    duration_ns: u64,
+}
+
+/// The actual caller's requested diagnostic and workspace root.
+#[derive(Debug, Clone, Copy)]
+pub struct ProbeSite<'a> {
+    /// The caller's actual variables, including its optional cost request.
+    pub vars: Option<&'a crate::vars::Variables>,
+    /// The workspace the command actually observes.
+    pub root: &'a Path,
+}
+
+/// The executing host named in one measured wait.
+#[derive(Debug, Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WaitMachine {
+    os: String,
+    cpus: u64,
+}
+
+/// The actual owner, cause and monotonic time published by a host-wait producer.
+#[derive(Debug, Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HostWait {
+    owner: String,
+    cause: String,
+    elapsed_ns: u64,
+    machine: WaitMachine,
+}
+
+/// Records one actual toolchain probe outside a session's existing recorder.
+///
+/// # Errors
+/// Its measured command or diagnostic cannot be represented or published.
+pub fn record_probe(
+    site: ProbeSite<'_>,
+    role: ProbeRole,
+    spec: &crate::runner::Spec,
+    result: &crate::runner::RunResult,
+) -> Result<(), crate::cargo::CargoError> {
+    let ProbeSite { vars, root } = site;
+    let Some(vars) = vars else {
+        return Ok(());
+    };
+    if !vars.holds("NJUTEST_TEST_COST_DIR") {
+        return Ok(());
+    }
+    let fail = |source: String| {
+        crate::cargo::CargoError::new(crate::cargo::CargoErrorKind::CommandFailed, source)
+    };
+    let trace = super::Recorder::disabled()
+        .costed_as(vars, root, "cost-probe-")
+        .map_err(|source| fail(source.to_string()))?;
+    let exec = super::ExecRecord::of(spec, result).map_err(|source| fail(source.to_string()))?;
+    let input = serde_json::to_vec(&(role, &exec.argv, &exec.dir))
+        .map_err(|source| fail(source.to_string()))?;
+    let nanos =
+        u64::try_from(result.duration.as_nanos()).map_err(|source| fail(source.to_string()))?;
+    let millis =
+        u64::try_from(result.duration.as_millis()).map_err(|source| fail(source.to_string()))?;
+    let probe = Probe {
+        identity: hex::encode(<sha2::Sha256 as sha2::Digest>::digest(input)),
+        role,
+        started: result.leader.is_some(),
+        duration_ns: nanos,
+    };
+    trace.exec(exec);
+    trace.note(
+        "tool-probe",
+        &serde_json::to_string(&probe).map_err(|source| fail(source.to_string()))?,
+    );
+    let kind = match role {
+        ProbeRole::CargoBanner => "cargo-probe",
+        ProbeRole::RustcCfg => "rustc-probe",
+        ProbeRole::RustcBuild => "rustc-build",
+    };
+    if probe.started {
+        trace.note(kind, &millis.to_string());
+    }
+    Ok(())
+}
+
+impl Origin {
+    fn of(vars: &crate::vars::Variables) -> io::Result<Self> {
+        let label = |name: &str| {
+            vars.var(name)
+                .and_then(std::ffi::OsStr::to_str)
+                .filter(|label| !label.is_empty())
+                .map(str::to_owned)
+                .ok_or_else(|| io::Error::other(format!("cost recording requires UTF-8 {name}")))
+        };
+        if vars.holds("NEXTEST_BINARY_ID") || vars.holds("NEXTEST_TEST_NAME") {
+            return Ok(Self::Suite {
+                binary: label("NEXTEST_BINARY_ID")?,
+                test: label("NEXTEST_TEST_NAME")?,
+            });
+        }
+        let program = match vars
+            .var("NJUTEST_COST_PRODUCT")
+            .and_then(std::ffi::OsStr::to_str)
+        {
+            Some("rust-mutants") => Product::RustMutants,
+            Some("njutest") => Product::Njutest,
+            Some(other) => return Err(io::Error::other(format!("unknown cost product {other:?}"))),
+            None => {
+                return Err(io::Error::other(
+                    "cost recording needs an actual suite or product origin",
+                ));
+            }
+        };
+        let command = label("NJUTEST_COST_COMMAND")?;
+        let command = crate::strictjson::decode_str(&command)
+            .map_err(|source| io::Error::other(format!("cost command is invalid: {source}")))?;
+        Ok(Self::Product { program, command })
+    }
+
+    fn labels(&self) -> (Option<&str>, Option<&str>) {
+        match self {
+            Self::Suite { binary, test } => (Some(binary), Some(test)),
+            Self::Product {
+                program: Product::RustMutants | Product::Njutest,
+                command: _,
+            } => (None, None),
+        }
+    }
 }
 
 /// What one bound build key accumulated: every request, every process it started, every launch that failed, and why.
@@ -63,6 +257,10 @@ struct Work {
     cargo_metadata_ms: u64,
     rustc_probes: u64,
     rustc_probe_ms: u64,
+    rustc_builds: u64,
+    rustc_build_ms: u64,
+    probes: BTreeMap<String, ProbeWork>,
+    host_waits: Vec<HostWait>,
     unobserved_cargo: Vec<&'static str>,
     build_ms: u64,
     units: u64,
@@ -78,8 +276,12 @@ const UNOBSERVED_CARGO: [&str; 1] =
 #[derive(Serialize)]
 struct Record<'a> {
     schema: &'a str,
-    binary: &'a str,
-    test: &'a str,
+    origin: &'a Origin,
+    machine: &'a Machine,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    binary: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    test: Option<&'a str>,
     root: &'a str,
     work: &'a Work,
     sealed: Option<rust_mutants_sealed::Spent>,
@@ -95,14 +297,12 @@ impl Costs {
         let Some(directory) = vars.var("NJUTEST_TEST_COST_DIR") else {
             return Ok(None);
         };
-        let label = |name: &str| {
-            vars.var(name)
-                .and_then(std::ffi::OsStr::to_str)
-                .map(str::to_owned)
-                .ok_or_else(|| io::Error::other(format!("cost recording requires UTF-8 {name}")))
+        let origin = Origin::of(vars)?;
+        let machine = Machine {
+            os: std::env::consts::OS,
+            arch: std::env::consts::ARCH,
+            cpus: std::thread::available_parallelism()?.get(),
         };
-        let binary = label("NEXTEST_BINARY_ID")?;
-        let test = label("NEXTEST_TEST_NAME")?;
         let root =
             crate::telling::LosslessBytes::new(root.as_os_str().as_encoded_bytes()).to_string();
         std::fs::create_dir_all(directory)?;
@@ -115,8 +315,8 @@ impl Costs {
         drop(path);
         Ok(Some(Self {
             output,
-            binary,
-            test,
+            origin,
+            machine,
             root,
             sealed,
             work: Mutex::new(Work {
@@ -228,6 +428,9 @@ const fn started(stopped: &crate::execute::Stopped) -> bool {
 
 /// Folds one diagnostic note into the multiplicity it observes.
 fn noted(work: &mut Work, note: &crate::trace::NoteRecord) -> Result<(), AccountingError> {
+    if observed_tool(work, note)? {
+        return Ok(());
+    }
     match note.kind.as_str() {
         "fixture-cargo-build" => {
             let millis = note
@@ -245,25 +448,6 @@ fn noted(work: &mut Work, note: &crate::trace::NoteRecord) -> Result<(), Account
         | "build-cache-hit"
         | "build-cache-miss"
         | "build-cache-unavailable" => identified(work, note)?,
-        "cargo-probe" => {
-            let millis = probe_millis(&note.detail, "cargo")?;
-            add(&mut work.cargo_probes, "cargo probe accounting")?;
-            sum(&mut work.cargo_probe_ms, millis, "cargo probe accounting")?;
-        }
-        "cargo-metadata" => {
-            let millis = probe_millis(&note.detail, "cargo metadata")?;
-            add(&mut work.cargo_metadata, "cargo metadata accounting")?;
-            sum(
-                &mut work.cargo_metadata_ms,
-                millis,
-                "cargo metadata accounting",
-            )?;
-        }
-        "rustc-probe" => {
-            let millis = probe_millis(&note.detail, "rustc")?;
-            add(&mut work.rustc_probes, "rustc probe accounting")?;
-            sum(&mut work.rustc_probe_ms, millis, "rustc probe accounting")?;
-        }
         "cargo-built-units" => {
             let measured =
                 note.detail
@@ -291,6 +475,74 @@ fn noted(work: &mut Work, note: &crate::trace::NoteRecord) -> Result<(), Account
         _ => {}
     }
     Ok(())
+}
+
+/// Folds actual probe roles and producer waits without guessing a role from an executable name.
+fn observed_tool(
+    work: &mut Work,
+    note: &crate::trace::NoteRecord,
+) -> Result<bool, AccountingError> {
+    let (count, duration, label) = match note.kind.as_str() {
+        "cargo-probe" => (&mut work.cargo_probes, &mut work.cargo_probe_ms, "cargo"),
+        "cargo-metadata" => (
+            &mut work.cargo_metadata,
+            &mut work.cargo_metadata_ms,
+            "cargo metadata",
+        ),
+        "rustc-probe" => (&mut work.rustc_probes, &mut work.rustc_probe_ms, "rustc"),
+        "rustc-build" => (
+            &mut work.rustc_builds,
+            &mut work.rustc_build_ms,
+            "rustc build",
+        ),
+        "tool-probe" => {
+            noted_probe(work, &note.detail)?;
+            return Ok(true);
+        }
+        "host-wait" => {
+            let waited = crate::strictjson::decode_str(&note.detail).map_err(|source| {
+                AccountingError::Invalid {
+                    problem: format!("host wait is invalid: {source}"),
+                }
+            })?;
+            work.host_waits.push(waited);
+            return Ok(true);
+        }
+        _ => return Ok(false),
+    };
+    add(count, "tool probe accounting")?;
+    sum(
+        duration,
+        probe_millis(&note.detail, label)?,
+        "tool probe accounting",
+    )?;
+    Ok(true)
+}
+
+/// Keeps the actual operation and every request, including a never-started probe.
+fn noted_probe(work: &mut Work, detail: &str) -> Result<(), AccountingError> {
+    let probe: Probe =
+        crate::strictjson::decode_str(detail).map_err(|source| AccountingError::Invalid {
+            problem: format!("tool probe is invalid: {source}"),
+        })?;
+    let held = work.probes.entry(probe.identity).or_insert(ProbeWork {
+        role: probe.role,
+        requests: 0,
+        processes: 0,
+        failed_launches: 0,
+        duration_ns: 0,
+    });
+    add(&mut held.requests, "probe request accounting")?;
+    if probe.started {
+        add(&mut held.processes, "probe process accounting")?;
+    } else {
+        add(&mut held.failed_launches, "probe launch failure accounting")?;
+    }
+    sum(
+        &mut held.duration_ns,
+        probe.duration_ns,
+        "probe duration accounting",
+    )
 }
 
 /// Folds one identity-carrying note: a request, a process, or a cache answer, each under its key or unbound reason.
@@ -421,8 +673,10 @@ impl Drop for Costs {
         };
         let record = Record {
             schema: "njutest-test-cost-v3",
-            binary: &self.binary,
-            test: &self.test,
+            origin: &self.origin,
+            machine: &self.machine,
+            binary: self.origin.labels().0,
+            test: self.origin.labels().1,
             root: &self.root,
             work,
             sealed: self.sealed.spent(),

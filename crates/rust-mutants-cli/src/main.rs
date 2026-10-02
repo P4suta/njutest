@@ -10,7 +10,22 @@ use std::process::ExitCode;
 use rust_mutants_cli::Environment;
 
 pub(crate) fn main() -> ExitCode {
-    let vars: rust_mutants::vars::Variables = std::env::vars_os().collect();
+    let mut vars: rust_mutants::vars::Variables = std::env::vars_os().collect();
+    vars.set("NJUTEST_COST_PRODUCT", "rust-mutants");
+    let arguments: Vec<_> = std::env::args_os().collect();
+    let command: Vec<_> = arguments
+        .iter()
+        .skip(1)
+        .map(|word| rust_mutants::telling::LosslessBytes::new(word.as_encoded_bytes()).to_string())
+        .collect();
+    let command = match serde_json::to_string(&command) {
+        Ok(command) => command,
+        Err(error) => {
+            eprintln!("rust-mutants: cannot record the actual command: {error}");
+            return ExitCode::from(rust_mutants::run::EXIT_FAILED);
+        }
+    };
+    vars.set("NJUTEST_COST_COMMAND", command);
     let interrupt = match rust_mutants_cli::interruptible() {
         Ok(interruptible) => interruptible,
         Err(error) => {
@@ -46,7 +61,7 @@ pub(crate) fn main() -> ExitCode {
         vars,
     };
     let code = rust_mutants_cli::run_from_compiled(
-        std::env::args_os(),
+        arguments,
         rust_mutants_cli::Composition::new(
             &environment,
             option_env!("RUST_MUTANTS_COMPILED_CATALOG"),

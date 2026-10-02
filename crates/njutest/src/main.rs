@@ -8,7 +8,22 @@
 use std::process::ExitCode;
 
 pub(crate) fn main() -> ExitCode {
-    let vars: rust_mutants::vars::Variables = std::env::vars_os().collect();
+    let mut vars: rust_mutants::vars::Variables = std::env::vars_os().collect();
+    vars.set("NJUTEST_COST_PRODUCT", "njutest");
+    let arguments: Vec<_> = std::env::args_os().collect();
+    let command: Vec<_> = arguments
+        .iter()
+        .skip(1)
+        .map(|word| rust_mutants::telling::LosslessBytes::new(word.as_encoded_bytes()).to_string())
+        .collect();
+    let command = match serde_json::to_string(&command) {
+        Ok(command) => command,
+        Err(error) => {
+            eprintln!("njutest: cannot record the actual command: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    vars.set("NJUTEST_COST_COMMAND", command);
     let (cancel, signalled) = match njutest::interruptible() {
         Ok(interruptible) => interruptible,
         Err(error) => {
@@ -48,7 +63,7 @@ pub(crate) fn main() -> ExitCode {
         cancel,
     };
     let code = njutest::run_from(
-        std::env::args_os(),
+        arguments,
         &environment,
         &mut std::io::stdout().lock(),
         &mut std::io::stderr().lock(),
