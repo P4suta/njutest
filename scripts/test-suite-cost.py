@@ -11,6 +11,7 @@ import runpy
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 COST = runpy.run_path(str(pathlib.Path(__file__).with_name("suite-cost.py")))
 
@@ -806,23 +807,84 @@ class SuiteCost(unittest.TestCase):
             published = json.loads((root / "suite-cost.json").read_text())
             self.assertEqual(published["gaps"], list(COST["GAPS"]), "the gaps stay declared")
 
-    def test_a_failed_baseline_publication_preserves_the_existing_ledger(self):
+    @staticmethod
+    def staged_leftovers(root):
+        return sorted(path.name for path in root.iterdir() if path.name.startswith(".published-"))
+
+    def test_a_partial_staged_write_through_each_publisher_preserves_the_old_bytes(self):
+        cases = [
+            ("report", lambda destination: COST["publish_report"](destination, {"schema": "kept"})),
+            ("ledger", lambda destination: COST["publish_ledger"](destination, {"schema": "kept"})),
+        ]
+        for name, publisher in cases:
+            with tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                destination = root / f"{name}.json"
+                kept = b'{"schema": "kept", "bytes": "original"}\n'
+                destination.write_bytes(kept)
+                original_dump = json.dump
+
+                def partially_dump(value, staged, *rest, **keywords):
+                    staged.write('{"schema": "partial"')
+                    raise OSError("a labelled mid-write boundary failure")
+
+                with unittest.mock.patch("json.dump", side_effect=partially_dump):
+                    with self.assertRaisesRegex(OSError, "a labelled mid-write boundary failure"):
+                        publisher(destination)
+                self.assertEqual(
+                    destination.read_bytes(),
+                    kept,
+                    f"a partially written staged {name} leaves the old bytes intact",
+                )
+                self.assertEqual(
+                    self.staged_leftovers(root),
+                    [],
+                    f"the failed staged {name} file is cleaned up",
+                )
+
+    def test_a_replacement_refusal_through_each_publisher_preserves_the_old_bytes(self):
+        cases = [
+            ("report", lambda destination: COST["publish_report"](destination, {"schema": "new"})),
+            ("ledger", lambda destination: COST["publish_ledger"](destination, {"schema": "new"})),
+        ]
+        for name, publisher in cases:
+            with tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                destination = root / f"{name}.json"
+                kept = b'{"schema": "kept", "bytes": "original"}\n'
+                destination.write_bytes(kept)
+                with unittest.mock.patch(
+                    "os.replace", side_effect=OSError("a labelled replacement refusal")
+                ):
+                    with self.assertRaisesRegex(OSError, "a labelled replacement refusal"):
+                        publisher(destination)
+                self.assertEqual(
+                    destination.read_bytes(),
+                    kept,
+                    f"a refused replacement leaves the old {name} bytes intact",
+                )
+                self.assertEqual(
+                    self.staged_leftovers(root),
+                    [],
+                    f"the refused {name} staged file is cleaned up",
+                )
+
+    def test_each_publisher_replaces_its_destination_completely_on_success(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
-            kept = b'{"schema":"njutest-suite-cost-budget-v3","platforms":{}}\n'
+            report = root / "suite-cost.json"
+            report.write_bytes(b"old diagnostic\n")
             baseline = root / "ledger.json"
-            baseline.write_bytes(kept)
-            os.chmod(root, 0o500)
-            try:
-                with self.assertRaises(OSError):
-                    COST["publish_ledger"](baseline, {"schema": "njutest-suite-cost-budget-v3"})
-            finally:
-                os.chmod(root, 0o700)
-            self.assertEqual(
-                baseline.read_bytes(),
-                kept,
-                "a failed staged write leaves the old baseline byte-for-byte",
+            baseline.write_bytes(b"old ledger\n")
+            COST["publish_report"](report, {"schema": "njutest-suite-cost-v2", "tests": []})
+            self.assertEqual(json.loads(report.read_text())["schema"], "njutest-suite-cost-v2")
+            self.assertNotIn("old diagnostic", report.read_text())
+            COST["publish_ledger"](
+                baseline, {"schema": "njutest-suite-cost-budget-v3", "platforms": {}}
             )
+            self.assertIn("njutest-suite-cost-budget-v3", baseline.read_text())
+            self.assertNotIn("old ledger", baseline.read_text())
+            self.assertEqual(self.staged_leftovers(root), [])
 
     def test_the_ledger_certifies_its_observation_gaps(self):
         report = budgeted(
