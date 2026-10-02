@@ -2517,6 +2517,7 @@ dependencies = [
  "jiff",
  "jsonschema",
  "njutest-devkit",
+ "njutest-fixture-tree",
  "njutest-macros",
  "notify",
  "proc-macro2",
