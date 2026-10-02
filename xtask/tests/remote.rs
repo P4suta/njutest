@@ -98,21 +98,35 @@ fn a_powershell_machine_stops_on_the_first_native_failure() {
 #[test]
 fn the_command_line_carries_the_script_in_a_form_no_shell_reinterprets() {
     let posix_line = invocation(Shell::Posix, "echo 'a b' \"$HOME\"\n");
-    assert!(posix_line.starts_with("echo "), "{posix_line}");
-    assert!(
-        posix_line.ends_with(" | base64 -d | bash -l"),
-        "{posix_line}"
-    );
-    assert!(!posix_line.contains('\''), "{posix_line}");
-    assert!(!posix_line.contains('$'), "{posix_line}");
-    let windows_line = invocation(Shell::Powershell, "Write-Output 'a'");
-    assert!(
-        windows_line.starts_with("pwsh -NoProfile -NonInteractive -EncodedCommand "),
-        "{windows_line}"
-    );
-    let encoded = windows_line.rsplit(' ').next().unwrap_or_default();
+    assert_eq!(posix_line.program, "bash");
     assert_eq!(
-        encoded,
+        posix_line.arguments.first().map(String::as_str),
+        Some("-lc")
+    );
+    let encoded_script = posix_line.arguments.last().expect("the encoded script");
+    assert!(encoded_script.starts_with("echo "));
+    assert!(encoded_script.ends_with(" | base64 -d | bash -l"));
+    assert!(!encoded_script.contains('\''));
+    assert!(!encoded_script.contains('$'));
+    let windows_line = invocation(Shell::Powershell, "Write-Output 'a'");
+    assert_eq!(windows_line.program, "pwsh");
+    assert_eq!(
+        windows_line.arguments.get(..3),
+        Some(
+            [
+                "-NoProfile".to_owned(),
+                "-NonInteractive".to_owned(),
+                "-EncodedCommand".to_owned(),
+            ]
+            .as_slice()
+        )
+    );
+    let encoded = windows_line
+        .arguments
+        .last()
+        .expect("the encoded Windows script");
+    assert_eq!(
+        encoded.as_str(),
         base64(&[
             b'W', 0, b'r', 0, b'i', 0, b't', 0, b'e', 0, b'-', 0, b'O', 0, b'u', 0, b't', 0, b'p',
             0, b'u', 0, b't', 0, b' ', 0, b'\'', 0, b'a', 0, b'\'', 0
@@ -189,4 +203,17 @@ fn native_checks_dispatch_through_the_owned_domyjob_transport() {
         !source.contains("\"--fresh\"") && !source.contains("\"--root\""),
         "native dispatch must use the installed CLI's immutable snapshot submission contract"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn the_native_invocation_executes_exact_script_bytes_and_exit() {
+    let script = "printf '%s' 'native $ input; quoted'\nprintf '%s' 'actual stderr' >&2\nexit 7\n";
+    let invoked = invocation(Shell::Posix, script);
+    let mut command = std::process::Command::new(invoked.program);
+    command.args(invoked.arguments);
+    let actual = command.output().expect("the native invocation starts");
+    assert_eq!(actual.stdout, b"native $ input; quoted");
+    assert_eq!(actual.stderr, b"actual stderr");
+    assert_eq!(actual.status.code(), Some(7));
 }

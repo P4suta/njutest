@@ -220,17 +220,44 @@ pub fn known(machine: &Machine) -> String {
     }
 }
 
-/// The remote command line that runs `script` on a machine spoken to by `shell`, with nothing in it a shell could reinterpret.
+/// A real program and distinct arguments accepted by the native transport.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Invocation {
+    /// The actual shell executable.
+    pub program: &'static str,
+    /// Its arguments with the script encoded as one exact argument.
+    pub arguments: Vec<String>,
+}
+
+impl Invocation {
+    /// The executable followed by every separate transport argument.
+    pub fn argv(&self) -> impl Iterator<Item = &str> {
+        std::iter::once(self.program).chain(self.arguments.iter().map(String::as_str))
+    }
+}
+
+/// The finite executable and argument vector that carries `script` unchanged.
 #[must_use]
-pub fn invocation(shell: Shell, script: &str) -> String {
+pub fn invocation(shell: Shell, script: &str) -> Invocation {
     match shell {
-        Shell::Posix => format!("echo {} | base64 -d | bash -l", base64(script.as_bytes())),
+        Shell::Posix => Invocation {
+            program: "bash",
+            arguments: vec![
+                "-lc".to_owned(),
+                format!("echo {} | base64 -d | bash -l", base64(script.as_bytes())),
+            ],
+        },
         Shell::Powershell => {
             let wide: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
-            format!(
-                "pwsh -NoProfile -NonInteractive -EncodedCommand {}",
-                base64(&wide)
-            )
+            Invocation {
+                program: "pwsh",
+                arguments: vec![
+                    "-NoProfile".to_owned(),
+                    "-NonInteractive".to_owned(),
+                    "-EncodedCommand".to_owned(),
+                    base64(&wide),
+                ],
+            }
         }
     }
 }
@@ -385,17 +412,10 @@ fn shared(root: &Path, answer: &[u8]) -> Vec<String> {
 
 fn ask(asked: &Asked) -> Result<Answer, RemoteError> {
     let log = asked.logs.join(format!("{}.log", asked.machine.name));
-    let queried = run(
-        "domyjob",
-        &[
-            "on",
-            &asked.machine.host,
-            "--wait",
-            "--",
-            &invocation(asked.machine.shell, &known(&asked.machine)),
-        ],
-        &asked.root,
-    )?;
+    let query = invocation(asked.machine.shell, &known(&asked.machine));
+    let mut query_arguments = vec!["on", &asked.machine.host, "--wait", "--"];
+    query_arguments.extend(query.argv());
+    let queried = run("domyjob", &query_arguments, &asked.root)?;
     if !queried.status.success() {
         let mut said = queried.stdout;
         said.extend_from_slice(&queried.stderr);
@@ -427,9 +447,11 @@ fn ask(asked: &Asked) -> Result<Answer, RemoteError> {
     for part in [
         asked.sha.as_bytes(),
         asked.machine.host.as_bytes(),
-        line.as_bytes(),
         packet.path().as_os_str().as_encoded_bytes(),
-    ] {
+    ]
+    .into_iter()
+    .chain(line.argv().map(str::as_bytes))
+    {
         identity.update(part);
         identity.update(b"\0");
     }
@@ -437,19 +459,16 @@ fn ask(asked: &Asked) -> Result<Answer, RemoteError> {
     let submission = identity.get(..32).ok_or(RemoteError::NotText {
         step: "native submission identity",
     })?;
-    let ran = run(
-        "domyjob",
-        &[
-            "run",
-            &asked.machine.host,
-            "--submission",
-            submission,
-            "--wait",
-            "--",
-            &line,
-        ],
-        packet.path(),
-    )?;
+    let mut run_arguments = vec![
+        "run",
+        &asked.machine.host,
+        "--submission",
+        submission,
+        "--wait",
+        "--",
+    ];
+    run_arguments.extend(line.argv());
+    let ran = run("domyjob", &run_arguments, packet.path())?;
     let mut said = ran.stdout;
     said.extend_from_slice(&ran.stderr);
     answer(asked, log, ran.status.success(), &said)
