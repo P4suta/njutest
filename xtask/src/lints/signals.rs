@@ -9,18 +9,17 @@ use syn::visit::Visit;
 
 use super::{Finding, Kind, item_attributes};
 
-/// The one file for each platform that may signal a process by id: the engine's runner on Unix and on Windows, and xtask's work, which cannot depend on the engine.
-const SIGNALLERS: [&str; 3] = [
-    "crates/rust-mutants/src/runner/unix.rs",
-    "crates/rust-mutants/src/runner/windows.rs",
-    "xtask/src/work.rs",
+/// The shared owned native boundary for each platform is the only production place that may signal a process by id.
+const SIGNALLERS: [&str; 2] = [
+    "crates/njutest-process/src/unix.rs",
+    "crates/njutest-process/src/windows.rs",
 ];
 
 /// The file that states this rule, which spells every way to signal in order to refuse it.
 const RULE: &str = "xtask/src/lints/signals.rs";
 
 /// Every name a crate offers for sending a signal to a process or a group by its id: a function, a method, a system call's number.
-const NAMES: [&str; 20] = [
+const NAMES: [&str; 21] = [
     "kill",
     "killpg",
     "kill_process",
@@ -32,6 +31,7 @@ const NAMES: [&str; 20] = [
     "tkill",
     "sigqueue",
     "pidfd_send_signal",
+    "proc_signal_with_audittoken",
     "SYS_kill",
     "SYS_tgkill",
     "SYS_tkill",
@@ -1327,6 +1327,37 @@ impl<'ast> Visit<'ast> for Signals<'_> {
     fn visit_lit_cstr(&mut self, literal: &'ast syn::LitCStr) {
         if symbol_bytes(literal.value().as_bytes()) {
             self.note_at(literal.span());
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::lints::{Kind, scan_source};
+
+    #[test]
+    fn process_generation_signals_are_confined_to_the_owned_native_boundary() {
+        let source =
+            "fn stop(token: AuditToken) { unsafe { proc_signal_with_audittoken(&token, 9); } }";
+        let outside =
+            scan_source("crates/app/src/lib.rs", source).expect("the signal specimen parses");
+        assert!(
+            outside
+                .iter()
+                .any(|finding| finding.kind == Kind::RawGroupSignal),
+            "a generation-bound signal outside the native owner must be refused"
+        );
+        for path in [
+            "crates/njutest-process/src/unix.rs",
+            "crates/njutest-process/src/windows.rs",
+        ] {
+            assert!(
+                !scan_source(path, source)
+                    .expect("the boundary specimen parses")
+                    .iter()
+                    .any(|finding| finding.kind == Kind::RawGroupSignal),
+                "the shared native owner must retain its actual signal boundary: {path}"
+            );
         }
     }
 }

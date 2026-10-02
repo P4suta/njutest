@@ -10,8 +10,8 @@ use super::{Finding, Kind, macro_tokens_name};
 /// Every module that calls a platform through a foreign boundary, and the only files `unsafe` code or an expectation of it may be written in.
 pub(super) const MODULES: [&str; 4] = [
     "crates/rust-mutants/src/capdir/windows.rs",
-    "crates/rust-mutants/src/runner/unix.rs",
-    "crates/rust-mutants/src/runner/windows.rs",
+    "crates/njutest-process/src/unix.rs",
+    "crates/njutest-process/src/windows.rs",
     "crates/rust-mutants/src/tempowner/lock.rs",
 ];
 

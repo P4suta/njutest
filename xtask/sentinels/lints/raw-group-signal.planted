@@ -75,3 +75,5 @@ fn main() { unsafe { libc::kill(1, 9); } }
 fn main() { unsafe { libc::kill(1, 9); } }
 === module-under-src-tests source crates/app/src/tests/stop.rs
 fn stop() { unsafe { libc::kill(1, 9); } }
+=== retained-generation-signal source crates/app/src/lib.rs
+fn stop(token: AuditToken) { unsafe { proc_signal_with_audittoken(&token, 9); } }

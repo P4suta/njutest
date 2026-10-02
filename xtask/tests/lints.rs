@@ -273,7 +273,7 @@ fn cfg_excluded_platform_code_cannot_hide_an_unchecked_cast() {
         "fn size(value: usize) -> u32 { value as u32 }",
         "macro_rules! handle { ($raw:expr) => { $raw as HANDLE } }",
     ] {
-        let found = scan_source("crates/rust-mutants/src/runner/windows.rs", source)
+        let found = scan_source("crates/njutest-process/src/windows.rs", source)
             .expect("the Windows source parses");
         assert!(
             found
@@ -284,7 +284,7 @@ fn cfg_excluded_platform_code_cannot_hide_an_unchecked_cast() {
     }
     assert!(
         scan_source(
-            "crates/rust-mutants/src/runner/windows.rs",
+            "crates/njutest-process/src/windows.rs",
             "fn size(value: usize) -> Result<u32, core::num::TryFromIntError> { u32::try_from(value) }",
         )
         .expect("the Windows source parses")
@@ -297,8 +297,8 @@ fn cfg_excluded_platform_code_cannot_hide_an_unchecked_cast() {
 fn unsafe_code_lives_only_in_the_modules_the_rule_names() {
     const MODULES: [&str; 4] = [
         "crates/rust-mutants/src/capdir/windows.rs",
-        "crates/rust-mutants/src/runner/unix.rs",
-        "crates/rust-mutants/src/runner/windows.rs",
+        "crates/njutest-process/src/unix.rs",
+        "crates/njutest-process/src/windows.rs",
         "crates/rust-mutants/src/tempowner/lock.rs",
     ];
     let outside = |file: &str, source: &str| {
@@ -1007,7 +1007,7 @@ fn an_expect_is_the_waiver_this_repository_writes() {
 #[test]
 fn an_expectation_cannot_waive_future_dead_or_unsafe_code_for_a_module() {
     let in_a_named_module = |source: &str| {
-        scan_source("crates/rust-mutants/src/runner/windows.rs", source)
+        scan_source("crates/njutest-process/src/windows.rs", source)
             .expect("the source parses")
             .into_iter()
             .map(|finding| finding.kind)
@@ -2787,7 +2787,7 @@ fn only_the_runner_signals_a_process_group_in_shipped_code() {
         "a second place that signals a group decides again what the kernel's refusal means"
     );
     assert!(
-        !shipped("crates/rust-mutants/src/runner/unix.rs", group_kill),
+        !shipped("crates/njutest-process/src/unix.rs", group_kill),
         "the runner is where the question is answered for everybody"
     );
     assert!(
@@ -2919,6 +2919,9 @@ fn every_place_code_runs_from_is_held_to_the_one_signaller() {
         "crates/rust-mutants/benches/pipeline.rs",
         "crates/njutest/src/tests/helper.rs",
         "xtask/src/lanes.rs",
+        "xtask/src/work.rs",
+        "crates/rust-mutants/src/runner/unix.rs",
+        "crates/rust-mutants/src/runner/windows.rs",
     ] {
         assert!(
             signals(held, signalling),
@@ -2930,9 +2933,8 @@ fn every_place_code_runs_from_is_held_to_the_one_signaller() {
     for exempt in [
         "crates/njutest/tests/toolchain_interrupt.rs",
         "xtask/tests/slot.rs",
-        "crates/rust-mutants/src/runner/unix.rs",
-        "crates/rust-mutants/src/runner/windows.rs",
-        "xtask/src/work.rs",
+        "crates/njutest-process/src/unix.rs",
+        "crates/njutest-process/src/windows.rs",
     ] {
         assert!(
             !signals(exempt, signalling),
