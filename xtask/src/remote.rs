@@ -176,8 +176,8 @@ pub fn script(fleet: &Fleet, machine: &Machine, sha: &str) -> String {
                 format!("export CARGO_TARGET_DIR={dir}\n")
             });
             format!(
-                "set -e\n{prelude}cd {repository}\n[ -d {worktree} ] || git worktree add -q --detach {worktree} HEAD\n\
-                 cd {worktree}\ngit fetch -q ~/{BUNDLE} HEAD\n\
+                "set -e\nbundle_path=\"$PWD/{BUNDLE}\"\n{prelude}cd {repository}\n[ -d {worktree} ] || git worktree add -q --detach {worktree} HEAD\n\
+                 cd {worktree}\ngit fetch -q \"$bundle_path\" HEAD\n\
                  git checkout -q --detach {sha}\nmise trust -q . >/dev/null 2>&1 || true\n{target}{command}\n",
                 repository = machine.repository,
                 worktree = machine.worktree,
@@ -190,9 +190,9 @@ pub fn script(fleet: &Fleet, machine: &Machine, sha: &str) -> String {
                 format!("$env:CARGO_TARGET_DIR = '{dir}'\n")
             });
             format!(
-                "$ErrorActionPreference = 'Stop'\n$PSNativeCommandUseErrorActionPreference = $true\n{prelude}\
+                "$ErrorActionPreference = 'Stop'\n$PSNativeCommandUseErrorActionPreference = $true\n$bundlePath = Join-Path (Get-Location) '{BUNDLE}'\n{prelude}\
                  Set-Location '{repository}'\nif (-not (Test-Path '{worktree}')) {{ git worktree add -q --detach '{worktree}' HEAD }}\n\
-                 Set-Location '{worktree}'\ngit fetch -q (Join-Path $HOME '{BUNDLE}') HEAD\n\
+                 Set-Location '{worktree}'\ngit fetch -q $bundlePath HEAD\n\
                  git checkout -q --detach {sha}\n$PSNativeCommandUseErrorActionPreference = $false\nmise trust -q . *> $null\n\
                  $PSNativeCommandUseErrorActionPreference = $true\n{target}{command}\n",
                 repository = machine.repository,
@@ -385,49 +385,73 @@ fn shared(root: &Path, answer: &[u8]) -> Vec<String> {
 fn ask(asked: &Asked) -> Result<Answer, RemoteError> {
     let log = asked.logs.join(format!("{}.log", asked.machine.name));
     let queried = run(
-        "ssh",
+        "domyjob",
         &[
+            "on",
             &asked.machine.host,
+            "--",
             &invocation(asked.machine.shell, &known(&asked.machine)),
         ],
         &asked.root,
     )?;
+    if !queried.status.success() {
+        let mut said = queried.stdout;
+        said.extend_from_slice(&queried.stderr);
+        return answer(asked, log, false, &said);
+    }
     let assumed = shared(&asked.root, &queried.stdout);
-    let bundle = asked.logs.join(format!("{}.bundle", asked.machine.name));
-    let bundle_path = bundle
-        .as_os_str()
-        .to_str()
-        .map_or_else(String::new, ToOwned::to_owned);
-    let mut arguments = vec!["bundle", "create", "-q", bundle_path.as_str(), "HEAD"];
-    if !assumed.is_empty() {
+    let packet = tempfile::Builder::new()
+        .prefix("njutest-native-input-")
+        .tempdir()
+        .map_err(|source| RemoteError::Log {
+            path: asked.logs.display().to_string(),
+            source,
+        })?;
+    let bundle = packet.path().join(BUNDLE);
+    let bundle_path = bundle.to_str().ok_or(RemoteError::NotText {
+        step: "bundle path",
+    })?;
+    let packet_path = packet.path().to_str().ok_or(RemoteError::NotText {
+        step: "source packet path",
+    })?;
+    let mut arguments = vec!["bundle", "create", "-q", bundle_path, "HEAD"];
+    if !assumed.is_empty() && !assumed.contains(&asked.sha) {
         arguments.push("--not");
         arguments.extend(assumed.iter().map(String::as_str));
     }
     git(&asked.root, "bundle", &arguments)?;
-    let destination = format!("{}:{BUNDLE}", asked.machine.host);
-    let copied = run("scp", &["-q", &bundle_path, &destination], &asked.logs)?;
-    let mut said = copied.stdout;
-    said.extend_from_slice(&copied.stderr);
-    let passed = if copied.status.success() {
-        let line = invocation(
-            asked.machine.shell,
-            &script(&asked.fleet, &asked.machine, &asked.sha),
-        );
-        let ran = run("ssh", &[&asked.machine.host, &line], &asked.logs)?;
-        said.extend_from_slice(&ran.stdout);
-        said.extend_from_slice(&ran.stderr);
-        ran.status.success()
-    } else {
-        false
-    };
-    std::fs::write(&log, &said).map_err(|source| RemoteError::Log {
+    let line = invocation(
+        asked.machine.shell,
+        &script(&asked.fleet, &asked.machine, &asked.sha),
+    );
+    let ran = run(
+        "domyjob",
+        &[
+            "run",
+            &asked.machine.host,
+            "--fresh",
+            "--root",
+            packet_path,
+            "--wait",
+            "--",
+            &line,
+        ],
+        packet.path(),
+    )?;
+    let mut said = ran.stdout;
+    said.extend_from_slice(&ran.stderr);
+    answer(asked, log, ran.status.success(), &said)
+}
+
+fn answer(asked: &Asked, log: PathBuf, passed: bool, said: &[u8]) -> Result<Answer, RemoteError> {
+    std::fs::write(&log, said).map_err(|source| RemoteError::Log {
         path: log.display().to_string(),
         source,
     })?;
     Ok(Answer {
         machine: asked.machine.name.clone(),
         passed,
-        failures: if passed { Vec::new() } else { read_back(&said) },
+        failures: if passed { Vec::new() } else { read_back(said) },
         log,
     })
 }

@@ -58,7 +58,8 @@ fn a_posix_machine_checks_out_exactly_the_commit_and_runs_the_command_last() {
         "a machine is never asked to reach the network: {said}"
     );
     assert!(
-        said.contains(&format!("git fetch -q ~/{BUNDLE} HEAD")),
+        said.contains("git fetch -q \"$bundle_path\" HEAD")
+            && said.contains(&format!("bundle_path=\"$PWD/{BUNDLE}\"")),
         "{said}"
     );
     assert!(
@@ -168,5 +169,18 @@ fn a_machine_is_asked_only_which_commits_its_clone_has() {
     assert!(
         known(&powershell())
             .starts_with(r"git -C 'C:\Users\someone\projects\njutest' for-each-ref")
+    );
+}
+
+#[test]
+fn native_checks_dispatch_through_the_owned_domyjob_transport() {
+    let source = include_str!("../src/remote.rs");
+    assert!(
+        source.contains("\"domyjob\"") && source.contains("\"--fresh\""),
+        "native proof must run through domyjob with an owned source landing"
+    );
+    assert!(
+        !source.contains("run(\"scp\"") && !source.contains("\"ssh\",\n"),
+        "native checks must not start untracked SSH or shared home bundle uploads"
     );
 }

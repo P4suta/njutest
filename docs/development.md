@@ -691,3 +691,11 @@ The `discarded-compiler-stderr` gate refuses its production use, including alias
 It also refuses invented empty captures passed to the complete diagnostic API.
 Nested `cargo xtask tidy` commands clear all four Cargo compiler-wrapper variables before a wrapper can retain an expiring temporary context.
 The same actual owned runner observes output, reader failures and host waits on success and refusal paths.
+
+Native gate dispatch uses `cargo xtask remote-check --machines <owned-fleet.toml>`.
+The configured command keeps every native target, feature and suite flag.
+The dispatcher queries existing commits through `domyjob on`, transfers one owned Git bundle through a fresh domyjob source landing, and checks out the exact requested commit in the configured private remote worktree.
+The local packet owner remains live until dispatch answers, and domyjob retains the remote job independently when its connection is interrupted.
+Set a package-specific remote worktree and target directory; the fleet must never name another worker's target.
+On macOS, `lint:windows` requires `NJUTEST_WINDOWS_MACHINES` naming this supported native route because absent MSVC headers cannot establish a Rust lint result.
+A transport control proves dispatch and input binding; only the retained actual Windows command result proves the native check.
