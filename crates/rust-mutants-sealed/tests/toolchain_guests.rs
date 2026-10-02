@@ -54,6 +54,88 @@ impl MeasuredRunner {
     }
 }
 
+#[test]
+fn a_cold_guest_build_publishes_its_real_artifacts_completely() {
+    let cost = tempfile::tempdir().expect("a cost directory");
+    let cache = tempfile::tempdir().expect("a fresh guest cache");
+    let status = std::process::Command::new(std::env::current_exe().expect("this binary"))
+        .args(["--exact", "guests_child_cold_libtest", "--nocapture"])
+        .env("NJUTEST_TEST_COST_CHILD", "1")
+        .env("NJUTEST_SEALED_GUEST_CACHE", cache.path())
+        .env("NJUTEST_TEST_COST_DIR", cost.path())
+        .status()
+        .expect("the child test runs");
+    assert!(status.success(), "the cold guest child passed: {status}");
+    let mut records: Vec<std::path::PathBuf> = std::fs::read_dir(cost.path())
+        .expect("the cost directory")
+        .map(|entry| entry.expect("one record").path())
+        .collect();
+    records.sort();
+    assert_eq!(records.len(), 1, "exactly one record: {records:?}");
+    let record: serde_json::Value = njutest_devkit::strictjson::decode_slice(
+        &std::fs::read(records.first().expect("the one")).expect("the record"),
+    )
+    .expect("a complete record");
+    if let (Some(root), Some(work), Some(sealed)) = (
+        record.get("root").and_then(serde_json::Value::as_str),
+        record.get("work"),
+        record.get("sealed"),
+    ) && std::env::var_os("NJUTEST_TEST_COST_DIR").is_some()
+    {
+        njutest_devkit::cost::record(std::path::Path::new(root), work, sealed)
+            .expect("the suite record of the cold guest's work");
+    }
+    let work = record.get("work").expect("the work block");
+    let absent: Vec<&str> = [
+        "builds",
+        "build_ms",
+        "units",
+        "build_requests",
+        "build_hits",
+        "build_misses",
+        "build_keys",
+        "unbound",
+        "launch_failures",
+        "observed_cargo_starts",
+        "cargo_probes",
+        "cargo_probe_ms",
+        "cargo_metadata",
+        "cargo_metadata_ms",
+        "rustc_probes",
+        "rustc_probe_ms",
+        "unobserved_cargo",
+        "platform",
+        "platform_requests",
+    ]
+    .into_iter()
+    .filter(|name| work.get(*name).is_none_or(serde_json::Value::is_null))
+    .collect();
+    assert!(
+        absent.is_empty(),
+        "every required field: absent {absent:?}: {work}"
+    );
+    assert!(
+        work.get("units")
+            .and_then(serde_json::Value::as_u64)
+            .is_some_and(|units| units >= 1),
+        "a cold guest build observes its real fresh artifacts instead of a hardcoded zero: {work}"
+    );
+    assert_eq!(
+        work.get("observed_cargo_starts")
+            .and_then(serde_json::Value::as_u64),
+        Some(1)
+    );
+}
+
+#[test]
+fn guests_child_cold_libtest() {
+    if std::env::var_os("NJUTEST_TEST_COST_CHILD").is_none() {
+        return;
+    }
+    let bytes = libtest_bytes();
+    assert!(!bytes.is_empty(), "the libtest guest builds real bytes");
+}
+
 impl Drop for MeasuredRunner {
     fn drop(&mut self) {
         njutest_devkit::cost::guest_modules(

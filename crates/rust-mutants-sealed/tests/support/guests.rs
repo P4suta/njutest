@@ -31,19 +31,14 @@ fn pinned(program: &str, scratch: &std::path::Path) -> std::process::Command {
 fn succeeded(mut command: std::process::Command, what: &str) -> std::process::Output {
     let build = command.get_program() == "cargo"
         && command.get_args().next() == Some(std::ffi::OsStr::new("test"));
-    let started = Instant::now();
-    let output = command
-        .output()
-        .unwrap_or_else(|error| panic!("{what} could not be started: {error}"));
-    if build {
-        let millis =
-            u64::try_from(started.elapsed().as_millis()).expect("a measured build duration");
-        njutest_devkit::cost::guest_build(
-            std::path::Path::new("sealed-guests"),
-            millis,
-        )
-        .expect("the direct fixture build's cost record");
-    }
+    let output = if build {
+        njutest_devkit::cost::cargo(command, "a guest's own cargo test build")
+            .unwrap_or_else(|error| panic!("{what} could not be started or kept: {error}"))
+    } else {
+        command
+            .output()
+            .unwrap_or_else(|error| panic!("{what} could not be started: {error}"))
+    };
     assert!(
         output.status.success(),
         "{what} failed with {}:\n{}\n{}",
@@ -99,7 +94,10 @@ fn toolchain_banner(scratch: &std::path::Path) -> String {
 
 /// Where compiled guests are kept between test processes, each under the digest of everything that went into it.
 fn guest_cache() -> std::path::PathBuf {
-    let cache = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("sealed-guests");
+    let cache = match std::env::var_os("NJUTEST_SEALED_GUEST_CACHE") {
+        Some(owned) => std::path::PathBuf::from(owned),
+        None => std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("sealed-guests"),
+    };
     std::fs::create_dir_all(&cache).expect("the guest cache can be made");
     cache
 }
