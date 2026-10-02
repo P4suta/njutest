@@ -180,6 +180,11 @@ Prepared captures share the target's preparation lease, including settling, actu
 The legacy capture and emptying APIs retain their public behavior, while compiler preparation also holds its owned lease.
 No successful removal or signal delivery certifies late-writer completion.
 
+The private snapshot removal capability is constructed only after every observed producer's retained kernel generation has completed.
+Lock release follows that completion, and production cleanup and Drop make one removal attempt.
+A completion or removal refusal retains its typed cause and snapshot identity instead of being discarded or replaced by guessed retry sleeps.
+The legacy cleanup adapter retains its explicitly injected clock and original controls, after the same producer completion boundary.
+
 ## Amendment, 2026-10-03: retained source placement preserves Cargo discovery
 
 A standalone manifest must not inherit an unrelated workspace from the retained cache's ancestors.

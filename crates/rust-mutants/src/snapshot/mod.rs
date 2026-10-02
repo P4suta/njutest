@@ -41,13 +41,13 @@ pub const TREE_NAME: &str = "tree";
 /// How much of the source root's digest `stable_name` spells out.
 pub const STABLE_NAME_HEX_LENGTH: usize = 16;
 
-/// How many times [`Snapshot::cleanup`] tries the removal before giving up.
+/// How many removals the explicitly injected cleanup clock can model.
 pub const CLEANUP_ATTEMPTS: usize = 5;
 
-/// The pause before the second removal attempt; it doubles for each attempt after that, so the ladder is 20, 40, 80, 160 ms and the whole loop costs at most a third of a second.
+/// The first advance of the explicitly injected cleanup clock, followed by 40, 80 and 160 ms.
 pub const CLEANUP_BACKOFF: Duration = Duration::from_millis(20);
 
-/// The complete bounded retry schedule.
+/// The complete bounded schedule for the injected cleanup clock.
 /// Its array length is checked against [`CLEANUP_ATTEMPTS`] by the compiler.
 const CLEANUP_DELAYS: [Option<Duration>; CLEANUP_ATTEMPTS] = [
     None,
@@ -1515,15 +1515,16 @@ impl Snapshot {
     /// Removes the snapshot directory.
     ///
     /// # Errors
-    /// [`SnapshotErrorKind::CleanupRefused`] when the guard fires, and [`SnapshotErrorKind::CleanupFailed`] when the directory survived every attempt or its lock could not be released.
-    pub fn cleanup(self) -> Result<(), SnapshotError> {
-        self.cleanup_with(
-            &|dir: &Path| tempowner::remove_tree(dir),
-            &std::thread::sleep,
-        )
+    /// [`SnapshotErrorKind::CleanupRefused`] when the guard fires, and [`SnapshotErrorKind::CleanupFailed`] when producer completion, lock release or the single removal fails.
+    pub fn cleanup(mut self) -> Result<(), SnapshotError> {
+        if self.state != State::Live {
+            return Ok(());
+        }
+        self.state = State::Released;
+        self.settled_removal()?.once(&tempowner::remove_tree)
     }
 
-    /// [`Snapshot::cleanup`] with the removal and the pause as arguments, so the retry ladder can be tested without a filesystem persuaded into failing.
+    /// Settles producers before modelling removal with the caller's explicitly injected clock.
     ///
     /// # Errors
     /// See [`Snapshot::cleanup`].
@@ -1536,15 +1537,21 @@ impl Snapshot {
             return Ok(());
         }
         self.state = State::Released;
-        self.remove(remove, sleep)
+        self.settled_removal()?.with_clock(remove, sleep)
     }
 
-    fn remove(
-        &mut self,
-        remove: &dyn Fn(&Path) -> io::Result<()>,
-        sleep: &dyn Fn(Duration),
-    ) -> Result<(), SnapshotError> {
+    fn settled_removal(&mut self) -> Result<SettledRemoval<'_>, SnapshotError> {
         cleanup_guard(&self.dir, &self.dest_parent)?;
+        let began = std::time::Instant::now();
+        let producers = crate::escaped::end_working_under(&[&self.dir]).map_err(|source| {
+            SnapshotError::new(
+                SnapshotErrorKind::CleanupFailed,
+                self.dir.display().to_string(),
+                "cannot establish completion of every observed snapshot producer",
+            )
+            .with_source(source)
+        })?;
+        let elapsed = began.elapsed();
         if let Some(owner) = &mut self.owner {
             owner.release().map_err(|source| {
                 SnapshotError::new(
@@ -1555,13 +1562,54 @@ impl Snapshot {
                 .with_source(source)
             })?;
         }
+        Ok(SettledRemoval {
+            directory: &self.dir,
+            producers,
+            elapsed,
+        })
+    }
+}
+
+struct SettledRemoval<'a> {
+    directory: &'a Path,
+    producers: Vec<u32>,
+    elapsed: Duration,
+}
+
+impl SettledRemoval<'_> {
+    fn once(self, remove: &dyn Fn(&Path) -> io::Result<()>) -> Result<(), SnapshotError> {
+        platform::clear_read_only(self.directory);
+        match remove(self.directory) {
+            Ok(()) => Ok(()),
+            Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(source) => Err(self.failed("the completed snapshot removal was refused", source)),
+        }
+    }
+
+    fn failed(&self, message: &str, source: io::Error) -> SnapshotError {
+        SnapshotError::new(
+            SnapshotErrorKind::CleanupFailed,
+            self.directory.display().to_string(),
+            format!(
+                "{message}; settled producers {:?} in {:?}",
+                self.producers, self.elapsed
+            ),
+        )
+        .with_source(source)
+    }
+
+    fn with_clock(
+        self,
+        remove: &dyn Fn(&Path) -> io::Result<()>,
+        clock: &dyn Fn(Duration),
+    ) -> Result<(), SnapshotError> {
         let mut last = None;
         for delay in CLEANUP_DELAYS {
             if let Some(delay) = delay {
-                platform::clear_read_only(&self.dir);
-                sleep(delay);
+                platform::clear_read_only(self.directory);
+                clock(delay);
             }
-            match remove(&self.dir) {
+            match remove(self.directory) {
                 Ok(()) => return Ok(()),
                 Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
                 Err(error) => last = Some(error),
@@ -1569,8 +1617,8 @@ impl Snapshot {
         }
         let mut error = SnapshotError::new(
             SnapshotErrorKind::CleanupFailed,
-            self.dir.display().to_string(),
-            format!("the snapshot directory survived {CLEANUP_ATTEMPTS} removal attempts"),
+            self.directory.display().to_string(),
+            format!("the snapshot directory survived {CLEANUP_ATTEMPTS} injected-clock attempts"),
         );
         if let Some(source) = last {
             error = error.with_source(source);
@@ -1584,14 +1632,11 @@ impl Drop for Snapshot {
     fn drop(&mut self) {
         if self.state == State::Live {
             self.state = State::Released;
-            if let Err(unswept) = crate::escaped::end_working_under(&[&self.dir]) {
-                drop(unswept);
-            }
-            if let Err(cleanup_failure) = self.remove(
-                &|dir: &Path| tempowner::remove_tree(dir),
-                &std::thread::sleep,
-            ) {
-                drop(cleanup_failure);
+            if let Err(cleanup_failure) = self
+                .settled_removal()
+                .and_then(|removal| removal.once(&tempowner::remove_tree))
+            {
+                eprintln!("snapshot: {cleanup_failure}");
                 std::process::abort();
             }
         }

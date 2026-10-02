@@ -673,6 +673,78 @@ fn cleanup_removes_the_whole_directory_and_releases_the_lock_first() {
     assert!(snapshot_dirs(&fx.dest).is_empty());
 }
 
+#[cfg(unix)]
+#[test]
+fn explicit_cleanup_settles_a_live_producer_before_the_first_removal() {
+    use std::io::{BufRead as _, Read as _, Write as _};
+    const CHILD: &str = "NJUTEST_SNAPSHOT_PRODUCER_CONTROL";
+    if std::env::var_os(CHILD).is_some() {
+        println!("snapshot-producer-ready");
+        io::stdout().flush().expect("the real readiness event");
+        let mut release = [0_u8; 1];
+        io::stdin()
+            .read_exact(&mut release)
+            .expect("the owned release event");
+        return;
+    }
+    let fx = fixture();
+    let snapshot = create(&options(&fx), now()).expect("the owned source snapshot");
+    let mut command = std::process::Command::new(std::env::current_exe().expect("this binary"));
+    command
+        .args([
+            "--exact",
+            "snapshot::explicit_cleanup_settles_a_live_producer_before_the_first_removal",
+            "--nocapture",
+            "--quiet",
+        ])
+        .env(CHILD, "1")
+        .current_dir(snapshot.root())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut producer = njutest_devkit::process::SupervisedChild::launch(&mut command)
+        .expect("the real source producer");
+    let completion = producer
+        .completion()
+        .expect("the owned producer completion");
+    let mut reader = io::BufReader::new(producer.take_stdout().expect("the readiness pipe"));
+    loop {
+        let mut line = String::new();
+        assert_ne!(reader.read_line(&mut line).expect("the readiness event"), 0);
+        if line.trim() == "snapshot-producer-ready" {
+            break;
+        }
+    }
+    assert!(
+        !completion
+            .wait(Some(Duration::ZERO))
+            .expect("the still-live producer")
+    );
+    snapshot
+        .cleanup_with(
+            &|directory| {
+                assert!(
+                    completion
+                        .wait(Some(Duration::ZERO))
+                        .expect("the actual terminal event"),
+                    "successful removal cannot certify that a live source producer has ended"
+                );
+                tempowner::remove_tree(directory)
+            },
+            &|_delay| panic!("a completed producer requires no retry clock"),
+        )
+        .expect("producer completion precedes the first removal");
+    let settled = producer
+        .wait_with_output()
+        .expect("all producer owners are reaped");
+    assert!(
+        !settled.status.success(),
+        "the source owner cancels its live producer"
+    );
+    drop(reader);
+    drop(completion);
+}
+
 #[test]
 fn dropping_an_unkept_snapshot_removes_it_best_effort() {
     let fx = fixture();
