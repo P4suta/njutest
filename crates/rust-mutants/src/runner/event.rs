@@ -86,11 +86,11 @@ impl Resources {
         let watcher = if roots.is_empty() {
             None
         } else {
-            let signal = observation.signal();
+            let signal = observation.invalidation();
             let mut watcher = notify::recommended_watcher(
                 move |event: notify::Result<notify::Event>| match event {
                     Ok(event) if event.kind.is_access() => {}
-                    Ok(_changed) => signal.publish(Event::Changed),
+                    Ok(_changed) => signal.changed(),
                     Err(source) => signal.failed(io::Error::other(source)),
                 },
             )
