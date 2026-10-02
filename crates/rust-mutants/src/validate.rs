@@ -1215,7 +1215,7 @@ fn first_error_code(messages: &[Message]) -> Option<String> {
 }
 
 #[cfg(test)]
-mod captured_diagnostic_tests {
+mod tests {
     #[test]
     fn captured_stderr_remains_lossless_when_cargo_has_no_error_message() {
         assert_eq!(

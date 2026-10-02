@@ -58,7 +58,7 @@ impl Scan<'_> {
         for tree in &trees {
             match tree {
                 proc_macro2::TokenTree::Ident(name) if name == "first_error_of" => {
-                    self.note(name.span())
+                    self.note(name.span());
                 }
                 proc_macro2::TokenTree::Group(group) => self.tokens(&group.stream()),
                 proc_macro2::TokenTree::Ident(_)
@@ -102,7 +102,7 @@ impl<'ast> syn::visit::Visit<'ast> for Scan<'_> {
 
     fn visit_item(&mut self, item: &'ast syn::Item) {
         self.within(item_attributes(item), |scan| {
-            syn::visit::visit_item(scan, item)
+            syn::visit::visit_item(scan, item);
         });
     }
 
