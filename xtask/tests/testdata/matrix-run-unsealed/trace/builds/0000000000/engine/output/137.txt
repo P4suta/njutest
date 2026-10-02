@@ -6,7 +6,7 @@ failures:
 
 ---- even_numbers_are_even stdout ----
 
-thread 'even_numbers_are_even' (101122654) panicked at tests/parity.rs:8:58:
+thread 'even_numbers_are_even' (101403398) panicked at tests/parity.rs:8:58:
 assertion failed: fixture_simple::is_even(2)
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 

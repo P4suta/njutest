@@ -6,7 +6,8 @@
 #![cfg(unix)]
 #![expect(
     clippy::expect_used,
-    reason = "a test reports a setup failure by panicking and asserts with panics"
+    clippy::indexing_slicing,
+    reason = "a test reports a setup failure by panicking, asserts with panics and reads a report as a table"
 )]
 
 use std::ffi::OsString;
@@ -157,54 +158,9 @@ fn a_whole_run_that_seals_nothing_is_held_by_a_retained_recording_the_audit_re_d
         record(&root);
         return;
     }
-    let text = std::fs::read_to_string(root.join("binding.json")).expect("the retained recording");
-    let binding = njutest_devkit::strictjson::decode_str::<Binding>(&text)
-        .expect("the retained recording's binding document");
-    assert_eq!(
-        (
-            binding.schema.as_str(),
-            binding.fixture.as_str(),
-            binding.config.as_str(),
-            binding.claim.as_str()
-        ),
-        (
-            SCHEMA,
-            "fixture-simple",
-            WHOLE,
-            "a whole run that seals nothing leaves every answer a native lead, so the mutation \
-             column is a hole the runner names and the audit re-decides with nothing to say \
-             against it",
-        ),
-        "the recording is bound to the fixture, the contract and the claim it holds"
-    );
-    assert_eq!(
-        binding.arguments,
-        ["--no-seal", "--no-cache"],
-        "the recording is bound to the options its run was asked with"
-    );
-    let source = njutest_devkit::paths::fixtures_dir().join("fixture-simple");
-    assert_eq!(
-        source_digest(&source),
-        binding.source_digest,
-        "the recording is bound to the source it was run of: re-record it with {UPDATE}=1"
-    );
-    for (retained, original) in [
-        ("Cargo.toml", source.join("Cargo.toml")),
-        ("Cargo.lock", source.join("Cargo.lock")),
-    ] {
-        assert_eq!(
-            std::fs::read(root.join("fixture").join(retained)).expect("the retained manifest"),
-            std::fs::read(&original).expect("today's manifest"),
-            "the retained {retained} is the manifest the run verified"
-        );
-    }
-    assert_eq!(
-        std::fs::read(root.join("fixture").join(".njutest.toml")).expect("the retained contract"),
-        WHOLE.as_bytes(),
-        "the retained contract is the one the run verified"
-    );
+    let binding = bound(&root);
     let run = root.join("run").join(&binding.run_id);
-    let report = njutest_devkit::strictjson::decode_str::<serde_json::Value>(
+    let mut report = njutest_devkit::strictjson::decode_str::<serde_json::Value>(
         &std::fs::read_to_string(run.join(njutest::app::reports::DOCUMENT_NAME))
             .expect("the retained report"),
     )
@@ -240,12 +196,7 @@ fn a_whole_run_that_seals_nothing_is_held_by_a_retained_recording_the_audit_re_d
     let tampered_trace = tampered.path().join("trace");
     copy_tree(&run, &tampered_run);
     copy_tree(&root.join("trace"), &tampered_trace);
-    let document = tampered
-        .path()
-        .join("run")
-        .join(njutest::app::reports::DOCUMENT_NAME);
-    let mut corrupted = report.clone();
-    corrupted["report"]["builds"][0]["parts"][0]["findings"]
+    report["report"]["builds"][0]["parts"][0]["findings"]
         .as_array_mut()
         .expect("the retained report's findings")
         .retain(|finding| {
@@ -257,8 +208,8 @@ fn a_whole_run_that_seals_nothing_is_held_by_a_retained_recording_the_audit_re_d
                     .is_some_and(|subject| subject != "mutation")
         });
     std::fs::write(
-        &document,
-        serde_json::to_string(&corrupted).expect("the tampered report"),
+        tampered_run.join(njutest::app::reports::DOCUMENT_NAME),
+        serde_json::to_string(&report).expect("the tampered report"),
     )
     .expect("the tampered report");
     let refused = audited(&tampered_run, &tampered_trace);
@@ -267,6 +218,65 @@ fn a_whole_run_that_seals_nothing_is_held_by_a_retained_recording_the_audit_re_d
         !(refused.status.success() && answer.contains("; 0 violations, 0 unaudited")),
         "a recording whose report drops the hole it held is refused rather than re-decided: {answer}"
     );
+}
+
+/// The retained recording's binding, held to the fixture, the contract, the options and the claim it names.
+fn bound(root: &std::path::Path) -> Binding {
+    let text = std::fs::read_to_string(root.join("binding.json")).expect("the retained recording");
+    let binding = njutest_devkit::strictjson::decode_str::<Binding>(&text)
+        .expect("the retained recording's binding document");
+    assert_eq!(
+        (
+            binding.schema.as_str(),
+            binding.fixture.as_str(),
+            binding.config.as_str(),
+            binding.claim.as_str()
+        ),
+        (
+            SCHEMA,
+            "fixture-simple",
+            WHOLE,
+            "a whole run that seals nothing leaves every answer a native lead, so the mutation \
+             column is a hole the runner names and the audit re-decides with nothing to say \
+             against it",
+        ),
+        "the recording is bound to the fixture, the contract and the claim it holds"
+    );
+    assert_eq!(
+        binding.arguments,
+        ["--no-seal", "--no-cache"],
+        "the recording is bound to the options its run was asked with"
+    );
+    let source = njutest_devkit::paths::fixtures_dir().join("fixture-simple");
+    assert_eq!(
+        source_digest(&source),
+        binding.source_digest,
+        "the recording is bound to the source it was run of: re-record it with {UPDATE}=1"
+    );
+    let retained =
+        njutest_devkit::strictjson::decode_str::<std::collections::BTreeMap<String, String>>(
+            &std::fs::read_to_string(root.join("fixture").join("manifests.json"))
+                .expect("the retained manifests"),
+        )
+        .expect("the retained manifests are JSON");
+    assert_eq!(
+        retained.keys().collect::<Vec<_>>(),
+        ["Cargo.lock", "Cargo.toml"],
+        "the recording retains both manifests the run verified"
+    );
+    for (name, text) in &retained {
+        assert_eq!(
+            std::fs::read_to_string(source.join(name)).expect("today's manifest"),
+            *text,
+            "the retained {name} is the manifest the run verified"
+        );
+    }
+    assert_eq!(
+        std::fs::read(root.join("fixture").join(".njutest.toml")).expect("the retained contract"),
+        WHOLE.as_bytes(),
+        "the retained contract is the one the run verified"
+    );
+    binding
 }
 
 #[test]
@@ -439,12 +449,16 @@ fn record(into: &PathBuf) {
             .join("runs"),
     )
     .expect("the run wrote its report")
-    .map(|entry| entry.expect("a stored run").path())
-    .filter(|path| path.is_dir())
+    .map(|entry| {
+        let entry = entry.expect("a stored run");
+        let kind = entry.file_type().expect("the stored run's kind");
+        (entry.path(), kind.is_dir())
+    })
+    .filter(|(_, held)| *held)
+    .map(|(path, _)| path)
     .collect();
-    let [run] = runs.as_slice() else {
-        panic!("one run, one report: {runs:?}");
-    };
+    assert_eq!(runs.len(), 1, "one run, one report: {runs:?}");
+    let run = runs.first().expect("the run's report");
     let report = njutest_devkit::strictjson::decode_str::<serde_json::Value>(
         &std::fs::read_to_string(run.join(njutest::app::reports::DOCUMENT_NAME))
             .expect("the run's report"),
@@ -454,19 +468,38 @@ fn record(into: &PathBuf) {
         .as_str()
         .expect("the run's identity")
         .to_owned();
-    match std::fs::remove_dir_all(into) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => panic!("the committed recording could not be replaced: {error}"),
-    }
+    let stale = std::fs::remove_dir_all(into);
+    assert!(
+        stale.is_ok()
+            || stale
+                .as_ref()
+                .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
+        "the committed recording could not be replaced: {stale:?}"
+    );
     std::fs::create_dir_all(into.join("fixture")).expect("the retained fixture directory");
-    for retained in ["Cargo.toml", "Cargo.lock", ".njutest.toml"] {
-        std::fs::copy(
-            fixture.root.join(retained),
-            into.join("fixture").join(retained),
-        )
-        .expect("the retained fixture file");
-    }
+    let manifests = ["Cargo.toml", "Cargo.lock"]
+        .into_iter()
+        .map(|name| {
+            (
+                name.to_owned(),
+                std::fs::read_to_string(fixture.root.join(name))
+                    .expect("the manifest the run verified"),
+            )
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    std::fs::write(
+        into.join("fixture").join("manifests.json"),
+        format!(
+            "{}\n",
+            serde_json::to_string(&manifests).expect("the retained manifests")
+        ),
+    )
+    .expect("the retained manifests");
+    std::fs::copy(
+        fixture.root.join(".njutest.toml"),
+        into.join("fixture").join(".njutest.toml"),
+    )
+    .expect("the retained contract");
     let recorded_run = into.join("run").join(&run_id);
     let recorded_trace = into.join("trace");
     copy_tree(run, &recorded_run);

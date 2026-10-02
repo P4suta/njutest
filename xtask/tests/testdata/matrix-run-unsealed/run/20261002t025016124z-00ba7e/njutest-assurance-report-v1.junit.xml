@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="fixture-simple" tests="14" failures="12" skipped="0" time="12.432">
+<testsuites name="fixture-simple" tests="14" failures="12" skipped="0" time="11.913">
   <testsuite name="targets" tests="2" failures="0" skipped="0">
-    <testcase classname="fixture-simple" name="fixture-simple/lib/fixture_simple" time="0.238"/>
-    <testcase classname="fixture-simple" name="fixture-simple/test/parity" time="0.226"/>
+    <testcase classname="fixture-simple" name="fixture-simple/lib/fixture_simple" time="0.225"/>
+    <testcase classname="fixture-simple" name="fixture-simple/test/parity" time="0.223"/>
   </testsuite>
   <testsuite name="findings" tests="12" failures="12">
     <testcase classname="dimension-not-measured" name="mutation">
@@ -44,7 +44,7 @@
   </testsuite>
   <properties>
     <property name="schema" value="njutest-assurance-report-v1"/>
-    <property name="run_id" value="20261002t023921944z-00b908"/>
+    <property name="run_id" value="20261002t025016124z-00ba7e"/>
     <property name="verdict" value="Insufficient"/>
     <property name="commit" value="unavailable"/>
     <property name="builds" value="default"/>

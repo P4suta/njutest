@@ -1,11 +1,11 @@
-RUN	run=20261002t023921944z-00b908	kind=full	contract=whole-v1
+RUN	run=20261002t025016124z-00ba7e	kind=full	contract=whole-v1
 BUILD	name=default
 TOOLCHAIN	rustc=rustc 1.98.0 (88d9e12ae 2026-08-18)	cargo=cargo 1.98.0 (797e8a9bc 2026-08-05)	target=aarch64-apple-darwin	os=macos	arch=aarch64
 REPOSITORY	root=fixture-simple	packages=1	commit=unavailable	branch=unavailable	dirty=false
 SCOPE	requested=(nothing named)	resolved=(nothing named)	included=(nothing named)	excluded=(nothing named)	from=.njutest.toml
-TIMING	started=2026-10-02T02:39:21.944784Z	finished=2026-10-02T02:39:34.376896Z	compute_total_ms=12432
-TARGET	passed	238ms	75b1f05e11b20c1dc61d2e63b66a91f4dedc5e87f628e29ff45ac9ddbcff6ef0	fixture-simple/lib/fixture_simple
-TARGET	passed	226ms	3b321d0402693467c792f5569f72c22813f318784f6755cec0c5bc0bb9e7dd79	fixture-simple/test/parity
+TIMING	started=2026-10-02T02:50:16.124595Z	finished=2026-10-02T02:50:28.038173Z	compute_total_ms=11913
+TARGET	passed	225ms	75b1f05e11b20c1dc61d2e63b66a91f4dedc5e87f628e29ff45ac9ddbcff6ef0	fixture-simple/lib/fixture_simple
+TARGET	passed	223ms	3b321d0402693467c792f5569f72c22813f318784f6755cec0c5bc0bb9e7dd79	fixture-simple/test/parity
 MUTANT	unproven	4f09b8f6515d886cf638	src/lib.rs:11:5	return-default	build=default killed_by=fixture-simple/lib/fixture_simple
 MUTANT	unproven	36f3786c607b20288246	src/lib.rs:11:8	negate-condition	build=default killed_by=fixture-simple/lib/fixture_simple
 MUTANT	unproven	97dcf2a134137b47d185	src/lib.rs:11:8	condition-to-true	build=default killed_by=fixture-simple/lib/fixture_simple
