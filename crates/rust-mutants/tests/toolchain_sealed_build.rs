@@ -145,6 +145,441 @@ fn sysroot() -> PathBuf {
         .to_path_buf()
 }
 
+/// A recorder whose notes a test counts, standing alone.
+fn notes_trace() -> Recorder {
+    Recorder::wall(
+        Sink::Memory(MemorySink::unbounded()),
+        rust_mutants::testkit::trace::standalone_context(),
+    )
+}
+
+/// How many Cargo processes the recorded trace says were started.
+fn cargo_builds(trace: &Recorder) -> usize {
+    trace
+        .events()
+        .iter()
+        .filter(|event| {
+            matches!(&event.payload,
+                Payload::Note { note } if note.kind == "fixture-cargo-build"
+            )
+        })
+        .count()
+}
+
+/// Every note the recorded trace holds, as (kind, detail).
+fn notes(trace: &Recorder) -> Vec<(String, String)> {
+    trace
+        .events()
+        .iter()
+        .filter_map(|event| {
+            if let Payload::Note { note } = &event.payload {
+                Some((note.kind.clone(), note.detail.clone()))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// A toolchain whose wrapper is empty, so the inputs a record binds are the real compiler's.
+fn unwrapped_toolchain(root: &Path) -> Toolchain {
+    let mut environment: rust_mutants::vars::Variables =
+        njutest_devkit::paths::environment_for_a_run()
+            .into_iter()
+            .collect();
+    environment.set("RUSTC_WRAPPER", "");
+    Toolchain::locate(
+        &LocateOptions {
+            cargo: Some(njutest_devkit::paths::cargo_binary()),
+            env: Some(environment),
+            ..LocateOptions::default()
+        },
+        root,
+        &Watched::new(&Cancel::new(), &Recorder::disabled()),
+    )
+    .expect("locate")
+}
+
+/// How the engine's own sealed build compiles: the sealed target, the linked flags of the platform `object`, into `target_dir` rooted at `root`.
+fn sealed_compile_options(root: &Path, target_dir: &Path, object: &str) -> CompileOptions {
+    let flags = rust_mutants::sealed::Flags {
+        compile: rust_mutants::sealed::platform::flags(object),
+        document: Vec::new(),
+    };
+    let mut options = CompileOptions::new(
+        BuildDir::new(target_dir.to_path_buf(), Vec::new()).rooted(root.to_path_buf()),
+    );
+    options.kind = CompileKind::SealedTests;
+    options.locked = true;
+    options.offline = true;
+    options.build.target = Some(TARGET.to_owned());
+    options.env.overlay(&flags.environment());
+    options
+}
+
+#[test]
+fn an_identical_sealed_build_with_the_engines_linked_flags_hits_without_starting_cargo() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let root = directory.path().join("source");
+    copy_tree(
+        &njutest_devkit::paths::fixtures_dir().join("fixture-simple"),
+        &root,
+    );
+    let tc = unwrapped_toolchain(&root);
+    let cancel = Cancel::new();
+    let trace = notes_trace();
+    let target_dir = directory.path().join("target");
+    let driver = Driver {
+        toolchain: &tc,
+        dir: &root,
+        cancel: &cancel,
+        trace: &trace,
+    };
+    let object = match rust_mutants::sealed::platform::ready(
+        &driver,
+        &target_dir.join("platform with spaces"),
+    )
+    .expect("the toolchain's platform object builds and its probe answers")
+    {
+        rust_mutants::sealed::platform::Readied::Object(object) => object,
+        rust_mutants::sealed::platform::Readied::Unanswered(said) => {
+            panic!("the pinned toolchain's standard library answers sealed: {said}")
+        }
+    };
+    let options = sealed_compile_options(&root, &target_dir, &object);
+    let first = compile(&driver, &options).expect("the cold sealed build compiles");
+    assert_eq!(
+        first.completion(),
+        rust_mutants::cargo::Completion::Built,
+        "the fixture builds for {TARGET} as the engine's sealed build does"
+    );
+    assert_eq!(
+        cargo_builds(&trace),
+        1,
+        "the cold sealed build starts one Cargo process"
+    );
+    let second = compile(&driver, &options)
+        .expect("the identical sealed build compiles without Cargo or answers why not");
+    let mut reusable = first.units;
+    for unit in &mut reusable {
+        unit.fresh = true;
+    }
+    assert_eq!(
+        reusable, second.units,
+        "the verified hit answers with every unit fresh"
+    );
+    let held = notes(&trace);
+    let starts = cargo_builds(&trace);
+    directory
+        .close()
+        .expect("remove the owned source and target before asserting reuse");
+    assert_eq!(
+        starts, 1,
+        "an identical sealed instrumented build and its repeat start exactly one Cargo process \
+         in total: {held:?}"
+    );
+    assert!(
+        held.iter()
+            .any(|(kind, detail)| kind == "build-cache-hit" && detail.len() == 64),
+        "the repeat reports an artifact-digest-verified engine hit naming its key: {held:?}"
+    );
+}
+
+/// Instruments the real fixture library through the engine's discovery, catalog and runtime writer.
+fn instrument_library(root: &Path) {
+    let path = "src/lib.rs";
+    let source = std::fs::read(root.join(path)).expect("the real fixture source");
+    let registry = rust_mutants::rule::Registry::canonical();
+    let selection = rust_mutants::syntax::Selection::tier(&registry, rust_mutants::rule::Tier::All);
+    let found = rust_mutants::syntax::discover_file(path, &source, &selection)
+        .expect("the engine discovers the fixture's real mutants");
+    let mut builder = rust_mutants::catalog::Builder::new();
+    for candidate in &found.candidates {
+        builder
+            .add(candidate.candidate.clone())
+            .expect("the actual candidate catalogs");
+    }
+    let catalog = builder.build().expect("the actual catalog builds");
+    let placements = rust_mutants::instrument::plan_file(&catalog, path, &found.candidates)
+        .expect("the real catalog plans");
+    let file =
+        rust_mutants::instrument::instrument_file(&rust_mutants::instrument::Instrumenting {
+            path,
+            source: &source,
+            placements: &placements,
+            carriers: &[],
+            markers: &[],
+            comparable: &std::collections::BTreeSet::new(),
+            probed: &std::collections::BTreeMap::new(),
+            catalog_digest: catalog.digest(),
+            first_item: 0,
+            watched: "/watched",
+        })
+        .expect("the production writer instruments the real fixture");
+    assert!(
+        file.instrumented && !file.branches.is_empty(),
+        "real mutation guards exist"
+    );
+    std::fs::write(root.join(path), file.text).expect("write the instrumented fixture source");
+}
+
+/// Recompiles the platform source with one observable change into the same actual object path.
+fn change_platform_object(driver: &Driver<'_>, object: &Path) {
+    let source = object.with_extension("rs");
+    std::fs::write(
+        &source,
+        rust_mutants::sealed::platform::SOURCE.replace("/tmp", "/changed"),
+    )
+    .expect("the changed platform source");
+    let mut spec = rust_mutants::runner::Spec::new(
+        vec![
+            driver.toolchain.rustc().as_os_str().to_owned(),
+            "--edition=2024".into(),
+            "--target".into(),
+            TARGET.into(),
+            "--crate-type=lib".into(),
+            "--crate-name=rust_mutants_sealed_platform".into(),
+            "--emit=obj".into(),
+            "-Copt-level=0".into(),
+            "-Cdebuginfo=0".into(),
+            "-o".into(),
+            object.as_os_str().to_owned(),
+            source.into_os_string(),
+        ],
+        rust_mutants::runner::Bound::After(rust_mutants::runner::PROBE),
+    );
+    spec.dir = Some(driver.dir.to_path_buf());
+    spec.env = driver.toolchain.env().cloned();
+    let result = rust_mutants::runner::run(&spec, driver.cancel);
+    driver
+        .trace
+        .exec_result(rust_mutants::trace::ExecRecord::of(&spec, &result));
+    assert!(
+        result.succeeded(),
+        "the changed object compiles: {}",
+        rust_mutants::telling::LosslessBytes::new(&result.output)
+    );
+}
+
+#[test]
+fn a_changed_valid_object_relinks_the_real_instrumented_build_and_then_hits() {
+    let directory = tempfile::tempdir().expect("an owned instrumented fixture");
+    let root = directory.path().join("source");
+    copy_tree(
+        &njutest_devkit::paths::fixtures_dir().join("fixture-simple"),
+        &root,
+    );
+    instrument_library(&root);
+    let tc = unwrapped_toolchain(&root);
+    let cancel = Cancel::new();
+    let trace = notes_trace();
+    let target = directory.path().join("target");
+    let driver = Driver {
+        toolchain: &tc,
+        dir: &root,
+        cancel: &cancel,
+        trace: &trace,
+    };
+    let object = match rust_mutants::sealed::platform::ready(&driver, &target.join("platform"))
+        .expect("the engine's actual object and probe")
+    {
+        rust_mutants::sealed::platform::Readied::Object(object) => object,
+        rust_mutants::sealed::platform::Readied::Unanswered(said) => panic!("{said}"),
+    };
+    let options = sealed_compile_options(&root, &target, &object);
+    let first = compile(&driver, &options).expect("the real instrumented fixture completes");
+    assert_eq!(first.completion(), rust_mutants::cargo::Completion::Built);
+    let original = linked_digests(&first);
+    let repeat = compile(&driver, &options).expect("an artifact-verified instrumented repeat");
+    assert_eq!(repeat.completion(), rust_mutants::cargo::Completion::Built);
+    assert_eq!(
+        cargo_builds(&trace),
+        1,
+        "the real instrumented repeat starts no Cargo"
+    );
+    change_platform_object(&driver, Path::new(&object));
+    let changed = compile(&driver, &options).expect("the changed real object relinks");
+    let after = linked_digests(&changed);
+    let rebuilt = changed.units.iter().filter(|unit| !unit.fresh).count();
+    let repeated = compile(&driver, &options).expect("the changed-input hit verifies artifacts");
+    let starts = cargo_builds(&trace);
+    let held = notes(&trace);
+    directory
+        .close()
+        .expect("remove the owned fixture before asserting the input boundary");
+    assert_eq!(changed.completion(), rust_mutants::cargo::Completion::Built);
+    assert_eq!(
+        repeated.completion(),
+        rust_mutants::cargo::Completion::Built
+    );
+    assert!(
+        rebuilt > 0,
+        "changed foreign bytes must compile real units: {held:?}"
+    );
+    assert_ne!(
+        original
+            .iter()
+            .map(|(_, digest)| digest)
+            .collect::<Vec<_>>(),
+        after.iter().map(|(_, digest)| digest).collect::<Vec<_>>(),
+        "the linked artifact bytes change with the real object's behavior"
+    );
+    assert_eq!(
+        starts, 2,
+        "only the two distinct complete inputs start Cargo: {held:?}"
+    );
+    assert_eq!(
+        held.iter()
+            .filter(|(kind, _)| kind == "build-cache-hit")
+            .count(),
+        2
+    );
+}
+
+/// The actual linked artifacts, held by digest before the test's owned directory is removed.
+fn linked_digests(compiled: &rust_mutants::cargo::Compiled) -> Vec<(PathBuf, String)> {
+    compiled
+        .messages
+        .iter()
+        .filter_map(|message| {
+            if let rust_mutants::cargo::Message::CompilerArtifact(artifact) = message {
+                artifact.executable.as_ref()
+            } else {
+                None
+            }
+        })
+        .map(|path| {
+            let bytes = std::fs::read(path).expect("the compiler's linked artifact");
+            (
+                path.clone(),
+                rust_mutants::id::HexDigest::of(&bytes).into_inner(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_changed_platform_object_cannot_publish_a_stale_cargo_artifact() {
+    let directory = tempfile::tempdir().expect("an owned source and target");
+    let root = directory.path().join("source");
+    copy_tree(
+        &njutest_devkit::paths::fixtures_dir().join("fixture-simple"),
+        &root,
+    );
+    let tc = unwrapped_toolchain(&root);
+    let cancel = Cancel::new();
+    let trace = notes_trace();
+    let target_dir = directory.path().join("target");
+    let driver = Driver {
+        toolchain: &tc,
+        dir: &root,
+        cancel: &cancel,
+        trace: &trace,
+    };
+    let object = match rust_mutants::sealed::platform::ready(&driver, &target_dir.join("platform"))
+        .expect("a real self-contained platform object and successful probe")
+    {
+        rust_mutants::sealed::platform::Readied::Object(object) => object,
+        rust_mutants::sealed::platform::Readied::Unanswered(said) => {
+            panic!("the pinned platform probe did not answer: {said}")
+        }
+    };
+    let options = sealed_compile_options(&root, &target_dir, &object);
+    let first = compile(&driver, &options).expect("the genuine sealed build completes");
+    assert_eq!(first.completion(), rust_mutants::cargo::Completion::Built);
+    let original = linked_digests(&first);
+    assert!(
+        !original.is_empty(),
+        "the real compiler produced linked artifacts"
+    );
+    std::fs::write(&object, b"corrupt").expect("change only the foreign object's contents");
+    let changed = compile(&driver, &options).expect("Cargo records the changed-input completion");
+    let changed_artifacts = linked_digests(&changed);
+    let repeated = compile(&driver, &options).expect("Cargo records the refused-input repeat");
+    let held = notes(&trace);
+    let starts = cargo_builds(&trace);
+    directory
+        .close()
+        .expect("remove the owned source and target before asserting");
+    assert_eq!(
+        changed.completion(),
+        rust_mutants::cargo::Completion::Refused,
+        "changed object bytes must relink and refuse, not publish old artifacts: \
+         original={original:?}, changed={changed_artifacts:?}, units={:?}, notes={held:?}",
+        changed.units
+    );
+    assert_eq!(
+        repeated.completion(),
+        rust_mutants::cargo::Completion::Refused
+    );
+    assert_eq!(
+        starts, 3,
+        "failed foreign inputs cannot acquire an engine hit: {held:?}"
+    );
+    assert!(
+        !held.iter().any(|(kind, _)| kind == "build-cache-hit"),
+        "a failed build is never published: {held:?}"
+    );
+}
+
+/// Whether the pinned compiler compiles a trivial library for the sealed target with `flags` as given.
+fn rustc_accepts(
+    tc: &Toolchain,
+    directory: &Path,
+    flags: &[&str],
+) -> rust_mutants::runner::RunResult {
+    let source = directory.join("lib.rs");
+    std::fs::write(&source, "pub fn one() -> u32 { 1 }\n").expect("a trivial library");
+    let mut argv = vec![
+        tc.rustc().as_os_str().to_owned(),
+        std::ffi::OsString::from("--edition=2024"),
+        std::ffi::OsString::from("--target"),
+        std::ffi::OsString::from(TARGET),
+        std::ffi::OsString::from("--crate-type=lib"),
+    ];
+    argv.extend(flags.iter().map(std::ffi::OsString::from));
+    argv.push(std::ffi::OsString::from("-o"));
+    argv.push(directory.join("lib.wasm").into_os_string());
+    argv.push(source.into_os_string());
+    let mut spec = rust_mutants::runner::Spec::new(
+        argv,
+        rust_mutants::runner::Bound::After(rust_mutants::runner::PROBE),
+    );
+    spec.dir = Some(directory.to_path_buf());
+    rust_mutants::runner::run(&spec, &Cancel::new())
+}
+
+#[test]
+fn the_pinned_compiler_accepts_only_the_link_arg_forms_the_record_classifies() {
+    let directory = tempfile::tempdir().expect("an owned directory");
+    let tc = toolchain(directory.path());
+    for accepted in [
+        vec!["-Clink-arg=--export=malloc"],
+        vec!["-C", "link-arg=--export=malloc"],
+        vec!["-Copt-level=0"],
+        vec!["-C", "strip=none"],
+        vec!["--cap-lints=warn"],
+    ] {
+        let run = rustc_accepts(&tc, directory.path(), &accepted);
+        assert!(
+            run.succeeded(),
+            "the pinned compiler accepts {accepted:?}: {:?} {}",
+            run.termination,
+            rust_mutants::telling::LosslessBytes::new(&run.output)
+        );
+    }
+    for rejected in [
+        vec!["-Clink-arg", "--export=malloc"],
+        vec!["-C", "link-arg", "--export=malloc"],
+    ] {
+        let run = rustc_accepts(&tc, directory.path(), &rejected);
+        assert!(
+            !run.succeeded(),
+            "the pinned compiler accepts no separate value for a codegen option: {rejected:?}"
+        );
+    }
+}
+
 #[test]
 fn the_pinned_toolchain_holds_the_sealed_targets_standard_library() {
     assert!(

@@ -137,6 +137,15 @@ Toolchain digests are memoized only while object and change stamps agree: inode 
 Unavailable stamps fall back to Cargo, and a zero Windows change time requires hashing again.
 Only diagnostic and scratch variables are excluded, and dep-info that reads one makes the compilation ineligible.
 Build scripts, procedural macros, unbound compiler inputs, custom compiler or linker programs, and unsupported configuration or flags fall back to Cargo.
+Each flag variable is read under the argument protocol cargo splits it by: the encoded forms on the unit separator alone, the plain ones on whitespace.
+The sealed target admits the engine's exact deterministic linker switches and its valid core WebAssembly `platform.o` with known linking metadata.
+The object's complete bytes are bound beside the toolchain's linker and libraries.
+Established scalar codegen options and configuration arguments bind no further files.
+Response files, archives, dynamic or unknown object metadata, other object formats, external compiler inputs and unknown switches fall back to Cargo with a concrete refusal cause.
+Foreign file inputs contribute a content fingerprint to the actual compiler flags, which the key also holds.
+Changing an object's bytes at the same path therefore makes Cargo recompile instead of returning a stale linked artifact as fresh.
+Corrupt object bytes change that fingerprint before the format refusal too, so fallback compilation observes the broken input.
+A native target's link arguments stay refused, because the system linker is not a toolchain input any record binds.
 A hit verifies the recorded artifact and dep-info digests, modes, complete Cargo message stream and compiler input/environment inventory before returning without a Cargo process.
 A missing, malformed or damaged record or artifact falls back to Cargo; damaged owned outputs are removed so Cargo must rebuild them.
 `build-cache-hit` notes carry the input key; `build-cache-miss` notes carry the key with a `cold:` or `repair:` class before the concrete cause, and `fixture-build-process` names the key, or an `unbound: `/`direct: ` reason, of one actual process, so cost records keep every key's multiplicity of requests, processes, hits and misses.

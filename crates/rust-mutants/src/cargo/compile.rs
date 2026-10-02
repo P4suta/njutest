@@ -407,7 +407,7 @@ pub fn compile(driver: &Driver<'_>, options: &CompileOptions) -> Result<Compiled
             "the compilation was cancelled",
         ));
     }
-    let (identity, request, reused) = cached(driver, options, (&spec, &trace));
+    let (identity, request, reused) = cached(driver, options, (&mut spec, &trace));
     if let Some(compiled) = reused {
         if driver.cancel.is_cancelled() {
             return Err(CargoError::new(
@@ -463,13 +463,13 @@ impl Identity {
 fn cached(
     driver: &Driver<'_>,
     options: &CompileOptions,
-    (spec, trace): (&crate::runner::Spec, &crate::trace::Recorder),
+    (spec, trace): (&mut crate::runner::Spec, &crate::trace::Recorder),
 ) -> (
     Identity,
     Option<super::build_cache::Request>,
     Option<Compiled>,
 ) {
-    match &spec.env {
+    match &mut spec.env {
         Some(env) => match super::build_cache::Request::of(driver, options, env) {
             Ok(request) => {
                 let identity = Identity::Key(request.key.clone());

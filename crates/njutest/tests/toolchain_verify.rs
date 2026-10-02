@@ -56,7 +56,7 @@ fn verify(fixture: &Fixture, extra: &[&str]) -> Output {
 
 #[cfg(unix)]
 #[test]
-fn repeated_runs_over_one_pool_reuse_verified_builds_except_the_sealed_build() {
+fn repeated_runs_over_one_pool_reuse_verified_builds_except_doctest_capture() {
     let fixture = fixture("fixture-simple");
     let mut environment = of(&fixture.root, &[]);
     let pool = tempfile::Builder::new()
@@ -111,13 +111,24 @@ fn repeated_runs_over_one_pool_reuse_verified_builds_except_the_sealed_build() {
         hits >= 3 && hits == bound,
         "the second run reuses every content-bound compilation over the pool this test owns: {notes:?}"
     );
+    assert!(
+        !notes
+            .iter()
+            .any(|note| note.kind == "fixture-build-uncacheable" && note.detail.contains("linker")),
+        "the sealed build's own linked flags bind its platform object by content, so no flag class refuses it: {notes:?}"
+    );
+    assert!(
+        notes.iter().any(|note| note.kind == "fixture-build-request"
+            && note.detail.contains("the doctests' capture build")),
+        "the one honest remaining start is attributed: {notes:?}"
+    );
     let started = notes
         .iter()
         .filter(|note| note.kind == "fixture-cargo-build")
         .count();
     assert_eq!(
         started, 1,
-        "only the sealed build, whose link arguments name an object outside the bound inputs, starts Cargo: {notes:?}"
+        "only the doctests' capture build, which no content record answers, starts Cargo: {notes:?}"
     );
 }
 

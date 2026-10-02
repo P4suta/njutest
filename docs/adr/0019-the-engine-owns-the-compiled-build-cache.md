@@ -95,5 +95,16 @@ The engine's compiler facade records eligible locked builds by their complete so
 The record lives under the engine-owned target directory and includes digests for every returned artifact and dep-info file.
 Reuse reconstructs the compilation only after verifying that inventory and its Cargo messages; doubt returns to Cargo.
 Opaque build scripts and procedural macros cannot establish this record because they may read undeclared inputs.
+Flag variables are classified under the argument protocol cargo actually splits them by: the encoded forms on the unit separator alone, the plain ones on whitespace, with every attached and separate `-C` form read alike.
+The sealed target admits the engine's exact deterministic linker switches and its WebAssembly platform object, bound by content beside the toolchain-owned linker.
+The object must be a valid core WebAssembly module with known linking metadata and the engine's `platform.o` filename.
+That format carries symbols and relocations in its own bytes, rather than response arguments or filesystem members.
+Only established scalar codegen options and configuration arguments are admitted otherwise.
+Response files, archives, dynamic or unknown object metadata, other object formats, file-bearing compiler options, unknown switches and unsupported separate values fall back to Cargo with their exact cause.
+The bound file inputs also add a content fingerprint to the actual compiler flags before the key is computed.
+Cargo therefore recompiles when an object's bytes change at the same path, even when its dep-info omits that object.
+The fingerprint also changes for corrupt object bytes before their format refusal, so fallback Cargo cannot publish an old fresh output for that change.
+Cargo's absent uplifted library dep-info is tolerated only when the remaining compiler unit inventory still proves the complete input set.
+A native target's link arguments remain refused, because its system linker is no toolchain input.
 This layer applies to users' repeated runs as well as leased fixture slots, and its hit/miss notes always identify the key.
 The suite count gate budgets unique bound build keys plus uncacheable requests per binary, rather than allowing a warm cache to hide new build requests.
