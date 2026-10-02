@@ -93,8 +93,7 @@ fn asked(root: &Path, args: &[&str]) -> (u8, String, String) {
 
 /// The document a run or a merge left at `path`, parsed.
 fn document(path: &Path) -> serde_json::Value {
-    let text = std::fs::read_to_string(path)
-        .unwrap_or_else(|error| panic!("recorded document {}: {error}", path.display()));
+    let text = std::fs::read_to_string(path).expect("a recorded document is readable");
     njutest_devkit::strictjson::decode_str(&text).expect("a recording's document is JSON")
 }
 
