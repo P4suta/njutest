@@ -12,6 +12,9 @@ use super::{CargoError, CargoErrorKind, Driver};
 use crate::runner::{Termination, run};
 use crate::trace::ExecRecord;
 
+mod prepared;
+pub use prepared::{PreparedDoctests, capture_prepared_doctests};
+
 /// How much of rustdoc's report is kept.
 const REPORT_LIMIT: usize = 64 << 20;
 
@@ -97,6 +100,14 @@ pub fn capture_doctests(
     capture: &DoctestCapture<'_>,
 ) -> Result<Vec<u8>, CargoError> {
     let options = capture.compile;
+    let preparation = super::build_cache::Preparation::own(options.target_dir.path(), driver.trace)
+        .map_err(|source| {
+            CargoError::new(
+                CargoErrorKind::BuildLedger,
+                "cannot own doctest compiler preparation",
+            )
+            .with_source(source)
+        })?;
     options.target_dir.settle()?;
     let mut spec = driver
         .toolchain
@@ -156,12 +167,11 @@ pub fn capture_doctests(
             "rustdoc printed more of a report of doctests than the engine keeps",
         ));
     }
+    drop(preparation);
     Ok(result.stdout)
 }
 
-/// The capture program in `directory`, compiled there with the toolchain's own rustc unless the program its source names is already there.
-///
-/// The source is written last, as the mark that the program beside it is the one it names, so a run that stopped halfway leaves nothing a later run takes for finished.
+/// The capture program, compiled and verified under one preparation owner with immutable products for each actual producer.
 ///
 /// # Errors
 /// [`CargoErrorKind::CommandFailed`] when its source cannot be written or rustc refuses it, and [`CargoErrorKind::Cancelled`] when the run was cancelled.
@@ -169,61 +179,7 @@ pub fn build_capture(
     driver: &Driver<'_>,
     directory: &Path,
 ) -> Result<std::path::PathBuf, CargoError> {
-    let failed = |path: &Path, error: std::io::Error| {
-        CargoError::new(
-            CargoErrorKind::CommandFailed,
-            format!("{}: {error}", path.display()),
-        )
-    };
-    let source = directory.join("capture.rs");
-    let program = directory.join(format!("capture{}", std::env::consts::EXE_SUFFIX));
-    let marked = match std::fs::read(&source) {
-        Ok(bytes) => bytes == crate::sealed::doctest::CAPTURE_SOURCE.as_bytes(),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
-        Err(error) => return Err(failed(&source, error)),
-    };
-    let built = match std::fs::metadata(&program) {
-        Ok(metadata) => metadata.is_file(),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
-        Err(error) => return Err(failed(&program, error)),
-    };
-    if marked && built {
-        return Ok(program);
-    }
-    std::fs::create_dir_all(directory).map_err(|error| failed(directory, error))?;
-    let staged_source = directory.join(format!("{}.rs", crate::replace::staging(&source)));
-    let staged_program = directory.join(crate::replace::staging(&program));
-    std::fs::write(&staged_source, crate::sealed::doctest::CAPTURE_SOURCE)
-        .map_err(|error| failed(&staged_source, error))?;
-    let mut spec = crate::runner::Spec::new(
-        [
-            driver.toolchain.rustc().as_os_str().to_owned(),
-            OsString::from("--edition=2021"),
-            OsString::from("--crate-name=capture"),
-            OsString::from("-o"),
-            staged_program.as_os_str().to_owned(),
-            staged_source.as_os_str().to_owned(),
-        ],
-        crate::runner::Bound::After(crate::runner::PROBE),
-    );
-    spec.dir = Some(directory.to_path_buf());
-    spec.env = driver.toolchain.env().cloned();
-    let result = run(&spec, driver.cancel);
-    driver.trace.exec_result(ExecRecord::of(&spec, &result));
-    if driver.cancel.is_cancelled() {
-        return Err(CargoError::new(
-            CargoErrorKind::Cancelled,
-            "the doctests' capture was cancelled",
-        ));
-    }
-    if !result.succeeded() {
-        return Err(command_failed(&spec, &result));
-    }
-    std::fs::rename(&staged_program, &program).map_err(|error| failed(&program, error))?;
-    std::fs::remove_file(&staged_source).map_err(|error| failed(&staged_source, error))?;
-    crate::replace::file(&source, crate::sealed::doctest::CAPTURE_SOURCE.as_bytes())
-        .map_err(|failure| failed(&failure.path, failure.source))?;
-    Ok(program)
+    prepared::program(driver, directory)
 }
 
 /// Empties `directory`, or makes it, so that every claim a capture gives out there is one this build made.

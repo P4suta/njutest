@@ -1523,8 +1523,7 @@ fn captured_doctests(
     (program, directory): (&Path, &Path),
     (package, compile, baked): (&str, &CompileOptions, crate::sealed::doctest::Baked),
 ) -> Result<(Vec<u8>, crate::sealed::doctest::Held), EngineError> {
-    crate::cargo::empty_capture(directory)?;
-    let stdout = crate::cargo::capture_doctests(
+    let prepared = crate::cargo::capture_prepared_doctests(
         driver,
         &crate::cargo::DoctestCapture {
             package,
@@ -1533,13 +1532,13 @@ fn captured_doctests(
             baked,
         },
     )?;
-    let held = crate::sealed::doctest::Held::read(directory).map_err(|error| {
+    let held = crate::sealed::doctest::Held::read(prepared.directory()).map_err(|error| {
         crate::cargo::CargoError::new(
             crate::cargo::CargoErrorKind::BuildLedger,
             format!("{}: {error}", directory.display()),
         )
     })?;
-    Ok((stdout, held))
+    Ok((prepared.report().to_vec(), held))
 }
 
 /// Turns the mutable-file snapshot into the text a prepared session exposes.

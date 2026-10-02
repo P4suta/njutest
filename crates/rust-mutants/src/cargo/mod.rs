@@ -41,7 +41,8 @@ pub use depinfo::{
     parse_dep_info, units_of,
 };
 pub use doctests::{
-    DoctestCapture, build_capture, capture_arguments, capture_doctests, empty_capture,
+    DoctestCapture, PreparedDoctests, build_capture, capture_arguments, capture_doctests,
+    capture_prepared_doctests, empty_capture,
 };
 pub use execution_products::ExecutionProducts;
 pub use provenance::{CompilerObservation, CompilerPurpose, InputIdentity};

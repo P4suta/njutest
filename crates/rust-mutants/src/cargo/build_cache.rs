@@ -42,12 +42,19 @@ struct Record {
     observation: super::CompilerObservation,
 }
 
+struct Augmentation {
+    role: String,
+    arguments: Vec<std::ffi::OsString>,
+    paths: Vec<PathBuf>,
+}
+
 pub(super) struct Request {
     pub(super) key: String,
     record: PathBuf,
     inputs: BTreeMap<PathBuf, File>,
     target: PathBuf,
     environment: Variables,
+    augmentation: Option<Augmentation>,
 }
 
 impl Request {
@@ -56,16 +63,7 @@ impl Request {
         options: &CompileOptions,
         env: &mut Variables,
     ) -> io::Result<Self> {
-        let root = options
-            .target_dir
-            .root()
-            .ok_or_else(|| io::Error::other("unbound source tree"))?;
-        if root != driver.dir
-            || !options.locked
-            || !std::fs::metadata(root.join("Cargo.lock"))?.is_file()
-        {
-            return Err(io::Error::other("unlocked or unbound build inputs"));
-        }
+        let root = source_root(driver, options)?;
         let environment = env.clone();
         let mut inputs = BTreeMap::new();
         tree(root, options.target_dir.path(), &mut inputs)?;
@@ -135,6 +133,7 @@ impl Request {
             inputs,
             target: options.target_dir.path().to_path_buf(),
             environment,
+            augmentation: None,
         })
     }
 
@@ -384,13 +383,133 @@ impl Request {
         options: &CompileOptions,
     ) -> io::Result<()> {
         let mut env = self.environment.clone();
-        let current = Self::of(driver, options, &mut env)?;
+        let mut current = Self::of(driver, options, &mut env)?;
+        if let Some(augmentation) = &self.augmentation {
+            current = current.augment(
+                &augmentation.role,
+                &augmentation.arguments,
+                &augmentation.paths,
+            )?;
+        }
         if current.key != self.key {
             return Err(io::Error::other(
                 "compiler inputs changed while preparing their products",
             ));
         }
         Ok(())
+    }
+
+    pub(super) fn augment(
+        mut self,
+        role: &str,
+        arguments: &[std::ffi::OsString],
+        paths: &[PathBuf],
+    ) -> io::Result<Self> {
+        let mut digest = Sha256::new();
+        field(&mut digest, self.key.as_bytes());
+        field(&mut digest, role.as_bytes());
+        for argument in arguments {
+            field(&mut digest, argument.as_encoded_bytes());
+        }
+        for path in paths {
+            let state = file(path)?;
+            field(&mut digest, path.as_os_str().as_encoded_bytes());
+            field(&mut digest, state.digest.as_bytes());
+            field(&mut digest, &state.mode.to_be_bytes());
+            self.inputs.insert(path.clone(), state);
+        }
+        for (name, value) in self.environment.canonical() {
+            field(&mut digest, name.as_encoded_bytes());
+            field(&mut digest, value.as_encoded_bytes());
+        }
+        self.key = hex::encode(digest.finalize());
+        self.record.set_file_name(format!("{}.json", self.key));
+        self.augmentation = Some(Augmentation {
+            role: role.to_owned(),
+            arguments: arguments.to_vec(),
+            paths: paths.to_vec(),
+        });
+        Ok(self)
+    }
+
+    pub(super) fn covers(&self, units: &[super::Unit]) -> bool {
+        units
+            .iter()
+            .flat_map(|unit| &unit.inputs)
+            .all(|path| self.inputs.contains_key(path))
+    }
+
+    pub(super) fn capture_files(
+        &self,
+        messages: &mut [Message],
+        directory: &Path,
+    ) -> io::Result<()> {
+        if !plain_messages(messages) {
+            return Err(io::Error::other("opaque doctest compiler messages"));
+        }
+        for message in messages {
+            if let Message::CompilerArtifact(artifact) = message {
+                for path in artifact
+                    .filenames
+                    .iter_mut()
+                    .chain(&mut artifact.executable)
+                {
+                    let copied = directory
+                        .join("compiler")
+                        .join(product_relative(path, &self.target)?);
+                    let parent = copied
+                        .parent()
+                        .ok_or_else(|| io::Error::other("compiler inventory parent"))?;
+                    std::fs::create_dir_all(parent)?;
+                    let original = file(path)?;
+                    std::fs::copy(&*path, &copied)?;
+                    if file(path)? != original || file(&copied)? != original {
+                        return Err(io::Error::other("doctest compiler products changed"));
+                    }
+                    if let Some(depinfo) = super::dep_info_path(path, &artifact.target.name)
+                        && held(&depinfo)?
+                    {
+                        let kept = directory
+                            .join("compiler")
+                            .join(product_relative(&depinfo, &self.target)?);
+                        std::fs::copy(&depinfo, &kept)?;
+                        if file(&depinfo)? != file(&kept)? {
+                            return Err(io::Error::other("doctest dependency products changed"));
+                        }
+                    }
+                    *path = copied;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn capture_messages(
+        &self,
+        messages: &mut [Message],
+        directory: &Path,
+    ) -> io::Result<()> {
+        for message in messages {
+            if let Message::CompilerArtifact(artifact) = message {
+                for path in artifact
+                    .filenames
+                    .iter_mut()
+                    .chain(&mut artifact.executable)
+                {
+                    *path = directory
+                        .join("compiler")
+                        .join(product_relative(path, &self.target)?);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn sources(&self) -> impl Iterator<Item = &Path> {
+        self.inputs
+            .keys()
+            .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
+            .map(PathBuf::as_path)
     }
 
     pub(super) fn independent(mut self, observation: &str) -> Self {
@@ -410,6 +529,20 @@ impl Request {
         }
         Ok(products.join(product_relative(original, &self.target)?))
     }
+}
+
+fn source_root<'a>(driver: &Driver<'_>, options: &'a CompileOptions) -> io::Result<&'a Path> {
+    let root = options
+        .target_dir
+        .root()
+        .ok_or_else(|| io::Error::other("unbound source tree"))?;
+    if root != driver.dir
+        || !options.locked
+        || !std::fs::metadata(root.join("Cargo.lock"))?.is_file()
+    {
+        return Err(io::Error::other("unlocked or unbound build inputs"));
+    }
+    Ok(root)
 }
 
 fn complete_environment(env: &Variables) -> io::Result<BTreeMap<String, Option<String>>> {
@@ -481,7 +614,7 @@ impl Preparation {
         self.prior != self.current && self.current.as_deref() == Some(generation.as_bytes())
     }
 
-    fn publish(&self, generation: &str) -> io::Result<()> {
+    pub(super) fn publish(&self, generation: &str) -> io::Result<()> {
         let parent = self
             .publication
             .parent()

@@ -156,3 +156,23 @@ A later prepare must measure an altered execution copy without changing the immu
 - An altered execution copy is remeasured without changing its compiler proof.
 - Waiting failed requests retain the actual refusal, and later complete requests may recover.
 - No target directory is copied, no repeated-build waiver is granted, and no reuse fabricates work.
+
+## Amendment, 2026-10-03: doctest capture has an immutable preparation result
+
+`PreparedDoctests` retains the original actual compiler observation, rustdoc report and captured inventory together.
+The capture program has one cold preparation owner and a distinct immutable output path for each actual rustc producer.
+Its source marker alone cannot certify a program; reuse verifies the original process and program bytes.
+A changed program is observed as changed and recovery publishes another path.
+
+Doctest preparation binds the complete source graph, actual rustdoc executable, capture program, compiler flags, requested arguments and full environment.
+Only the internally owned output staging address varies with publication; the actual argv remains in the original observation.
+Cargo message records and rustdoc report bytes are separated from the same raw stdout, and every reuse derives the report from that original stdout again.
+The explicit compiler artifact and dep-info inventory is frozen beside the captured binaries, and source inputs are checked against those original dependency records.
+A publication verifies complete capture accounting and every file digest.
+Unaccounted reports remain actual observations and do not publish reusable products.
+
+External include macros and unresolved documentation attributes cannot establish a complete doctest input graph.
+They continue through an actual compiler and never receive a verified capture hit.
+Prepared captures share the target's preparation lease, including settling, actual work, publication and failure evidence.
+The legacy capture and emptying APIs retain their public behavior, while compiler preparation also holds its owned lease.
+No successful removal or signal delivery certifies late-writer completion.

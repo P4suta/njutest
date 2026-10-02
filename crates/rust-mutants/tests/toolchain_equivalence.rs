@@ -828,3 +828,145 @@ fn a_failed_preparation_is_published_to_its_waiting_requests_and_can_recover() {
     );
     workspace.close().expect("the source owner closes");
 }
+
+fn capture_program_processes(trace: &Recorder) -> usize {
+    trace.events().iter().filter(|event| {
+        matches!(&event.payload, Payload::Exec { exec } if exec.argv.iter().any(|arg| arg == "--crate-name=capture"))
+    }).count()
+}
+
+#[test]
+fn concurrent_capture_program_requests_have_one_immutable_producer() {
+    let fixture = Fixture::copy("fixture-equivalent");
+    let trace = rust_mutants::testkit::trace::memory_recorder();
+    let workspace = compiler_workspace(&fixture, &trace);
+    let cancel = Cancel::new();
+    let driver = rust_mutants::cargo::Driver {
+        toolchain: workspace.toolchain(),
+        dir: workspace.snapshot_root(),
+        cancel: &cancel,
+        trace: &trace,
+    };
+    let directory = fixture.temp().join("capture-program");
+    let start = std::sync::Barrier::new(3);
+    let mut products = Vec::new();
+    std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..3)
+            .map(|_| {
+                njutest_devkit::thread::ScopedThread::launch(scope, || {
+                    start.wait();
+                    rust_mutants::cargo::build_capture(&driver, &directory)
+                })
+            })
+            .collect();
+        for worker in workers {
+            products.push(worker.join().expect("the capture preparation owner joins"));
+        }
+    });
+    assert_eq!(
+        capture_program_processes(&trace),
+        1,
+        "one cold capture preparation owns its real compiler"
+    );
+    let first = products
+        .first()
+        .expect("a producer result")
+        .as_ref()
+        .expect("the capture built");
+    for product in &products {
+        assert_eq!(product.as_ref().expect("every request succeeds"), first);
+    }
+    let original = std::fs::read(first).expect("the actual capture program");
+    std::fs::write(first, b"an altered capture program").expect("the original artifact is altered");
+    let recovered =
+        rust_mutants::cargo::build_capture(&driver, &directory).expect("verified recovery");
+    assert_ne!(
+        &recovered, first,
+        "recovery cannot overwrite an earlier reader's product path"
+    );
+    assert_eq!(
+        std::fs::read(&recovered).expect("the new compiler program"),
+        original
+    );
+    assert_eq!(
+        std::fs::read(first).expect("the altered original stays observable"),
+        b"an altered capture program"
+    );
+    assert_eq!(capture_program_processes(&trace), 2);
+    workspace.close().expect("the source owner closes");
+}
+
+fn owned_doctest_capture(
+    driver: &rust_mutants::cargo::Driver<'_>,
+    capture: &rust_mutants::cargo::DoctestCapture<'_>,
+) -> (Vec<u8>, std::path::PathBuf) {
+    let owned = rust_mutants::cargo::capture_prepared_doctests(driver, capture)
+        .expect("the actual owned Cargo capture");
+    (owned.report().to_vec(), owned.directory().to_path_buf())
+}
+
+#[test]
+fn a_complete_doctest_capture_has_one_owned_actual_compiler() {
+    let fixture = Fixture::copy("fixture-doctest");
+    let trace = rust_mutants::testkit::trace::memory_recorder();
+    let workspace = compiler_workspace(&fixture, &trace);
+    let cancel = Cancel::new();
+    let driver = rust_mutants::cargo::Driver {
+        toolchain: workspace.toolchain(),
+        dir: workspace.snapshot_root(),
+        cancel: &cancel,
+        trace: &trace,
+    };
+    let mut options = compiler_options(&workspace);
+    options.build.target = Some(rust_mutants::sealed::TARGET.to_owned());
+    let directory = fixture.temp().join("doctests");
+    let program = rust_mutants::cargo::build_capture(&driver, &fixture.temp().join("capture"))
+        .expect("the real capture program");
+    let capture = rust_mutants::cargo::DoctestCapture {
+        package: "fixture-doctest",
+        capture: (&program, &directory),
+        compile: &options,
+        baked: rust_mutants::sealed::doctest::Baked::List,
+    };
+    let (report, first) = owned_doctest_capture(&driver, &capture);
+    let held = rust_mutants::sealed::doctest::Held::read(&first).expect("actual captured binaries");
+    let listing =
+        rust_mutants::sealed::doctest::listing(&report).expect("a complete real rustdoc listing");
+    let binaries = rust_mutants::sealed::doctest::merged_binaries(&listing, &held)
+        .expect("every listing claim is held");
+    assert!(
+        !binaries.is_empty(),
+        "the positive control compiles and captures real doctests"
+    );
+    let original: Vec<_> = binaries
+        .iter()
+        .map(|path| std::fs::read(path).expect("captured original bytes"))
+        .collect();
+    let again = owned_doctest_capture(&driver, &capture);
+    assert_eq!(
+        compiler_processes(&trace),
+        1,
+        "one complete capture starts one actual Cargo producer"
+    );
+    assert_eq!(again, (report.clone(), first.clone()));
+    let source = workspace.snapshot_root().join("src/lib.rs");
+    let pristine = std::fs::read_to_string(&source).expect("the real source");
+    std::fs::write(&source, pristine.replace("n * 2", "n * 3"))
+        .expect("a different complete graph");
+    let changed = owned_doctest_capture(&driver, &capture);
+    assert_ne!(changed.1, first);
+    for (path, bytes) in binaries.iter().zip(original) {
+        assert_eq!(
+            std::fs::read(path).expect("an earlier reader keeps its product"),
+            bytes
+        );
+    }
+    std::fs::write(&source, pristine).expect("input A returns");
+    assert_eq!(owned_doctest_capture(&driver, &capture), (report, first));
+    assert_eq!(
+        compiler_processes(&trace),
+        2,
+        "A-B-A reuses the original immutable capture"
+    );
+    workspace.close().expect("the source owner closes");
+}
