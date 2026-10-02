@@ -27,7 +27,7 @@ environment["NJUTEST_FIXTURE_BUILD_CACHE"] = str(directory / "fixture-builds")
 checks = subprocess.run([sys.executable, str(root / "scripts" / "test-suite-cost.py")], cwd=root, check=False)
 if checks.returncode:
     sys.exit(checks.returncode)
-command = ["cargo", "nextest", "run", "--locked", "--workspace", "--all-targets", "--all-features", "--no-fail-fast", "--test-threads", "3", "--status-level", "pass", "--profile", "cost"]
+command = ["cargo", "xtask", "tidy", "--", "cargo", "nextest", "run", "--locked", "--workspace", "--all-targets", "--all-features", "--no-fail-fast", "--test-threads", "3", "--status-level", "pass", "--profile", "cost"]
 started = time.monotonic()
 run = subprocess.Popen(command, cwd=root, env=environment)
 samples = []

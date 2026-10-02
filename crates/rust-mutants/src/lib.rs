@@ -32,6 +32,7 @@ pub mod interval;
 pub mod killers;
 pub mod libtest;
 pub mod limitation;
+pub mod observation;
 pub mod orphan;
 pub mod outcome;
 pub mod outcomes;

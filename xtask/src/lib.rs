@@ -38,6 +38,7 @@ pub mod lexed;
 pub mod lints;
 pub mod milestones;
 pub mod modelaudit;
+pub mod observation;
 pub mod prepush;
 pub mod proofaudit;
 pub mod receipt;
