@@ -3,7 +3,7 @@
 
 [package]
 name = "njutest-fixture-tree"
-description = "Shared fixture-group classification for repository gates and tests"
+description = "Dependency-free filesystem policy shared by the engine, gates and tests"
 publish = false
 version.workspace = true
 edition.workspace = true
@@ -13,7 +13,7 @@ repository.workspace = true
 authors.workspace = true
 
 [package.metadata.njutest]
-surface = "test-support"
+surface = "unreleased"
 
 [lints]
 workspace = true

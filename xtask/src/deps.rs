@@ -41,20 +41,21 @@ pub const RULE: &str = "The allowed direction is: njutest -> rust-mutants, \
     depend on nothing, rust-mutants -> rust-mutants-adapt, whose adapters depend on the \
     decisions alone, rust-mutants-adapt -> rust-mutants-decision, rust-mutants -> \
     rust-mutants-sealed, which depends on no crate of the \
-    workspace but njutest-macros; xtask and njutest-devkit share only the pure fixture-tree \
-    classifier, and xtask shares the engine's pure decisions in rust-mutants-decision and \
+    workspace but njutest-macros; rust-mutants, xtask and njutest-devkit share the dependency-free \
+    fixture-tree policy, and xtask shares the engine's pure decisions in rust-mutants-decision and \
     nothing else of the engine; every crate may use the dependency-free compiler declarations in njutest-macros \
     and may dev-depend on njutest-devkit. compiler-surfaces may depend on the engine, its decisions \
     and the fixture classifier only to compile the incidental tools as private modules. Nothing else, in particular \
     nothing from the engine towards the runner, and nothing into the sealed host but from the engine.";
 
-const ALLOWED_NORMAL: [(&str, &str); 12] = [
+const ALLOWED_NORMAL: [(&str, &str); 13] = [
     ("njutest", "rust-mutants"),
     ("rust-mutants-cli", "rust-mutants"),
     ("rust-mutants", "rust-mutants-decision"),
     ("rust-mutants", "rust-mutants-adapt"),
     ("rust-mutants-adapt", "rust-mutants-decision"),
     ("rust-mutants", "rust-mutants-sealed"),
+    ("rust-mutants", "njutest-fixture-tree"),
     ("compiler-surfaces", "rust-mutants"),
     ("compiler-surfaces", "rust-mutants-decision"),
     ("xtask", "njutest-fixture-tree"),
@@ -122,8 +123,9 @@ pub fn prohibited_direct_dependencies<'a>(
 }
 
 /// The crates a release ships, whose dependencies are built with the features their own edges ask for.
-pub const SHIPPED: [&str; 7] = [
+pub const SHIPPED: [&str; 8] = [
     "njutest",
+    "njutest-fixture-tree",
     "njutest-macros",
     "rust-mutants",
     "rust-mutants-adapt",

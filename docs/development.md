@@ -674,3 +674,6 @@ Tidy still refuses every entry left in the child temporary root, including marke
 The `unowned-cache-directory` lint rejects temporary paths passed to cache consumers.
 It follows imported cache type names and local constructor aliases while preserving ordinary native command closures.
 Synchronous test scratch remains test-owned and closes once without a quiet-period retry.
+The engine shares the dependency-free `njutest-fixture-tree` filesystem policy with development tools.
+The dependency gate allows that finite lower edge and refuses reverse engine, devkit, xtask and sealed-host edges.
+The runtime helper remains unpublished and declares its surface as `unreleased`.
