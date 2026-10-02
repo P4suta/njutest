@@ -15,7 +15,7 @@ use std::path::PathBuf;
 const CHILD: &str = "NJUTEST_TEST_COST_CHILD";
 
 /// Every work field the reader requires of a record, by name.
-const REQUIRED: [&str; 19] = [
+const REQUIRED: [&str; 24] = [
     "builds",
     "build_ms",
     "units",
@@ -32,6 +32,11 @@ const REQUIRED: [&str; 19] = [
     "cargo_metadata_ms",
     "rustc_probes",
     "rustc_probe_ms",
+    "rustc_builds",
+    "rustc_build_ms",
+    "executions",
+    "probes",
+    "host_waits",
     "unobserved_cargo",
     "platform",
     "platform_requests",
@@ -107,6 +112,28 @@ fn a_real_direct_build_publishes_every_field_the_reader_requires() {
         absent.is_empty(),
         "a published work payload carries every required field: absent {absent:?}: {work}"
     );
+    let origin = record.get("origin").expect("the actual suite origin");
+    assert_eq!(
+        origin.get("kind").and_then(serde_json::Value::as_str),
+        Some("suite")
+    );
+    assert_eq!(origin.get("binary"), record.get("binary"));
+    assert_eq!(origin.get("test"), record.get("test"));
+    let machine = record.get("machine").expect("the executing machine");
+    assert_eq!(
+        machine.get("os").and_then(serde_json::Value::as_str),
+        Some(std::env::consts::OS)
+    );
+    assert_eq!(
+        machine.get("arch").and_then(serde_json::Value::as_str),
+        Some(std::env::consts::ARCH)
+    );
+    assert!(
+        machine
+            .get("cpus")
+            .and_then(serde_json::Value::as_u64)
+            .is_some_and(|cpus| cpus > 0)
+    );
     assert_eq!(count(work, "observed_cargo_starts"), 1);
     assert_eq!(count(work, "builds"), 1);
     assert_eq!(count(work, "build_requests"), 1);
@@ -114,6 +141,102 @@ fn a_real_direct_build_publishes_every_field_the_reader_requires() {
     assert!(
         count(work, "units") >= 1,
         "an actual build derives its artifacts from the Cargo JSON stream it observed: {work}"
+    );
+}
+
+#[test]
+fn actual_toolchain_probes_keep_their_role_and_one_execution() {
+    for (role, count_field, execution_role) in [
+        ("cargo-banner", "cargo_probes", "cargo-probe"),
+        ("rustc-cfg", "rustc_probes", "rustc-probe"),
+        ("rustc-build", "rustc_builds", "rustc-build"),
+    ] {
+        let guard = tempfile::tempdir().expect("a probe cost directory");
+        let status = std::process::Command::new(std::env::current_exe().expect("this binary"))
+            .args(["--exact", "cost::cost_child_actual_probe", "--nocapture"])
+            .env(CHILD, "1")
+            .env("NJUTEST_TEST_COST_DIR", guard.path())
+            .env("NJUTEST_TEST_PROBE_ROLE", role)
+            .status()
+            .expect("the actual probe child");
+        assert!(status.success(), "the actual {role} succeeded: {status}");
+        let record = one_record(guard.path());
+        owned_by_suite(&record);
+        let work = the_work(&record);
+        assert_eq!(count(work, count_field), 1, "the actual {role}");
+        let executions = work
+            .get("executions")
+            .and_then(serde_json::Value::as_object)
+            .expect("the complete actual execution inventory");
+        assert_eq!(executions.len(), 1, "one real process, recorded once");
+        let executed = executions.values().next().expect("the actual execution");
+        assert_eq!(
+            executed.get("role").and_then(serde_json::Value::as_str),
+            Some(execution_role)
+        );
+        assert_eq!(
+            executed
+                .get("processes")
+                .and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+        let probes = work
+            .get("probes")
+            .and_then(serde_json::Value::as_object)
+            .expect("the keyed actual probe");
+        assert_eq!(probes.len(), 1);
+        assert_eq!(
+            probes
+                .values()
+                .next()
+                .and_then(|probe| probe.get("role"))
+                .and_then(serde_json::Value::as_str),
+            Some(role)
+        );
+    }
+}
+
+#[test]
+fn cost_child_actual_probe() {
+    if std::env::var_os(CHILD).is_none() {
+        return;
+    }
+    let directory = std::env::var_os("NJUTEST_TEST_COST_DIR").expect("a cost directory");
+    let directory = std::path::Path::new(&directory);
+    let cargo = njutest_devkit::paths::cargo_binary();
+    let rustc = cargo.with_file_name(if cfg!(windows) { "rustc.exe" } else { "rustc" });
+    let role = std::env::var("NJUTEST_TEST_PROBE_ROLE").expect("the actual probe role");
+    let (mut command, role) = match role.as_str() {
+        "cargo-banner" => {
+            let mut command = std::process::Command::new(cargo);
+            command.arg("--version");
+            (command, njutest_devkit::cost::ProbeRole::CargoBanner)
+        }
+        "rustc-cfg" => {
+            let mut command = std::process::Command::new(rustc);
+            command.args(["--print", "cfg"]);
+            (command, njutest_devkit::cost::ProbeRole::RustcCfg)
+        }
+        "rustc-build" => {
+            let source = directory.join("probe.rs");
+            std::fs::write(&source, "pub fn actual() -> u8 { 1 }\n")
+                .expect("the actual compiler input");
+            let mut command = std::process::Command::new(rustc);
+            command
+                .args(["--crate-type=lib", "--emit=metadata", "--out-dir"])
+                .arg(directory)
+                .arg(source);
+            (command, njutest_devkit::cost::ProbeRole::RustcBuild)
+        }
+        other => panic!("unknown actual probe role {other}"),
+    };
+    command.current_dir(directory);
+    let output = njutest_devkit::cost::probe(command, role, "an actual observed toolchain probe")
+        .expect("the actual probe executes");
+    assert!(
+        output.status.success(),
+        "the actual tool succeeds: {:?}",
+        output.stderr
     );
 }
 

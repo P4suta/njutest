@@ -94,6 +94,78 @@ struct ProbeWork {
     duration_ns: u64,
 }
 
+/// The operation described by one actual observed invocation.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum ExecutionRole {
+    CargoBuild,
+    CargoTest,
+    CargoDocTest,
+    CargoMetadata,
+    CargoProbe,
+    CargoUnclassified,
+    RustcProbe,
+    RustcBuild,
+    Program,
+}
+
+/// Actual attempts, launches and durations under one observed invocation identity.
+#[derive(Debug, Serialize)]
+struct ExecutionWork {
+    role: ExecutionRole,
+    requests: u64,
+    processes: u64,
+    failed_launches: u64,
+    duration_ms: u64,
+}
+
+impl ExecutionRole {
+    fn of(exec: &super::ExecRecord) -> Self {
+        let program = exec
+            .argv
+            .first()
+            .and_then(|program| Path::new(program).file_stem());
+        let args: Vec<_> = exec.argv.iter().skip(1).map(String::as_str).collect();
+        match program.and_then(std::ffi::OsStr::to_str) {
+            Some("cargo") => Self::cargo(&args),
+            Some("rustc")
+                if args
+                    .iter()
+                    .any(|arg| matches!(*arg, "-vV" | "-V" | "--version" | "--print")) =>
+            {
+                Self::RustcProbe
+            }
+            Some("rustc") => Self::RustcBuild,
+            _ => Self::Program,
+        }
+    }
+
+    fn cargo(args: &[&str]) -> Self {
+        let command = args.iter().find(|arg| !arg.starts_with('+')).copied();
+        match command {
+            Some("build" | "check" | "rustc") => Self::CargoBuild,
+            Some("test") if args.contains(&"--no-run") => Self::CargoBuild,
+            Some("test") if args.contains(&"--doc") => Self::CargoDocTest,
+            Some("test") => Self::CargoTest,
+            Some("metadata") => Self::CargoMetadata,
+            Some("-vV" | "-V" | "--version") => Self::CargoProbe,
+            Some(_) | None => Self::CargoUnclassified,
+        }
+    }
+
+    const fn is_cargo(self) -> bool {
+        match self {
+            Self::CargoBuild
+            | Self::CargoTest
+            | Self::CargoDocTest
+            | Self::CargoMetadata
+            | Self::CargoProbe
+            | Self::CargoUnclassified => true,
+            Self::RustcProbe | Self::RustcBuild | Self::Program => false,
+        }
+    }
+}
+
 /// The actual caller's requested diagnostic and workspace root.
 #[derive(Debug, Clone, Copy)]
 pub struct ProbeSite<'a> {
@@ -260,6 +332,7 @@ struct Work {
     rustc_builds: u64,
     rustc_build_ms: u64,
     probes: BTreeMap<String, ProbeWork>,
+    executions: BTreeMap<String, ExecutionWork>,
     host_waits: Vec<HostWait>,
     unobserved_cargo: Vec<&'static str>,
     build_ms: u64,
@@ -403,17 +476,42 @@ fn apply(work: &mut Work, payload: &Payload) -> Result<(), AccountingError> {
 
 /// Observes one Cargo command the engine watched: a filename says it needs a role note, not what its work was.
 fn observed_cargo(work: &mut Work, exec: &super::ExecRecord) -> Result<(), AccountingError> {
-    let cargo = exec
-        .argv
-        .first()
-        .and_then(|program| Path::new(program).file_name())
-        .is_some_and(|program| program == "cargo" || program == "cargo.exe");
-    if cargo && started(&exec.stopped) {
+    let role = ExecutionRole::of(exec);
+    let ran = started(&exec.stopped);
+    if role.is_cargo() && ran {
         add(
             &mut work.observed_cargo_starts,
             "observed cargo start accounting",
         )?;
     }
+    let input =
+        serde_json::to_vec(&(&exec.argv, &exec.dir, &exec.env_names)).map_err(|source| {
+            AccountingError::Invalid {
+                problem: source.to_string(),
+            }
+        })?;
+    let identity = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(input));
+    let held = work.executions.entry(identity).or_insert(ExecutionWork {
+        role,
+        requests: 0,
+        processes: 0,
+        failed_launches: 0,
+        duration_ms: 0,
+    });
+    add(&mut held.requests, "execution request accounting")?;
+    if ran {
+        add(&mut held.processes, "execution process accounting")?;
+    } else {
+        add(
+            &mut held.failed_launches,
+            "execution failed-launch accounting",
+        )?;
+    }
+    sum(
+        &mut held.duration_ms,
+        exec.duration_ms,
+        "execution duration accounting",
+    )?;
     Ok(())
 }
 

@@ -9,6 +9,110 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+/// The operation the actual producer asked a command to perform.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ExecutionRole {
+    /// A Cargo compilation.
+    CargoBuild,
+    /// A Cargo test execution.
+    CargoTest,
+    /// A Cargo doctest execution.
+    CargoDocTest,
+    /// Cargo's workspace and dependency inventory.
+    CargoMetadata,
+    /// Cargo's toolchain banner.
+    CargoProbe,
+    /// An observed Cargo operation that has not been classified.
+    CargoUnclassified,
+    /// A Rustc toolchain query.
+    RustcProbe,
+    /// A direct Rustc compilation.
+    RustcBuild,
+    /// Another actual program execution.
+    Program,
+}
+
+/// Every actual request and launch under one observed invocation identity.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionWork {
+    /// The operation asked of this command.
+    pub role: ExecutionRole,
+    /// Actual attempts, including launches that never started.
+    pub requests: u64,
+    /// Child processes that actually started.
+    pub processes: u64,
+    /// Attempts for which no child started.
+    pub failed_launches: u64,
+    /// Monotonic durations at the producer's millisecond precision.
+    pub duration_ms: u64,
+}
+
+impl ExecutionWork {
+    fn launch(role: ExecutionRole, started: bool, duration_ms: u64) -> Self {
+        Self {
+            role,
+            requests: 1,
+            processes: u64::from(started),
+            failed_launches: u64::from(!started),
+            duration_ms,
+        }
+    }
+}
+
+/// The actual toolchain probe asked by its producer.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProbeRole {
+    /// Cargo's toolchain banner.
+    CargoBanner,
+    /// Rustc's target configuration.
+    RustcCfg,
+    /// A direct Rustc compilation.
+    RustcBuild,
+}
+
+/// Every probe attempt under its observed invocation identity.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProbeWork {
+    /// The actual toolchain operation.
+    pub role: ProbeRole,
+    /// Attempts, including failed launches.
+    pub requests: u64,
+    /// Child processes that actually started.
+    pub processes: u64,
+    /// Attempts for which no child started.
+    pub failed_launches: u64,
+    /// The actual monotonic duration in nanoseconds.
+    pub duration_ns: u64,
+}
+
+/// The executing host on which a producer waited.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WaitMachine {
+    /// The actual operating system.
+    pub os: String,
+    /// The positive processor count observed on that host.
+    pub cpus: u64,
+}
+
+/// An actual producer wait, retaining its owner, cause, duration and host.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostWait {
+    /// The actual producer or resource awaited.
+    pub owner: String,
+    /// The event or semantic deadline awaited.
+    pub cause: String,
+    /// The actual monotonic duration in nanoseconds.
+    pub elapsed_ns: u64,
+    /// The host that executed the wait.
+    pub machine: WaitMachine,
+}
+
 /// Cargo command classes the engine knows of that never run under a run's watch, so no record can count them.
 pub const UNOBSERVED_CARGO: [&str; 1] =
     ["toolchain banners located outside a costed run (standalone commands and test support)"];
@@ -90,6 +194,16 @@ pub struct Work {
     pub rustc_probes: u64,
     /// Their measured wall time in milliseconds.
     pub rustc_probe_ms: u64,
+    /// Direct Rustc compilations observed.
+    pub rustc_builds: u64,
+    /// Their measured monotonic durations in milliseconds.
+    pub rustc_build_ms: u64,
+    /// Every actual execution under its observed invocation identity.
+    pub executions: BTreeMap<String, ExecutionWork>,
+    /// Actual toolchain requests and launches under their invocation identities.
+    pub probes: BTreeMap<String, ProbeWork>,
+    /// Every producer wait with its executing-host identity.
+    pub host_waits: Vec<HostWait>,
     /// Cargo command classes this recorder knows it cannot observe.
     pub unobserved_cargo: Vec<String>,
     /// Platform-probe work, as the engine records it.
@@ -101,6 +215,51 @@ pub struct Work {
 }
 
 impl Work {
+    fn probed(
+        role: ProbeRole,
+        identity: String,
+        started: bool,
+        duration: std::time::Duration,
+    ) -> io::Result<Self> {
+        let millis = u64::try_from(duration.as_millis()).map_err(io::Error::other)?;
+        let measured = u64::try_from(duration.as_nanos()).map_err(io::Error::other)?;
+        let mut work = Self::none();
+        let count = u64::from(started);
+        let execution = match role {
+            ProbeRole::CargoBanner => {
+                work.cargo_probes = count;
+                work.cargo_probe_ms = millis;
+                work.observed_cargo_starts = count;
+                ExecutionRole::CargoProbe
+            }
+            ProbeRole::RustcCfg => {
+                work.rustc_probes = count;
+                work.rustc_probe_ms = millis;
+                ExecutionRole::RustcProbe
+            }
+            ProbeRole::RustcBuild => {
+                work.rustc_builds = count;
+                work.rustc_build_ms = millis;
+                ExecutionRole::RustcBuild
+            }
+        };
+        work.executions.insert(
+            identity.clone(),
+            ExecutionWork::launch(execution, started, millis),
+        );
+        work.probes.insert(
+            identity,
+            ProbeWork {
+                role,
+                requests: 1,
+                processes: count,
+                failed_launches: u64::from(!started),
+                duration_ns: measured,
+            },
+        );
+        Ok(work)
+    }
+
     /// The work of a record with no Cargo work of its own: its typed operation proves none happened.
     #[must_use]
     pub fn none() -> Self {
@@ -121,6 +280,11 @@ impl Work {
             cargo_metadata_ms: 0,
             rustc_probes: 0,
             rustc_probe_ms: 0,
+            rustc_builds: 0,
+            rustc_build_ms: 0,
+            executions: BTreeMap::new(),
+            probes: BTreeMap::new(),
+            host_waits: Vec::new(),
             unobserved_cargo: UNOBSERVED_CARGO
                 .iter()
                 .map(|name| (*name).to_owned())
@@ -136,34 +300,43 @@ impl Work {
     pub fn direct(identity: &str, launch: DirectLaunch) -> Self {
         let mut work = Self::none();
         work.build_requests = 1;
-        let held = match launch {
+        let (held, execution) = match launch {
             DirectLaunch::Started { millis, units } => {
                 work.builds = 1;
                 work.build_ms = millis;
                 work.units = units;
                 work.observed_cargo_starts = 1;
-                UnboundWork {
+                let held = UnboundWork {
                     requests: 1,
                     misses: 0,
                     processes: 1,
                     failed_launches: 0,
                     launch_causes: BTreeMap::new(),
-                }
+                };
+                (
+                    held,
+                    ExecutionWork::launch(ExecutionRole::CargoBuild, true, millis),
+                )
             }
             DirectLaunch::Failed { cause } => {
                 work.launch_failures = 1;
                 let mut launch_causes = BTreeMap::new();
                 launch_causes.insert(cause, 1);
-                UnboundWork {
+                let held = UnboundWork {
                     requests: 1,
                     misses: 0,
                     processes: 0,
                     failed_launches: 1,
                     launch_causes,
-                }
+                };
+                (
+                    held,
+                    ExecutionWork::launch(ExecutionRole::CargoBuild, false, 0),
+                )
             }
         };
         work.unbound.insert(identity.to_owned(), held);
+        work.executions.insert(identity.to_owned(), execution);
         work
     }
 
@@ -192,6 +365,11 @@ impl Work {
         std::fs::create_dir_all(&directory)?;
         let record = serde_json::json!({
             "schema": SCHEMA, "binary": binary, "test": test, "root": root,
+            "origin": {"kind": "suite", "binary": binary, "test": test},
+            "machine": {
+                "os": std::env::consts::OS, "arch": std::env::consts::ARCH,
+                "cpus": std::thread::available_parallelism()?.get(),
+            },
             "work": self, "sealed": sealed,
         });
         let mut staged = tempfile::Builder::new()
@@ -324,4 +502,29 @@ pub fn cargo(
     )
     .publish(&root, &serde_json::Value::Null, "cost-direct-")?;
     Ok(output)
+}
+
+/// Runs and records one actual toolchain probe under its producer's explicit operation.
+///
+/// # Errors
+/// The child cannot start or its actual observation cannot be published.
+pub fn probe(
+    mut command: std::process::Command,
+    role: ProbeRole,
+    context: &str,
+) -> io::Result<std::process::Output> {
+    let root = command
+        .get_current_dir()
+        .ok_or_else(|| io::Error::other("an observed probe needs its actual directory"))?
+        .to_path_buf();
+    let input = format!("{context}\n{command:?}");
+    let identity = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(input.as_bytes()));
+    let began = std::time::Instant::now();
+    let output = command.output();
+    Work::probed(role, identity, output.is_ok(), began.elapsed())?.publish(
+        &root,
+        &serde_json::Value::Null,
+        "cost-probe-",
+    )?;
+    output
 }
