@@ -742,6 +742,3 @@ pub fn listed() -> Option<Vec<Listed>> {
     }
     Some(processes)
 }
-
-#[cfg(unix)]
-pub use rust_mutants_decision::group::{Delivered, Others, StopDecision, Stopped, decide_stop};
