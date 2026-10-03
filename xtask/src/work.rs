@@ -102,10 +102,16 @@ pub struct Stops {
 #[derive(Debug, Default)]
 struct StopState {
     raised: std::sync::atomic::AtomicI32,
-    observers: Mutex<Vec<std::sync::Weak<crate::observation::Signal>>>,
+    observers: Mutex<Vec<std::sync::Weak<StopObserver>>>,
     heard: Mutex<Option<Instant>>,
     waits: Mutex<Vec<crate::observation::WaitNote>>,
     failure: Mutex<Option<Arc<std::io::Error>>>,
+}
+
+#[derive(Debug)]
+struct StopObserver {
+    signal: crate::observation::Signal,
+    invalidation: crate::observation::Invalidation,
 }
 
 impl StopState {
@@ -119,7 +125,9 @@ impl StopState {
         };
         observers.retain(|observer| match observer.upgrade() {
             Some(observer) => {
-                observer.failed(std::io::Error::new(source.kind(), Arc::clone(source)));
+                observer
+                    .signal
+                    .failed(std::io::Error::new(source.kind(), Arc::clone(source)));
                 true
             }
             None => false,
@@ -136,7 +144,12 @@ impl StopState {
         };
         observers.retain(|observer| match observer.upgrade() {
             Some(observer) => {
-                observer.publish(event);
+                match event {
+                    crate::observation::Event::Changed => observer.invalidation.changed(),
+                    crate::observation::Event::Cancelled
+                    | crate::observation::Event::Completed
+                    | crate::observation::Event::Deadline => observer.signal.publish(event),
+                }
                 true
             }
             None => false,
@@ -199,7 +212,10 @@ impl Stops {
         &self,
         observation: &crate::observation::Observation,
     ) -> StopSubscription {
-        let signal = Arc::new(observation.signal());
+        let signal = Arc::new(StopObserver {
+            signal: observation.signal(),
+            invalidation: observation.invalidation(),
+        });
         match self.state.observers.lock() {
             Ok(mut observers) => {
                 observers.retain(|observer| observer.strong_count() != 0);
@@ -211,12 +227,14 @@ impl Stops {
             }
         }
         if self.raised().is_some() {
-            signal.publish(crate::observation::Event::Cancelled);
+            signal.signal.publish(crate::observation::Event::Cancelled);
         }
         match self.state.failure.lock() {
             Ok(failure) => {
                 if let Some(source) = failure.as_ref() {
-                    signal.failed(std::io::Error::new(source.kind(), Arc::clone(source)));
+                    signal
+                        .signal
+                        .failed(std::io::Error::new(source.kind(), Arc::clone(source)));
                 }
             }
             Err(source) => {
@@ -261,7 +279,7 @@ impl Drop for Stops {
 
 #[derive(Debug)]
 pub(crate) struct StopSubscription {
-    _signal: Arc<crate::observation::Signal>,
+    _signal: Arc<StopObserver>,
 }
 
 /// An owned endpoint through which the output producer publishes its actual arrival time.
@@ -1047,5 +1065,125 @@ fn retain_group_member(
         Err(source) => Err(WorkError::Watch {
             source: source.into(),
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Stops;
+    use crate::observation::{Event, Observation};
+
+    #[test]
+    fn progress_wakes_coalesce_until_the_original_subscription_reads() {
+        let stops = Stops::arm().expect("the owned original stop observer");
+        let observed = Observation::subscribe();
+        let subscription = stops.subscribe(&observed);
+        for _ in 0..256 {
+            stops.state.publish(Event::Changed);
+        }
+        assert_eq!(
+            observed
+                .pending()
+                .expect("the complete original publication"),
+            Some(Event::Changed)
+        );
+        assert_eq!(
+            observed
+                .pending()
+                .expect("the complete original publication"),
+            None
+        );
+        drop(subscription);
+    }
+
+    #[test]
+    fn progress_wakes_preserve_the_original_cancellation_event() {
+        let stops = Stops::arm().expect("the owned original stop observer");
+        let observed = Observation::subscribe();
+        let subscription = stops.subscribe(&observed);
+        for _ in 0..256 {
+            stops.state.publish(Event::Changed);
+        }
+        stops.state.publish(Event::Cancelled);
+        assert_eq!(
+            observed
+                .pending()
+                .expect("the complete original publication"),
+            Some(Event::Cancelled)
+        );
+        assert_eq!(
+            observed
+                .pending()
+                .expect("the complete original publication"),
+            Some(Event::Changed)
+        );
+        assert_eq!(
+            observed
+                .pending()
+                .expect("the complete original publication"),
+            None
+        );
+        drop(subscription);
+    }
+
+    #[test]
+    fn progress_wakes_preserve_the_first_actual_producer_refusal() {
+        let stops = Stops::arm().expect("the owned original stop observer");
+        let observed = Observation::subscribe();
+        let subscription = stops.subscribe(&observed);
+        let failure = std::sync::Arc::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "the original producer refused its progress",
+        ));
+        stops.state.publish_failure(&failure);
+        for _ in 0..256 {
+            stops.state.publish(Event::Changed);
+        }
+        let retained = observed
+            .ensure_complete()
+            .expect_err("the original refusal");
+        assert_eq!(retained.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(retained.to_string(), failure.to_string());
+        drop(subscription);
+    }
+
+    #[test]
+    fn actual_output_publishers_rearm_progress_after_the_reader_acknowledges() {
+        let stops = Stops::arm().expect("the owned original stop observer");
+        let observed = Observation::subscribe();
+        let subscription = stops.subscribe(&observed);
+        std::thread::scope(|scope| {
+            let publisher = stops.events();
+            njutest_devkit::thread::ScopedThread::launch(scope, move || {
+                for _arrival in 0..256 {
+                    publisher.heard();
+                }
+            })
+            .join()
+            .expect("the actual output publisher joins");
+        });
+        assert!(
+            stops.heard().is_some(),
+            "the real output arrival time remains available"
+        );
+        assert_eq!(
+            observed.pending().expect("coalesced output burst"),
+            Some(Event::Changed)
+        );
+        assert_eq!(
+            observed.pending().expect("one output acknowledgement"),
+            None
+        );
+        stops.events().heard();
+        assert!(
+            stops.heard().is_some(),
+            "the new actual arrival time is retained"
+        );
+        assert_eq!(
+            observed.pending().expect("a new output arrival"),
+            Some(Event::Changed)
+        );
+        assert_eq!(observed.pending().expect("no cached output wake"), None);
+        drop(subscription);
     }
 }

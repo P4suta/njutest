@@ -4,6 +4,7 @@
 //! Producer-owned host observations with retained subscriptions and measured semantic deadlines.
 
 use std::io;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, Thread};
@@ -162,10 +163,26 @@ impl Signal {
     }
 }
 
+/// A distinct resource wake retained until its original subscription receives it.
+#[derive(Debug, Clone)]
+pub(crate) struct Invalidation {
+    pending: Arc<AtomicBool>,
+    reader: Thread,
+}
+
+impl Invalidation {
+    /// Publishes one pending resource change without consuming counted event capacity.
+    pub(crate) fn changed(&self) {
+        self.pending.store(true, Ordering::Release);
+        self.reader.unpark();
+    }
+}
+
 /// An owned subscription registered before a producer starts or an initial resource observation is made.
 pub struct Observation {
     received: Receiver<io::Result<Event>>,
     signal: Signal,
+    invalidation: Invalidation,
 }
 
 impl std::fmt::Debug for Observation {
@@ -189,6 +206,10 @@ impl Observation {
                 reader: thread::current(),
                 lost: Arc::new(Mutex::new(None)),
             },
+            invalidation: Invalidation {
+                pending: Arc::new(AtomicBool::new(false)),
+                reader: thread::current(),
+            },
         }
     }
 
@@ -196,6 +217,12 @@ impl Observation {
     #[must_use]
     pub fn signal(&self) -> Signal {
         self.signal.clone()
+    }
+
+    /// The separate capability for a latest-resource wake rather than a counted sequence.
+    #[must_use]
+    pub(crate) fn invalidation(&self) -> Invalidation {
+        self.invalidation.clone()
     }
 
     /// Refuses every queued-result decision after a retained producer or backlog failure.
@@ -217,7 +244,11 @@ impl Observation {
         self.ensure_complete()?;
         let event = match self.received.try_recv() {
             Ok(event) => Some(event?),
-            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Empty) => self
+                .invalidation
+                .pending
+                .swap(false, Ordering::AcqRel)
+                .then_some(Event::Changed),
             Err(TryRecvError::Disconnected) => {
                 return Err(io::Error::other("the observation producers disconnected"));
             }
@@ -298,5 +329,130 @@ impl Observation {
                 machine,
             },
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Event, Observation};
+
+    #[test]
+    fn a_resource_change_is_one_retained_wake_until_received() {
+        let observed = Observation::subscribe();
+        let resource = observed.invalidation();
+        for _change in 0..4096 {
+            resource.changed();
+        }
+        assert_eq!(
+            observed.pending().expect("one retained wake"),
+            Some(Event::Changed)
+        );
+        assert_eq!(observed.pending().expect("one acknowledgement"), None);
+        observed.signal().publish(Event::Completed);
+        observed.signal().publish(Event::Cancelled);
+        resource.changed();
+        assert_eq!(
+            observed.pending().expect("independent completion"),
+            Some(Event::Completed)
+        );
+        assert_eq!(
+            observed.pending().expect("independent cancellation"),
+            Some(Event::Cancelled)
+        );
+        assert_eq!(
+            observed.pending().expect("independent change"),
+            Some(Event::Changed)
+        );
+        assert_eq!(observed.pending().expect("every event is received"), None);
+    }
+
+    #[test]
+    fn resource_coalescing_preserves_first_refusal_and_counted_overflow() {
+        let observed = Observation::subscribe();
+        observed.invalidation().changed();
+        observed.signal().failed(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "the original native refusal",
+        ));
+        observed
+            .signal()
+            .failed(std::io::Error::other("a later refusal"));
+        observed.signal().publish(Event::Completed);
+        for _read in 0..2 {
+            let error = observed
+                .pending()
+                .expect_err("the first refusal remains sticky");
+            assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+            assert_eq!(error.to_string(), "the original native refusal");
+        }
+        let counted = Observation::subscribe();
+        for _event in 0..4096 {
+            counted.signal().publish(Event::Changed);
+            counted.invalidation().changed();
+        }
+        assert!(
+            counted
+                .pending()
+                .expect_err("counted evidence overflowed")
+                .to_string()
+                .contains("full")
+        );
+    }
+
+    #[test]
+    fn counted_capacity_remains_exactly_sixty_four_with_resource_wakes() {
+        let observed = Observation::subscribe();
+        let resource = observed.invalidation();
+        for _event in 0..64 {
+            observed.signal().publish(Event::Changed);
+            resource.changed();
+        }
+        for _event in 0..64 {
+            assert_eq!(
+                observed.pending().expect("every counted event"),
+                Some(Event::Changed)
+            );
+        }
+        assert_eq!(
+            observed.pending().expect("the separate resource wake"),
+            Some(Event::Changed)
+        );
+        assert_eq!(observed.pending().expect("no event was manufactured"), None);
+        for _event in 0..65 {
+            observed.signal().publish(Event::Changed);
+        }
+        for _read in 0..2 {
+            assert!(
+                observed
+                    .pending()
+                    .expect_err("the sixty-fifth counted event refuses")
+                    .to_string()
+                    .contains("full")
+            );
+        }
+    }
+
+    #[test]
+    fn every_counted_terminal_event_precedes_a_resource_wake() {
+        let observed = Observation::subscribe();
+        observed.invalidation().changed();
+        let terminal = [Event::Cancelled, Event::Completed, Event::Deadline];
+        for event in terminal {
+            observed.signal().publish(event);
+        }
+        for event in terminal {
+            assert_eq!(
+                observed.pending().expect("counted terminal priority"),
+                Some(event)
+            );
+        }
+        assert_eq!(
+            observed.pending().expect("resource remains pending"),
+            Some(Event::Changed)
+        );
+        assert_eq!(
+            observed.pending().expect("all events are accounted for"),
+            None
+        );
     }
 }
