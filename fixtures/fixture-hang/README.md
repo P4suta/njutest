@@ -19,7 +19,11 @@ process tree the runner kills are carried by tests that reach them nowhere
 else.
 
 `clamp_positive` is ordinary, and its test advances an explicitly injected clock once per activation when `FIXTURE_HANG_MARKER` names a directory and `FIXTURE_HANG_PAUSE_MS` says how far.
-`NJUTEST_TEST_CLOCK` names the event directory; supervision acknowledges each event before the child continues.
+`NJUTEST_TEST_CLOCK` names the event directory; each child atomically publishes its elapsed milliseconds under its actual process identifier.
+Before publishing an elapsed event, the child atomically offers its retained loopback acknowledgment listener as `<pid>.wake`.
+Supervision decides whether execution may continue, atomically publishes the identical bytes as `<pid>.ack`, and sends those bytes through that original listener.
+The child blocks on the native acknowledgment, confirms exact bytes and writer completion, and checks the unchanged file acknowledgment before continuing.
+No polling wait or host sleep advances this injected clock.
 That is the other half of the contract, and since a count took over the first half it is the only one that reaches the clock at all: a bound that expires once and not again is `inconclusive` rather than `waited`, because a loaded machine is a different machine from the one a bound was calibrated on.
 The serial retry is carried here now, and no longer by `count_to`, which ends at the allowance and is never asked twice.
 The fates below are the ones without the marker set, so the fixture's ordinary run stays ordinary; `crates/rust-mutants-cli/tests/toolchain_hang.rs` sets it and injects the clock.

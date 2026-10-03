@@ -3,6 +3,7 @@
 
 //! The tests of the fixture, one of which can be told to be slow exactly once per mutation, or slow and moving.
 
+use std::io::Read as _;
 use std::path::Path;
 
 /// Where a marker of "this mutation has already been slow once" is kept.
@@ -68,13 +69,44 @@ fn tick(milliseconds: u64, moving: bool) {
     }
     let pid = std::process::id();
     let path = Path::new(&directory).join(pid.to_string());
+    let pending = Path::new(&directory).join(format!("{pid}.next"));
     let acknowledged = Path::new(&directory).join(format!("{pid}.ack"));
+    let wake = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .expect("the original clock acknowledgment listener");
+    let endpoint = Path::new(&directory).join(format!("{pid}.wake"));
+    let offered = Path::new(&directory).join(format!("{pid}.wake.next"));
+    std::fs::write(
+        &offered,
+        wake.local_addr()
+            .expect("the original listener endpoint")
+            .to_string(),
+    )
+    .expect("the complete clock acknowledgment offer");
+    std::fs::rename(offered, endpoint).expect("the atomic clock acknowledgment offer");
     let value = milliseconds.to_string();
-    std::fs::write(path, &value).expect("the clock event");
-    loop {
-        if let Ok(read) = std::fs::read_to_string(&acknowledged) && read == value { break; }
-        std::thread::yield_now();
-    }
+    std::fs::write(&pending, &value).expect("the complete clock event");
+    std::fs::rename(pending, path).expect("the atomic clock event");
+    let (mut reply, _peer) = wake.accept().expect("the original clock acknowledgment");
+    let mut bytes = vec![0; value.len()];
+    reply
+        .read_exact(&mut bytes)
+        .expect("the complete accepted clock value");
+    let mut trailing = [0];
+    assert_eq!(
+        reply.read(&mut trailing).expect("the clock writer closes"),
+        0,
+        "the clock acknowledgment has no trailing bytes"
+    );
+    assert_eq!(
+        bytes,
+        value.as_bytes(),
+        "the exact elapsed event is accepted"
+    );
+    assert_eq!(
+        std::fs::read(acknowledged).expect("the published clock acknowledgment"),
+        value.as_bytes(),
+        "the native wake acknowledges the same atomically published event"
+    );
 }
 
 #[test]

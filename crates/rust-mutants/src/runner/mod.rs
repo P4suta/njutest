@@ -764,7 +764,7 @@ fn run_with_stall_candidate(
         named: AtomicBool::new(false),
         signal: observed.signal(),
     });
-    let mut running = match start(spec, program, &answered) {
+    let mut running = match start(spec, program, &answered, &cancel.clock) {
         Ok(started) => started,
         Err(Failed {
             error,
@@ -1141,7 +1141,12 @@ struct Failed {
 
 /// The first half of [`run`]: supervision, the pipes, the spawn, the reader threads, and adoption.
 /// On any failure the child, if any, is dead.
-fn start(spec: &Spec, program: &OsString, answered: &Arc<Answered>) -> Result<Started, Failed> {
+fn start(
+    spec: &Spec,
+    program: &OsString,
+    answered: &Arc<Answered>,
+    clock: &Clock,
+) -> Result<Started, Failed> {
     let failed = |error| Failed {
         error,
         output: Vec::new(),
@@ -1159,6 +1164,7 @@ fn start(spec: &Spec, program: &OsString, answered: &Arc<Answered>) -> Result<St
             source,
         })
     })?;
+    clock.configure(&mut command);
     let limit = match spec.output_limit {
         Some(asked) => asked,
         None => DEFAULT_OUTPUT_LIMIT,
@@ -2013,7 +2019,7 @@ impl Waiting<'_> {
             self.stops
                 .cancel
                 .clock
-                .acknowledged(id, sample.tick.as_deref())?;
+                .acknowledged(id, sample.tick.as_deref(), self.stops.waits)?;
             self.acknowledged = sample.tick;
         }
         let left = match (sample.remaining, sample.quiet) {

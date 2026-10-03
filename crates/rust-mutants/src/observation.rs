@@ -17,6 +17,14 @@ use serde::Serialize;
 /// The bounded backlog, whose overflow remains a sticky refusal for the entire subscription.
 const BACKLOG: usize = 64;
 
+/// The native macOS resource stream, without one descriptor for every observed file.
+#[cfg(target_os = "macos")]
+type ResourceWatcher = notify::FsEventWatcher;
+
+/// The native resource subscription on the other supported hosts.
+#[cfg(not(target_os = "macos"))]
+type ResourceWatcher = notify::RecommendedWatcher;
+
 /// The semantic deadline clock, independent of the executing host's wait measurement.
 pub trait Clock {
     /// The current monotonic point used to decide the semantic deadline.
@@ -196,7 +204,7 @@ pub struct Observation {
     received: Receiver<io::Result<Event>>,
     signal: Arc<Signal>,
     reader: thread::ThreadId,
-    watcher: Option<notify::RecommendedWatcher>,
+    watcher: Option<ResourceWatcher>,
 }
 
 impl std::fmt::Debug for Observation {
@@ -244,8 +252,8 @@ impl Observation {
         let signal = observed.invalidation();
         let root = std::fs::canonicalize(root)?;
         let generated: Vec<_> = excluded.iter().map(|name| root.join(name)).collect();
-        let mut watcher =
-            notify::recommended_watcher(move |event: notify::Result<notify::Event>| match event {
+        let mut watcher = ResourceWatcher::new(
+            move |event: notify::Result<notify::Event>| match event {
                 Ok(event) if event.kind.is_access() => {}
                 Ok(event)
                     if !event.paths.is_empty()
@@ -256,8 +264,10 @@ impl Observation {
                         }) => {}
                 Ok(_changed) => signal.changed(),
                 Err(source) => signal.failed(io::Error::other(source)),
-            })
-            .map_err(io::Error::other)?;
+            },
+            notify::Config::default(),
+        )
+        .map_err(io::Error::other)?;
         watcher
             .watch(
                 &root,

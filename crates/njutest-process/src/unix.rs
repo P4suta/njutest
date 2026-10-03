@@ -4,7 +4,6 @@
 //! POSIX supervision: a process group per child.
 
 use std::io;
-#[cfg(target_os = "macos")]
 use std::mem::size_of_val;
 use std::os::unix::process::CommandExt as _;
 use std::process::{Child, Command};
@@ -746,7 +745,7 @@ impl MemberExit {
         match rustix::process::pidfd_open(member.pid, rustix::process::PidfdFlags::empty()) {
             Ok(handle) => match linux_member(member.pid, leader)? {
                 Some(actual) if actual == member => Ok(Some(Self(handle))),
-                Some(_replaced) | None => Ok(None),
+                Some(_) | None => Ok(None),
             },
             Err(rustix::io::Errno::SRCH) => Ok(None),
             Err(source) => Err(source.into()),
@@ -949,8 +948,7 @@ pub(super) fn custody_peer(stream: &std::os::unix::net::UnixStream) -> io::Resul
     let (level, option, mut value) = (0, 2, [0_i32; 1]);
     #[cfg(target_os = "linux")]
     let (level, option, mut value) = (1, 17, [0_i32; 3]);
-    let mut length =
-        u32::try_from(std::mem::size_of_val(value.as_slice())).map_err(io::Error::other)?;
+    let mut length = u32::try_from(size_of_val(value.as_slice())).map_err(io::Error::other)?;
     #[expect(
         unsafe_code,
         reason = "getsockopt reads the native peer PID or ucred into its exact initialized bounded representation"
@@ -967,8 +965,7 @@ pub(super) fn custody_peer(stream: &std::os::unix::net::UnixStream) -> io::Resul
     if result != 0 {
         return Err(io::Error::last_os_error());
     }
-    if usize::try_from(length).map_err(io::Error::other)? != std::mem::size_of_val(value.as_slice())
-    {
+    if usize::try_from(length).map_err(io::Error::other)? != size_of_val(value.as_slice()) {
         return Err(io::Error::other("the custody peer identity was incomplete"));
     }
     Pid::from_raw(value[0]).ok_or_else(|| io::Error::other("the custody peer PID is invalid"))

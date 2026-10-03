@@ -3,8 +3,10 @@
 
 //! An explicitly injected supervision clock whose events belong to one child.
 
-use std::io;
+use std::io::{self, Write as _};
+use std::net::{Shutdown, SocketAddr, TcpStream};
 use std::path::PathBuf;
+use std::str::FromStr as _;
 use std::time::{Duration, Instant};
 
 /// The clock a supervisor reads, carried through cancellation children.
@@ -41,6 +43,15 @@ impl Clock {
         match &self.source {
             ClockSource::Wall => None,
             ClockSource::Events(directory) => Some(directory),
+        }
+    }
+
+    pub(super) fn configure(&self, command: &mut std::process::Command) {
+        match &self.source {
+            ClockSource::Wall => {}
+            ClockSource::Events(directory) => {
+                command.env("NJUTEST_TEST_CLOCK", directory);
+            }
         }
     }
 
@@ -104,13 +115,75 @@ impl Clock {
         Ok((advanced, Some(bytes)))
     }
 
-    pub(super) fn acknowledged(&self, pid: u32, value: Option<&[u8]>) -> io::Result<()> {
+    pub(super) fn acknowledged(
+        &self,
+        pid: u32,
+        value: Option<&[u8]>,
+        waits: &mut Vec<super::WaitNote>,
+    ) -> io::Result<()> {
         if let (ClockSource::Events(directory), Some(value)) = (&self.source, value) {
             let pending = directory.join(format!("{pid}.ack.next"));
             std::fs::write(&pending, value)?;
             std::fs::rename(pending, directory.join(format!("{pid}.ack")))?;
+            if let Some(endpoint) = Self::wake_endpoint(directory, pid)? {
+                let began = Instant::now();
+                let sent = Self::wake(endpoint, value);
+                let measured = super::measured_wait(
+                    pid,
+                    "bounded logical-clock acknowledgment to the published loopback listener",
+                    began,
+                );
+                match (sent, measured) {
+                    (Ok(()), Ok(note)) => waits.push(note),
+                    (Err(source), Ok(note)) => {
+                        waits.push(note);
+                        return Err(source);
+                    }
+                    (Ok(()), Err(source)) => return Err(source),
+                    (Err(delivery), Err(measurement)) => {
+                        return Err(io::Error::other(format!(
+                            "clock acknowledgment: {delivery}; wait measurement: {measurement}"
+                        )));
+                    }
+                }
+            }
         }
         Ok(())
+    }
+
+    fn wake_endpoint(directory: &std::path::Path, pid: u32) -> io::Result<Option<SocketAddr>> {
+        let bytes = match super::read_side_channel(&directory.join(format!("{pid}.wake"))) {
+            Ok(bytes) => bytes,
+            Err(missing) if missing.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(source) => return Err(source),
+        };
+        let endpoint = SocketAddr::from_str(std::str::from_utf8(&bytes).map_err(io::Error::other)?)
+            .map_err(io::Error::other)?;
+        if !endpoint.ip().is_loopback() || endpoint.port() == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "the logical clock wake is not an owned loopback listener",
+            ));
+        }
+        Ok(Some(endpoint))
+    }
+
+    fn wake(endpoint: SocketAddr, value: &[u8]) -> io::Result<()> {
+        let deadline = Instant::now()
+            .checked_add(super::REAPING_GRACE)
+            .ok_or_else(|| io::Error::other("the clock acknowledgment bound overflowed"))?;
+        let mut stream = TcpStream::connect_timeout(&endpoint, super::REAPING_GRACE)?;
+        let left = deadline
+            .checked_duration_since(Instant::now())
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "the owned logical clock acknowledgment did not complete",
+                )
+            })?;
+        stream.set_write_timeout(Some(left))?;
+        stream.write_all(value)?;
+        stream.shutdown(Shutdown::Write)
     }
 
     pub(super) fn finished(&self, pid: u32) -> io::Result<()> {
@@ -120,6 +193,9 @@ impl Clock {
                 pid.to_string(),
                 format!("{pid}.ack"),
                 format!("{pid}.ack.next"),
+                format!("{pid}.wake"),
+                format!("{pid}.wake.next"),
+                format!("{pid}.next"),
             ] {
                 let path = directory.join(name);
                 match std::fs::remove_file(&path) {

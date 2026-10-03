@@ -24,7 +24,7 @@ use rust_mutants::workspace::{OpenOptions, Workspace};
 /// The engine reads no configuration file, so a fixture's own `steps` does not reach here and the default of fifty million would apply.
 /// A hundred takes spend about 789ms on Windows against this two-second bound, a margin of two and a half that load closes; ten spend 129ms and do not.
 /// What settles the race is the cost of the count, not the length of the bound: a longer bound wins it by making every failure wait the bound out twice, which is the worst moment to make a suite slow to read (ADR 0023).
-fn prepared(fixture: &Fixture, env: &[(&str, String)]) -> Session {
+fn prepared(fixture: &Fixture, env: &[(&str, String)], cancel: &Cancel) -> Session {
     let mut vars: rust_mutants::vars::Variables = std::env::vars_os().collect();
     for (name, value) in env {
         vars.set(*name, value);
@@ -39,7 +39,7 @@ fn prepared(fixture: &Fixture, env: &[(&str, String)]) -> Session {
             offline: true,
             ..OpenOptions::default()
         },
-        &Cancel::new(),
+        cancel,
     )
     .expect("open");
     workspace
@@ -50,7 +50,7 @@ fn prepared(fixture: &Fixture, env: &[(&str, String)]) -> Session {
                 mutant_steps: Some(10),
                 ..PrepareOptions::new(Tier::Balanced)
             },
-            &Cancel::new(),
+            cancel,
         )
         .expect("prepare")
 }
@@ -91,6 +91,9 @@ fn a_mutation_that_cannot_end_is_stopped_by_a_count_and_one_that_is_merely_slow_
     let fixture = Fixture::copy("fixture-hang");
     let markers = fixture.temp().join("markers");
     std::fs::create_dir_all(&markers).expect("the marker directory");
+    let clock = fixture.temp().join("clock-events");
+    std::fs::create_dir_all(&clock).expect("the owned logical clock directory");
+    let cancel = Cancel::new().with_clock(rust_mutants::runner::Clock::events(clock));
     let session = prepared(
         &fixture,
         &[
@@ -103,9 +106,9 @@ fn a_mutation_that_cannot_end_is_stopped_by_a_count_and_one_that_is_merely_slow_
             ),
             ("FIXTURE_HANG_PAUSE_MS", "4000".to_owned()),
         ],
+        &cancel,
     );
     let quiet = Quiet::default();
-    let cancel = Cancel::new();
 
     let never = mutant(&session, "delete-compound-assignment", 13);
     let stopped = session
@@ -148,7 +151,7 @@ fn a_mutation_that_cannot_end_is_stopped_by_a_count_and_one_that_is_merely_slow_
 #[test]
 fn a_judgement_names_every_target_it_asked_and_what_each_answered() {
     let fixture = Fixture::copy("fixture-hang");
-    let session = prepared(&fixture, &[]);
+    let session = prepared(&fixture, &[], &Cancel::new());
     let ordinary = mutant(&session, "delete-compound-assignment", 12);
     let judged = session
         .judge(&Request::new(ordinary), &Quiet::default(), &Cancel::new())
@@ -182,7 +185,7 @@ fn a_judgement_names_every_target_it_asked_and_what_each_answered() {
 #[test]
 fn a_mutant_nothing_delays_is_judged_once() {
     let fixture = Fixture::copy("fixture-hang");
-    let session = prepared(&fixture, &[]);
+    let session = prepared(&fixture, &[], &Cancel::new());
     let ordinary = mutant(&session, "delete-compound-assignment", 12);
     let judged = session
         .judge(&Request::new(ordinary), &Quiet::default(), &Cancel::new())
@@ -227,7 +230,7 @@ impl rust_mutants::run::Observer for Watching {
 #[test]
 fn one_job_and_several_judge_a_catalog_the_same_way() {
     let fixture = Fixture::copy("fixture-simple");
-    let session = prepared(&fixture, &[]);
+    let session = prepared(&fixture, &[], &Cancel::new());
     let quiet = Quiet::default();
     let cancel = Cancel::new();
 

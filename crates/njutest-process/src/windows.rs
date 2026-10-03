@@ -433,7 +433,7 @@ impl Drop for Supervisor {
 }
 
 #[derive(Debug)]
-pub(crate) struct ExitHandle(std::os::windows::io::OwnedHandle);
+pub(crate) struct ExitHandle(OwnedHandle);
 
 impl ExitHandle {
     /// Cancels the raw child retained during a failed or unwinding preparation.

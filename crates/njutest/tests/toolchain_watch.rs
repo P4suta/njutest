@@ -318,6 +318,10 @@ fn a_run_told_where_to_look_for_a_toolchain_looks_there_and_nowhere_else() {
         vars: std::env::vars_os()
             .filter(|(name, _)| {
                 njutest_devkit::paths::same_name(name, std::ffi::OsStr::new("PATH"))
+                    || njutest_devkit::paths::same_name(
+                        name,
+                        std::ffi::OsStr::new("NJUTEST_TEST_CACHE_ROOT"),
+                    )
             })
             .collect(),
         cancel: Cancel::new(),
@@ -1901,6 +1905,8 @@ fn verified_in_process(
     }
     let scratch = dir.join("scratch");
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
+    let clock = dir.join("clock-events");
+    std::fs::create_dir_all(&clock).expect("the owned logical clock directory");
 
     let mut vars: rust_mutants::vars::Variables = njutest_devkit::paths::environment_for_a_run()
         .into_iter()
@@ -1915,7 +1921,7 @@ fn verified_in_process(
         temp_directory: scratch,
         program: std::path::PathBuf::from(env!("CARGO_BIN_EXE_njutest")),
         vars,
-        cancel: Cancel::new(),
+        cancel: Cancel::new().with_clock(rust_mutants::runner::Clock::events(clock)),
         terminal: njutest::presentation::Terminal::default(),
     };
     let mut args: Vec<OsString> = ["njutest", "verify", "--offline", "--locked", "--no-cache"]
