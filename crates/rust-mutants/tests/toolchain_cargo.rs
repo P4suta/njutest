@@ -239,11 +239,24 @@ fn an_identical_build_verifies_artifacts_without_starting_cargo() {
             })
             .collect::<Vec<_>>()
     );
-    let mut reusable = first.units.clone();
-    for unit in &mut reusable {
-        unit.fresh = true;
-    }
-    assert_eq!(reusable, second.units);
+    assert_eq!(first.provenance, rust_mutants::cargo::Provenance::Compiler);
+    assert_eq!(
+        second.provenance,
+        rust_mutants::cargo::Provenance::VerifiedReuse
+    );
+    assert_eq!(
+        first.units, second.units,
+        "verified reuse preserves the original raw Cargo unit freshness"
+    );
+    assert_eq!(
+        first.messages, second.messages,
+        "verified reuse preserves every original raw CompilerArtifact message"
+    );
+    assert_eq!(
+        first.observation(),
+        second.observation(),
+        "verified reuse retains the same actual CompilerObservation"
+    );
     assert!(trace.events().iter().any(|event| matches!(&event.payload,
         rust_mutants::trace::Payload::Note { note } if note.kind == "build-cache-hit" && note.detail.len() == 64
     )), "every hit names its input digest");

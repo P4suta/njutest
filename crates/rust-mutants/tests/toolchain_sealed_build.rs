@@ -262,13 +262,23 @@ fn an_identical_sealed_build_with_the_engines_linked_flags_hits_without_starting
     );
     let second = compile(&driver, &options)
         .expect("the identical sealed build compiles without Cargo or answers why not");
-    let mut reusable = first.units;
-    for unit in &mut reusable {
-        unit.fresh = true;
-    }
+    assert_eq!(first.provenance, rust_mutants::cargo::Provenance::Compiler);
     assert_eq!(
-        reusable, second.units,
-        "the verified hit answers with every unit fresh"
+        second.provenance,
+        rust_mutants::cargo::Provenance::VerifiedReuse
+    );
+    assert_eq!(
+        first.units, second.units,
+        "verified reuse preserves the original raw Cargo unit freshness"
+    );
+    assert_eq!(
+        first.messages, second.messages,
+        "verified reuse preserves every original raw CompilerArtifact message"
+    );
+    assert_eq!(
+        first.observation(),
+        second.observation(),
+        "verified reuse retains the same actual CompilerObservation"
     );
     let held = notes(&trace);
     let starts = cargo_builds(&trace);
