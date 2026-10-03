@@ -56,7 +56,7 @@ fn verify(fixture: &Fixture, extra: &[&str]) -> Output {
 
 #[cfg(unix)]
 #[test]
-fn repeated_runs_over_one_pool_reuse_verified_builds_except_doctest_capture() {
+fn repeated_runs_over_one_pool_reuse_every_verified_compilation_and_capture() {
     let fixture = fixture("fixture-simple");
     let mut environment = of(&fixture.root, &[]);
     let pool = tempfile::Builder::new()
@@ -67,6 +67,7 @@ fn repeated_runs_over_one_pool_reuse_verified_builds_except_doctest_capture() {
         .vars
         .set("NJUTEST_FIXTURE_BUILD_CACHE", pool.path());
     environment.vars.set("RUSTC_WRAPPER", "");
+    let mut runs = BTreeSet::new();
     for repetition in 0..2 {
         let output = asked(
             &environment,
@@ -76,6 +77,19 @@ fn repeated_runs_over_one_pool_reuse_verified_builds_except_doctest_capture() {
             output.status.code(),
             Some(2),
             "repetition {repetition} keeps its verdict: {output:?}"
+        );
+        let report = document(&fixture);
+        assert_eq!(
+            report["provenance"]["cached"], false,
+            "compilation reuse must not reuse the run's verdict: {report}"
+        );
+        assert_eq!(
+            report["provenance"]["source_run_id"],
+            serde_json::Value::Null
+        );
+        assert!(
+            runs.insert(text(&report["run_id"])),
+            "each actual verification publishes its own run: {report}"
         );
     }
     let report = document(&fixture);
@@ -117,18 +131,63 @@ fn repeated_runs_over_one_pool_reuse_verified_builds_except_doctest_capture() {
             .any(|note| note.kind == "fixture-build-uncacheable" && note.detail.contains("linker")),
         "the sealed build's own linked flags bind its platform object by content, so no flag class refuses it: {notes:?}"
     );
-    assert!(
-        notes.iter().any(|note| note.kind == "fixture-build-request"
-            && note.detail.contains("the doctests' capture build")),
-        "the one honest remaining start is attributed: {notes:?}"
+    let keyed = |kind: &str| {
+        let mut keys: Vec<_> = notes
+            .iter()
+            .filter(|note| note.kind == kind)
+            .map(|note| note.detail.as_str())
+            .collect();
+        keys.sort_unstable();
+        keys
+    };
+    for (requested, reused) in [
+        ("fixture-build-request", "build-cache-hit"),
+        ("capture-program-request", "capture-program-reuse"),
+    ] {
+        let requests = keyed(requested);
+        assert!(
+            !requests.is_empty()
+                && requests.iter().all(|key| {
+                    key.len() == 64 && key.bytes().all(|byte| byte.is_ascii_hexdigit())
+                }),
+            "every requested compilation/capture has a complete identity: {notes:?}"
+        );
+        assert_eq!(
+            requests,
+            keyed(reused),
+            "every complete request has exactly its reused original product: {notes:?}"
+        );
+    }
+    assert_eq!(
+        keyed("fixture-build-request"),
+        keyed("build-cache-bound"),
+        "every requested compilation/capture has its actual complete binding: {notes:?}"
     );
     let started = notes
         .iter()
         .filter(|note| note.kind == "fixture-cargo-build")
         .count();
     assert_eq!(
-        started, 1,
-        "only the doctests' capture build, which no content record answers, starts Cargo: {notes:?}"
+        started, 0,
+        "every original compilation/capture is reused without a physical Cargo start: {notes:?}"
+    );
+    let attempts = events
+        .iter()
+        .filter(|event| {
+            if let rust_mutants::trace::Payload::Exec { exec } = &event.payload {
+                let program = exec
+                    .argv
+                    .first()
+                    .expect("the actual execution has a program");
+                Path::new(program).file_stem() == Some(std::ffi::OsStr::new("cargo"))
+            } else {
+                false
+            }
+        })
+        .count();
+    assert_eq!(
+        attempts, 0,
+        "the reused build trace contains no physical or failed Cargo attempt: {events:?}"
     );
 }
 
