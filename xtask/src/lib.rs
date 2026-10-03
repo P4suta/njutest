@@ -10,6 +10,7 @@ pub mod adrs;
 pub mod bundle;
 mod cfg_conditions;
 pub mod claims;
+pub mod codeql;
 pub mod concurrency;
 pub mod confined;
 pub mod confirm;
@@ -100,6 +101,12 @@ enum Task {
         /// The command and its arguments, after `--`.
         #[arg(last = true, required = true)]
         command: Vec<OsString>,
+    },
+    /// An exclusively owned local security analysis with retained actual input identities.
+    Codeql {
+        /// The unchanged pinned bundle, query and native adapter.
+        #[command(flatten)]
+        options: codeql::Options,
     },
     /// Every pinned cargo plugin, selected by mise and answering through Cargo's complete external-subcommand protocol.
     Tools,
@@ -284,6 +291,13 @@ where
         Ok(cli) => cli,
         Err(answered) => return answered,
     };
+    if let Err(source) = prepare_work_inputs(process.environment) {
+        let failure = work::WorkError::Watch { source };
+        return after_output(
+            writeln!(stderr, "xtask: {}", failure.coded()),
+            ExitCode::FAILURE,
+        );
+    }
     let root = gates::workspace_root();
     let outcome = match cli.task {
         Task::Repository(gate) => gate.run(&root),
@@ -291,11 +305,43 @@ where
         Task::Slot { lane, command } => return slot(&lane, &command, process, stderr),
         Task::PrePush => return pre_push(process, &mut *streams.input, stderr),
         Task::Tidy { command } => return tidy(&command, process, stderr),
+        Task::Codeql { options } => {
+            return match codeql::run(&root, &options, process.environment) {
+                Ok(directory) => after_output(
+                    writeln!(
+                        stdout,
+                        "codeql: retained generation {}",
+                        directory.display()
+                    ),
+                    ExitCode::SUCCESS,
+                ),
+                Err(failure) => after_output(
+                    writeln!(stderr, "codeql: {}", failure.coded()),
+                    ExitCode::FAILURE,
+                ),
+            };
+        }
         Task::Tools => return tools(process, stderr),
         Task::Tool { arguments } => return tool(&arguments, process, stderr),
         Task::Execution(gate) => return run_execution(gate, &root, process, (stdout, stderr)),
     };
     report(outcome, stdout, stderr)
+}
+
+/// Establishes configured observation inputs before any gate or child command starts.
+fn prepare_work_inputs(environment: &environment::Environment) -> std::io::Result<()> {
+    if let Some(directory) = environment.value("NJUTEST_TEST_COST_DIR") {
+        std::fs::create_dir_all(directory).map_err(|source| {
+            std::io::Error::new(
+                source.kind(),
+                format!(
+                    "NJUTEST_TEST_COST_DIR {} cannot be prepared: {source}",
+                    Path::new(directory).display()
+                ),
+            )
+        })?;
+    }
+    Ok(())
 }
 
 /// Executes the selected Cargo command from the caller's directory under its inherited owner.

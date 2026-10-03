@@ -261,7 +261,7 @@ cleanup() { rm -rf -- "$install_root"; }
 trap cleanup EXIT HUP INT TERM
 export CARGO_TARGET_DIR="$install_root/target"
 target="${NJUTEST_BUNDLE_TARGET:-$(rustc --print host-tuple)}"
-cargo package --locked --workspace --no-verify --allow-dirty --exclude-lockfile
+cargo package --locked --workspace --allow-dirty --exclude-lockfile
 cargo xtask bundle --target "${target}" --out "$install_root/dist"
 cargo install --locked --path crates/njutest --root "$install_root" --target "${target}"
 cargo install --locked --path crates/rust-mutants-cli --root "$install_root" --target "${target}"

@@ -318,8 +318,12 @@ Unit-returning test names describe behavior and introduce no credential value.
 Both rules find their planted shapes before reading the workspace, including source behind another platform's `cfg`.
 See [ADR 0049](adr/0049-os-records-and-sensitive-values-carry-their-boundaries.md) for the causes, representations and sweep.
 
-`mise run security:codeql`, also required by `mise run check`, runs the unfiltered Rust `security-extended` query suite with the pinned official CodeQL 2.27.1 bundle and writes `target/codeql/results.sarif`.
-It fails on any finding and on a missing CLI, extractor or query pack; it downloads nothing as part of the check.
+`mise run security:codeql`, also required by `mise run check`, runs the unfiltered Rust `security-extended` query suite with the pinned official CodeQL 2.27.1 bundle.
+The typed xtask creates a fresh exclusive generation under `target/codeql` and writes its own `results.sarif`, retaining every successful or failed database.
+Each generation records its actual owner, executable version, source, complete bundle, query and user-configuration identities before and after execution.
+An invocation failure, changed input, incomplete result or any security finding fails the gate; the check downloads nothing.
+A later successful generation does not explain a previous checksum or import failure, whose original database and logs remain evidence.
+Failed-analysis diagnostic exports are diagnostics, not completed security-query results.
 `mise run setup:codeql` downloads and verifies the [official complete bundle](https://docs.github.com/en/code-security/how-tos/find-and-fix-code-vulnerabilities/scan-from-the-command-line/set-up-codeql-cli) once into the user's cache, before going offline.
 The versioned cache contains the CLI, Rust extractor and query packs; the check refuses a missing bundle or a different version and never installs or downloads a query.
 macOS ARM64 runs the official macOS x86-64 bundle through an already available Rosetta installation, as this campaign's Mac does; setup and execution fail explicitly where that interpreter is unavailable.

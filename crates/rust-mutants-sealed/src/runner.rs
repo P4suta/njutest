@@ -29,7 +29,7 @@ use crate::transcripts::Reuse;
 use crate::validate;
 
 /// The wasmtime every digest of this crate is taken under, which `Cargo.toml` pins exactly.
-pub const WASMTIME_VERSION: &str = "48.0.3";
+pub const WASMTIME_VERSION: &str = "48.0.4";
 
 /// The suffix naming a cache domain's preparation leases, as a sibling of the cache directory itself: Wasmtime's cache worker removes anything inside its directory it does not recognize.
 const PREPARATION_LEASES: &str = ".preparations-v1";

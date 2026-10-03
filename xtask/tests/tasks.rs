@@ -485,6 +485,11 @@ fn package_install_deny_and_typos_are_exact_local_ci_pairs() {
         );
     }
 
+    assert!(
+        !package.contains("--no-verify"),
+        "every workspace archive must be verified by Cargo: {package}"
+    );
+
     let deny = task("deny");
     assert!(
         deny.contains("cargo deny --locked --all-features check"),

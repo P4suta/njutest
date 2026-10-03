@@ -107,7 +107,7 @@ Poisoned alarm or interrupt ownership and a panicked alarm terminate with a diag
 
 ## Reusing compilation work
 
-The host uses Wasmtime 48.0.3's built-in content-addressed compiled-module cache across processes and runs.
+The host uses Wasmtime 48.0.4's built-in content-addressed compiled-module cache across processes and runs.
 Wasmtime keys compiled code by the complete module bytes, compiler and target settings, engine tunables and features, and its own version.
 The engine uses the safe `Module::new` interface; repository code neither deserializes native code nor uses `unsafe`.
 The cache lives in `wasmtime-modules-v1` beside the session's build cache, or under the explicitly supplied `NJUTEST_FIXTURE_BUILD_CACHE` root.

@@ -119,7 +119,7 @@ rust-mutants-sealed = { version = "0.1.0", path = "crates/rust-mutants-sealed" }
 rust-mutants-decision = { version = "0.1.0", path = "crates/rust-mutants-decision" }
 rust-mutants-adapt = { version = "0.1.0", path = "crates/rust-mutants-adapt" }
 njutest-macros = { version = "0.1.0", path = "crates/njutest-macros" }
-njutest-devkit = { version = "0.1.0", path = "crates/njutest-devkit" }
+njutest-devkit = { path = "crates/njutest-devkit" }
 njutest-fixture-tree = { version = "0.1.0", path = "crates/njutest-fixture-tree" }
 njutest-process = { version = "0.1.0", path = "crates/njutest-process" }
 
@@ -168,19 +168,19 @@ ratatui = "0.30"
 unicode-width = "0.2"
 shared_child = "1.1"
 signal-hook = { version = "0.4", default-features = false, features = ["iterator"] }
-notify = { version = "8.2", features = ["macos_kqueue"] }
+notify = { version = "8.2", features = ["macos_fsevent"] }
 globset = "0.4"
 walkdir = "2.5"
 cargo_metadata = "0.23"
 similar = { version = "3.2", default-features = false, features = ["text"] }
 # The sealed host: exact pins, because the compiled code, the fuel each operator costs, and the traps it raises are part of every transcript digest.
-wasmtime = { version = "=48.0.3", default-features = false, features = [
+wasmtime = { version = "=48.0.4", default-features = false, features = [
   "cache",
   "cranelift",
   "runtime",
   "std",
 ] }
-wasmparser = "=0.254.0"
+wasmparser = "=0.254.2"
 # The release archive, written by the tooling itself so every platform writes the same bytes.
 flate2 = "1.1"
 tar = { version = "0.4", default-features = false }
