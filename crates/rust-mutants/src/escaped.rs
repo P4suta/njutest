@@ -102,13 +102,14 @@ fn roots(dirs: &[&Path]) -> std::io::Result<Vec<PathBuf>> {
 /// Every process of this user beside the directory it works in, as `/proc` says.
 #[cfg(target_os = "linux")]
 fn working_directories() -> std::io::Result<Vec<(u32, PathBuf)>> {
+    use std::os::unix::fs::MetadataExt as _;
+
     let mut found = Vec::new();
     for listed in std::fs::read_dir("/proc")? {
         let listed = listed?;
         let Some(Ok(pid)) = listed.file_name().to_str().map(str::parse::<u32>) else {
             continue;
         };
-        use std::os::unix::fs::MetadataExt as _;
         let metadata = match listed.metadata() {
             Ok(metadata) => metadata,
             Err(source) if source.kind() == std::io::ErrorKind::NotFound => continue,
