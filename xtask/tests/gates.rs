@@ -868,3 +868,162 @@ fn a_gate_lists_the_tree_itself_rather_than_asking_a_file_system_monitor() -> Re
         Err(unread) => Err(unread.into()),
     }
 }
+
+#[test]
+fn every_reader_binding_keeps_its_actual_original_in_the_closed_repository_inventory()
+-> Result<(), TestError> {
+    gates::originals(&gates::workspace_root())?;
+    Ok(())
+}
+
+#[test]
+fn an_ignored_genuine_recording_is_missing_input_even_when_its_working_bytes_are_present()
+-> Result<(), TestError> {
+    let root = tempfile::tempdir()?;
+    xtask::repository::init(root.path())?;
+    let recording = "xtask/tests/testdata/reader-runs/reports-simple";
+    njutest_devkit::fixture::copy_tree(
+        &gates::workspace_root().join(recording),
+        &root.path().join(recording),
+    );
+    let failure = refused(
+        gates::originals(root.path()),
+        "ignored actual artifacts established a closed inventory",
+    )?;
+    require(
+        failure.to_string().contains("closed repository inventory"),
+        failure.to_string(),
+    )
+}
+
+fn complete_original_catalog() -> Result<tempfile::TempDir, TestError> {
+    let root = tempfile::tempdir()?;
+    xtask::repository::init(root.path())?;
+    let relative = "xtask/tests/testdata/reader-runs";
+    njutest_devkit::fixture::copy_tree(
+        &gates::workspace_root().join(relative),
+        &root.path().join(relative),
+    );
+    for path in xtask::repository::files(&gates::workspace_root())
+        .map_err(|error| TestError::Contract(error.to_string()))?
+        .into_iter()
+        .filter(|path| path.starts_with(&format!("{relative}/")))
+    {
+        retain_original_entry(root.path(), &path)?;
+    }
+    gates::originals(root.path())?;
+    Ok(root)
+}
+
+fn retain_original_entry(root: &std::path::Path, relative: &str) -> Result<(), TestError> {
+    let hashed = xtask::repository::git(root)
+        .args(["hash-object", "-w", "--"])
+        .arg(relative)
+        .output()?;
+    require(hashed.status.success(), "retain the actual original blob")?;
+    let digest = njutest_devkit::process::strict_utf8(&hashed.stdout);
+    let added = xtask::repository::git(root)
+        .args(["update-index", "--add", "--cacheinfo", "100644"])
+        .arg(digest.trim())
+        .arg(relative)
+        .status()?;
+    require(added.success(), "retain the actual original inventory")
+}
+
+#[test]
+fn a_missing_original_family_is_not_a_complete_catalog() -> Result<(), TestError> {
+    let root = complete_original_catalog()?;
+    std::fs::remove_dir_all(
+        root.path()
+            .join("xtask/tests/testdata/reader-runs/reports-coverage"),
+    )?;
+    refused(
+        gates::originals(root.path()),
+        "a missing reader family was accepted",
+    )?;
+    Ok(())
+}
+
+#[test]
+fn a_hidden_original_artifact_is_not_a_complete_recording() -> Result<(), TestError> {
+    let root = complete_original_catalog()?;
+    let relative = "xtask/tests/testdata/reader-runs/reports-simple/artifacts/hidden-input";
+    std::fs::write(root.path().join(relative), "a previously unnamed subject")?;
+    retain_original_entry(root.path(), relative)?;
+    refused(
+        gates::originals(root.path()),
+        "hidden original input was accepted",
+    )?;
+    Ok(())
+}
+
+#[test]
+fn an_unnamed_original_family_cannot_hide_a_subject_without_a_binding() -> Result<(), TestError> {
+    let root = complete_original_catalog()?;
+    let relative = "xtask/tests/testdata/reader-runs/unknown-family/artifacts/hidden-input";
+    std::fs::create_dir_all(
+        root.path()
+            .join("xtask/tests/testdata/reader-runs/unknown-family/artifacts"),
+    )?;
+    std::fs::write(root.path().join(relative), "a previously unnamed subject")?;
+    retain_original_entry(root.path(), relative)?;
+    refused(
+        gates::originals(root.path()),
+        "an unnamed family without a binding hid an original subject",
+    )?;
+    Ok(())
+}
+
+#[test]
+fn an_unknown_original_binding_field_cannot_change_its_scope() -> Result<(), TestError> {
+    let root = complete_original_catalog()?;
+    let binding = root
+        .path()
+        .join("xtask/tests/testdata/reader-runs/reports-simple/binding.json");
+    let mut value: serde_json::Value =
+        njutest_devkit::strictjson::decode_slice(&std::fs::read(&binding)?)
+            .map_err(|error| TestError::Contract(error.to_string()))?;
+    let fields = value
+        .as_object_mut()
+        .ok_or_else(|| TestError::Contract("the actual binding is an object".to_owned()))?;
+    fields.insert(
+        "unrequested_success".to_owned(),
+        serde_json::Value::Bool(true),
+    );
+    std::fs::write(
+        binding,
+        serde_json::to_vec(&value).map_err(|error| TestError::Contract(error.to_string()))?,
+    )?;
+    refused(
+        gates::originals(root.path()),
+        "an unknown binding field was accepted",
+    )?;
+    Ok(())
+}
+
+#[test]
+fn a_changed_original_source_inventory_is_not_its_producer_input() -> Result<(), TestError> {
+    let root = complete_original_catalog()?;
+    let inventory = root
+        .path()
+        .join("xtask/tests/testdata/reader-runs/reports-simple/original/source.json");
+    let mut value: serde_json::Value =
+        njutest_devkit::strictjson::decode_slice(&std::fs::read(&inventory)?)
+            .map_err(|error| TestError::Contract(error.to_string()))?;
+    let files = value
+        .get_mut("files")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            TestError::Contract("the actual source inventory is an object".to_owned())
+        })?;
+    files.remove("src/lib.rs");
+    std::fs::write(
+        inventory,
+        serde_json::to_vec(&value).map_err(|error| TestError::Contract(error.to_string()))?,
+    )?;
+    refused(
+        gates::originals(root.path()),
+        "a changed source inventory was accepted",
+    )?;
+    Ok(())
+}

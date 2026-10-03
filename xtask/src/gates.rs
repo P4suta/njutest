@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Arguments;
 use std::path::{Component, Path, PathBuf};
 
+mod originals;
 mod reach;
 pub mod tree;
 
@@ -68,6 +69,8 @@ pub(crate) enum RepositoryGate {
     Skipped,
     /// Every claim of `.rust-mutants.toml` names as many mutations as it says, asked of the engine's own locator.
     Claims,
+    /// Every retained reader binding names complete versioned original files rather than ignored working-tree artifacts.
+    Originals,
 }
 
 impl RepositoryGate {
@@ -88,6 +91,7 @@ impl RepositoryGate {
             Self::Tracked => tracked(root),
             Self::Skipped => skipped(root),
             Self::Claims => crate::claims::claims(root),
+            Self::Originals => originals(root),
         }
     }
 }
@@ -1830,6 +1834,14 @@ pub fn fixtures(root: &Path) -> Result<String, GateError> {
         problems.join("\n"),
         fixtures::RULE
     )))
+}
+
+/// Requires every original reader input, artifact and producer byte to belong to the closed repository inventory.
+///
+/// # Errors
+/// A binding member is ignored, missing, unreadable, unsafe or differs from its original digest.
+pub fn originals(root: &Path) -> Result<String, GateError> {
+    originals::held(root)
 }
 
 /// Version consistency between the workspace and the release manifest.

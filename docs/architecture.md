@@ -113,3 +113,11 @@ advisory_lock, environment, test_args, report, config
 ```
 
 Every seam is an argument ([ADR 0001](adr/0001-seam-policy.md)); the gate `cargo xtask devgates` refuses the alternative.
+
+Reader contracts retain an original product recording for each complete source and configuration rather than running the product again to read its output.
+Each binding preserves the actual producer command, exit, original source archive, report, trace and provenance bytes.
+The required repository gate independently reads the archive, compares every source digest and mode, checks the closed binding schema, and derives the complete retained file inventory.
+Missing families, ignored inputs, unknown fields and unnamed subjects remain refusals even when other recordings are complete.
+The seven reader families are `documents-baseline`, `explain-simple`, `projections-unicode`, `reports-coverage`, `reports-simple`, `run-report-alltiers` and `run-report-default`.
+Their reader controls pay for decoding, projections, schema checks and independent proof audits of those actual recordings.
+Compiler, product and CLI behavior controls continue to execute the live layer their claim requires.
