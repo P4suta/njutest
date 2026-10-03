@@ -1074,13 +1074,37 @@ impl Workspace {
         options: &OpenOptions,
         watch: &crate::runner::Watched<'_>,
     ) -> Result<Toolchain, crate::cargo::CargoError> {
-        Toolchain::locate(
+        let mut exclusions = options.exclude.clone();
+        if let Some(output) = &options.report_directory {
+            let path = crate::id::normalize_path(output).map_err(|source| {
+                crate::cargo::CargoError::new(
+                    crate::cargo::CargoErrorKind::CommandFailed,
+                    "an invalid observation output path",
+                )
+                .with_source(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    source,
+                ))
+            })?;
+            exclusions.push(Pattern::compile(&path).map_err(|source| {
+                crate::cargo::CargoError::new(
+                    crate::cargo::CargoErrorKind::CommandFailed,
+                    "an invalid observation output pattern",
+                )
+                .with_source(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    source,
+                ))
+            })?);
+        }
+        Toolchain::locate_with_exclusions(
             &LocateOptions {
                 cargo: options.cargo.clone(),
                 search_path: options.search_path.clone(),
                 env: Some(options.env.clone()),
             },
             root,
+            &exclusions,
             watch,
         )
     }
@@ -1256,13 +1280,9 @@ impl Workspace {
             Ok(root) => root,
             Err(_root_has_no_physical_spelling) => root.to_path_buf(),
         };
-        let toolchain = Toolchain::locate(
-            &LocateOptions {
-                cargo: options.cargo.clone(),
-                search_path: options.search_path.clone(),
-                env: Some(options.env.clone()),
-            },
+        let toolchain = Self::located(
             &root,
+            options,
             &crate::runner::Watched::new(cancel, &options.trace),
         )?;
         let build_dir = Self::reachable(&root, &toolchain, options, cancel)?;

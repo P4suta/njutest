@@ -12,13 +12,13 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use super::build_cache::toolchain::Identities;
-use super::build_cache::{File, configurations, file, tree};
+use super::build_cache::{File, configurations, file};
 use super::{CargoError, CargoErrorKind, LocateOptions, Toolchain, VersionInfo};
 use crate::runner::{Cancel, RunResult, Spec, Watch};
 use crate::trace::ExecRecord;
 use crate::vars::Variables;
 
-const SCHEMA: &str = "rust-mutants-tool-observation-v2";
+const SCHEMA: &str = "rust-mutants-tool-observation-v3";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -26,6 +26,7 @@ struct Inputs {
     files: BTreeMap<PathBuf, File>,
     programs: BTreeMap<PathBuf, Executable>,
     loader_digest: String,
+    exclusions: Vec<String>,
 }
 
 impl Inputs {
@@ -65,6 +66,12 @@ impl Inputs {
                 after: actual.loader_digest.clone(),
             });
         }
+        if self.exclusions != actual.exclusions {
+            changes.push(InputChange::Exclusions {
+                before: self.exclusions.clone(),
+                after: actual.exclusions.clone(),
+            });
+        }
         if changes.is_empty() {
             return Ok(());
         }
@@ -90,6 +97,10 @@ enum InputChange {
     Loader {
         before: String,
         after: String,
+    },
+    Exclusions {
+        before: Vec<String>,
+        after: Vec<String>,
     },
 }
 
@@ -261,12 +272,14 @@ struct Owner {
     lease: std::fs::File,
     initial: Inputs,
     identities: Identities,
+    exclusions: Vec<crate::glob::Pattern>,
 }
 
 impl Owner {
     fn acquire<W: Watch>(
         (options, dir): (&LocateOptions, &Path),
         (cargo, rustc): (&Path, &Path),
+        exclusions: &[crate::glob::Pattern],
         watch: &W,
     ) -> io::Result<Self> {
         let env = options
@@ -289,7 +302,11 @@ impl Owner {
         }
         let identities = Identities::empty();
         let sysroot = selecting_root((cargo, rustc), env, &identities)?;
-        let initial = observation_inputs((cargo, rustc, cargo), (&sysroot, dir, env), &identities)?;
+        let initial = observation_inputs(
+            (cargo, rustc, cargo),
+            (&sysroot, dir, env),
+            (&identities, exclusions),
+        )?;
         field(
             &mut digest,
             &serde_json::to_vec(&initial).map_err(io::Error::other)?,
@@ -317,6 +334,7 @@ impl Owner {
             lease,
             initial,
             identities,
+            exclusions: exclusions.to_vec(),
         })
     }
 
@@ -328,7 +346,8 @@ impl Owner {
         }
         let observed = Toolchain::observed(record.located, options.env.clone())
             .map_err(io::Error::other)?
-            .with_identities(&self.identities);
+            .with_identities(&self.identities)
+            .with_exclusions(&self.exclusions);
         record
             .inputs
             .verify(&observed_inputs(&observed, dir)?, dir)?;
@@ -362,7 +381,7 @@ impl Owner {
 
 /// Reuses only a complete, unchanged observation whose original actual processes remain retained.
 pub(super) fn locate<W: Watch>(
-    (options, dir): (&LocateOptions, &Path),
+    (options, dir, exclusions): (&LocateOptions, &Path, &[crate::glob::Pattern]),
     (cargo, rustc): (&Path, &Path),
     watch: &W,
     fresh: impl FnOnce(&dyn Watch) -> Result<Toolchain, CargoError>,
@@ -373,7 +392,7 @@ pub(super) fn locate<W: Watch>(
             "toolchain observation was cancelled",
         ));
     }
-    let owner = match Owner::acquire((options, dir), (cargo, rustc), watch) {
+    let owner = match Owner::acquire((options, dir), (cargo, rustc), exclusions, watch) {
         Ok(owner) => Some(owner),
         Err(source) => {
             watch.note("toolchain-observation-unbound", &source.to_string());
@@ -400,7 +419,7 @@ pub(super) fn locate<W: Watch>(
         processes: RefCell::new(Vec::new()),
         unavailable: RefCell::new(None),
     };
-    let toolchain = fresh(&collected)?;
+    let toolchain = fresh(&collected)?.with_exclusions(exclusions);
     let toolchain = match &owner {
         Some(owner) => toolchain.with_identities(&owner.identities),
         None => toolchain,
@@ -452,14 +471,14 @@ fn observed_inputs(toolchain: &Toolchain, dir: &Path) -> io::Result<Inputs> {
             toolchain.selecting().path(),
         ),
         (sysroot, dir, env),
-        toolchain.identities(),
+        (toolchain.identities(), toolchain.observation_exclusions()),
     )
 }
 
 fn observation_inputs(
     (cargo, rustc, selecting): (&Path, &Path, &Path),
     (sysroot, dir, env): (&Path, &Path, &Variables),
-    identities: &Identities,
+    (identities, exclusions): (&Identities, &[crate::glob::Pattern]),
 ) -> io::Result<Inputs> {
     let loaders = super::build_cache::loaders::Inputs::of(env, identities)?;
     super::build_cache::toolchain::environment(sysroot, rustc, env, &loaders)?;
@@ -483,7 +502,7 @@ fn observation_inputs(
         known_program(program, sysroot, env, identities)?;
         programs.insert(program.to_path_buf(), Executable::of(program, identities)?);
     }
-    tree(dir, &dir.join("target"), &mut inputs)?;
+    source_tree(dir, dir, exclusions, &mut inputs)?;
     configurations(dir, env, &mut inputs)?;
     for ancestor in dir.ancestors() {
         for name in ["rust-toolchain", "rust-toolchain.toml"] {
@@ -526,7 +545,45 @@ fn observation_inputs(
         files: inputs,
         programs,
         loader_digest: loaders.digest().to_owned(),
+        exclusions: exclusions.iter().map(ToString::to_string).collect(),
     })
+}
+
+fn source_tree(
+    root: &Path,
+    directory: &Path,
+    exclusions: &[crate::glob::Pattern],
+    inputs: &mut BTreeMap<PathBuf, File>,
+) -> io::Result<()> {
+    for entry in std::fs::read_dir(directory)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.starts_with(root.join("target")) {
+            continue;
+        }
+        let relative = path.strip_prefix(root).map_err(io::Error::other)?;
+        let components = relative
+            .components()
+            .map(|component| {
+                component
+                    .as_os_str()
+                    .to_str()
+                    .ok_or_else(|| io::Error::other("a non-textual source graph path"))
+            })
+            .collect::<io::Result<Vec<_>>>()?;
+        if exclusions
+            .iter()
+            .any(|pattern| pattern.matches(&components.join("/")))
+        {
+            continue;
+        }
+        if entry.file_type()?.is_dir() {
+            source_tree(root, &path, exclusions, inputs)?;
+        } else {
+            inputs.insert(path.clone(), file(&path)?);
+        }
+    }
+    Ok(())
 }
 
 fn known_program(
@@ -746,6 +803,7 @@ impl Response {
                 "an observation has no complete successful original process",
             ));
         }
+        validate_answer_inputs(self.role, &self.inputs, &answer.process.stdout)?;
         Ok(answer.process.stdout)
     }
 
@@ -757,6 +815,7 @@ impl Response {
             &response_inputs(spec, &self.toolchain, self.role)?,
             toolchain_root(spec).map_err(io::Error::other)?,
         )?;
+        validate_answer_inputs(self.role, &self.inputs, &result.stdout)?;
         let answer = Answer {
             schema: SCHEMA.to_owned(),
             key: self.key.clone(),
@@ -828,7 +887,7 @@ fn response_inputs(spec: &Spec, toolchain: &Toolchain, role: Role) -> io::Result
     let mut inputs = observation_inputs(
         (toolchain.cargo(), toolchain.rustc(), Path::new(program)),
         (sysroot, dir, env),
-        toolchain.identities(),
+        (toolchain.identities(), toolchain.observation_exclusions()),
     )?;
     for argument in &spec.argv {
         let path = Path::new(argument);
@@ -852,6 +911,32 @@ fn response_inputs(spec: &Spec, toolchain: &Toolchain, role: Role) -> io::Result
         ));
     }
     Ok(inputs)
+}
+
+fn validate_answer_inputs(role: Role, inputs: &Inputs, stdout: &[u8]) -> io::Result<()> {
+    match role {
+        Role::Metadata => {
+            let metadata: super::Metadata =
+                crate::strictjson::decode_slice(stdout).map_err(io::Error::other)?;
+            for package in &metadata.packages {
+                for path in std::iter::once(package.manifest_path.as_path()).chain(
+                    package
+                        .targets
+                        .iter()
+                        .map(|target| target.src_path.as_path()),
+                ) {
+                    if !inputs.files.contains_key(path) {
+                        return Err(io::Error::other(format!(
+                            "metadata read outside its owned source graph: {}",
+                            path.display()
+                        )));
+                    }
+                }
+            }
+        }
+        Role::CargoBanner | Role::RustcCfg => {}
+    }
+    Ok(())
 }
 
 /// Obtains a typed reusable observation or records the complete actual command that answered it.

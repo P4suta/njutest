@@ -37,6 +37,7 @@ pub struct Toolchain {
     rustc_version: VersionInfo,
     env: Option<crate::vars::Variables>,
     identities: super::build_cache::toolchain::Identities,
+    observation_exclusions: Vec<crate::glob::Pattern>,
 }
 
 impl Toolchain {
@@ -50,6 +51,15 @@ impl Toolchain {
         dir: &Path,
         watch: &W,
     ) -> Result<Self, CargoError> {
+        Self::locate_with_exclusions(options, dir, &[], watch)
+    }
+
+    pub(crate) fn locate_with_exclusions<W: crate::runner::Watch>(
+        options: &LocateOptions,
+        dir: &Path,
+        exclusions: &[crate::glob::Pattern],
+        watch: &W,
+    ) -> Result<Self, CargoError> {
         let name = match &options.cargo {
             Some(cargo) => cargo.clone(),
             None => PathBuf::from("cargo"),
@@ -59,13 +69,18 @@ impl Toolchain {
             Some(rustc) => rustc,
             None => resolve_executable(Path::new("rustc"), options.search_path.as_deref())?,
         };
-        super::observed::locate((options, dir), (&cargo, &rustc), watch, |observed| {
-            Self::fresh(
-                (options, dir, &name),
-                (cargo.clone(), rustc.clone()),
-                observed,
-            )
-        })
+        super::observed::locate(
+            (options, dir, exclusions),
+            (&cargo, &rustc),
+            watch,
+            |observed| {
+                Self::fresh(
+                    (options, dir, &name),
+                    (cargo.clone(), rustc.clone()),
+                    observed,
+                )
+            },
+        )
     }
 
     fn fresh<W: crate::runner::Watch + ?Sized>(
@@ -105,6 +120,7 @@ impl Toolchain {
             rustc_version,
             env,
             identities: super::build_cache::toolchain::Identities::empty(),
+            observation_exclusions: Vec::new(),
         })
     }
 
@@ -127,6 +143,7 @@ impl Toolchain {
             rustc_version: located.rustc_version,
             env,
             identities: super::build_cache::toolchain::Identities::empty(),
+            observation_exclusions: Vec::new(),
         })
     }
 
@@ -226,6 +243,15 @@ impl Toolchain {
     ) -> Self {
         self.identities = identities.clone();
         self
+    }
+
+    pub(super) fn with_exclusions(mut self, exclusions: &[crate::glob::Pattern]) -> Self {
+        self.observation_exclusions = exclusions.to_vec();
+        self
+    }
+
+    pub(super) fn observation_exclusions(&self) -> &[crate::glob::Pattern] {
+        &self.observation_exclusions
     }
 
     /// The environment the tests are given, with this toolchain's own directory first on its search path where a bare `cargo` from `dir` would answer with another toolchain or not at all, and what it said that made it so.
