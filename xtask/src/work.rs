@@ -382,10 +382,74 @@ pub fn run<F>(
 where
     F: FnOnce(u32) -> std::io::Result<()>,
 {
+    run_with_custody(
+        Request {
+            command,
+            bound,
+            stops,
+            custody: Custody::Direct,
+        },
+        started,
+    )
+}
+
+/// The actual command, semantic bounds and one consumed native custody transition.
+#[derive(Debug)]
+pub struct Request<'run, 'bound> {
+    /// The exact configured command that is launched once.
+    pub command: &'run mut Command,
+    /// The original semantic deadline and progress observation.
+    pub bound: Option<&'run mut Bound<'bound>>,
+    /// The original retained cancellation and failure events.
+    pub stops: &'run Stops,
+    /// The actual original recipient and output endpoints consumed at group completion.
+    pub custody: Custody,
+}
+
+/// The actual recipient that retains a naturally completed producer scope.
+#[derive(Debug)]
+pub enum Custody {
+    /// Every member settles before this command returns.
+    Direct,
+    /// The original native launching session owns the complete nested scope.
+    #[cfg(unix)]
+    Original {
+        /// The actual acknowledged original launching session.
+        parent: njutest_process::ParentSession,
+        /// The original standard-output descriptor retained before its reader starts.
+        stdout: njutest_process::OutputEndpoint,
+        /// The original standard-error descriptor retained before its reader starts.
+        stderr: njutest_process::OutputEndpoint,
+    },
+}
+
+/// Runs with an explicitly acknowledged original native recipient for natural completion.
+///
+/// # Errors
+/// Every original observation, recipient, cancellation and cleanup refusal remains reported.
+pub fn run_with_custody<F>(request: Request<'_, '_>, started: F) -> Result<Ended, WorkError>
+where
+    F: FnOnce(u32) -> std::io::Result<()>,
+{
+    let Request {
+        command,
+        bound,
+        stops,
+        custody,
+    } = request;
     std::thread::scope(|scope| {
         let observation = crate::observation::Observation::subscribe();
         let subscription = stops.subscribe(&observation);
         let mut group = Group::launch(command)?;
+        match &custody {
+            Custody::Direct => {}
+            #[cfg(unix)]
+            Custody::Original { .. } => {
+                command
+                    .stdout(std::process::Stdio::inherit())
+                    .stderr(std::process::Stdio::inherit());
+            }
+        }
         let completion = Arc::new(Completion::default());
         let waiter = ProcessWaiter::launch(
             scope,
@@ -397,7 +461,7 @@ where
         let watched = started(cleanup.group.leader()?)
             .map_err(|source| WorkError::Watch { source })
             .and_then(|()| decided(&completion, &observation, bound, stops));
-        let stopped = cleanup.group.stop(&completion, stops);
+        let stopped = cleanup.group.close(&watched, stops, custody);
         let joined = waiter.join();
         let reaped = cleanup.group.reap();
         drop(subscription);
@@ -662,16 +726,94 @@ impl Group {
             })
     }
 
-    fn stop(&mut self, _completion: &Completion, stops: &Stops) -> Result<(), WorkError> {
+    fn close(
+        &mut self,
+        watched: &Result<Option<Ended>, WorkError>,
+        stops: &Stops,
+        custody: Custody,
+    ) -> Result<(), WorkError> {
+        match custody {
+            Custody::Direct => self.stop(stops),
+            #[cfg(unix)]
+            Custody::Original {
+                parent,
+                stdout,
+                stderr,
+            } => {
+                let outcome = if matches!(watched, Ok(None)) && stops.raised().is_none() {
+                    stops.failed()?;
+                    let began = Instant::now();
+                    let deadline = began
+                        .checked_add(njutest_process::REAPING_GRACE)
+                        .ok_or_else(|| WorkError::Watch {
+                            source: std::io::Error::other("the natural output backstop overflowed"),
+                        })?;
+                    let mut attempts = 0_u64;
+                    let closed = stdout.closed(deadline, &mut attempts).and_then(|first| {
+                        if first {
+                            stderr.closed(deadline, &mut attempts)
+                        } else {
+                            Ok(false)
+                        }
+                    });
+                    self.note(
+                        stops,
+                        began,
+                        &format!("natural-independent-output-eof; observation-calls={attempts}"),
+                    )?;
+                    stops.failed()?;
+                    if closed.map_err(|source| WorkError::Watch { source })?
+                        && stops.raised().is_none()
+                    {
+                        self.release(&parent)
+                    } else {
+                        self.stop(stops)
+                    }
+                } else {
+                    self.stop(stops)
+                };
+                drop(parent);
+                drop(stdout);
+                drop(stderr);
+                outcome
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    fn release(&mut self, parent: &njutest_process::ParentSession) -> Result<(), WorkError> {
+        self.child
+            .as_mut()
+            .ok_or_else(|| WorkError::Watch {
+                source: std::io::Error::other(
+                    "the original producer was consumed before custody transfer",
+                ),
+            })?
+            .release_to_parent(parent)
+            .map(|_status| ())
+            .map_err(|source| WorkError::Watch { source })
+    }
+
+    fn stop(&mut self, stops: &Stops) -> Result<(), WorkError> {
         let began = Instant::now();
         let leader = self.leader()?;
         let child = self.child.as_mut().ok_or_else(|| WorkError::Watch {
             source: std::io::Error::other("the process owner was consumed before settlement"),
         })?;
         let settled = child.stop_with_grace(GRACE);
+        Self::note_for(stops, began, leader, "owned-group-exit-and-leader-reap")?;
+        settled.map_err(|source| WorkError::Watch { source })
+    }
+
+    #[cfg(unix)]
+    fn note(&self, stops: &Stops, began: Instant, cause: &str) -> Result<(), WorkError> {
+        Self::note_for(stops, began, self.leader()?, cause)
+    }
+
+    fn note_for(stops: &Stops, began: Instant, leader: u32, cause: &str) -> Result<(), WorkError> {
         stops.record(crate::observation::WaitNote {
             owner: format!("process-group:{leader}"),
-            cause: "owned-group-exit-and-leader-reap".to_owned(),
+            cause: cause.to_owned(),
             elapsed_ns: u64::try_from(began.elapsed().as_nanos()).map_err(|source| {
                 WorkError::Watch {
                     source: std::io::Error::other(source),
@@ -684,7 +826,7 @@ impl Group {
                     .get(),
             },
         });
-        settled.map_err(|source| WorkError::Watch { source })
+        Ok(())
     }
 
     fn reap(&mut self) -> Result<ExitStatus, WorkError> {
@@ -858,9 +1000,8 @@ pub(crate) fn signal_group(group: &GroupAuthority, sent: Sent) -> Result<(), Wor
             others = Others::Somebody;
         }
         match actual {
-            Delivered::Sent | Delivered::Gone => {}
             Delivered::Refused if delivered != Delivered::Failed => delivered = Delivered::Refused,
-            Delivered::Refused => {}
+            Delivered::Sent | Delivered::Gone | Delivered::Refused => {}
             Delivered::Failed => delivered = Delivered::Failed,
         }
         if let Err(source) = answer {

@@ -18,6 +18,20 @@ use crate::work::{Bound, Ended, Stops, WorkError};
 mod commandwork;
 mod hostcost;
 
+/// The actual cleanup recipient selected before any nested command can start.
+#[derive(Debug)]
+#[cfg_attr(not(unix), derive(Clone, Copy))]
+pub(crate) enum Recipient {
+    /// The existing command runner settles every producer itself.
+    Direct,
+    /// The acknowledged original native session retains naturally completed nested groups.
+    #[cfg(unix)]
+    Original {
+        /// The verified original session and retained launching parent.
+        parent: njutest_process::ParentSession,
+    },
+}
+
 /// The actual destination of both child streams.
 #[derive(Debug)]
 pub(crate) enum Output {
@@ -54,6 +68,26 @@ where
     F: FnOnce(u32) -> std::io::Result<()>,
 {
     commandwork::run(request, started)
+}
+
+/// Verifies the inherited original recipient before slot metadata or work can start.
+pub(crate) fn session_recipient(
+    environment: &Environment,
+    stops: &Stops,
+) -> std::io::Result<Recipient> {
+    commandwork::recipient(environment, stops)
+}
+
+/// Runs with the actual native recipient already admitted by its original slot caller.
+pub(crate) fn run_with_recipient<F>(
+    request: Request<'_, '_>,
+    started: F,
+    recipient: Recipient,
+) -> Result<Ended, WorkError>
+where
+    F: FnOnce(u32) -> std::io::Result<()>,
+{
+    commandwork::run_with_recipient(request, started, recipient)
 }
 
 pub(crate) fn capture(

@@ -41,10 +41,18 @@ pub fn configure_reader(reader: &io::PipeReader) -> io::Result<()> {
 }
 
 /// Owns the process group of one child.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Scope {
+    Group,
+    Session,
+}
+
 #[derive(Debug)]
 pub(crate) struct Supervisor {
     /// The group id, which is the child's pid: a new group has the child as its leader.
     pgid: Option<Pid>,
+    scope: Scope,
+    original_session: Pid,
     retained: std::sync::Mutex<Vec<(Member, MemberExit)>>,
 }
 
@@ -62,7 +70,6 @@ impl Membership {
 
 #[expect(
     clippy::unnecessary_wraps,
-    clippy::unused_self,
     reason = "the same signatures as the Windows supervisor, which can fail and holds a handle"
 )]
 impl Supervisor {
@@ -70,17 +77,43 @@ impl Supervisor {
     ///
     /// # Errors
     /// The operating system refused this owned process transition.
-    pub(super) const fn new() -> io::Result<Self> {
+    pub(super) fn new() -> io::Result<Self> {
         Ok(Self {
             pgid: None,
+            scope: Scope::Group,
+            original_session: rustix::process::getsid(None)?,
             retained: std::sync::Mutex::new(Vec::new()),
         })
+    }
+
+    pub(super) fn session() -> io::Result<Self> {
+        let mut prepared = Self::new()?;
+        prepared.scope = Scope::Session;
+        Ok(prepared)
     }
 
     /// Asks the kernel to put the child in a new process group of its own.
     /// Descendants inherit that group unless they deliberately leave it.
     pub(super) fn configure(&self, command: &mut Command) {
-        command.process_group(0);
+        match self.scope {
+            Scope::Group => {
+                command.process_group(0);
+            }
+            Scope::Session => {
+                command.process_group(rustix::process::getpgrp().as_raw_nonzero().get());
+                #[expect(
+                    unsafe_code,
+                    reason = "the pre-exec closure calls only the async-signal-safe setsid syscall before child code can run"
+                )]
+                unsafe {
+                    command.pre_exec(|| {
+                        rustix::process::setsid()
+                            .map(|_session| ())
+                            .map_err(Into::into)
+                    });
+                }
+            }
+        }
     }
 
     /// Records the group id.
@@ -93,6 +126,29 @@ impl Supervisor {
         let pgid =
             Pid::from_raw(raw).ok_or_else(|| io::Error::other("invalid owned process-group id"))?;
         self.pgid = Some(pgid);
+        if self.scope == Scope::Session {
+            self.original_session = pgid;
+            match rustix::process::getsid(Some(pgid)) {
+                Ok(actual) if actual == pgid => {}
+                Ok(actual) => {
+                    return Err(io::Error::other(format!(
+                        "the original leader acquired session {} instead of {}",
+                        actual.as_raw_nonzero(),
+                        pgid.as_raw_nonzero()
+                    )));
+                }
+                Err(rustix::io::Errno::SRCH) => {
+                    use std::os::unix::process::ExitStatusExt as _;
+                    let status = ExitHandle::status(child)?;
+                    if status.code().is_none() && status.signal().is_none() {
+                        return Err(io::Error::other(format!(
+                            "the prepared native session has no supported terminal status: {status}"
+                        )));
+                    }
+                }
+                Err(source) => return Err(source.into()),
+            }
+        }
         Ok(())
     }
 
@@ -133,6 +189,9 @@ impl Supervisor {
         let Some(leader) = self.pgid else {
             return Ok(());
         };
+        if self.scope == Scope::Session {
+            return self.settle_session(leader, leader_state);
+        }
         let deadline = Instant::now()
             .checked_add(super::REAPING_GRACE)
             .ok_or_else(|| {
@@ -166,6 +225,148 @@ impl Supervisor {
             cancelled = true;
             for event in events {
                 event.wait(deadline)?;
+            }
+        }
+    }
+
+    pub(super) const fn original_session(&self) -> Pid {
+        self.original_session
+    }
+
+    pub(super) fn settle_except_named(&self, named: &super::ForeignProcess) -> io::Result<()> {
+        if self.scope != Scope::Group {
+            return Err(io::Error::other(
+                "a named member cannot take an original session",
+            ));
+        }
+        let leader = self
+            .pgid
+            .ok_or_else(|| io::Error::other("the original group has no leader"))?;
+        if !self
+            .retained
+            .lock()
+            .map_err(|source| io::Error::other(source.to_string()))?
+            .is_empty()
+        {
+            return Err(io::Error::other(
+                "prior group cancellation prevents a named transfer",
+            ));
+        }
+        let session = self.original_session;
+        Self::confirm_named(named, leader, session)?;
+        let deadline = Instant::now()
+            .checked_add(super::REAPING_GRACE)
+            .ok_or_else(|| io::Error::other("the non-transferred member bound overflowed"))?;
+        loop {
+            if Instant::now() >= deadline {
+                return Err(member_timeout());
+            }
+            let mut others = Vec::new();
+            for observed in group_members(leader)? {
+                let raw =
+                    u32::try_from(observed.pid.as_raw_nonzero().get()).map_err(io::Error::other)?;
+                if let Some(member) = super::ForeignProcess::retain(raw)? {
+                    if member.identity() == named.identity() {
+                        continue;
+                    }
+                    if rustix::process::getpgid(Some(observed.pid))? == leader
+                        && rustix::process::getsid(Some(observed.pid))? == session
+                    {
+                        others.push(member);
+                    }
+                }
+            }
+            if others.is_empty() {
+                return Self::confirm_named(named, leader, session);
+            }
+            let mut failures = Vec::new();
+            for member in &others {
+                if let Err(source) = member.signal(super::GroupStop::Kill) {
+                    failures.push(format!("{}: {source}", member.identity().token()));
+                }
+            }
+            for member in others {
+                let left = deadline
+                    .checked_duration_since(Instant::now())
+                    .ok_or_else(member_timeout)?;
+                match member.wait(Some(left)) {
+                    Ok(true) => {}
+                    Ok(false) => failures.push(format!(
+                        "{}: no non-transferred exit",
+                        member.identity().token()
+                    )),
+                    Err(source) => {
+                        failures.push(format!("{}: {source}", member.identity().token()));
+                    }
+                }
+            }
+            if !failures.is_empty() {
+                return Err(io::Error::other(failures.join("; ")));
+            }
+        }
+    }
+
+    fn confirm_named(named: &super::ForeignProcess, leader: Pid, session: Pid) -> io::Result<()> {
+        let raw = i32::try_from(named.identity().pid()).map_err(io::Error::other)?;
+        let pid = Pid::from_raw(raw)
+            .ok_or_else(|| io::Error::other("the named member has no native PID"))?;
+        if pid == leader
+            || named.wait(Some(std::time::Duration::ZERO))?
+            || rustix::process::getpgid(Some(pid))? != leader
+            || rustix::process::getsid(Some(pid))? != session
+        {
+            return Err(io::Error::other(
+                "the live named member does not belong to the original group and session",
+            ));
+        }
+        let actual = super::ForeignProcess::retain(named.identity().pid())?
+            .ok_or_else(|| io::Error::other("the named member generation ended during transfer"))?;
+        if actual.identity() != named.identity() {
+            return Err(io::Error::other(
+                "the named member generation changed during transfer",
+            ));
+        }
+        Ok(())
+    }
+
+    fn settle_session(&self, session: Pid, leader: LeaderObservation) -> io::Result<()> {
+        let deadline = Instant::now()
+            .checked_add(super::REAPING_GRACE)
+            .ok_or_else(|| io::Error::other("the original session completion bound overflowed"))?;
+        if leader == LeaderObservation::Running {
+            self.signal(Signal::KILL)?;
+        }
+        loop {
+            let members = retained_session_members(session)?;
+            if members.is_empty() {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(member_timeout());
+            }
+            let mut failures = Vec::new();
+            for member in &members {
+                if let Err(source) = member.signal(super::GroupStop::Kill) {
+                    failures.push(format!("{}: {source}", member.identity().token()));
+                }
+            }
+            for member in members {
+                let left = deadline
+                    .checked_duration_since(Instant::now())
+                    .ok_or_else(member_timeout)?;
+                match member.wait(Some(left)) {
+                    Ok(true) => {}
+                    Ok(false) => failures.push(format!(
+                        "{}: no native member exit",
+                        member.identity().token()
+                    )),
+                    Err(source) => {
+                        failures.push(format!("{}: {source}", member.identity().token()));
+                    }
+                }
+            }
+            if !failures.is_empty() {
+                return Err(io::Error::other(failures.join("; ")));
             }
         }
     }
@@ -649,6 +850,146 @@ fn member_timeout() -> io::Error {
     )
 }
 
+fn retained_session_members(session: Pid) -> io::Result<Vec<super::ForeignProcess>> {
+    let mut members = Vec::new();
+    let pids = native_pids()?;
+    if !pids.contains(&session) {
+        return Err(io::Error::other(
+            "the native inventory omitted its retained session leader",
+        ));
+    }
+    for pid in pids {
+        if pid == session {
+            continue;
+        }
+        match rustix::process::getsid(Some(pid)) {
+            Ok(actual) if actual == session => {}
+            Ok(_) | Err(rustix::io::Errno::SRCH) => continue,
+            Err(source) => return Err(source.into()),
+        }
+        let raw = u32::try_from(pid.as_raw_nonzero().get()).map_err(io::Error::other)?;
+        let Some(member) = super::ForeignProcess::retain(raw)? else {
+            continue;
+        };
+        if member.wait(Some(std::time::Duration::ZERO))? {
+            continue;
+        }
+        match rustix::process::getsid(Some(pid)) {
+            Ok(actual) if actual == session => members.push(member),
+            Ok(_) | Err(rustix::io::Errno::SRCH) => {}
+            Err(source) => return Err(source.into()),
+        }
+    }
+    Ok(members)
+}
+
+#[cfg(target_os = "linux")]
+fn native_pids() -> io::Result<Vec<Pid>> {
+    let mut pids = Vec::new();
+    for entry in std::fs::read_dir("/proc")? {
+        let entry = entry?;
+        let filename = entry.file_name();
+        let name = filename.to_str().ok_or_else(|| {
+            io::Error::other("the native process inventory contains a non-text entry")
+        })?;
+        if !name.is_empty() && name.bytes().all(|byte| byte.is_ascii_digit()) {
+            let raw = name.parse::<i32>().map_err(io::Error::other)?;
+            let pid = Pid::from_raw(raw).ok_or_else(|| {
+                io::Error::other("the native process inventory contains an invalid numeric PID")
+            })?;
+            pids.push(pid);
+        }
+    }
+    Ok(pids)
+}
+
+#[cfg(target_os = "macos")]
+fn native_pids() -> io::Result<Vec<Pid>> {
+    #[expect(
+        unsafe_code,
+        reason = "proc_listallpids sizes the complete native process inventory without a buffer"
+    )]
+    let estimate = unsafe { proc_listallpids(std::ptr::null_mut(), 0) };
+    if estimate <= 0 {
+        return Err(io::Error::other(
+            "the native process inventory returned no capacity",
+        ));
+    }
+    let mut capacity = usize::try_from(estimate).map_err(io::Error::other)?;
+    loop {
+        let mut values = vec![0_i32; capacity];
+        let bytes = i32::try_from(size_of_val(values.as_slice())).map_err(io::Error::other)?;
+        #[expect(
+            unsafe_code,
+            reason = "proc_listallpids fills its bounded initialized native PID inventory"
+        )]
+        let returned = unsafe { proc_listallpids(values.as_mut_ptr().cast(), bytes) };
+        let returned = usize::try_from(returned).map_err(io::Error::other)?;
+        if returned < capacity {
+            let mut pids = Vec::new();
+            for raw in values.into_iter().take(returned) {
+                if raw != 0 {
+                    pids.push(Pid::from_raw(raw).ok_or_else(|| {
+                        io::Error::other("the native process inventory contained an invalid PID")
+                    })?);
+                }
+            }
+            return Ok(pids);
+        }
+        capacity = capacity
+            .checked_mul(2)
+            .ok_or_else(|| io::Error::other("the native PID inventory capacity overflowed"))?;
+    }
+}
+
+pub(super) fn custody_peer(stream: &std::os::unix::net::UnixStream) -> io::Result<Pid> {
+    use std::os::fd::AsRawFd as _;
+
+    #[cfg(target_os = "macos")]
+    let (level, option, mut value) = (0, 2, [0_i32; 1]);
+    #[cfg(target_os = "linux")]
+    let (level, option, mut value) = (1, 17, [0_i32; 3]);
+    let mut length =
+        u32::try_from(std::mem::size_of_val(value.as_slice())).map_err(io::Error::other)?;
+    #[expect(
+        unsafe_code,
+        reason = "getsockopt reads the native peer PID or ucred into its exact initialized bounded representation"
+    )]
+    let result = unsafe {
+        getsockopt(
+            stream.as_raw_fd(),
+            level,
+            option,
+            value.as_mut_ptr().cast(),
+            std::ptr::addr_of_mut!(length),
+        )
+    };
+    if result != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if usize::try_from(length).map_err(io::Error::other)? != std::mem::size_of_val(value.as_slice())
+    {
+        return Err(io::Error::other("the custody peer identity was incomplete"));
+    }
+    Pid::from_raw(value[0]).ok_or_else(|| io::Error::other("the custody peer PID is invalid"))
+}
+
+#[expect(
+    unsafe_code,
+    reason = "native session custody uses the existing audited Unix platform boundary"
+)]
+unsafe extern "C" {
+    fn getsockopt(
+        fd: i32,
+        level: i32,
+        option: i32,
+        value: *mut core::ffi::c_void,
+        length: *mut u32,
+    ) -> i32;
+    #[cfg(target_os = "macos")]
+    fn proc_listallpids(buffer: *mut core::ffi::c_void, bytes: i32) -> i32;
+}
+
 #[derive(Debug)]
 pub(crate) struct ExitHandle(Pid);
 
@@ -658,6 +999,38 @@ impl ExitHandle {
         Pid::from_raw(raw)
             .map(Self)
             .ok_or_else(|| io::Error::other("the child has no waitable process identity"))
+    }
+
+    pub(super) fn status(child: &Child) -> io::Result<std::process::ExitStatus> {
+        use std::os::unix::process::ExitStatusExt as _;
+
+        let process = Self::of(child)?;
+        let observed = loop {
+            match waitid(
+                WaitId::Pid(process.0),
+                WaitIdOptions::EXITED | WaitIdOptions::NOWAIT | WaitIdOptions::NOHANG,
+            ) {
+                Ok(Some(observed)) => break observed,
+                Ok(None) => {
+                    return Err(io::Error::other(
+                        "the observed owned leader is not waitable",
+                    ));
+                }
+                Err(rustix::io::Errno::INTR) => {}
+                Err(source) => return Err(source.into()),
+            }
+        };
+        let status = if let Some(code) = observed.exit_status() {
+            code.checked_shl(8)
+                .ok_or_else(|| io::Error::other("the actual exit code exceeds its native width"))?
+        } else if let Some(signal) = observed.terminating_signal() {
+            signal | if observed.dumped() { 0x80 } else { 0 }
+        } else {
+            return Err(io::Error::other(
+                "the owned leader has no terminal native status",
+            ));
+        };
+        Ok(std::process::ExitStatus::from_raw(status))
     }
 
     pub(super) fn wait(self) -> io::Result<()> {

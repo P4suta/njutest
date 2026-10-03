@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use super::event::ChildEvent;
 
-/// A child whose complete inherited process set settles before its leader is reaped.
+/// A child whose native scope settles or moves to its acknowledged original owner before reap.
 #[derive(Debug)]
 pub struct GroupChild {
     owned: Owned,
@@ -72,6 +72,10 @@ enum Settlement {
         status: ExitStatus,
         refusal: Option<Arc<io::Error>>,
     },
+    #[cfg(unix)]
+    Transferred {
+        status: ExitStatus,
+    },
 }
 
 #[derive(Debug)]
@@ -110,6 +114,35 @@ impl Leader<'_> {
     }
 }
 
+/// Only one explicitly transferred native member generation remains owned.
+#[cfg(unix)]
+#[derive(Debug)]
+pub struct NamedMember {
+    process: super::ForeignProcess,
+}
+
+#[cfg(unix)]
+impl Drop for NamedMember {
+    fn drop(&mut self) {
+        if let Err(source) = self.process.stop() {
+            terminal(&format!(
+                "the transferred named member cleanup refused: {source}"
+            ));
+        }
+    }
+}
+
+/// The genuinely reaped foreground status and its one transferred member.
+#[cfg(unix)]
+#[derive(Debug)]
+#[must_use]
+pub struct NamedMemberCompletion {
+    /// The original foreground leader's actual reaped status.
+    pub status: ExitStatus,
+    /// Only this original native generation remains owned until disposal.
+    pub member: NamedMember,
+}
+
 impl GroupChild {
     /// Starts a child with mandatory inherited-member cleanup.
     ///
@@ -119,6 +152,20 @@ impl GroupChild {
         match PreparedGroup::new()?.launch(command) {
             GroupStart::Started(child) => Ok(child),
             GroupStart::ProcessRefused { source } | GroupStart::SupervisionRefused { source } => {
+                Err(source)
+            }
+        }
+    }
+
+    /// Starts an original session that retains every nested process group until disposal.
+    ///
+    /// # Errors
+    /// Creation or supervision failed after mandatory cleanup.
+    #[cfg(unix)]
+    pub(crate) fn start_session(command: &mut Command) -> io::Result<Self> {
+        match Owned::launch(super::sys::Supervisor::session()?, command) {
+            Ok(owned) => Ok(Self { owned }),
+            Err(StartRefusal::Process { source } | StartRefusal::Supervision { source }) => {
                 Err(source)
             }
         }
@@ -142,6 +189,9 @@ impl GroupChild {
     pub fn id(&self) -> Option<u32> {
         match self.owned.settlement {
             Settlement::Running => Some(self.owned.child.id()),
+            #[cfg(unix)]
+            Settlement::Settled { .. } | Settlement::Transferred { .. } => None,
+            #[cfg(not(unix))]
             Settlement::Settled { .. } => None,
         }
     }
@@ -193,12 +243,37 @@ impl GroupChild {
         self.owned.settle(failures).map(|_status| ())
     }
 
+    /// Checks natural leader status while the same native scope remains retained.
+    ///
+    /// # Errors
+    /// Observation refusal triggers complete settlement and remains sticky.
+    #[cfg(unix)]
+    pub fn try_observe_status(&mut self) -> io::Result<Option<ExitStatus>> {
+        self.owned.observe_status(Some(Duration::ZERO))
+    }
+
+    /// Waits for the natural leader status without ending its retained native scope.
+    ///
+    /// # Errors
+    /// An observation refusal triggers complete settlement and remains sticky.
+    #[cfg(unix)]
+    pub fn observe_status(&mut self) -> io::Result<ExitStatus> {
+        self.owned.observe_status(None)?.ok_or_else(|| {
+            io::Error::other("a blocking natural leader observation returned no status")
+        })
+    }
+
     /// Returns a status only after an observed exit and complete group settlement.
     ///
     /// # Errors
     /// A failed observer still triggers mandatory cleanup before returning its refusal.
     pub fn try_wait_status(&mut self) -> io::Result<Option<ExitStatus>> {
         match &self.owned.settlement {
+            #[cfg(unix)]
+            Settlement::Settled { .. } | Settlement::Transferred { .. } => {
+                return self.owned.result().map(Some);
+            }
+            #[cfg(not(unix))]
             Settlement::Settled { .. } => return self.owned.result().map(Some),
             Settlement::Running => {}
         }
@@ -215,6 +290,11 @@ impl GroupChild {
     /// All ownership failures are retained after mandatory cleanup.
     pub fn wait_status(&mut self) -> io::Result<ExitStatus> {
         match &self.owned.settlement {
+            #[cfg(unix)]
+            Settlement::Settled { .. } | Settlement::Transferred { .. } => {
+                return self.owned.result();
+            }
+            #[cfg(not(unix))]
             Settlement::Settled { .. } => return self.owned.result(),
             Settlement::Running => {}
         }
@@ -224,6 +304,103 @@ impl GroupChild {
             Err(source) => vec![source.to_string()],
         };
         self.owned.settle(failures)
+    }
+
+    /// Reaps natural foreground exit only after its original native session recipient is retained.
+    ///
+    /// # Errors
+    /// Recipient, observation or reap refusal triggers mandatory complete group settlement.
+    #[cfg(unix)]
+    pub fn release_to_parent(&mut self, parent: &super::ParentSession) -> io::Result<ExitStatus> {
+        match self.owned.settlement {
+            #[cfg(unix)]
+            Settlement::Settled { .. } | Settlement::Transferred { .. } => {
+                return self.owned.result();
+            }
+            #[cfg(not(unix))]
+            Settlement::Settled { .. } => return self.owned.result(),
+            Settlement::Running => {}
+        }
+        let status = match (|| {
+            let status = self.observe_status()?;
+            parent.confirm_child(
+                &self.owned.child,
+                self.owned.supervisor.original_session(),
+                status,
+            )?;
+            self.owned.finish_event()?;
+            Ok::<ExitStatus, io::Error>(status)
+        })() {
+            Ok(status) => status,
+            Err(source) => return self.owned.settle(vec![source.to_string()]),
+        };
+        match self.owned.child.wait() {
+            Ok(reaped) if reaped == status => {}
+            Ok(reaped) => terminal(&format!(
+                "the nested status changed across reaping: {status} to {reaped}"
+            )),
+            Err(source) => terminal(&format!(
+                "the acknowledged nested leader reap refused: {source}"
+            )),
+        }
+        if let Err(source) = self.owned.supervisor.release() {
+            terminal(&format!(
+                "the acknowledged nested supervisor release refused after reap: {source}"
+            ));
+        }
+        self.owned.settlement = Settlement::Transferred { status };
+        Ok(status)
+    }
+
+    /// Reaps the actual leader after all members except one named generation settle.
+    ///
+    /// # Errors
+    /// Native membership or transfer refuses after mandatory complete original cleanup.
+    #[cfg(unix)]
+    pub fn reap_to_member(
+        &mut self,
+        process: super::ForeignProcess,
+    ) -> io::Result<NamedMemberCompletion> {
+        match self.owned.settlement {
+            Settlement::Running => {}
+            Settlement::Settled { .. } | Settlement::Transferred { .. } => {
+                return Err(match self.owned.result() {
+                    Err(source) => source,
+                    Ok(_status) => io::Error::other("the original group was already consumed"),
+                });
+            }
+        }
+        let status = match (|| {
+            let status = self.observe_status()?;
+            self.owned.supervisor.settle_except_named(&process)?;
+            self.owned.finish_event()?;
+            Ok::<ExitStatus, io::Error>(status)
+        })() {
+            Ok(status) => status,
+            Err(source) => {
+                let status = self.owned.settle(vec![source.to_string()])?;
+                terminal(&format!(
+                    "the named member transfer refusal was lost during cleanup; unexpected status: {status}"
+                ))
+            }
+        };
+        let member = NamedMember { process };
+        match self.owned.child.wait() {
+            Ok(reaped) if reaped == status => {}
+            Ok(reaped) => terminal(&format!(
+                "the named member foreground status changed across reap: {status} to {reaped}"
+            )),
+            Err(source) => terminal(&format!(
+                "the named member foreground reap refused: {source}"
+            )),
+        }
+        if let Err(source) = self.owned.supervisor.release() {
+            terminal(&format!(
+                "the named member supervisor release refused after reap: {source}"
+            ));
+        }
+        self.owned.settlement = Settlement::Transferred { status };
+        Ok(NamedMemberCompletion { status, member })
     }
 
     /// Whether the complete process set settled and its leader was reaped.
@@ -337,6 +514,13 @@ impl Owned {
     fn result(&self) -> io::Result<ExitStatus> {
         match &self.settlement {
             Settlement::Running => Err(io::Error::other("the producer set has not settled")),
+            #[cfg(unix)]
+            Settlement::Transferred { status }
+            | Settlement::Settled {
+                status,
+                refusal: None,
+            } => Ok(*status),
+            #[cfg(not(unix))]
             Settlement::Settled {
                 status,
                 refusal: None,
@@ -348,8 +532,29 @@ impl Owned {
         }
     }
 
+    #[cfg(unix)]
+    fn observe_status(&mut self, timeout: Option<Duration>) -> io::Result<Option<ExitStatus>> {
+        match self.settlement {
+            Settlement::Settled { .. } | Settlement::Transferred { .. } => {
+                return self.result().map(Some);
+            }
+            Settlement::Running => {}
+        }
+        match self.event().wait(timeout) {
+            Ok(false) => Ok(None),
+            Ok(true) => match super::sys::ExitHandle::status(&self.child) {
+                Ok(status) => Ok(Some(status)),
+                Err(source) => self.settle(vec![source.to_string()]).map(Some),
+            },
+            Err(source) => self.settle(vec![source.to_string()]).map(Some),
+        }
+    }
+
     fn settle(&mut self, mut failures: Vec<String>) -> io::Result<ExitStatus> {
         match self.settlement {
+            #[cfg(unix)]
+            Settlement::Settled { .. } | Settlement::Transferred { .. } => return self.result(),
+            #[cfg(not(unix))]
             Settlement::Settled { .. } => return self.result(),
             Settlement::Running => {}
         }
@@ -458,6 +663,9 @@ impl Owned {
     #[cfg(unix)]
     fn leader(&self) -> Option<Leader<'_>> {
         match self.settlement {
+            #[cfg(unix)]
+            Settlement::Settled { .. } | Settlement::Transferred { .. } => return None,
+            #[cfg(not(unix))]
             Settlement::Settled { .. } => return None,
             Settlement::Running => {}
         }
@@ -474,6 +682,9 @@ impl Owned {
 impl Drop for Owned {
     fn drop(&mut self) {
         match self.settlement {
+            #[cfg(unix)]
+            Settlement::Settled { .. } | Settlement::Transferred { .. } => {}
+            #[cfg(not(unix))]
             Settlement::Settled { .. } => {}
             Settlement::Running => {
                 if let Err(source) = self.settle(Vec::new()) {

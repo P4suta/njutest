@@ -4,21 +4,12 @@
 //! Producer-owned host observations with retained subscriptions and measured semantic deadlines.
 
 use std::io;
-use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, Thread};
 use std::time::{Duration, Instant};
 
-use notify::Watcher as _;
 use serde::Serialize;
-
-#[cfg(target_os = "macos")]
-type FilesystemWatcher = notify::KqueueWatcher;
-
-#[cfg(not(target_os = "macos"))]
-type FilesystemWatcher = notify::RecommendedWatcher;
 
 /// The bounded backlog, whose overflow remains a sticky refusal for the entire subscription.
 const BACKLOG: usize = 64;
@@ -113,7 +104,6 @@ pub struct Signal {
     sent: SyncSender<io::Result<Event>>,
     reader: Thread,
     lost: Arc<Mutex<Option<io::Error>>>,
-    invalidated: Arc<AtomicBool>,
 }
 
 impl Signal {
@@ -172,30 +162,10 @@ impl Signal {
     }
 }
 
-/// A coalesced resource wake whose pending change survives until this subscription receives it.
-#[derive(Debug, Clone)]
-pub struct Invalidation {
-    signal: Signal,
-}
-
-impl Invalidation {
-    /// Retains one pending resource change without enqueueing a counted product event.
-    pub fn changed(&self) {
-        self.signal.invalidated.store(true, Ordering::Release);
-        self.signal.wake();
-    }
-
-    /// Retains the first producer refusal independently of the pending resource change.
-    pub fn failed(&self, error: io::Error) {
-        self.signal.failed(error);
-    }
-}
-
 /// An owned subscription registered before a producer starts or an initial resource observation is made.
 pub struct Observation {
     received: Receiver<io::Result<Event>>,
     signal: Signal,
-    watcher: Option<FilesystemWatcher>,
 }
 
 impl std::fmt::Debug for Observation {
@@ -203,7 +173,6 @@ impl std::fmt::Debug for Observation {
         formatter
             .debug_struct("Observation")
             .field("signal", &self.signal)
-            .field("filesystem", &self.watcher.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -219,54 +188,14 @@ impl Observation {
                 sent,
                 reader: thread::current(),
                 lost: Arc::new(Mutex::new(None)),
-                invalidated: Arc::new(AtomicBool::new(false)),
             },
-            watcher: None,
         }
-    }
-
-    /// Subscribes to native filesystem change events before the caller first reads `root`.
-    ///
-    /// # Errors
-    /// The operating system could not subscribe to every requested directory.
-    pub fn filesystem(root: &Path, recursive: bool) -> io::Result<Self> {
-        let mut observed = Self::subscribe();
-        let signal = observed.invalidation();
-        let mut watcher = FilesystemWatcher::new(
-            move |event: notify::Result<notify::Event>| match event {
-                Ok(event) if event.kind.is_access() => {}
-                Ok(_changed) => signal.changed(),
-                Err(source) => signal.failed(io::Error::other(source)),
-            },
-            notify::Config::default(),
-        )
-        .map_err(io::Error::other)?;
-        watcher
-            .watch(
-                root,
-                if recursive {
-                    notify::RecursiveMode::Recursive
-                } else {
-                    notify::RecursiveMode::NonRecursive
-                },
-            )
-            .map_err(io::Error::other)?;
-        observed.watcher = Some(watcher);
-        Ok(observed)
     }
 
     /// The endpoint retained by each explicit producer of this subscription.
     #[must_use]
     pub fn signal(&self) -> Signal {
         self.signal.clone()
-    }
-
-    /// The distinct endpoint for a latest-resource wake rather than a counted event sequence.
-    #[must_use]
-    pub fn invalidation(&self) -> Invalidation {
-        Invalidation {
-            signal: self.signal(),
-        }
     }
 
     /// Refuses every queued-result decision after a retained producer or backlog failure.
@@ -288,11 +217,7 @@ impl Observation {
         self.ensure_complete()?;
         let event = match self.received.try_recv() {
             Ok(event) => Some(event?),
-            Err(TryRecvError::Empty) => self
-                .signal
-                .invalidated
-                .swap(false, Ordering::AcqRel)
-                .then_some(Event::Changed),
+            Err(TryRecvError::Empty) => None,
             Err(TryRecvError::Disconnected) => {
                 return Err(io::Error::other("the observation producers disconnected"));
             }
@@ -373,73 +298,5 @@ impl Observation {
                 machine,
             },
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{Event, Observation};
-
-    #[test]
-    fn a_resource_change_is_one_retained_wake_until_received() {
-        let observed = Observation::subscribe();
-        let resource = observed.invalidation();
-        for _change in 0..4096 {
-            resource.changed();
-        }
-        assert_eq!(
-            observed.pending().expect("one retained wake"),
-            Some(Event::Changed)
-        );
-        assert_eq!(observed.pending().expect("one acknowledgement"), None);
-        observed.signal().publish(Event::Completed);
-        observed.signal().publish(Event::Cancelled);
-        resource.changed();
-        assert_eq!(
-            observed.pending().expect("independent completion"),
-            Some(Event::Completed)
-        );
-        assert_eq!(
-            observed.pending().expect("independent cancellation"),
-            Some(Event::Cancelled)
-        );
-        assert_eq!(
-            observed.pending().expect("independent change"),
-            Some(Event::Changed)
-        );
-        assert_eq!(observed.pending().expect("every event is received"), None);
-    }
-
-    #[test]
-    fn resource_coalescing_preserves_first_refusal_and_counted_overflow() {
-        let observed = Observation::subscribe();
-        observed.invalidation().changed();
-        observed.invalidation().failed(std::io::Error::new(
-            std::io::ErrorKind::PermissionDenied,
-            "the original native refusal",
-        ));
-        observed
-            .invalidation()
-            .failed(std::io::Error::other("a later refusal"));
-        observed.signal().publish(Event::Completed);
-        for _read in 0..2 {
-            let error = observed
-                .pending()
-                .expect_err("the first refusal remains sticky");
-            assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
-            assert_eq!(error.to_string(), "the original native refusal");
-        }
-        let counted = Observation::subscribe();
-        for _event in 0..4096 {
-            counted.signal().publish(Event::Changed);
-            counted.invalidation().changed();
-        }
-        assert!(
-            counted
-                .pending()
-                .expect_err("counted evidence overflowed")
-                .to_string()
-                .contains("full")
-        );
     }
 }

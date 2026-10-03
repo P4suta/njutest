@@ -25,7 +25,14 @@ pub use event::{ChildEvent, ExitStop, ExitSubscription};
 pub use group::Leader;
 pub use group::{GroupChild, GroupStart, PreparedGroup};
 #[cfg(unix)]
+pub use group::{NamedMember, NamedMemberCompletion};
+
+#[cfg(unix)]
+mod session;
+#[cfg(unix)]
 pub use rust_mutants_decision::group::{Delivered, Others, StopDecision, Stopped, decide_stop};
+#[cfg(unix)]
+pub use session::{OutputEndpoint, ParentSession, SESSION_CUSTODY, SessionOwner};
 pub use sys::{Membership, ReaderStop, ReaderWait, configure_reader, stream_ended};
 
 /// What the leader's non-reaping completion observation established.

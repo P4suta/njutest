@@ -20,7 +20,6 @@ surface = "incidental"
 testkit = []
 
 [dependencies]
-notify = { workspace = true }
 njutest-fixture-tree = { workspace = true }
 njutest-process = { workspace = true }
 njutest-macros = { workspace = true }

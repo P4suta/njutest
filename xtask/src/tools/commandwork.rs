@@ -8,12 +8,82 @@ use std::process::{Command, Stdio};
 use std::thread::JoinHandle;
 use std::time::Instant;
 
-use super::{Output, Request};
+use super::{Output, Recipient, Request};
 use crate::environment::Environment;
 use crate::work::{self, Ended, Stops, WorkError, WorkEvents};
 
+/// Accepts only the explicitly selected inherited protocol before any command or probe starts.
+pub(super) fn recipient(environment: &Environment, stops: &Stops) -> io::Result<Recipient> {
+    match environment.value("NJUTEST_SESSION_CUSTODY") {
+        None => Ok(Recipient::Direct),
+        Some(value) if value == "stdin-v1" => {
+            #[cfg(unix)]
+            {
+                let machine = crate::observation::Machine {
+                    os: std::env::consts::OS,
+                    cpus: std::thread::available_parallelism()?.get(),
+                };
+                let began = Instant::now();
+                let parent = njutest_process::ParentSession::accept_stdin();
+                let elapsed = u64::try_from(began.elapsed().as_nanos());
+                match (parent, elapsed) {
+                    (Ok(parent), Ok(elapsed_ns)) => {
+                        stops.record(crate::observation::WaitNote {
+                            owner: format!("xtask-original-session:{}", std::process::id()),
+                            cause: "native-parent-handshake-identity-and-session".to_owned(),
+                            elapsed_ns,
+                            machine,
+                        });
+                        Ok(Recipient::Original { parent })
+                    }
+                    (Err(source), Ok(elapsed_ns)) => {
+                        stops.record(crate::observation::WaitNote {
+                            owner: format!("xtask-original-session:{}", std::process::id()),
+                            cause: "native-parent-handshake-identity-and-session".to_owned(),
+                            elapsed_ns,
+                            machine,
+                        });
+                        Err(source)
+                    }
+                    (Ok(_parent), Err(source)) => Err(io::Error::other(source)),
+                    (Err(parent), Err(measurement)) => Err(io::Error::other(format!(
+                        "native custody failed: {parent}; admission measurement failed: {measurement}"
+                    ))),
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                let _stops = stops;
+                Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "the inherited original-session protocol requires its native Unix owner",
+                ))
+            }
+        }
+        Some(value) => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "the original-session custody protocol is not supported: {}",
+                value.display()
+            ),
+        )),
+    }
+}
+
 /// Captures actual bytes before notifying the work observer and publishes every result's waits.
 pub(super) fn run<F>(request: Request<'_, '_>, started: F) -> Result<Ended, WorkError>
+where
+    F: FnOnce(u32) -> io::Result<()>,
+{
+    run_with_recipient(request, started, Recipient::Direct)
+}
+
+/// Runs with the actual pre-admitted recipient while retaining every original output and receipt.
+pub(super) fn run_with_recipient<F>(
+    request: Request<'_, '_>,
+    started: F,
+    recipient: Recipient,
+) -> Result<Ended, WorkError>
 where
     F: FnOnce(u32) -> io::Result<()>,
 {
@@ -24,16 +94,33 @@ where
         environment,
         output,
     } = request;
+    command.env_remove("NJUTEST_SESSION_CUSTODY");
     let began = Instant::now();
     let invocation = super::hostcost::Invocation::of(command);
     let events = stops.events();
     let leader = std::cell::Cell::new(None);
     let (ran, joined) = match RunningOutput::launch(command, output, &events) {
         Ok(mut reading) => {
-            let ran = work::run(reading.command, bound, stops, |pid| {
+            let callback = |pid| {
                 leader.set(Some(pid));
                 started(pid)
-            });
+            };
+            let ran = match recipient {
+                Recipient::Direct => work::run(reading.command, bound, stops, callback),
+                #[cfg(unix)]
+                Recipient::Original { parent } => match reading.custody(parent) {
+                    Ok(custody) => work::run_with_custody(
+                        work::Request {
+                            command: reading.command,
+                            bound,
+                            stops,
+                            custody,
+                        },
+                        callback,
+                    ),
+                    Err(source) => Err(WorkError::Watch { source }),
+                },
+            };
             (ran, reading.finish())
         }
         Err(source) => (Err(WorkError::Watch { source }), Ok(())),
@@ -65,6 +152,25 @@ impl<'a> RunningOutput<'a> {
         Ok(Self {
             command,
             pipes: Some(pipes),
+        })
+    }
+
+    #[cfg(unix)]
+    fn custody(&mut self, parent: njutest_process::ParentSession) -> io::Result<work::Custody> {
+        let pipes = self
+            .pipes
+            .as_mut()
+            .ok_or_else(|| io::Error::other("the original output owner was already consumed"))?;
+        let stdout = pipes.stdout.endpoint.take().ok_or_else(|| {
+            io::Error::other("the original standard-output endpoint was already consumed")
+        })?;
+        let stderr = pipes.stderr.endpoint.take().ok_or_else(|| {
+            io::Error::other("the original standard-error endpoint was already consumed")
+        })?;
+        Ok(work::Custody::Original {
+            parent,
+            stdout,
+            stderr,
         })
     }
 
@@ -193,11 +299,15 @@ fn inherited_stderr() -> io::Result<std::fs::File> {
 struct Stream {
     writer: Option<io::PipeWriter>,
     reader: Option<JoinHandle<io::Result<()>>>,
+    #[cfg(unix)]
+    endpoint: Option<njutest_process::OutputEndpoint>,
 }
 
 impl Stream {
     fn launch(mut destination: Destination, events: WorkEvents) -> io::Result<Self> {
         let (mut reading, writer) = io::pipe()?;
+        #[cfg(unix)]
+        let endpoint = njutest_process::OutputEndpoint::capture(&reading)?;
         let reader = std::thread::Builder::new()
             .name("xtask-output-arrivals".to_owned())
             .spawn(move || {
@@ -210,6 +320,8 @@ impl Stream {
         Ok(Self {
             writer: Some(writer),
             reader: Some(reader),
+            #[cfg(unix)]
+            endpoint: Some(endpoint),
         })
     }
 

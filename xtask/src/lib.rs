@@ -574,6 +574,16 @@ fn audit_run(
     }
 }
 
+/// Arms stop observation and admits its recipient before any slot metadata probe starts.
+fn slot_controls(
+    environment: &environment::Environment,
+) -> Result<(work::Stops, tools::Recipient), work::WorkError> {
+    let stops = work::Stops::arm()?;
+    let recipient = tools::session_recipient(environment, &stops)
+        .map_err(|source| work::WorkError::Watch { source })?;
+    Ok((stops, recipient))
+}
+
 /// Holds `lane` while `command` runs, and answers with the command's own exit status.
 fn slot(
     lane: &str,
@@ -605,8 +615,8 @@ fn slot(
             );
         }
     };
-    let stops = match work::Stops::arm() {
-        Ok(stops) => stops,
+    let (stops, recipient) = match slot_controls(process.environment) {
+        Ok(controls) => controls,
         Err(failure) => {
             return after_output(
                 writeln!(stderr, "slot: {}", failure.coded()),
@@ -643,7 +653,7 @@ fn slot(
         .args(arguments)
         .env(lanes::HELD, lanes.held_with(named))
         .stdin(std::process::Stdio::null());
-    let ran = tools::run(
+    let ran = tools::run_with_recipient(
         tools::Request {
             command: &mut running,
             bound: None,
@@ -652,6 +662,7 @@ fn slot(
             output: tools::Output::Inherited,
         },
         |leader| held.working_on(leader),
+        recipient,
     );
     if ran.is_err() {
         held.left_work_running();

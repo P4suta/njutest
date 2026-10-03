@@ -120,6 +120,21 @@ impl SupervisedChild {
         ChildOwner::launch(command).map(|owner| Self { owner })
     }
 
+    /// Starts an original native session that retains naturally released nested producers.
+    ///
+    /// # Errors
+    /// Native creation or custody publication refused after mandatory cleanup.
+    #[cfg(unix)]
+    pub fn launch_session(command: &mut Command) -> Result<Self, ChildError> {
+        njutest_process::SessionOwner::launch(command)
+            .map(|session| Self {
+                owner: ChildOwner {
+                    child: ChildScope::Session(session),
+                },
+            })
+            .map_err(|source| ChildError::Start { source })
+    }
+
     /// The operating-system process identifier, while the child is live.
     #[must_use]
     pub fn id(&self) -> Option<u32> {
@@ -168,6 +183,38 @@ impl SupervisedChild {
         self.owner.wait()
     }
 
+    /// Observes natural leader exit while retaining its complete scope until owner disposal.
+    ///
+    /// # Errors
+    /// Observation failures trigger complete settlement and remain retained by the native owner.
+    #[cfg(unix)]
+    pub fn observe_status(&mut self) -> Result<ExitStatus, ChildError> {
+        self.owner
+            .live_mut()
+            .ok_or(ChildError::AlreadyReaped)?
+            .observe_status()
+            .map_err(|source| ChildError::Reap { source })
+    }
+
+    /// Reaps this leader while retaining only one validated original native member.
+    ///
+    /// # Errors
+    /// Native membership or cleanup refused after mandatory original group settlement.
+    #[cfg(unix)]
+    pub fn reap_to_member(
+        &mut self,
+        member: njutest_process::ForeignProcess,
+    ) -> Result<njutest_process::NamedMemberCompletion, ChildError> {
+        let completion = self
+            .owner
+            .live_mut()
+            .ok_or(ChildError::AlreadyReaped)?
+            .reap_to_member(member)
+            .map_err(|source| ChildError::Reap { source })?;
+        self.owner.child.close();
+        Ok(completion)
+    }
+
     /// Waits for the child and collects its configured output pipes.
     ///
     /// # Errors
@@ -180,14 +227,49 @@ impl SupervisedChild {
 /// A producer group whose terminal transitions include every member and owned pipe collector.
 #[derive(Debug)]
 struct ChildOwner {
-    /// `Some` is the live ownership capability; `None` is reachable only after a successful wait or reap.
-    child: Option<GroupChild>,
+    /// A terminal child settles at wait; an original session stays retained until owner disposal.
+    child: ChildScope,
+}
+
+#[derive(Debug)]
+enum ChildScope {
+    Terminal(Option<GroupChild>),
+    #[cfg(unix)]
+    Session(njutest_process::SessionOwner),
+}
+
+impl ChildScope {
+    const fn as_ref(&self) -> Option<&GroupChild> {
+        match self {
+            Self::Terminal(child) => child.as_ref(),
+            #[cfg(unix)]
+            Self::Session(session) => Some(session.scope()),
+        }
+    }
+
+    const fn as_mut(&mut self) -> Option<&mut GroupChild> {
+        match self {
+            Self::Terminal(child) => child.as_mut(),
+            #[cfg(unix)]
+            Self::Session(session) => Some(session.scope_mut()),
+        }
+    }
+
+    fn close(&mut self) {
+        match self {
+            Self::Terminal(child) => *child = None,
+            #[cfg(unix)]
+            Self::Session(_session) => {}
+        }
+    }
 }
 
 impl ChildOwner {
     fn launch(command: &mut Command) -> Result<Self, ChildError> {
         GroupChild::start(command)
-            .map(|child| Self { child: Some(child) })
+            .map(|child| Self {
+                child: ChildScope::Terminal(Some(child)),
+            })
             .map_err(|source| ChildError::Start { source })
     }
 
@@ -200,22 +282,34 @@ impl ChildOwner {
     }
 
     fn try_wait(&mut self) -> Result<Option<ExitStatus>, ChildError> {
+        #[cfg(unix)]
+        if let ChildScope::Session(session) = &mut self.child {
+            return session
+                .try_observe_status()
+                .map_err(|source| ChildError::Reap { source });
+        }
         let child = self.child.as_mut().ok_or(ChildError::AlreadyReaped)?;
         let status = child
             .try_wait_status()
             .map_err(|source| ChildError::Reap { source })?;
         if status.is_some() {
-            self.child = None;
+            self.child.close();
         }
         Ok(status)
     }
 
     fn wait(&mut self) -> Result<ExitStatus, ChildError> {
+        #[cfg(unix)]
+        if let ChildScope::Session(session) = &mut self.child {
+            return session
+                .observe_status()
+                .map_err(|source| ChildError::Reap { source });
+        }
         let child = self.child.as_mut().ok_or(ChildError::AlreadyReaped)?;
         let status = child
             .wait_status()
             .map_err(|source| ChildError::Reap { source })?;
-        self.child = None;
+        self.child.close();
         Ok(status)
     }
 
@@ -279,7 +373,7 @@ impl ChildOwner {
             std::io::Error::other("the supervised child was reaped before output collection")
         })?;
         let status = child.wait_status()?;
-        self.child = None;
+        self.child.close();
         Ok(status)
     }
 
@@ -288,7 +382,7 @@ impl ChildOwner {
             return Ok(());
         };
         child.stop().map_err(|source| ChildError::Reap { source })?;
-        self.child = None;
+        self.child.close();
         Ok(())
     }
 }
@@ -484,7 +578,7 @@ mod tests {
         let result = owner
             .wait_with_output_using(|_owned| Err(std::io::Error::other("injected wait failure")));
 
-        if owner.child.is_some() {
+        if owner.live().is_some() {
             return Err(std::io::Error::other(
                 "the failure return was reachable before the child had been reaped",
             ));

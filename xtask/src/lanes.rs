@@ -860,7 +860,7 @@ pub enum HolderState {
 pub fn holder_state(now: &Start, born: &str) -> HolderState {
     match now {
         Start::Running(started) if started == born => HolderState::Alive,
-        Start::Running(_) | Start::Absent => HolderState::Dead,
+        Start::Running(_) | Start::Ended(_) | Start::Absent => HolderState::Dead,
         Start::Unread => HolderState::Unseen,
     }
 }
@@ -874,7 +874,7 @@ fn waiter_state(me: u32, pid: u32, born: Option<&str>, now: &Start) -> HolderSta
         Start::Running(started) if born.is_none_or(|born| born.is_empty() || born == started) => {
             HolderState::Alive
         }
-        Start::Running(_) | Start::Absent => HolderState::Dead,
+        Start::Running(_) | Start::Ended(_) | Start::Absent => HolderState::Dead,
         Start::Unread => HolderState::Unseen,
     }
 }
@@ -938,6 +938,8 @@ pub struct Recorded {
 pub enum Start {
     /// It runs, and started then.
     Running(String),
+    /// This generation ended but its native birth evidence remains readable.
+    Ended(String),
     /// Nothing has that id.
     Absent,
     /// Whether anything has it could not be read.
@@ -970,10 +972,12 @@ pub fn group_liveness(
     session_of: impl Fn(u32) -> Session,
 ) -> Liveness {
     let tied = match leader {
-        Start::Running(now) if *now != recorded.born => return Liveness::Gone,
+        Start::Running(now) | Start::Ended(now) if *now != recorded.born => {
+            return Liveness::Gone;
+        }
         Start::Running(_) => None,
         Start::Unread => return Liveness::Unseen,
-        Start::Absent => match recorded.session {
+        Start::Ended(_) | Start::Absent => match recorded.session {
             Some(session) => Some(session),
             None => return Liveness::Gone,
         },
@@ -1299,19 +1303,20 @@ fn start_of(pid: u32) -> Start {
         Err(gone) if gone.kind() == std::io::ErrorKind::NotFound => return Start::Absent,
         Err(_unreadable) => return Start::Unread,
     };
-    match stat
-        .rsplit_once(')')
-        .and_then(|(_, after)| after.split_whitespace().nth(19))
-    {
-        Some(started) => Start::Running(started.to_owned()),
-        None => Start::Unread,
+    let Some((_, after)) = stat.rsplit_once(')') else {
+        return Start::Unread;
+    };
+    let mut fields = after.split_whitespace();
+    match (fields.next(), fields.nth(18)) {
+        (Some(state), Some(started)) => observed_start(state, started),
+        (Some(_), None) | (None, Some(_) | None) => Start::Unread,
     }
 }
 
 #[cfg(all(unix, not(target_os = "linux")))]
 fn start_of(pid: u32) -> Start {
     let output = match Command::new("ps")
-        .args(["-o", "lstart=", "-p", &pid.to_string()])
+        .args(["-o", "stat=", "-o", "lstart=", "-p", &pid.to_string()])
         .env("LC_ALL", "C")
         .env("TZ", "UTC0")
         .output()
@@ -1324,9 +1329,24 @@ fn start_of(pid: u32) -> Start {
         Err(_not_text) => return Start::Unread,
     };
     match (output.status.success(), said.is_empty()) {
-        (true, false) => Start::Running(said),
+        (true, false) => match said.split_once(char::is_whitespace) {
+            Some((state, started)) => observed_start(state, started.trim_start()),
+            None => Start::Unread,
+        },
         (false, true) => Start::Absent,
         (true, true) | (false, false) => Start::Unread,
+    }
+}
+
+/// One native state and birth observation retains an ended generation instead of inventing absence.
+#[cfg(unix)]
+fn observed_start(state: &str, born: &str) -> Start {
+    if state.is_empty() || born.is_empty() {
+        Start::Unread
+    } else if state.starts_with('Z') {
+        Start::Ended(born.to_owned())
+    } else {
+        Start::Running(born.to_owned())
     }
 }
 
@@ -1500,5 +1520,107 @@ fn io(path: &Path, source: std::io::Error) -> LaneError {
     LaneError::Io {
         path: path.display().to_string(),
         source,
+    }
+}
+#[cfg(all(test, unix))]
+mod terminal_generation_contract {
+    use super::{
+        HolderState, Liveness, Recorded, Session, Start, group_liveness, holder_state, start_of,
+    };
+    use std::io::{self, Write as _};
+    use std::process::{Command, Stdio};
+
+    /// Captures the independent native process row while its original generation stays retained.
+    fn native_listing(pid: u32) -> io::Result<std::process::Output> {
+        Command::new("ps")
+            .args([
+                "-o",
+                "pid=",
+                "-o",
+                "stat=",
+                "-o",
+                "lstart=",
+                "-p",
+                &pid.to_string(),
+            ])
+            .env("LC_ALL", "C")
+            .env("TZ", "UTC0")
+            .output()
+    }
+
+    #[test]
+    fn actual_terminal_generation_keeps_birth_without_remaining_alive() -> io::Result<()> {
+        let mut command = Command::new("sh");
+        command
+            .args(["-c", "read answer"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut child = njutest_process::GroupChild::start(&mut command)?;
+        let pid = child
+            .id()
+            .ok_or_else(|| io::Error::other("no owned leader PID"))?;
+        let mut control = child
+            .stdin()
+            .ok_or_else(|| io::Error::other("no owned input"))?;
+        let running = start_of(pid);
+        let born = if let Start::Running(born) = &running {
+            born.clone()
+        } else {
+            return Err(io::Error::other(format!(
+                "the controlled live leader has no birth: {running:?}"
+            )));
+        };
+        let session = rustix::process::getsid(None)?;
+        let recorded = Recorded {
+            pid,
+            born: born.clone(),
+            session: Some(u32::try_from(session.as_raw_nonzero().get()).map_err(io::Error::other)?),
+        };
+        let mismatched = Recorded {
+            pid,
+            born: "a long time ago".to_owned(),
+            session: recorded.session,
+        };
+        writeln!(control)?;
+        drop(control);
+        let exited = child
+            .completion()
+            .wait(Some(njutest_process::REAPING_GRACE))?;
+        let terminal = start_of(pid);
+        let holder = holder_state(&terminal, &born);
+        let mismatching = group_liveness(&mismatched, &terminal, None, |_| Session::Unread);
+        let matching = group_liveness(&recorded, &terminal, None, |_| Session::Unread);
+        let native = native_listing(pid)?;
+        let status = child.wait_status()?;
+        let reaped = start_of(pid);
+        eprintln!(
+            "actual retained leader: pid={pid}; live={running:?}; born={born:?}; exited={exited}; terminal={terminal:?}; holder={holder:?}; mismatch={mismatching:?}; matching-without-census={matching:?}; reaped={reaped:?}; status={status}"
+        );
+        eprintln!(
+            "actual native ps: status={}; stdout={:?}; stderr={:?}",
+            native.status, native.stdout, native.stderr
+        );
+        if !exited || !status.success() || !matches!(reaped, Start::Absent) {
+            return Err(io::Error::other(
+                "the real completion and reaped positive did not hold",
+            ));
+        }
+        if holder != HolderState::Dead {
+            return Err(io::Error::other(format!(
+                "an actually completed known leader still holds the lane alive: {terminal:?}; holder={holder:?}"
+            )));
+        }
+        if mismatching != Liveness::Gone {
+            return Err(io::Error::other(format!(
+                "known mismatching birth was erased before member discrimination: {terminal:?}; mismatch={mismatching:?}"
+            )));
+        }
+        if matching != Liveness::Unseen {
+            return Err(io::Error::other(format!(
+                "matching known birth changed or a missing member census became absence: {terminal:?}; matching={matching:?}"
+            )));
+        }
+        Ok(())
     }
 }

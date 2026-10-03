@@ -814,8 +814,11 @@ fn a_live_group_a_record_from_another_boot_names_is_left_alone() {
 #[test]
 fn what_a_holder_that_let_go_itself_left_in_its_group_is_left_alone() {
     let machine = Machine::new();
-    let mut holder =
-        machine.run("sh -c 'echo $$ > \"$TURNS/daemon\"; exec sleep 30' > /dev/null 2>&1 &");
+    let mut holder = SupervisedChild::launch_session(
+        &mut machine
+            .command("sh -c 'echo $$ > \"$TURNS/daemon\"; exec sleep 30' > /dev/null 2>&1 &"),
+    )
+    .expect("the original session that retains the released daemon");
     let finished = finished_within(Duration::from_secs(60), &mut holder);
     assert!(
         finished.is_some_and(|status| status.success()),
@@ -852,13 +855,25 @@ fn a_group_whose_leader_is_gone_is_ended_only_where_it_shares_the_recorded_sessi
         .process_group(0);
     let mut leader = SupervisedChild::launch(&mut orphaning).expect("a leader that leaves");
     let group = leader.id().expect("the leader's id");
-    leader.wait().expect("the leader ends at once");
+    leader.observe_status().expect("the leader ends at once");
     assert!(
         until(Duration::from_secs(60), || machine.marker("member")),
         "the member never started"
     );
     let member = written(&machine, "member");
     let member_pid = member.parse::<u32>().expect("the member's id");
+    let retained = njutest_process::ForeignProcess::retain(member_pid)
+        .expect("the member's native generation can be retained")
+        .expect("the original named member still lives");
+    let completed = leader
+        .reap_to_member(retained)
+        .expect("the leader is reaped while its named member remains owned");
+    assert!(
+        completed.status.success(),
+        "the original shell exited: {:?}",
+        completed.status
+    );
+    let named_member = completed.member;
     let session = xtask::lanes::session(member_pid).expect("the member's session");
     let record = machine.slots.path().join("heavy.holder");
     let boot = xtask::lanes::boot().unwrap_or_default();
@@ -891,6 +906,7 @@ fn a_group_whose_leader_is_gone_is_ended_only_where_it_shares_the_recorded_sessi
         control_in.is_some_and(|status| status.success()),
         "the same group in the recorded session is the work's, and it is ended: {control_in:?}"
     );
+    drop(named_member);
 }
 
 /// The id of a process that ran and was reaped, which is how a holder that died is named in a record.
