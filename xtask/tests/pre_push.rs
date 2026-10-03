@@ -700,11 +700,9 @@ fn replacing_an_actual_gate_tool_invalidates_both_checks() {
     let first = repository.push(&repository.head);
     assert!(first.status.success(), "{}", stderr(&first));
     let mise = repository.commands.path().join("mise");
-    let mut changed = std::fs::OpenOptions::new()
-        .append(true)
-        .open(&mise)
-        .expect("the actual selected gate tool");
-    writeln!(changed, "printf 'changed tool bytes\\n' >&2").expect("changed executable bytes");
+    let mut changed = std::fs::read(&mise).expect("the actual selected gate tool");
+    changed.extend_from_slice(b"printf 'changed tool bytes\\n' >&2\n");
+    std::fs::write(&mise, changed).expect("closed changed executable bytes");
     let again = repository.push(&repository.head);
     assert!(again.status.success(), "{}", stderr(&again));
     assert_eq!(
