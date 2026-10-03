@@ -183,6 +183,7 @@ pub struct Observation {
     received: Receiver<io::Result<Event>>,
     signal: Signal,
     invalidation: Invalidation,
+    before_resource_acknowledgement: fn(&Signal, &Invalidation),
 }
 
 impl std::fmt::Debug for Observation {
@@ -210,6 +211,7 @@ impl Observation {
                 pending: Arc::new(AtomicBool::new(false)),
                 reader: thread::current(),
             },
+            before_resource_acknowledgement: |_signal, _resource| {},
         }
     }
 
@@ -242,13 +244,16 @@ impl Observation {
     /// The subscription lost evidence or a producer retained a failure.
     pub fn pending(&self) -> io::Result<Option<Event>> {
         self.ensure_complete()?;
+        (self.before_resource_acknowledgement)(&self.signal, &self.invalidation);
+        let resource = self.invalidation.pending.swap(false, Ordering::AcqRel);
         let event = match self.received.try_recv() {
-            Ok(event) => Some(event?),
-            Err(TryRecvError::Empty) => self
-                .invalidation
-                .pending
-                .swap(false, Ordering::AcqRel)
-                .then_some(Event::Changed),
+            Ok(event) => {
+                if resource {
+                    self.invalidation.pending.store(true, Ordering::Release);
+                }
+                Some(event?)
+            }
+            Err(TryRecvError::Empty) => resource.then_some(Event::Changed),
             Err(TryRecvError::Disconnected) => {
                 return Err(io::Error::other("the observation producers disconnected"));
             }
@@ -453,6 +458,72 @@ mod tests {
         assert_eq!(
             observed.pending().expect("all events are accounted for"),
             None
+        );
+    }
+
+    fn publish_before_resource_acknowledgement(
+        signal: &super::Signal,
+        resource: &super::Invalidation,
+        terminal: Event,
+    ) {
+        std::thread::scope(|scope| {
+            let producer = njutest_devkit::thread::ScopedThread::launch(scope, || {
+                signal.publish(terminal);
+                resource.changed();
+            });
+            producer.join().expect("the actual publisher completed");
+        });
+    }
+
+    fn a_terminal_published_before_resource_acknowledgement_keeps_priority(
+        before_acknowledgement: fn(&super::Signal, &super::Invalidation),
+        terminal: Event,
+    ) {
+        let mut observed = Observation::subscribe();
+        observed.before_resource_acknowledgement = before_acknowledgement;
+        assert_eq!(
+            observed.pending().expect("the controlled publication"),
+            Some(terminal),
+            "a resource wake overtook its earlier counted terminal"
+        );
+        observed.before_resource_acknowledgement = |_signal, _resource| {};
+        assert_eq!(
+            observed.pending().expect("the retained resource wake"),
+            Some(Event::Changed)
+        );
+        assert_eq!(
+            observed.pending().expect("no event was lost or added"),
+            None
+        );
+    }
+
+    #[test]
+    fn cancelled_published_before_resource_acknowledgement_keeps_priority() {
+        a_terminal_published_before_resource_acknowledgement_keeps_priority(
+            |signal, resource| {
+                publish_before_resource_acknowledgement(signal, resource, Event::Cancelled);
+            },
+            Event::Cancelled,
+        );
+    }
+
+    #[test]
+    fn completed_published_before_resource_acknowledgement_keeps_priority() {
+        a_terminal_published_before_resource_acknowledgement_keeps_priority(
+            |signal, resource| {
+                publish_before_resource_acknowledgement(signal, resource, Event::Completed);
+            },
+            Event::Completed,
+        );
+    }
+
+    #[test]
+    fn deadline_published_before_resource_acknowledgement_keeps_priority() {
+        a_terminal_published_before_resource_acknowledgement_keeps_priority(
+            |signal, resource| {
+                publish_before_resource_acknowledgement(signal, resource, Event::Deadline);
+            },
+            Event::Deadline,
         );
     }
 }
