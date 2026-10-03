@@ -53,7 +53,7 @@ pub enum CompilerPurpose {
 
 /// The retained original actual process and raw streams that established compiler products.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, try_from = "RecordedObservation")]
 pub struct CompilerObservation {
     id: String,
     identity: InputIdentity,
@@ -63,6 +63,41 @@ pub struct CompilerObservation {
     stdout_digest: String,
     stderr: Vec<u8>,
     stderr_digest: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecordedObservation {
+    id: String,
+    identity: InputIdentity,
+    purpose: CompilerPurpose,
+    exec: ExecRecord,
+    leader: u32,
+    stdout_digest: String,
+    stderr: Vec<u8>,
+    stderr_digest: String,
+}
+
+impl TryFrom<RecordedObservation> for CompilerObservation {
+    type Error = std::io::Error;
+
+    fn try_from(record: RecordedObservation) -> Result<Self, Self::Error> {
+        let mut held = Self {
+            id: record.id,
+            identity: record.identity,
+            purpose: record.purpose,
+            exec: record.exec,
+            leader: record.leader,
+            stdout_digest: record.stdout_digest,
+            stderr: record.stderr,
+            stderr_digest: record.stderr_digest,
+        };
+        if !held.verifies_output() {
+            return Err(std::io::Error::other("unverified original compiler output"));
+        }
+        held.exec.output.clone_from(&held.stderr);
+        Ok(held)
+    }
 }
 
 impl CompilerObservation {
@@ -106,15 +141,23 @@ impl CompilerObservation {
             && self.id.bytes().all(|byte| byte.is_ascii_hexdigit())
             && self.leader != 0
             && self.stdout_digest == crate::id::digest(stdout)
-            && self.stderr_digest == crate::id::digest(&self.stderr)
+            && self.verifies_output()
+            && self.exec.output == self.stderr
             && self.exec.error.is_none()
+            && matches!(self.exec.stopped,
+                crate::execute::Stopped::Exited { exit: crate::runner::ProcessExit::Code(code) }
+                if code == exit)
+    }
+
+    fn verifies_output(&self) -> bool {
+        u64::try_from(self.stderr.len()).is_ok_and(|bytes| bytes == self.exec.output_bytes)
+            && self.stderr_digest == crate::id::digest(&self.stderr)
+            && !self.exec.output_truncated
+            && self.exec.output_path.is_none()
             && match self.exec.output_sha256.as_deref() {
                 Some(digest) => digest == self.stderr_digest,
                 None => self.stderr.is_empty(),
             }
-            && matches!(self.exec.stopped,
-                crate::execute::Stopped::Exited { exit: crate::runner::ProcessExit::Code(code) }
-                if code == exit)
     }
 
     /// The unique identity of the original actual producer, retained unchanged on reuse.
