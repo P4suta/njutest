@@ -4,19 +4,19 @@
 //! Statement sites: deletions render an empty branch, and every alternative
 //! of one site shares one chain.
 
-pub fn accumulate(v: &mut Vec<i32>, n: i32) -> i32 {
-    __rm::item(0); __rm::checkpoint(); let mut total = __rm::value!(if __rm::active(0) { 1 } else { 0 });
+macro_rules! __rm_value { ($value:expr) => { $value }; } pub fn accumulate(v: &mut Vec<i32>, n: i32) -> i32 {
+    __rm::item(0); __rm::checkpoint(); let mut total = __rm_value!(if __rm::active(0) { 1 } else { 0 });
     if __rm::active(1) { } else if __rm::active(2) { total -= n; } else { total += n; }
     if __rm::active(3) { } else { v.push(total); }
     if __rm::active(4) { } else { v.clear(); }
-    if __rm::active(5) { } else { total = __rm::value!(if __rm::active(6) { total / 2 } else { total * __rm::value!(if __rm::active(7) { 3 } else if __rm::active(8) { 1 } else { 2 }) }); }
-    __rm::value!(if __rm::active(9) { Default::default() } else { total })
+    if __rm::active(5) { } else { total = __rm_value!(if __rm::active(6) { total / 2 } else { total * __rm_value!(if __rm::active(7) { 3 } else if __rm::active(8) { 1 } else { 2 }) }); }
+    __rm_value!(if __rm::active(9) { Default::default() } else { total })
 }
 
 pub fn propagate(text: &str) -> Result<i32, std::num::ParseIntError> {
-    __rm::item(1); __rm::checkpoint(); let n = __rm::value!(if __rm::active(10) { text.parse::<i32>().unwrap() } else { text.parse::<i32>()? });
-    if __rm::active(11) { } else if __rm::active(13) { text.parse::<i32>(); } else { __rm::value!(if __rm::active(12) { text.parse::<i32>().unwrap() } else { text.parse::<i32>()? }); }
-    __rm::value!(if __rm::active(14) { Ok(Default::default()) } else { Ok(n) })
+    __rm::item(1); __rm::checkpoint(); let n = __rm_value!(if __rm::active(10) { text.parse::<i32>().unwrap() } else { text.parse::<i32>()? });
+    if __rm::active(11) { } else if __rm::active(13) { text.parse::<i32>(); } else { __rm_value!(if __rm::active(12) { text.parse::<i32>().unwrap() } else { text.parse::<i32>()? }); }
+    __rm_value!(if __rm::active(14) { Ok(Default::default()) } else { Ok(n) })
 }
 #[doc(hidden)]
 #[allow(dead_code, unused_qualifications)]
@@ -288,15 +288,6 @@ pub(crate) const fn step_transition(
     static STEP_STATE: __rm_std::sync::OnceLock<
         __rm_std::sync::Mutex<__rm_std::option::Option<BoundStepState>>,
     > = __rm_std::sync::OnceLock::new();
-
-    // The invocation is an expression boundary before expansion, while the
-    // expansion is exactly the user's expression. That groups generated
-    // boolean chains without adding lint-producing parentheses, a temporary
-    // scope, a call boundary, or a new generic type-inference boundary.
-    macro_rules! value {
-        ($value:expr) => { $value };
-    }
-    pub(crate) use value;
 
 
     // The failures a fault can make without guessing: an error type the

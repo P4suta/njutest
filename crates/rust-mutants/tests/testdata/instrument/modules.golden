@@ -4,23 +4,23 @@
 //! Inline modules reach the runtime through `super::`, and a nested function
 //! carries its own allow attribute.
 
-pub mod outer {
+macro_rules! __rm_value { ($value:expr) => { $value }; } pub mod outer {
     pub mod inner {
         pub fn deep(a: i32) -> i32 {
-            super::super::__rm::item(0); super::super::__rm::checkpoint(); super::super::__rm::value!(if super::super::__rm::active(0) { Default::default() } else if super::super::__rm::active(1) { a - 1 } else { a + super::super::__rm::value!(if super::super::__rm::active(2) { 2 } else if super::super::__rm::active(3) { 0 } else { 1 }) })
+            super::super::__rm::item(0); super::super::__rm::checkpoint(); __rm_value!(if super::super::__rm::active(0) { Default::default() } else if super::super::__rm::active(1) { a - 1 } else { a + __rm_value!(if super::super::__rm::active(2) { 2 } else if super::super::__rm::active(3) { 0 } else { 1 }) })
         }
     }
 
     pub fn shallow(a: i32) -> i32 {
         super::__rm::item(1); super::__rm::checkpoint(); fn helper(x: i32) -> i32 {
-            super::__rm::item(2); super::__rm::checkpoint(); super::__rm::value!(if super::__rm::active(4) { Default::default() } else if super::__rm::active(5) { x / 2 } else { x * super::__rm::value!(if super::__rm::active(6) { 3 } else if super::__rm::active(7) { 1 } else { 2 }) })
+            super::__rm::item(2); super::__rm::checkpoint(); __rm_value!(if super::__rm::active(4) { Default::default() } else if super::__rm::active(5) { x / 2 } else { x * __rm_value!(if super::__rm::active(6) { 3 } else if super::__rm::active(7) { 1 } else { 2 }) })
         }
-        super::__rm::value!(if super::__rm::active(8) { Default::default() } else if super::__rm::active(9) { helper(a) + 1 } else { helper(a) - super::__rm::value!(if super::__rm::active(10) { 2 } else if super::__rm::active(11) { 0 } else { 1 }) })
+        __rm_value!(if super::__rm::active(8) { Default::default() } else if super::__rm::active(9) { helper(a) + 1 } else { helper(a) - __rm_value!(if super::__rm::active(10) { 2 } else if super::__rm::active(11) { 0 } else { 1 }) })
     }
 }
 
 pub fn top(a: i32) -> i32 {
-    __rm::item(3); __rm::checkpoint(); __rm::value!(if __rm::active(12) { Default::default() } else if __rm::active(13) { a * 2 } else { a / __rm::value!(if __rm::active(14) { 3 } else if __rm::active(15) { 1 } else { 2 }) })
+    __rm::item(3); __rm::checkpoint(); __rm_value!(if __rm::active(12) { Default::default() } else if __rm::active(13) { a * 2 } else { a / __rm_value!(if __rm::active(14) { 3 } else if __rm::active(15) { 1 } else { 2 }) })
 }
 #[doc(hidden)]
 #[allow(dead_code, unused_qualifications)]
@@ -293,15 +293,6 @@ pub(crate) const fn step_transition(
     static STEP_STATE: __rm_std::sync::OnceLock<
         __rm_std::sync::Mutex<__rm_std::option::Option<BoundStepState>>,
     > = __rm_std::sync::OnceLock::new();
-
-    // The invocation is an expression boundary before expansion, while the
-    // expansion is exactly the user's expression. That groups generated
-    // boolean chains without adding lint-producing parentheses, a temporary
-    // scope, a call boundary, or a new generic type-inference boundary.
-    macro_rules! value {
-        ($value:expr) => { $value };
-    }
-    pub(crate) use value;
 
 
     // The failures a fault can make without guessing: an error type the

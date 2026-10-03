@@ -4,17 +4,17 @@
 //! Sites nested inside sites: the original branch of each guard carries the
 //! guards of the sites inside it, and no alternative does.
 
-pub fn nested(a: i32, b: i32, c: i32) -> bool {
-    __rm::item(0); __rm::checkpoint(); __rm::value!(if __rm::active(0) { true } else if __rm::active(3) { a + b * c <= a - b } else { __rm::value!(if __rm::active(1) { a - b * c } else { a + __rm::value!(if __rm::active(2) { b / c } else { b * c }) }) < __rm::value!(if __rm::active(4) { a + b } else { a - b }) })
+macro_rules! __rm_value { ($value:expr) => { $value }; } pub fn nested(a: i32, b: i32, c: i32) -> bool {
+    __rm::item(0); __rm::checkpoint(); __rm_value!(if __rm::active(0) { true } else if __rm::active(3) { a + b * c <= a - b } else { __rm_value!(if __rm::active(1) { a - b * c } else { a + __rm_value!(if __rm::active(2) { b / c } else { b * c }) }) < __rm_value!(if __rm::active(4) { a + b } else { a - b }) })
 }
 
 pub fn multiline(a: i32, b: i32) -> bool {
-    __rm::item(1); __rm::checkpoint(); if __rm::value!(__rm::active(5) && __rm::value!(!(a < b && b > 0)) || __rm::active(6) && __rm::value!(true) || __rm::active(7) && __rm::value!(false) || __rm::active(9) && __rm::value!(a < b || b > 0) || !__rm::active(5) && !__rm::active(6) && !__rm::active(7) && !__rm::active(9) && __rm::differing(9, __rm::value!(__rm::value!(__rm::active(8) && __rm::value!(a <= b) || !__rm::active(8) && __rm::differing(8, __rm::value!(a < b), || __rm::value!(a <= b)))
-        && __rm::value!(__rm::active(10) && __rm::value!(b >= 0) || !__rm::active(10) && __rm::differing(10, __rm::value!(b > __rm::value!(if __rm::active(11) { 1 } else { 0 })), || __rm::value!(b >= 0)))), || __rm::value!(a < b || b > 0)))
+    __rm::item(1); __rm::checkpoint(); if __rm_value!(__rm::active(5) && __rm_value!(!(a < b && b > 0)) || __rm::active(6) && __rm_value!(true) || __rm::active(7) && __rm_value!(false) || __rm::active(9) && __rm_value!(a < b || b > 0) || !__rm::active(5) && !__rm::active(6) && !__rm::active(7) && !__rm::active(9) && __rm::differing(9, __rm_value!(__rm_value!(__rm::active(8) && __rm_value!(a <= b) || !__rm::active(8) && __rm::differing(8, __rm_value!(a < b), || __rm_value!(a <= b)))
+        && __rm_value!(__rm::active(10) && __rm_value!(b >= 0) || !__rm::active(10) && __rm::differing(10, __rm_value!(b > __rm_value!(if __rm::active(11) { 1 } else { 0 })), || __rm_value!(b >= 0)))), || __rm_value!(a < b || b > 0)))
     {
-        return __rm::value!(if __rm::active(12) { false } else { true });
+        return __rm_value!(if __rm::active(12) { false } else { true });
     }
-    __rm::value!(if __rm::active(13) { true } else { false })
+    __rm_value!(if __rm::active(13) { true } else { false })
 }
 #[doc(hidden)]
 #[allow(dead_code, unused_qualifications)]
@@ -285,15 +285,6 @@ pub(crate) const fn step_transition(
     static STEP_STATE: __rm_std::sync::OnceLock<
         __rm_std::sync::Mutex<__rm_std::option::Option<BoundStepState>>,
     > = __rm_std::sync::OnceLock::new();
-
-    // The invocation is an expression boundary before expansion, while the
-    // expansion is exactly the user's expression. That groups generated
-    // boolean chains without adding lint-producing parentheses, a temporary
-    // scope, a call boundary, or a new generic type-inference boundary.
-    macro_rules! value {
-        ($value:expr) => { $value };
-    }
-    pub(crate) use value;
 
 
     // The failures a fault can make without guessing: an error type the

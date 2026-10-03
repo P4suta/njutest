@@ -570,7 +570,7 @@ fn an_expression_closure_reentered_by_an_external_iterator_spends_the_global_all
     assert!(
         instrumented.text.contains("|_| { ")
             && instrumented.text.contains("::checkpoint(); ")
-            && instrumented.text.contains("::value!(if "),
+            && instrumented.text.contains("_value!(if "),
         "the expression body is a charged block around the guarded expression: {}",
         instrumented.text
     );
@@ -1033,7 +1033,7 @@ fn the_runtime_rendered_for_a_file_compiles_for_a_sealed_host() {
          \x20   let held = ({MODULE_STEM}::undefaulted(2, 1_i32), {MODULE_STEM}::unsomedefault(2, Some(1_i32)));\n\
          \x20   let kept: Result<i32, std::io::Error> = {MODULE_STEM}::unokdefault(2, Ok(1));\n\
          \x20   let injected: std::io::Error = {MODULE_STEM}::injected();\n\
-         \x20   let grouped = {MODULE_STEM}::value!(1 + 2);\n\
+         \x20   let grouped = {MODULE_STEM}_value!(1 + 2);\n\
          \x20   if !differed || held != (1, Some(1)) || kept.is_err() || injected.kind() != std::io::ErrorKind::Other || grouped != 3 {{\n\
          \x20       {MODULE_STEM}::crashed_after(());\n\
          \x20   }}\n\

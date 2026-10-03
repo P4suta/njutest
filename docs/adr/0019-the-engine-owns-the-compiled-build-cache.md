@@ -227,3 +227,20 @@ A doctest acquisition retains either its complete request or its original unboun
 Requests, misses, actual launches, failed launches and compiler provenance carry that same owned identity.
 Actual launch presence is recorded before interpreting the process result, including cancellation and supervision failures.
 The existing accounting law, independent compiler requirements and original cost records remain authoritative.
+
+## Amendment, 2026-10-04: owned observations exclude only explicit output boundaries
+
+A command observation shares its owner's strong filesystem change-stamp and content memo across fresh captures and retained responses.
+Executable resolution, directory aliases, loader namespaces and complete file content remain checked before publication and reuse.
+Caller-owned snapshot exclusions and the actual report directory identify outputs explicitly; guessed directory names cannot establish that boundary.
+Metadata must name only manifest and target source paths present in the bound source inventory, so an excluded source cannot certify a reusable response.
+
+## Amendment, 2026-10-04: expression macros have one private lexical owner
+
+Rust 2015 resolves a module's unqualified macro re-export at the crate root, which refused eight actual FNV 1.0.7 alternatives.
+Each instrumented file instead declares one private expression macro before its first owning item, after the original crate attributes and source prefix.
+The runtime module and macro share a collision-free name, and native and sealed alternatives use the same lexical declaration.
+The macro expands to the original expression without another scope, inference boundary or exported crate item.
+Every inserted byte maps through the existing splice offsets for branch and constant diagnostics, while source line counts remain unchanged.
+Statement-only files emit no unused expression macro.
+Generated imports retain their module-relative standard-library aliases under every supported edition.

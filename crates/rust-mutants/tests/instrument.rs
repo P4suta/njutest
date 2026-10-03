@@ -189,16 +189,16 @@ fn a_boolean_position_takes_the_selector_form_and_a_value_position_the_expressio
         "pub fn f(a: i32, b: i32, c: i32) -> bool {\n    if a > b {\n        return true;\n    }\n    a + c > b\n}\n",
     );
     assert!(
-        text.contains("if __rm::value!(__rm::active(0) && __rm::value!(!(a > b)) || __rm::active(1) && __rm::value!(true) || __rm::active(2) && __rm::value!(false) || __rm::active(3) && __rm::value!(a >= b) || !__rm::active(0) && !__rm::active(1) && !__rm::active(2) && !__rm::active(3) && __rm::differing(3, __rm::value!(a > b), || __rm::value!(a >= b))) {"),
+        text.contains("if __rm_value!(__rm::active(0) && __rm_value!(!(a > b)) || __rm::active(1) && __rm_value!(true) || __rm::active(2) && __rm_value!(false) || __rm::active(3) && __rm_value!(a >= b) || !__rm::active(0) && !__rm::active(1) && !__rm::active(2) && !__rm::active(3) && __rm::differing(3, __rm_value!(a > b), || __rm_value!(a >= b))) {"),
         "{text}"
     );
     assert!(
-        text.contains("return __rm::value!(if __rm::active(4) { false } else { true });"),
+        text.contains("return __rm_value!(if __rm::active(4) { false } else { true });"),
         "{text}"
     );
     assert!(
         text.contains(
-            "__rm::value!(if __rm::active(5) { true } else if __rm::active(7) { a + c >= b } else {"
+            "__rm_value!(if __rm::active(5) { true } else if __rm::active(7) { a + c >= b } else {"
         ),
         "{text}"
     );
@@ -393,7 +393,7 @@ fn a_statement_takes_the_statement_form_and_a_deletion_renders_an_empty_branch()
         "one chain holds every alternative of a site: {text}"
     );
     assert!(
-        !text.contains("macro_rules! value"),
+        !text.contains("macro_rules! __rm_value"),
         "a statement-only file emits no unused expression macro: {text}"
     );
 }
@@ -410,7 +410,7 @@ fn nested_sites_become_nested_guards_and_only_the_original_branch_carries_them()
         "an alternative is the pristine site with one edit and no nested guard: {line}"
     );
     assert!(
-        line.contains("else { __rm::value!(if __rm::active("),
+        line.contains("else { __rm_value!(if __rm::active("),
         "the original branch is the only one carrying the nested guard: {line}"
     );
     let (_, tail) = line.split_once("else {").expect("an original branch");
@@ -426,7 +426,14 @@ fn the_runtime_is_appended_after_the_last_line_and_names_the_catalog() {
     let source = "pub fn f(a: i32) -> i32 {\n    a + 1\n}\n";
     let (text, catalog) = instrument_with_catalog(source);
     let (body, runtime) = split_runtime(&text);
-    assert!(body.starts_with("pub fn f(a: i32) -> i32 {"), "{body}");
+    let module = module_name("src/lib.rs", source).expect("the complete original identifiers");
+    assert!(
+        body.starts_with(&format!(
+            "macro_rules! {module}_value {{ ($value:expr) => {{ $value }}; }} pub fn f(a: i32) -> i32 {{"
+        )),
+        "the original function follows its private lexical declaration: {body}"
+    );
+    assert_eq!(count_lines(body.as_bytes()), count_lines(source.as_bytes()));
     assert!(runtime.contains(RUNTIME_MARKER), "{runtime}");
     assert!(
         runtime.contains(&format!("{:?}", catalog.digest())),
@@ -519,7 +526,7 @@ fn a_file_without_a_mutant_still_carries_the_process_wide_checkpoint_runtime() {
     assert!(file.text.starts_with(source), "{}", file.text);
     assert!(file.text.contains(RUNTIME_MARKER), "{}", file.text);
     assert!(
-        !file.text.contains("macro_rules! value"),
+        !file.text.contains("macro_rules! __rm_value"),
         "a candidate-free file emits no unused expression macro: {}",
         file.text
     );
@@ -681,7 +688,7 @@ fn a_multi_line_site_keeps_its_lines_because_only_the_original_branch_holds_them
         "an alternative is folded onto one line: {body}"
     );
     assert!(
-        body.contains(")\n        && __rm::value!("),
+        body.contains(")\n        && __rm_value!("),
         "the original branch is where the line break stayed: {body}"
     );
 }
@@ -1490,6 +1497,9 @@ fn a_guard_that_breaks_inside_an_identity_macro_is_seen_where_a_plain_parse_is_b
         "fn f(a: u8) -> u8 { __rm::value!(match a { 0 => __rm::value!(1) _ => 2, }) }\n",
         "fn f(a: u8) -> u8 { __rm::value!(if __rm::active(0) { 1 } else { { a } + 1 }) }\n",
         "fn f(a: u8) -> u8 { __rm::value!(1 + __rm::value!(a +)) }\n",
+        "fn f(a: u8) -> u8 { __rm_value!(match a { 0 => __rm_value!(1) _ => 2, }) }\n",
+        "fn f(a: u8) -> u8 { __rm_value!(if __rm::active(0) { 1 } else { { a } + 1 }) }\n",
+        "fn f(a: u8) -> u8 { __rm_value!(1 + __rm_value!(a +)) }\n",
     ];
     for text in planted {
         assert!(
@@ -1505,6 +1515,21 @@ fn a_guard_that_breaks_inside_an_identity_macro_is_seen_where_a_plain_parse_is_b
             ),
             "reading through every identity macro finds the guard the compiler would refuse, and \
              names where: {read:?} for {text}"
+        );
+    }
+}
+
+#[test]
+fn the_runtime_and_its_private_macro_share_one_collision_free_name() {
+    let taken = module_name("src/lib.rs", "").expect("valid source tokens");
+    for spelling in [format!("{taken}_value"), format!("r#{taken}_value")] {
+        let source = format!(
+            "macro_rules! {spelling} {{ () => {{ 7 }}; }}\npub fn f() -> i32 {{ {spelling}!() }}\n"
+        );
+        let chosen = module_name("src/lib.rs", &source).expect("the complete source is read");
+        assert_ne!(
+            chosen, taken,
+            "the private macro must not shadow source macro {spelling}"
         );
     }
 }

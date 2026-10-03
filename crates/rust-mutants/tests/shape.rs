@@ -31,6 +31,7 @@ fn runtime(path: &syn::Path) -> Option<String> {
         .map(|segment| segment.ident.to_string())
         .collect();
     match names.as_slice() {
+        [name] if name == &format!("{MODULE_STEM}_value") => Some("value".to_owned()),
         [.., module, name] if module == MODULE_STEM => Some(name.clone()),
         _ => None,
     }
@@ -157,6 +158,26 @@ struct Undo;
 
 impl VisitMut for Undo {
     fn visit_file_mut(&mut self, file: &mut syn::File) {
+        file.items.retain(|item| {
+            if let syn::Item::Macro(grouping) = item
+                && grouping
+                    .ident
+                    .as_ref()
+                    .is_some_and(|name| name == &format!("{MODULE_STEM}_value"))
+            {
+                assert!(
+                    grouping.attrs.is_empty(),
+                    "the grouping macro remains private"
+                );
+                assert!(grouping.mac.path.is_ident("macro_rules"));
+                assert_eq!(
+                    grouping.mac.tokens.to_string(),
+                    "($ value : expr) => { $ value } ;"
+                );
+                return false;
+            }
+            true
+        });
         file.items
             .retain(|item| !matches!(item, syn::Item::Mod(module) if module.ident == MODULE_STEM));
         syn::visit_mut::visit_file_mut(self, file);

@@ -173,7 +173,8 @@ pub(super) fn module_named(
     let tokens = parsing.tokens(text)?;
     let mut taken = BTreeSet::new();
     collect_identifiers(tokens, &mut taken);
-    if !taken.contains(stem) {
+    let available = |name: &str| !taken.contains(name) && !taken.contains(&format!("{name}_value"));
+    if available(stem) {
         return Ok(stem.to_owned());
     }
     let candidates = taken
@@ -184,7 +185,7 @@ pub(super) fn module_named(
         u32::try_from(candidates).map_err(|_overflow| ModuleNameError::SuffixesExhausted)?;
     for suffix in 1..=limit {
         let candidate = format!("{stem}{suffix}");
-        if !taken.contains(&candidate) {
+        if available(&candidate) {
             return Ok(candidate);
         }
     }
@@ -192,10 +193,11 @@ pub(super) fn module_named(
 }
 
 fn collect_identifiers(tokens: proc_macro2::TokenStream, names: &mut BTreeSet<String>) {
+    use syn::ext::IdentExt as _;
     for tree in tokens {
         match tree {
             proc_macro2::TokenTree::Ident(ident) => {
-                names.extend(std::iter::once(ident.to_string()));
+                names.extend(std::iter::once(ident.unraw().to_string()));
             }
             proc_macro2::TokenTree::Group(group) => collect_identifiers(group.stream(), names),
             proc_macro2::TokenTree::Punct(_) | proc_macro2::TokenTree::Literal(_) => {}
@@ -203,18 +205,13 @@ fn collect_identifiers(tokens: proc_macro2::TokenStream, names: &mut BTreeSet<St
     }
 }
 
-/// The expression-grouping macro, emitted only into files whose guards call it.
-/// A statement-only file has no unused generated macro to excuse.
-const VALUE_MACRO: &str = r"    // The invocation is an expression boundary before expansion, while the
-    // expansion is exactly the user's expression. That groups generated
-    // boolean chains without adding lint-producing parentheses, a temporary
-    // scope, a call boundary, or a new generic type-inference boundary.
-    macro_rules! value {
-        ($value:expr) => { $value };
-    }
-    pub(crate) use value;
+/// The private expression boundary preserves its argument without changing its scope or inference.
+const VALUE_MACRO: &str = "macro_rules! {{MODULE}}_value { ($value:expr) => { $value }; } ";
 
-";
+/// The single private declaration placed before the file's actual expression guards.
+pub(super) fn expression_macro(module: &str) -> String {
+    VALUE_MACRO.replace("{{MODULE}}", module)
+}
 
 /// The invariant text of the runtime, with the per-file parts as placeholders.
 /// Written as one literal so a reader sees the generated module exactly as it will appear in the snapshot.
@@ -370,7 +367,7 @@ mod {{MODULE}} {
         __rm_std::sync::Mutex<__rm_std::option::Option<BoundStepState>>,
     > = __rm_std::sync::OnceLock::new();
 
-{{VALUE_MACRO}}
+
     // The failures a fault can make without guessing: an error type the
     // standard library defines and a caller already has to be ready for.
     // A `?` whose error is anything else does not compile under a fault,
@@ -1681,7 +1678,7 @@ mod {{MODULE}} {
     static SEEN_ITEMS: [__rm_std::sync::atomic::AtomicBool; ITEM_SPAN as usize] =
         [const { __rm_std::sync::atomic::AtomicBool::new(false) }; ITEM_SPAN as usize];
 
-{{VALUE_MACRO}}
+
     // The failures a fault can make without guessing: an error type the
     // standard library defines and a caller already has to be ready for.
     // A `?` whose error is anything else does not compile under a fault,
@@ -2126,6 +2123,27 @@ fn with_protocol(text: &str) -> String {
 ///
 /// Returns [`RuntimeRenderError`] when the inclusive catalog-index window cannot be represented without overflow.
 pub fn render(rendering: &Rendering<'_>) -> Result<String, RuntimeRenderError> {
+    let mut text = String::new();
+    if rendering
+        .placements
+        .iter()
+        .any(|placement| match placement.hint.form {
+            crate::syntax::Form::C
+            | crate::syntax::Form::E
+            | crate::syntax::Form::M
+            | crate::syntax::Form::B => true,
+            crate::syntax::Form::S => false,
+        })
+    {
+        text.push_str(&expression_macro(rendering.module));
+        text.push_str(rendering.newline);
+    }
+    text.push_str(&render_modules(rendering)?);
+    Ok(text)
+}
+
+/// Renders both target alternatives independently of the file's single lexical macro owner.
+pub(super) fn render_modules(rendering: &Rendering<'_>) -> Result<String, RuntimeRenderError> {
     let Rendering {
         module,
         catalog_digest,
@@ -2146,14 +2164,6 @@ pub fn render(rendering: &Rendering<'_>) -> Result<String, RuntimeRenderError> {
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
     }
     let reach = touched(placements, markers)?;
-    let value_macro = if placements
-        .iter()
-        .any(|placement| placement.hint.form != crate::syntax::Form::S)
-    {
-        VALUE_MACRO
-    } else {
-        ""
-    };
     let step_machine = rust_mutants_decision::STEP_SOURCE.replace("pub ", "pub(crate) ");
 
     let selector = if placements
@@ -2171,7 +2181,6 @@ pub fn render(rendering: &Rendering<'_>) -> Result<String, RuntimeRenderError> {
                 "{{GENERATED_MODULE_ALLOW}}",
                 super::GENERATED_MODULE_ALLOW_ATTRIBUTE,
             )
-            .replace("{{VALUE_MACRO}}", value_macro)
             .replace("{{MODULE}}", module)
             .replace("{{MARKER}}", RUNTIME_MARKER)
             .replace("{{SEALED_MARKER}}", SEALED_MARKER)
@@ -2293,7 +2302,7 @@ mod tests {
     use super::{
         ACTIVE_ENV, CATALOG_ENV, DELAY_ENV, FAULT_ENV, Rendering, SEALED_TEMPLATE, STEP_NONCE_ENV,
         STEP_NOTICE_ENV, STEP_NOTICE_SCHEMA, STEP_STATE_ENV, STEP_STATE_SCHEMA, STEPS_ENV,
-        TEMPLATE, TOUCH_ENV, WATCHED_ENV, render,
+        TEMPLATE, TOUCH_ENV, VALUE_MACRO, WATCHED_ENV, render,
     };
     use crate::instrument::Placement;
     use crate::rule::Tier;
@@ -2452,7 +2461,7 @@ mod tests {
         }
     }
 
-    /// The runtime rendered for a file whose guards group a value, so that each module holds every item it can.
+    /// The runtime and its single private macro rendered for a file whose guards group a value.
     fn rendered() -> String {
         let scripted = ScriptedCompile::from_source(
             "src/lib.rs",
@@ -2471,8 +2480,8 @@ mod tests {
         })
         .expect("generated runtime");
         assert!(
-            text.contains("macro_rules! value"),
-            "the file's guards group a value, so both modules hold the macro that groups it"
+            text.contains("macro_rules! __rm_value"),
+            "the file's guards group a value through their single private macro"
         );
         text
     }
@@ -2487,6 +2496,21 @@ mod tests {
                 .file(text)
                 .expect("the rendered runtime reads as Rust");
             match file.items.as_slice() {
+                [
+                    syn::Item::Macro(grouping),
+                    syn::Item::Mod(native),
+                    syn::Item::Mod(sealed),
+                ] => {
+                    assert!(
+                        grouping.attrs.is_empty(),
+                        "the actual grouping macro is private"
+                    );
+                    assert_eq!(
+                        spelled(grouping, text),
+                        super::expression_macro("__rm").trim()
+                    );
+                    inspect(native, sealed)
+                }
                 [syn::Item::Mod(native), syn::Item::Mod(sealed)] => inspect(native, sealed),
                 items => panic!(
                     "the rendered runtime is two modules, and it holds {} items",
@@ -2863,6 +2887,141 @@ mod tests {
         assert_eq!(
             step_transition(StepPhase::Dormant, StepAction::Activate, usize::MAX),
             Err(StepMachineError::Limit)
+        );
+    }
+    /// Every line of `text` that spells a `use` item, plain or behind a visibility, with comments passed over.
+    fn use_declarations(text: &str) -> Vec<String> {
+        let mut found = Vec::new();
+        for line in text.lines() {
+            let line = line.trim_start();
+            if line.starts_with("//") {
+                continue;
+            }
+            if let Some((_visibility, declaration)) = line.split_once(" use ") {
+                found.push(format!("use {declaration}"));
+            } else if line.starts_with("use ") {
+                found.push(line.to_owned());
+            }
+        }
+        found
+    }
+
+    /// The path `declaration` imports, trimmed of its `use`, its visibility and its semicolon.
+    fn imported_path(declaration: &str) -> &str {
+        declaration
+            .strip_prefix("use ")
+            .unwrap_or(declaration)
+            .trim_end()
+            .trim_end_matches(';')
+    }
+
+    #[test]
+    fn every_generated_use_is_scope_anchored_so_every_edition_resolves_it() {
+        for template in [TEMPLATE, SEALED_TEMPLATE, VALUE_MACRO] {
+            for declaration in use_declarations(template) {
+                let path = imported_path(&declaration);
+                let head = path.split('{').next().unwrap_or_default().trim();
+                let first = head.split("::").next().unwrap_or_default();
+                assert!(
+                    ["self", "super", "crate", ""].contains(&first),
+                    "the generated runtime spells `{declaration}` without anchoring its \
+                     scope: under Rust 2015 a `use` path resolves at the crate root, where \
+                     the runtime's aliases do not live, so the instrumented tree of an \
+                     edition-2015 crate does not compile",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_generated_module_compiles_under_rust_2015_where_its_aliases_live() {
+        let temporary = tempfile::tempdir().expect("an owned root");
+        let scripted =
+            ScriptedCompile::from_source("src/lib.rs", "pub fn step() -> i32 { 7 }\n", Tier::All);
+        let module = render(&Rendering {
+            module: "__rm",
+            catalog_digest: PLANT_CATALOG,
+            placements: scripted.placements(),
+            markers: &[],
+            first_item: 0,
+            item_count: 0,
+            newline: "\n",
+            watched: PLANT_WATCHED,
+        })
+        .expect("generated runtime");
+        let source = temporary.path().join("edition-2015.rs");
+        std::fs::write(
+            &source,
+            format!(
+                "{module}\npub fn anchored() -> i32 {{ {}!(7) }}\n",
+                rust_mutants_adapt::guard::named("__rm", 0, "value")
+            ),
+        )
+        .expect("the generated source");
+        for edition in ["2015", "2018", "2021", "2024"] {
+            for target in ["native", "wasm32-wasip1"] {
+                let mut compiler = Command::new("rustc");
+                compiler.args(["--edition", edition, "--crate-type", "lib"]);
+                if target != "native" {
+                    compiler.args(["--target", target]);
+                }
+                let built = compiler
+                    .arg("--out-dir")
+                    .arg(temporary.path())
+                    .arg(&source)
+                    .output()
+                    .expect("rustc runs");
+                assert!(
+                    built.status.success(),
+                    "edition {edition}, target {target}: the runtime and its macro resolve \
+                     in their actual scope: {:?}",
+                    std::str::from_utf8(&built.stderr)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn private_expression_guards_compile_in_proc_macro_crates_under_every_edition() {
+        let source = "#![deny(warnings)]\nextern crate proc_macro;\n#[proc_macro]\npub fn answer(input: proc_macro::TokenStream) -> proc_macro::TokenStream { input }\n";
+        let scripted = ScriptedCompile::from_source("src/lib.rs", source, Tier::All);
+        assert!(!scripted.placements().is_empty());
+        let file = crate::instrument::instrument_file(&crate::instrument::Instrumenting {
+            path: "src/lib.rs",
+            source: source.as_bytes(),
+            placements: scripted.placements(),
+            carriers: &[],
+            markers: &[],
+            comparable: &std::collections::BTreeSet::new(),
+            probed: &std::collections::BTreeMap::new(),
+            catalog_digest: PLANT_CATALOG,
+            first_item: 0,
+            watched: PLANT_WATCHED,
+        })
+        .expect("the actual complete file is instrumented");
+        let temporary = tempfile::tempdir().expect("an owned compiler root");
+        let path = temporary.path().join("procedural.rs");
+        std::fs::write(&path, file.text).expect("the complete generated file");
+        let mut refused = Vec::new();
+        for edition in ["2015", "2018", "2021", "2024"] {
+            let built = Command::new("rustc")
+                .args(["--edition", edition, "--crate-type", "proc-macro"])
+                .arg("--out-dir")
+                .arg(temporary.path())
+                .arg(&path)
+                .output()
+                .expect("the actual native compiler runs");
+            if !built.status.success() {
+                eprintln!(
+                    "edition {edition}: {}",
+                    std::str::from_utf8(&built.stderr).expect("the exact compiler diagnostic")
+                );
+                refused.push(edition);
+            }
+        }
+        assert!(
+            refused.is_empty(),
+            "generated private expression guards must compile in every proc-macro edition: {refused:?}"
         );
     }
 }

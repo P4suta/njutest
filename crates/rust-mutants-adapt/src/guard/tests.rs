@@ -80,7 +80,7 @@ fn every_form_is_written_as_its_letter() {
 #[test]
 fn a_runtime_function_is_named_from_as_deep_as_its_site_stands() {
     assert_eq!(named("rt", 0, "active"), "rt::active");
-    assert_eq!(named("rt", 1, "value"), "super::rt::value");
+    assert_eq!(named("rt", 1, "value"), "rt_value");
     assert_eq!(named("rt", 2, "body"), "super::super::rt::body");
     assert_eq!(
         Paths {
@@ -97,21 +97,21 @@ fn a_boolean_selector_holds_every_branch_and_compares_what_may_be_compared() {
     let both = composed(Form::C, &[plain(), compared_and_probed()], ORIGINAL);
     assert_eq!(
         both.text,
-        "rt::value!(rt::active(7) && rt::value!(false) || rt::active(8) && rt::value!(b()) || \
-         !rt::active(7) && !rt::active(8) && rt::differing(8, rt::value!(a() || b()), || \
-         rt::value!(b())))"
+        "rt_value!(rt::active(7) && rt_value!(false) || rt::active(8) && rt_value!(b()) || \
+         !rt::active(7) && !rt::active(8) && rt::differing(8, rt_value!(a() || b()), || \
+         rt_value!(b())))"
     );
     assert_eq!(both.compared, vec![8]);
     let one = composed(Form::C, &[plain()], ORIGINAL);
     assert_eq!(
         one.text,
-        "rt::value!(rt::active(7) && rt::value!(false) || !rt::active(7) && rt::value!(a() || \
+        "rt_value!(rt::active(7) && rt_value!(false) || !rt::active(7) && rt_value!(a() || \
          b()))"
     );
     assert_eq!(one.compared, Vec::<u32>::new());
     let none = composed(Form::C, &[], ORIGINAL);
-    assert_eq!(none.text, "rt::value!(rt::value!(a() || b()))");
-    assert_eq!(none.original_at, 22);
+    assert_eq!(none.text, "rt_value!(rt_value!(a() || b()))");
+    assert_eq!(none.original_at, "rt_value!(rt_value!(".len());
     let nested = composed(
         Form::C,
         &[compared_and_probed(), alternative(9, "c", true, None)],
@@ -119,9 +119,9 @@ fn a_boolean_selector_holds_every_branch_and_compares_what_may_be_compared() {
     );
     assert_eq!(
         nested.text,
-        "rt::value!(rt::active(8) && rt::value!(b()) || rt::active(9) && rt::value!(c) || \
-         !rt::active(8) && !rt::active(9) && rt::differing(8, rt::value!(rt::differing(9, \
-         rt::value!(a() || b()), || rt::value!(c))), || rt::value!(b())))",
+        "rt_value!(rt::active(8) && rt_value!(b()) || rt::active(9) && rt_value!(c) || \
+         !rt::active(8) && !rt::active(9) && rt::differing(8, rt_value!(rt::differing(9, \
+         rt_value!(a() || b()), || rt_value!(c))), || rt_value!(b())))",
         "each comparison holds the next, the first outermost, and each closes with its own \
          alternative"
     );
@@ -133,7 +133,7 @@ fn a_value_chain_asks_every_vouched_probe_around_the_original() {
     let both = composed(Form::E, &[plain(), compared_and_probed()], ORIGINAL);
     assert_eq!(
         both.text,
-        "rt::value!(if rt::active(7) { false } else if rt::active(8) { b() } else { rt::untrue(8, \
+        "rt_value!(if rt::active(7) { false } else if rt::active(8) { b() } else { rt::untrue(8, \
          a() || b()) })"
     );
     assert_eq!(both.compared, vec![8]);
@@ -147,13 +147,13 @@ fn a_value_chain_asks_every_vouched_probe_around_the_original() {
     );
     assert_eq!(
         two.text,
-        "rt::value!(if rt::active(8) { b() } else if rt::active(9) { c } else { rt::untrue(8, \
+        "rt_value!(if rt::active(8) { b() } else if rt::active(9) { c } else { rt::untrue(8, \
          rt::undefaulted(9, a() || b())) })"
     );
     assert_eq!(two.compared, vec![8, 9]);
     let none = composed(Form::E, &[], ORIGINAL);
-    assert_eq!(none.text, "rt::value!(a() || b())");
-    assert_eq!(none.original_at, 11);
+    assert_eq!(none.text, "rt_value!(a() || b())");
+    assert_eq!(none.original_at, "rt_value!(".len());
 }
 
 #[test]
@@ -170,7 +170,7 @@ fn a_value_that_opens_a_block_is_guarded_by_a_chain_holding_every_branch_in_the_
         assert_eq!(
             composed.text,
             format!(
-                "if rt::active(7) {{ rt::value!({{ a }} - b) }} else {{ rt::value!({original}) }}"
+                "if rt::active(7) {{ rt_value!({{ a }} - b) }} else {{ rt_value!({original}) }}"
             ),
             "a guard over a value that opens a block has to end where that did, so it is the \
              chain; and a branch that opens a block starts the block it is written into, so the \
@@ -186,7 +186,7 @@ fn a_value_that_opens_a_block_is_guarded_by_a_chain_holding_every_branch_in_the_
         "{ a }",
     );
     assert_eq!(
-        probed.text, "if rt::active(7) { rt::value!({ a } - b) } else { rt::untrue(7, { a }) }",
+        probed.text, "if rt::active(7) { rt_value!({ a } - b) } else { rt::untrue(7, { a }) }",
         "a probe holds the original as its argument, where no macro is needed"
     );
     let within = composed(
@@ -196,7 +196,7 @@ fn a_value_that_opens_a_block_is_guarded_by_a_chain_holding_every_branch_in_the_
     );
     assert_eq!(
         within.text,
-        "rt::value!(if rt::active(7) { rt::value!({ a } - b) } else { a() || b() })"
+        "rt_value!(if rt::active(7) { rt_value!({ a } - b) } else { a() || b() })"
     );
 }
 
@@ -229,7 +229,7 @@ fn a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe() 
     let built = composed(Form::B, &[plain(), compared_and_probed()], ORIGINAL);
     assert_eq!(
         built.text,
-        "rt::value!(if rt::baked(7) { rt::value!(false) } else if rt::baked(8) { rt::value!(b()) } else { rt::value!(a() || b()) })"
+        "rt_value!(if rt::baked(7) { rt_value!(false) } else if rt::baked(8) { rt_value!(b()) } else { rt_value!(a() || b()) })"
     );
     assert!(built.compared.is_empty());
     for original in [
@@ -248,7 +248,7 @@ fn a_compiled_selector_holds_the_original_and_never_evaluates_a_runtime_probe() 
         assert!(built.compared.is_empty());
     }
     let dormant = composed(Form::B, &[], ORIGINAL);
-    assert_eq!(dormant.text, "rt::value!(a() || b())");
+    assert_eq!(dormant.text, "rt_value!(a() || b())");
 }
 
 #[test]
@@ -256,9 +256,9 @@ fn an_arm_guard_is_written_after_the_pattern_it_keeps() {
     let arm = composed(Form::M, &[plain(), compared_and_probed()], "0");
     assert_eq!(
         arm.text,
-        "0 if rt::value!(rt::active(7) && rt::value!(false) || rt::active(8) && rt::value!(b()) || \
-         !rt::active(7) && !rt::active(8) && rt::differing(8, rt::value!(true), || \
-         rt::value!(b())))"
+        "0 if rt_value!(rt::active(7) && rt_value!(false) || rt::active(8) && rt_value!(b()) || \
+         !rt::active(7) && !rt::active(8) && rt::differing(8, rt_value!(true), || \
+         rt_value!(b())))"
     );
     assert_eq!(
         arm.original_at, 0,
@@ -270,7 +270,7 @@ fn an_arm_guard_is_written_after_the_pattern_it_keeps() {
 #[test]
 fn the_original_is_one_operand_whatever_operators_it_holds() {
     let around = |form: Form| match form {
-        Form::C | Form::B => ("rt::value!(", ")"),
+        Form::C | Form::B => ("rt_value!(", ")"),
         Form::E | Form::S => ("else { ", " }"),
         Form::M => ("", " if "),
     };

@@ -807,14 +807,7 @@ fn instrument_with(
     let forest = worker.forest(&checkpointed.placements)?;
     let markers = File::markable(&checkpointed.markers, &forest);
 
-    let Rewritten {
-        text,
-        branches,
-        compared,
-        beside,
-        deconst,
-        constant,
-    } = worker.rewrite(
+    let mut rewritten = worker.rewrite(
         &checkpointed.source,
         &Planted {
             forest: &forest,
@@ -822,6 +815,15 @@ fn instrument_with(
             const_fns: &checkpointed.const_fns,
         },
     )?;
+    worker.bind_expression_macro(&mut rewritten)?;
+    let Rewritten {
+        text,
+        branches,
+        compared,
+        beside,
+        deconst,
+        constant,
+    } = rewritten;
     let (text, runtime_at) = worker.finished(
         text,
         &Rendering {
@@ -1087,10 +1089,96 @@ fn unwrapped(text: &str, module: &str) -> String {
         Some(after_the_last_call) => after_the_last_call,
         None => "",
     });
-    kept
+    let call = format!("{module}_value!");
+    kept.replace(&call, &" ".repeat(call.len()))
+}
+
+/// Whether the bounded token stream actually calls this file's unique expression macro.
+fn macro_called(tokens: proc_macro2::TokenStream, name: &str) -> bool {
+    let mut tokens = tokens.into_iter().peekable();
+    while let Some(token) = tokens.next() {
+        match token {
+            proc_macro2::TokenTree::Ident(ident) => {
+                if ident == name
+                    && matches!(tokens.peek(), Some(proc_macro2::TokenTree::Punct(punct)) if punct.as_char() == '!')
+                {
+                    return true;
+                }
+            }
+            proc_macro2::TokenTree::Group(group) => {
+                if macro_called(group.stream(), name) {
+                    return true;
+                }
+            }
+            proc_macro2::TokenTree::Punct(_) | proc_macro2::TokenTree::Literal(_) => {}
+        }
+    }
+    false
 }
 
 impl File<'_> {
+    /// Owns one private macro before every use while mapping all rendered diagnostic spans.
+    fn bind_expression_macro(&self, rewritten: &mut Rewritten) -> Result<(), InstrumentError> {
+        use syn::spanned::Spanned as _;
+        let (base, rust) = crate::syntax::strip_prefix(&rewritten.text).map_err(|source| {
+            self.error(InstrumentErrorKind::SourceMismatch, source.to_string())
+        })?;
+        let tokens = self
+            .parsing
+            .tokens(rust)
+            .map_err(|source| self.unparsable(&source))?;
+        if !macro_called(tokens, &format!("{}_value", self.module)) {
+            return Ok(());
+        }
+        let file = self
+            .parsing
+            .file(rust)
+            .map_err(|source| self.unparsable(&source))?;
+        let first = file.items.first().ok_or_else(|| {
+            self.error(
+                InstrumentErrorKind::SourceMismatch,
+                "an expression guard has no owning item",
+            )
+        })?;
+        let at = self
+            .offset(first.span().byte_range().start, "expression macro")?
+            .checked_add(base)
+            .ok_or_else(|| {
+                self.error(
+                    InstrumentErrorKind::SpliceFailed,
+                    "the source prefix does not fit",
+                )
+            })?;
+        let splice = Splice {
+            span: Span { start: at, end: at },
+            original: Vec::new(),
+            replacement: runtime::expression_macro(&self.module).into_bytes(),
+        };
+        let (text, offsets) = apply(rewritten.text.as_bytes(), &[splice])
+            .map_err(|source| self.error(InstrumentErrorKind::SpliceFailed, source.to_string()))?;
+        let map = |span| {
+            offsets
+                .map_span(span)
+                .map_err(|source| self.error(InstrumentErrorKind::SpliceFailed, source.to_string()))
+        };
+        for branch in &mut rewritten.branches {
+            branch.span = map(branch.span)?;
+        }
+        for function in &mut rewritten.deconst {
+            function.keyword = map(function.keyword)?;
+        }
+        for function in &mut rewritten.constant {
+            function.body = map(function.body)?;
+            for constant in &mut function.evaluated {
+                *constant = map(*constant)?;
+            }
+        }
+        rewritten.text = String::from_utf8(text).map_err(|source| {
+            self.error(InstrumentErrorKind::SourceMismatch, source.to_string())
+        })?;
+        Ok(())
+    }
+
     /// The line ending the file uses, so the appended runtime matches it.
     fn newline(&self) -> &'static str {
         if self.text.contains("\r\n") {
@@ -1125,7 +1213,7 @@ impl File<'_> {
         text: &mut String,
         rendering: &Rendering<'_>,
     ) -> Result<(), InstrumentError> {
-        let runtime = render(rendering).map_err(|error| {
+        let runtime = runtime::render_modules(rendering).map_err(|error| {
             self.error(
                 InstrumentErrorKind::SourceMismatch,
                 format!("the generated runtime cannot represent this file: {error}"),
@@ -1740,9 +1828,7 @@ mod tests {
     fn nested(depth: usize, inner: &str) -> String {
         let mut guard = inner.to_owned();
         for index in 0..depth {
-            guard = format!(
-                "super::rt::value!(if super::rt::active({index}) {{ 0 }} else {{ {guard} }})"
-            );
+            guard = format!("rt_value!(if super::rt::active({index}) {{ 0 }} else {{ {guard} }})");
         }
         format!("mod m {{\n    fn f() -> u8 {{\n        {guard}\n    }}\n}}\n")
     }
