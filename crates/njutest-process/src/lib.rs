@@ -162,6 +162,15 @@ impl ForeignProcess {
         self.handle.wait(bound)
     }
 
+    /// Signals only this retained native process generation.
+    ///
+    /// # Errors
+    /// The exact native generation refused this cancellation signal.
+    #[cfg(unix)]
+    pub fn signal(&self, how: GroupStop) -> std::io::Result<()> {
+        self.handle.signal(how)
+    }
+
     /// Cancels only the retained generation and confirms its actual completion.
     ///
     /// # Errors

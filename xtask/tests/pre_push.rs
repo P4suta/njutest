@@ -961,7 +961,7 @@ fn two_gates_take_turns_on_one_machine() {
             || present(&second.turns.join("overlapped"))),
         "the second gate neither waited nor ran"
     );
-    release_turns(&first.turns).expect("the first check's release");
+    std::fs::write(first.turns.join("go"), b"released\n").expect("the first check's release");
 
     let first_answer = running.wait_with_output().expect("the first gate's answer");
     let second_answer = queued.wait_with_output().expect("the second gate's answer");
@@ -1085,7 +1085,7 @@ fn a_second_push_of_a_commit_that_passed_while_it_waited_is_not_checked_again() 
         until(Duration::from_secs(120), || waiting_in(&repository.slots)),
         "the second gate did not queue behind the first"
     );
-    release_turns(&repository.turns).expect("the first check's release");
+    std::fs::write(repository.turns.join("go"), b"released\n").expect("the first check's release");
     let first = first.wait_with_output().expect("the first gate's answer");
     let calls = repository.calls();
     let second = second.wait_with_output().expect("the second gate's answer");
@@ -1128,7 +1128,7 @@ fn two_gates_of_one_repository_take_turns_even_inside_a_held_lane() {
         }),
         "the second gate neither waited nor ran"
     );
-    release_turns(&repository.turns).expect("the first check's release");
+    std::fs::write(repository.turns.join("go"), b"released\n").expect("the first check's release");
     let first = first.wait_with_output().expect("the first gate's answer");
     let second = second.wait_with_output().expect("the second gate's answer");
     assert!(

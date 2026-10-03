@@ -13,7 +13,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
 use crate::environment::Environment;
-use crate::observation::{Event, Observation};
 use crate::work::Stops;
 
 /// The variable that names the lanes a process already holds, so a run inside one never waits for itself.
@@ -25,11 +24,15 @@ pub const QUIET: &str = "NJUTEST_SLOT_QUIET_SECONDS";
 /// How long a run waits behind a holder whose work shows nothing new, where [`QUIET`] does not say.
 const DEFAULT_QUIET: Duration = Duration::from_secs(600);
 
-/// The minimum interval between actual operating-system CPU samples.
+/// How often a waiting run looks at the lock again.
 const POLL: Duration = Duration::from_millis(200);
 
 /// How often a waiting run repeats whom it is waiting for.
 const REPORT: Duration = Duration::from_secs(30);
+
+/// How long work a dead holder left behind is given to end once asked, and again once killed.
+#[cfg(unix)]
+const ORPHAN_GRACE: Duration = Duration::from_secs(10);
 
 /// A lane a run can queue for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,12 +119,12 @@ pub enum LaneError {
         /// The output failure.
         source: std::io::Error,
     },
-    /// A legacy receipt still names a listed group with no retained settlement capability.
+    /// The work a dead holder left running in the lane would not end when this run stopped it.
     #[cfg(unix)]
     #[error(
-        "the {lane} lane's legacy group (led by pid {pid}) still has a listed member, but its \
-         receipt retains no complete group and descriptor ownership; settlement is unprovable \
-         and the lane is not taken over it"
+        "the {lane} lane's last holder is gone and a process of the group its work ran in (led by \
+         pid {pid}) outlived both the request to stop and the kill; nothing else will take the \
+         lane while it runs"
     )]
     Unended {
         /// The lane.
@@ -153,12 +156,12 @@ pub enum LaneError {
         /// The waiting run.
         pid: u32,
     },
-    /// The recorded generation lacks a capability proving its whole group and descriptors ended.
+    /// Whether the group a dead holder's work ran in is still there could not be seen.
     #[cfg(unix)]
     #[error(
-        "the {lane} lane's legacy group receipt (led by pid {pid}) retains no ownership of its \
-         complete group and descriptors, so settlement is unprovable and the lane is not taken \
-         over it"
+        "the {lane} lane's last holder is gone and the processes of the group its work ran in (led \
+         by pid {pid}) could not be listed, so whether that work has ended is unknown and the lane \
+         is not taken over it"
     )]
     Unseen {
         /// The lane.
@@ -391,20 +394,6 @@ impl Place<'_> {
     }
 
     fn take(&self, request: &Request<'_>, progress: &mut dyn Write) -> Result<File, LaneError> {
-        let observed = Observation::filesystem(self.directory, false)
-            .map_err(|source| io(self.directory, source))?;
-        let stopping = request.stops.subscribe(&observed);
-        let taken = self.take_observed(request, progress, &observed);
-        drop(stopping);
-        taken
-    }
-
-    fn take_observed(
-        &self,
-        request: &Request<'_>,
-        progress: &mut dyn Write,
-        observed: &Observation,
-    ) -> Result<File, LaneError> {
         let marker = self.directory.join(format!(
             "{}.waiting.{}",
             request.lane.name(),
@@ -467,29 +456,7 @@ impl Place<'_> {
                     ),
                 )?;
             }
-            let deadline = watch
-                .deadline(reported)
-                .map_err(|source| io(self.record, source))?;
-            self.wait(observed, request, deadline)?;
-        }
-    }
-
-    fn wait(
-        &self,
-        observed: &Observation,
-        request: &Request<'_>,
-        deadline: Instant,
-    ) -> Result<(), LaneError> {
-        let waited = observed
-            .wait(
-                &self.record.display().to_string(),
-                "lane publication, cancellation, CPU sample or quiet deadline",
-                Some(deadline),
-            )
-            .map_err(|source| io(self.record, source))?;
-        request.stops.record(waited.note);
-        match waited.event.map_err(|source| io(self.record, source))? {
-            Event::Changed | Event::Completed | Event::Cancelled | Event::Deadline => Ok(()),
+            std::thread::sleep(POLL);
         }
     }
 
@@ -626,12 +593,9 @@ impl Place<'_> {
         Ok(alive)
     }
 
-    /// Refuses unreleased legacy work whose complete group and descriptor lifetime was not retained.
+    /// Ends every group the last holder's work ran in, when that holder died before its work did: each is asked to stop, then killed, and the lane is taken only once every one is seen gone.
     #[cfg(unix)]
     fn outlast(&self, request: &Request<'_>, progress: &mut dyn Write) -> Result<(), LaneError> {
-        let observed = Observation::filesystem(self.directory, false)
-            .map_err(|source| io(self.directory, source))?;
-        let stopping = request.stops.subscribe(&observed);
         let bytes = match std::fs::read(self.record) {
             Ok(bytes) => bytes,
             Err(missing) if missing.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -658,24 +622,11 @@ impl Place<'_> {
         if groups.is_empty() {
             return Ok(());
         }
-        self.outwait_holder(request, progress, (&observed, (pid, born)))?;
-        drop(stopping);
-        match groups.first() {
-            Some(group) => {
-                let lane = request.lane.name();
-                let pid = group.pid;
-                match group_liveness(
-                    group,
-                    &start_of(pid),
-                    crate::work::listed().as_deref(),
-                    session_of,
-                ) {
-                    Liveness::Alive => Err(LaneError::Unended { lane, pid }),
-                    Liveness::Gone | Liveness::Unseen => Err(LaneError::Unseen { lane, pid }),
-                }
-            }
-            None => Ok(()),
+        self.outwait_holder(request, progress, (pid, born))?;
+        for group in groups {
+            self.end_group(request, progress, &group)?;
         }
+        Ok(())
     }
 
     /// Nothing is recorded where no start time can be read, so there is no group a dead holder left to end.
@@ -699,7 +650,7 @@ impl Place<'_> {
         &self,
         request: &Request<'_>,
         progress: &mut dyn Write,
-        (observed, (pid, born)): (&Observation, (u32, &str)),
+        (pid, born): (u32, &str),
     ) -> Result<(), LaneError> {
         let lane = request.lane.name();
         let mut reported: Option<Instant> = None;
@@ -725,10 +676,7 @@ impl Place<'_> {
                     ),
                 )?;
             }
-            let deadline = watch
-                .deadline(reported.unwrap_or(watch.moved))
-                .map_err(|source| io(self.record, source))?;
-            self.wait(observed, request, deadline)?;
+            std::thread::sleep(POLL);
         }
     }
 
@@ -739,6 +687,48 @@ impl Place<'_> {
             holder: describe(self.record),
             silent: span(silent.as_secs()),
             quiet: span(self.quiet.as_secs()),
+        }
+    }
+
+    /// Asks the group `pid` led to stop, then kills it, until a look at it finds nobody that has not ended.
+    #[cfg(unix)]
+    fn end_group(
+        &self,
+        request: &Request<'_>,
+        progress: &mut dyn Write,
+        group: &Recorded,
+    ) -> Result<(), LaneError> {
+        let lane = request.lane.name();
+        let pid = group.pid;
+        for sent in crate::work::Sent::ALL {
+            match liveness(group) {
+                Liveness::Gone => return Ok(()),
+                Liveness::Unseen => return Err(LaneError::Unseen { lane, pid }),
+                Liveness::Alive => {}
+            }
+            say(
+                progress,
+                &format!(
+                    "slot: the {lane} lane is free, but the group its last holder's work ran in (led by pid {pid}) still holds a process with nobody to answer to; {} it",
+                    match sent {
+                        crate::work::Sent::Ask => "asking it to stop",
+                        crate::work::Sent::Kill => "it did not stop when asked, so killing",
+                    }
+                ),
+            )?;
+            stop_group(group, sent).map_err(|source| io(self.record, source))?;
+            let asked = Instant::now();
+            while liveness(group) == Liveness::Alive && asked.elapsed() < ORPHAN_GRACE {
+                if let Some(signal) = request.stops.raised() {
+                    return Err(LaneError::Interrupted { lane, signal });
+                }
+                std::thread::sleep(POLL);
+            }
+        }
+        match liveness(group) {
+            Liveness::Gone => Ok(()),
+            Liveness::Alive => Err(LaneError::Unended { lane, pid }),
+            Liveness::Unseen => Err(LaneError::Unseen { lane, pid }),
         }
     }
 }
@@ -781,27 +771,6 @@ impl Watch {
         let silent = self.moved.elapsed();
         (silent >= self.quiet).then_some(silent)
     }
-
-    fn deadline(&self, reported: Instant) -> std::io::Result<Instant> {
-        let sampled = match self.looked {
-            Some(last) => last,
-            None => self.moved,
-        };
-        let deadlines = [
-            sampled.checked_add(self.look),
-            self.moved.checked_add(self.quiet),
-            reported.checked_add(REPORT),
-        ];
-        let mut next = Instant::now()
-            .checked_add(REPORT)
-            .ok_or_else(|| std::io::Error::other("the lane reporting deadline is too large"))?;
-        for deadline in deadlines {
-            next = next.min(deadline.ok_or_else(|| {
-                std::io::Error::other("a lane CPU, quiet or reporting deadline is too large")
-            })?);
-        }
-        Ok(next)
-    }
 }
 
 /// A watch where a group's processes cannot be listed, which is where a stalled holder cannot be told from a slow one, so the lock alone decides.
@@ -824,16 +793,6 @@ impl Watch {
     )]
     const fn stalled(&mut self, _record: &Path) -> Option<Duration> {
         None
-    }
-
-    #[expect(
-        clippy::unused_self,
-        reason = "the non-Unix watch only owns the reporting deadline"
-    )]
-    fn deadline(&self, reported: Instant) -> std::io::Result<Instant> {
-        reported
-            .checked_add(REPORT)
-            .ok_or_else(|| std::io::Error::other("the lane reporting deadline is too large"))
     }
 }
 
@@ -1043,6 +1002,17 @@ pub fn group_liveness(
     }
 }
 
+/// Whether the group `recorded` names still holds a process of its work that has not ended, as the machine answers now.
+#[cfg(unix)]
+fn liveness(recorded: &Recorded) -> Liveness {
+    group_liveness(
+        recorded,
+        &start_of(recorded.pid),
+        crate::work::listed().as_deref(),
+        session_of,
+    )
+}
+
 /// The byte the next writer ends a line with that a writer was killed before finishing, which no finished line holds.
 const TORN: u8 = 0;
 
@@ -1173,6 +1143,20 @@ pub fn boot() -> Option<String> {
     }
 }
 
+/// Stops the group led by `pid`, whether or not its leader is still alive.
+#[cfg(unix)]
+fn stop_group(recorded: &Recorded, sent: crate::work::Sent) -> std::io::Result<()> {
+    let Some(group) = crate::work::GroupAuthority::capture(recorded, start_of, session_of)
+        .map_err(|source| std::io::Error::other(source.to_string()))?
+    else {
+        return Ok(());
+    };
+    match crate::work::signal_group(&group, sent) {
+        Ok(()) | Err(crate::work::WorkError::Outlived { .. }) => Ok(()),
+        Err(error) => Err(std::io::Error::other(error.to_string())),
+    }
+}
+
 /// A run waiting for a lane, and its place in the line.
 #[derive(Debug, Clone, Copy)]
 struct Waiter {
@@ -1198,13 +1182,6 @@ impl Drop for Held {
         {
             match append(record, "released") {
                 Ok(()) | Err(_) => {}
-            }
-            let held = self.lock.take();
-            drop(held);
-            let publication = record.with_extension("released");
-            if let Err(source) = replace(&publication, &std::process::id().to_string()) {
-                drop(source);
-                std::process::abort();
             }
         }
     }

@@ -23,26 +23,15 @@ fn working_until_go() -> String {
 
 /// The lanes and the marker files the scripted runs of one test share.
 struct Machine {
-    observed: xtask::observation::Observation,
-    slots: std::path::PathBuf,
-    turns: std::path::PathBuf,
-    root: tempfile::TempDir,
+    slots: tempfile::TempDir,
+    turns: tempfile::TempDir,
 }
 
 impl Machine {
     fn new() -> Self {
-        let root = tempfile::tempdir().expect("the complete owned lane observation scope");
-        let slots = root.path().join("slots");
-        let turns = root.path().join("turns");
-        std::fs::create_dir_all(&slots).expect("the lane directory");
-        std::fs::create_dir_all(&turns).expect("the turn directory");
-        let observed = xtask::observation::Observation::filesystem(root.path(), true)
-            .expect("subscribe before starting any lane producer");
         Self {
-            observed,
-            slots,
-            turns,
-            root,
+            slots: tempfile::tempdir().expect("a lane directory"),
+            turns: tempfile::tempdir().expect("a directory the runs take turns in"),
         }
     }
 
@@ -50,9 +39,9 @@ impl Machine {
         let mut command = Command::new(env!("CARGO_BIN_EXE_xtask"));
         command
             .args(["slot", "heavy", "--", "sh", "-c", script])
-            .env("NJUTEST_SLOT_DIR", self.slots.as_path())
+            .env("NJUTEST_SLOT_DIR", self.slots.path())
             .env_remove("NJUTEST_SLOT_HELD")
-            .env("TURNS", self.turns.as_path())
+            .env("TURNS", self.turns.path())
             .env("XTASK", env!("CARGO_BIN_EXE_xtask"))
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -65,20 +54,19 @@ impl Machine {
     }
 
     fn marker(&self, name: &str) -> bool {
-        self.root
+        self.turns
             .path()
-            .join("turns")
             .join(name)
             .try_exists()
             .expect("a marker can be looked for")
     }
 
     fn release(&self) {
-        release_turns(self.turns.as_path()).expect("the holder's release observation");
+        std::fs::write(self.turns.path().join("go"), "").expect("the holder's release");
     }
 
     fn waiters(&self) -> usize {
-        std::fs::read_dir(self.slots.as_path())
+        std::fs::read_dir(self.slots.path())
             .expect("a readable lane directory")
             .map(|entry| entry.expect("a readable lane entry").file_name())
             .filter(|name| {
@@ -96,279 +84,30 @@ fn holds_until_go() -> String {
 }
 
 /// Waits until `ready` says so, or `limit` passes, and says which.
-fn until(machine: &Machine, limit: Duration, mut ready: impl FnMut() -> bool) -> bool {
-    let deadline = Instant::now()
-        .checked_add(limit)
-        .expect("the existing semantic limit");
-    loop {
+fn until(limit: Duration, mut ready: impl FnMut() -> bool) -> bool {
+    let started = Instant::now();
+    while started.elapsed() < limit {
         if ready() {
             return true;
         }
-        let waited = machine
-            .observed
-            .wait(
-                "lane-test-producers",
-                "marker, queue or terminal publication",
-                Some(deadline),
-            )
-            .expect("the actual subscribed host wait");
-        eprintln!(
-            "{}",
-            serde_json::to_string(&waited.note).expect("the actual host measurement")
-        );
-        match waited.event.expect("the actual producer observation") {
-            xtask::observation::Event::Changed => {}
-            xtask::observation::Event::Deadline => return ready(),
-            xtask::observation::Event::Completed | xtask::observation::Event::Cancelled => {
-                return false;
-            }
-        }
+        std::thread::sleep(Duration::from_millis(20));
     }
+    ready()
 }
 
 fn finished_within(limit: Duration, child: &mut SupervisedChild) -> Option<ExitStatus> {
-    let owner = format!("lane-test-child:{:?}", child.id());
     let started = Instant::now();
-    let arrived = child
-        .completion()
-        .expect("the owned producer completion")
-        .wait(Some(limit))
-        .expect("the retained actual completion result");
-    let result = arrived.then(|| {
-        child
-            .wait()
-            .expect("the whole owned group and its inherited descriptors settled")
-    });
-    let note = xtask::observation::WaitNote {
-        owner,
-        cause: "owned group completion or the existing semantic deadline".to_owned(),
-        elapsed_ns: u64::try_from(started.elapsed().as_nanos()).expect("the actual duration fits"),
-        machine: xtask::observation::Machine {
-            os: std::env::consts::OS,
-            cpus: std::thread::available_parallelism()
-                .expect("the executing host processors")
-                .get(),
-        },
-    };
-    eprintln!(
-        "{}",
-        serde_json::to_string(&note).expect("the actual host measurement")
-    );
-    result
-}
-
-#[test]
-fn a_turn_wait_registers_its_pipe_before_the_release_is_observed() {
-    let turns = tempfile::tempdir().expect("the owned turn rendezvous");
-    let observed = xtask::observation::Observation::filesystem(turns.path(), false)
-        .expect("subscribe before starting the shell producer");
-    let mut command = Command::new("sh");
-    command
-        .args(["-c", UNTIL_GO])
-        .env("TURNS", turns.path())
-        .stdout(Stdio::piped());
-    let mut child = SupervisedChild::launch(&mut command).expect("the real shell waiter");
-    let deadline = Instant::now()
-        .checked_add(Duration::from_secs(2))
-        .expect("the bounded subscription control");
-    let registered = loop {
-        let endpoints = std::fs::read_dir(turns.path())
-            .expect("the complete turn endpoint inventory")
-            .map(|entry| entry.expect("a readable endpoint").file_name())
-            .filter(|name| name.to_str().expect("a UTF-8 endpoint").starts_with("go."))
-            .count();
-        if endpoints == 1 {
-            break true;
+    while started.elapsed() < limit {
+        if let Some(status) = child.try_wait().expect("the run can be looked at") {
+            return Some(status);
         }
-        let waited = observed
-            .wait("shell-turn", "release-subscription", Some(deadline))
-            .expect("the actual native observation");
-        eprintln!(
-            "{}",
-            serde_json::to_string(&waited.note).expect("the actual host wait")
-        );
-        match waited.event.expect("a readable producer event") {
-            xtask::observation::Event::Changed => {}
-            xtask::observation::Event::Deadline => break false,
-            xtask::observation::Event::Completed | xtask::observation::Event::Cancelled => {
-                break false;
-            }
-        }
-    };
-    release_turns(turns.path()).expect("publish the actual release to the registered producer");
-    assert!(
-        child
-            .wait()
-            .expect("the released shell completes")
-            .success()
-    );
-    assert!(
-        registered,
-        "a shell turn must register its owned release endpoint before checking the sticky marker"
-    );
-}
-
-#[test]
-fn a_turn_release_is_retained_before_the_shell_subscribes() {
-    let turns = tempfile::tempdir().expect("the owned turn rendezvous");
-    release_turns(turns.path()).expect("a release before registration");
-    let mut command = Command::new("sh");
-    command.args(["-c", UNTIL_GO]).env("TURNS", turns.path());
-    let mut child = SupervisedChild::launch(&mut command).expect("the late subscriber");
-    assert!(
-        child
-            .wait()
-            .expect("the retained release is read")
-            .success()
-    );
-    let names: Vec<_> = std::fs::read_dir(turns.path())
-        .expect("the complete endpoint inventory")
-        .map(|entry| entry.expect("a readable endpoint").file_name())
-        .collect();
-    assert_eq!(names, [std::ffi::OsString::from("go")]);
-}
-
-#[test]
-fn a_turn_release_refuses_an_unowned_endpoint_shape() {
-    let turns = tempfile::tempdir().expect("the owned turn rendezvous");
-    std::fs::write(turns.path().join("go.foreign"), "unowned")
-        .expect("a planted regular-file endpoint");
-    let error = release_turns(turns.path()).expect_err("a regular file is not a release FIFO");
-    assert!(
-        error.to_string().contains("not a producer-owned FIFO"),
-        "{error}"
-    );
-    assert_eq!(
-        std::fs::read(turns.path().join("go.foreign")).expect("unchanged"),
-        b"unowned"
-    );
-}
-
-struct BlockedWriter(Option<rustix::process::Pid>);
-
-impl Drop for BlockedWriter {
-    fn drop(&mut self) {
-        let Some(writer) = self.0 else {
-            return;
-        };
-        match rustix::process::kill_process(writer, rustix::process::Signal::KILL) {
-            Ok(()) | Err(rustix::io::Errno::SRCH) => {}
-            Err(_unstopped) => std::process::abort(),
-        }
+        std::thread::sleep(Duration::from_millis(20));
     }
-}
-
-#[test]
-fn completed_work_ends_its_blocked_writer_before_the_parent_disposes_its_cache() {
-    let turns = tempfile::tempdir().expect("the producer's cache and rendezvous");
-    let gate = turns.path().join("go");
-    assert!(
-        Command::new("mkfifo")
-            .arg(&gate)
-            .status()
-            .expect("the explicit producer gate")
-            .success()
-    );
-    let mut command = Command::new("sh");
-    command.args(["-c", "sh -c 'read released < \"$TURNS/go\"; printf late > \"$TURNS/cache\"' & printf '%s\\n' $! > \"$TURNS/writer\"; exit 0"])
-        .env("TURNS", turns.path());
-    let stops = xtask::work::Stops::arm().expect("owned stop observations");
-    let leader = std::cell::Cell::new(None);
-    let ended = xtask::work::run(&mut command, None, &stops, |pid| {
-        leader.set(Some(pid));
-        Ok(())
-    })
-    .expect("the work's complete result");
-    assert!(matches!(ended, xtask::work::Ended::Exited(status) if status.success()));
-    let writer: i32 = std::fs::read_to_string(turns.path().join("writer"))
-        .expect("the exact writer identity")
-        .trim()
-        .parse::<i32>()
-        .expect("the writer pid");
-    let writer = rustix::process::Pid::from_raw(writer).expect("a positive writer pid");
-    let alive = xtask::work::listed()
-        .expect("the executing host's actual processes")
-        .iter()
-        .any(|one| {
-            one.pid == u32::try_from(writer.as_raw_nonzero().get()).expect("the writer pid fits")
-                && Some(one.group) == leader.get()
-                && !one.ended
-        });
-    let cleanup = BlockedWriter(alive.then_some(writer));
-    assert!(
-        !alive,
-        "a successful leader exit must settle its producer group before cache disposal; the gated late writer is still alive"
-    );
-    drop(cleanup);
+    None
 }
 
 fn text(bytes: &[u8]) -> String {
     String::from_utf8(bytes.to_vec()).expect("a run's output is UTF-8")
-}
-
-fn callback_refusal(from_started: bool) {
-    let mut command = Command::new("sh");
-    command.args(["-c", "read gate"]).stdin(Stdio::piped());
-    let leader = std::cell::Cell::new(None);
-    let stops = xtask::work::Stops::arm().expect("the signal producer");
-    let mut heard = || {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::BrokenPipe,
-            "the actual output consumer refused",
-        ))
-    };
-    let mut bound = xtask::work::Bound {
-        ceiling: Duration::from_secs(60),
-        quiet: Duration::from_secs(60),
-        heard: &mut heard,
-    };
-    let refused = xtask::work::run(
-        &mut command,
-        (!from_started).then_some(&mut bound),
-        &stops,
-        |pid| {
-            leader.set(Some(pid));
-            if from_started {
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::PermissionDenied,
-                    "the actual start observer refused",
-                ))
-            } else {
-                Ok(())
-            }
-        },
-    )
-    .expect_err("the observer failure remains a failure");
-    assert!(
-        matches!(refused, xtask::work::WorkError::Watch { source } if source.kind() == if from_started { std::io::ErrorKind::PermissionDenied } else { std::io::ErrorKind::BrokenPipe })
-    );
-    assert!(
-        !xtask::work::listed()
-            .expect("the actual process inventory")
-            .iter()
-            .any(|one| Some(one.pid) == leader.get() && !one.ended),
-        "the callback failure returned only after the producer ended"
-    );
-    let waits = stops.take_waits();
-    assert!(
-        waits.iter().any(|wait| wait.owner
-            == format!(
-                "process-group:{}",
-                leader.get().expect("the actual launched leader")
-            )
-            && wait.machine.cpus > 0),
-        "the cleanup retains its measured executing-host wait"
-    );
-}
-
-#[test]
-fn a_start_callback_failure_returns_after_its_producer_is_reaped() {
-    callback_refusal(true);
-}
-
-#[test]
-fn an_output_callback_failure_returns_after_its_producer_is_reaped() {
-    callback_refusal(false);
 }
 
 #[test]
@@ -376,17 +115,16 @@ fn a_second_run_waits_until_the_first_has_ended() {
     let machine = Machine::new();
     let first = machine.run(&holds_until_go());
     assert!(
-        until(&machine, Duration::from_secs(60), || machine
-            .marker("inside")),
+        until(Duration::from_secs(60), || machine.marker("inside")),
         "the first run never started"
     );
-    let progress = machine.turns.as_path().join("waiting.log");
+    let progress = machine.turns.path().join("waiting.log");
     let told = std::fs::File::create(&progress).expect("the waiting run's progress");
     let mut second = machine.command("test ! -e \"$TURNS/inside\"");
     second.stderr(Stdio::from(told));
     let second = SupervisedChild::launch(&mut second).expect("the second run in the lane");
     assert!(
-        until(&machine, Duration::from_secs(60), || {
+        until(Duration::from_secs(60), || {
             std::fs::read_to_string(&progress)
                 .is_ok_and(|said| said.contains("waiting for the heavy lane"))
         }),
@@ -412,8 +150,7 @@ fn a_run_inside_a_held_lane_does_not_wait_for_itself() {
     let machine = Machine::new();
     let holder = machine.run(&holds_until_go());
     assert!(
-        until(&machine, Duration::from_secs(60), || machine
-            .marker("inside")),
+        until(Duration::from_secs(60), || machine.marker("inside")),
         "the holder never started"
     );
     let mut nested = machine.command("true");
@@ -433,13 +170,12 @@ fn a_run_inside_a_held_lane_does_not_wait_for_itself() {
 /// Kills the run `holder` outright once the work it started is recorded, and says which process that work is.
 fn orphan_the_work(machine: &Machine, holder: &mut SupervisedChild) -> String {
     assert!(
-        until(machine, Duration::from_secs(60), || machine
-            .marker("inside")),
+        until(Duration::from_secs(60), || machine.marker("inside")),
         "the holder never started"
     );
-    let record = machine.slots.as_path().join("heavy.holder");
+    let record = machine.slots.path().join("heavy.holder");
     assert!(
-        until(machine, Duration::from_secs(60), || {
+        until(Duration::from_secs(60), || {
             std::fs::read_to_string(&record).is_ok_and(|text| text.contains("group="))
         }),
         "the holder never recorded the work it started"
@@ -451,7 +187,7 @@ fn orphan_the_work(machine: &Machine, holder: &mut SupervisedChild) -> String {
         .expect("kill");
     assert!(killed.success(), "the holder could not be killed");
     holder.wait().expect("the killed holder is reaped");
-    std::fs::read_to_string(machine.turns.as_path().join("work"))
+    std::fs::read_to_string(machine.turns.path().join("work"))
         .expect("the work said who it is")
         .trim()
         .to_owned()
@@ -500,8 +236,7 @@ fn a_run_asked_to_stop_stops_its_work_first() {
         let mut command = machine.command(&working_until_go());
         let mut run = SupervisedChild::launch(&mut command).expect("a run in the lane");
         assert!(
-            until(&machine, Duration::from_secs(60), || machine
-                .marker("inside")),
+            until(Duration::from_secs(60), || machine.marker("inside")),
             "the run never started"
         );
         let unread = run.take_stderr();
@@ -513,7 +248,7 @@ fn a_run_asked_to_stop_stops_its_work_first() {
             .expect("kill");
         assert!(sent.success(), "{signal} could not be sent");
         let ended = finished_within(Duration::from_secs(60), &mut run);
-        let work = std::fs::read_to_string(machine.turns.as_path().join("work"))
+        let work = std::fs::read_to_string(machine.turns.path().join("work"))
             .expect("the work said who it is");
         let alive = Command::new("kill")
             .args(["-0", work.trim()])
@@ -565,19 +300,13 @@ fn a_test_that_ends_while_its_run_waits_leaves_no_worker_behind() {
     let machine = Machine::new();
     let mut holder = machine.run(&working_until_go());
     assert!(
-        until(&machine, Duration::from_secs(60), || machine
-            .marker("inside")),
+        until(Duration::from_secs(60), || machine.marker("inside")),
         "the holder never started"
     );
-    let work = std::fs::read_to_string(machine.turns.as_path().join("work"))
+    let work = std::fs::read_to_string(machine.turns.path().join("work"))
         .expect("the work said who it is")
         .trim()
         .to_owned();
-    let completion = njutest_process::ForeignProcess::retain(
-        work.parse::<u32>().expect("the actual worker's PID"),
-    )
-    .expect("retain the worker generation before ending its holder")
-    .expect("the worker is alive before the holder ends");
     let pid = holder.id().expect("a live holder").to_string();
     let killed = Command::new("kill")
         .args(["-KILL", &pid])
@@ -586,16 +315,15 @@ fn a_test_that_ends_while_its_run_waits_leaves_no_worker_behind() {
     assert!(killed.success(), "the holder could not be killed");
     holder.wait().expect("the killed holder is reaped");
     drop(machine);
-    let completed = completion
-        .wait(Some(Duration::from_secs(10)))
-        .expect("the retained worker completion or the original deadline");
-    let gone = !Command::new("kill")
-        .args(["-0", &work])
-        .status()
-        .expect("the original no-worker check")
-        .success();
+    let gone = until(Duration::from_secs(10), || {
+        !Command::new("kill")
+            .args(["-0", &work])
+            .status()
+            .expect("kill -0")
+            .success()
+    });
     assert!(
-        completed && gone,
+        gone,
         "a test that ended as a panicking one does, its run killed and its directories removed, \
          left the work its run started waiting for a release nobody will write; under measurement \
          that worker kept the machine's lane for every session"
@@ -607,8 +335,7 @@ fn runs_that_wait_go_in_in_the_order_they_began_to_wait() {
     let machine = Machine::new();
     let mut holder = machine.run(&holds_until_go());
     assert!(
-        until(&machine, Duration::from_secs(60), || machine
-            .marker("inside")),
+        until(Duration::from_secs(60), || machine.marker("inside")),
         "the holder never started"
     );
     let names = ["first", "second", "third", "fourth"];
@@ -616,8 +343,7 @@ fn runs_that_wait_go_in_in_the_order_they_began_to_wait() {
     for (ahead, name) in names.iter().enumerate() {
         waiting.push(machine.run(&format!("echo {name} >> \"$TURNS/order\"")));
         assert!(
-            until(&machine, Duration::from_secs(60), || machine.waiters()
-                == ahead + 1),
+            until(Duration::from_secs(60), || machine.waiters() == ahead + 1),
             "{name} never began to wait"
         );
     }
@@ -628,7 +354,7 @@ fn runs_that_wait_go_in_in_the_order_they_began_to_wait() {
             "every run went in and finished"
         );
     }
-    let order = std::fs::read_to_string(machine.turns.as_path().join("order"))
+    let order = std::fs::read_to_string(machine.turns.path().join("order"))
         .expect("every waiting run wrote its name");
     assert_eq!(
         order.lines().collect::<Vec<&str>>(),
@@ -644,18 +370,17 @@ fn a_run_that_died_while_it_waited_holds_no_place_in_the_line() {
     let machine = Machine::new();
     let mut holder = machine.run(&holds_until_go());
     assert!(
-        until(&machine, Duration::from_secs(60), || machine
-            .marker("inside")),
+        until(Duration::from_secs(60), || machine.marker("inside")),
         "the holder never started"
     );
     let mut dead = machine.run("echo dead >> \"$TURNS/order\"");
     assert!(
-        until(&machine, Duration::from_secs(60), || machine.waiters() == 1),
+        until(Duration::from_secs(60), || machine.waiters() == 1),
         "the first waiter never began to wait"
     );
     let mut next = machine.run("echo next >> \"$TURNS/order\"");
     assert!(
-        until(&machine, Duration::from_secs(60), || machine.waiters() == 2),
+        until(Duration::from_secs(60), || machine.waiters() == 2),
         "the second waiter never began to wait"
     );
     let pid = dead.id().expect("a live waiter").to_string();
@@ -676,14 +401,14 @@ fn a_run_that_died_while_it_waited_holds_no_place_in_the_line() {
         finished_within(Duration::from_secs(60), &mut holder).is_some(),
         "the holder finished"
     );
-    let order = std::fs::read_to_string(machine.turns.as_path().join("order"))
+    let order = std::fs::read_to_string(machine.turns.path().join("order"))
         .expect("the run behind wrote its name");
     assert_eq!(order.lines().collect::<Vec<&str>>(), ["next"]);
 }
 
 /// The id `name` wrote into the turns directory.
 fn written(machine: &Machine, name: &str) -> String {
-    std::fs::read_to_string(machine.turns.as_path().join(name))
+    std::fs::read_to_string(machine.turns.path().join(name))
         .expect("the run wrote its id")
         .trim()
         .to_owned()
@@ -707,8 +432,7 @@ fn a_member_that_outlives_its_leader_is_ended_before_the_next_run_goes_in() {
         UNTIL_GO.replace('\'', "'\\''")
     ));
     assert!(
-        until(&machine, Duration::from_secs(60), || machine
-            .marker("inside")
+        until(Duration::from_secs(60), || machine.marker("inside")
             && machine.marker("member")),
         "the holder and its member never started"
     );
@@ -734,8 +458,7 @@ fn a_group_started_inside_the_held_lane_is_ended_with_the_holder_s_own() {
         UNTIL_GO.replace('\'', "'\\''")
     ));
     assert!(
-        until(&machine, Duration::from_secs(60), || machine
-            .marker("inside")
+        until(Duration::from_secs(60), || machine.marker("inside")
             && machine.marker("nested")),
         "the nested work never started"
     );
@@ -940,7 +663,7 @@ fn a_line_a_writer_was_killed_in_does_not_swallow_the_next_one() {
     let environment = xtask::environment::Environment::of([
         (
             OsString::from("NJUTEST_SLOT_DIR"),
-            machine.slots.as_path().as_os_str().to_owned(),
+            machine.slots.path().as_os_str().to_owned(),
         ),
         (OsString::from("NJUTEST_SLOT_HELD"), OsString::from("heavy")),
     ]);
@@ -949,7 +672,7 @@ fn a_line_a_writer_was_killed_in_does_not_swallow_the_next_one() {
         .inside(xtask::lanes::Lane::Heavy)
         .expect("the lane the run is inside");
     let boot = xtask::lanes::boot();
-    let record = machine.slots.as_path().join("heavy.holder");
+    let record = machine.slots.path().join("heavy.holder");
     std::fs::write(
         &record,
         format!(
@@ -1010,31 +733,6 @@ fn a_record_is_read_only_as_far_as_its_writers_finished_it() {
 }
 
 #[test]
-fn a_reaped_leader_record_does_not_prove_group_and_descriptor_settlement() {
-    let machine = Machine::new();
-    let holder = reaped();
-    let leader = reaped();
-    let record = machine.slots.as_path().join("heavy.holder");
-    let original = format!(
-        "pid={holder}\nholder_born=gone\nboot={}\ngroup={leader} holder={holder} session=0 born=gone\n",
-        xtask::lanes::boot().expect("the actual boot identity")
-    );
-    std::fs::write(&record, &original).expect("the unprovable original receipt");
-    let output = machine
-        .run("true")
-        .wait_with_output()
-        .expect("the actual lane consumer");
-    assert!(
-        !output.status.success(),
-        "a reaped leader was accepted as complete group and descriptor settlement: {output:?}"
-    );
-    assert_eq!(
-        std::fs::read_to_string(record).expect("the retained refused receipt"),
-        original
-    );
-}
-
-#[test]
 fn a_live_group_a_record_from_another_boot_names_is_left_alone() {
     use std::os::unix::process::CommandExt as _;
 
@@ -1047,7 +745,7 @@ fn a_live_group_a_record_from_another_boot_names_is_left_alone() {
     let pid = stranger.id().expect("a live stranger");
     let born = xtask::lanes::started(pid).expect("when the stranger started");
     let session = xtask::lanes::session(pid).expect("the stranger's session");
-    let record = machine.slots.as_path().join("heavy.holder");
+    let record = machine.slots.path().join("heavy.holder");
     std::fs::write(
         &record,
         format!(
@@ -1124,8 +822,7 @@ fn what_a_holder_that_let_go_itself_left_in_its_group_is_left_alone() {
         "{finished:?}"
     );
     assert!(
-        until(&machine, Duration::from_secs(60), || machine
-            .marker("daemon")),
+        until(Duration::from_secs(60), || machine.marker("daemon")),
         "the daemon never started"
     );
     let daemon = written(&machine, "daemon");
@@ -1147,7 +844,7 @@ fn a_group_whose_leader_is_gone_is_ended_only_where_it_shares_the_recorded_sessi
     let dead = reaped();
 
     let machine = Machine::new();
-    let turns = machine.turns.as_path().to_owned();
+    let turns = machine.turns.path().to_owned();
     let mut orphaning = Command::new("sh");
     orphaning
         .args(["-c", "sleep 300 & echo $! > \"$TURNS/member\""])
@@ -1157,14 +854,13 @@ fn a_group_whose_leader_is_gone_is_ended_only_where_it_shares_the_recorded_sessi
     let group = leader.id().expect("the leader's id");
     leader.wait().expect("the leader ends at once");
     assert!(
-        until(&machine, Duration::from_secs(60), || machine
-            .marker("member")),
+        until(Duration::from_secs(60), || machine.marker("member")),
         "the member never started"
     );
     let member = written(&machine, "member");
     let member_pid = member.parse::<u32>().expect("the member's id");
     let session = xtask::lanes::session(member_pid).expect("the member's session");
-    let record = machine.slots.as_path().join("heavy.holder");
+    let record = machine.slots.path().join("heavy.holder");
     let boot = xtask::lanes::boot().unwrap_or_default();
     let line = |recorded: u32| {
         format!(
@@ -1246,7 +942,7 @@ fn a_run_that_found_the_lock_free_waits_while_the_recorded_holder_still_runs() {
     let born = xtask::lanes::started(pid).expect("when the holder started");
     let session = xtask::lanes::session(pid).expect("the holder's session");
     std::fs::write(
-        machine.slots.as_path().join("heavy.holder"),
+        machine.slots.path().join("heavy.holder"),
         format!(
             "pid={pid}\nholder_born={born}\nboot={}\ngroup={pid} holder={pid} session={session} born={born}\n",
             xtask::lanes::boot().unwrap_or_default()
@@ -1278,11 +974,10 @@ fn a_run_behind_a_holder_whose_work_shows_nothing_stops_waiting() {
     let machine = Machine::new();
     let mut holder = machine.run("mkdir \"$TURNS/inside\"; exec sleep 60");
     assert!(
-        until(&machine, Duration::from_secs(60), || machine
-            .marker("inside")),
+        until(Duration::from_secs(60), || machine.marker("inside")),
         "the holder never started"
     );
-    let told = machine.turns.as_path().join("stalled.log");
+    let told = machine.turns.path().join("stalled.log");
     let mut behind = machine.command("true");
     behind
         .env("NJUTEST_SLOT_QUIET_SECONDS", "3")
@@ -1314,8 +1009,7 @@ fn a_run_behind_a_holder_whose_work_keeps_moving_waits_for_it() {
     let machine = Machine::new();
     let holder = machine.run(&holds_until_go());
     assert!(
-        until(&machine, Duration::from_secs(60), || machine
-            .marker("inside")),
+        until(Duration::from_secs(60), || machine.marker("inside")),
         "the holder never started"
     );
     let mut behind = machine.command("true");

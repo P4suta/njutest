@@ -927,7 +927,15 @@ impl ForeignHandle {
     }
 
     pub(super) fn stop(&self) -> io::Result<()> {
-        match rustix::process::pidfd_send_signal(&self.handle, Signal::KILL) {
+        self.signal(super::GroupStop::Kill)
+    }
+
+    pub(super) fn signal(&self, how: super::GroupStop) -> io::Result<()> {
+        let signal = match how {
+            super::GroupStop::Ask => Signal::TERM,
+            super::GroupStop::Kill => Signal::KILL,
+        };
+        match rustix::process::pidfd_send_signal(&self.handle, signal) {
             Ok(()) | Err(rustix::io::Errno::SRCH) => Ok(()),
             Err(source) => Err(source.into()),
         }
@@ -1100,6 +1108,14 @@ impl ForeignHandle {
     }
 
     pub(super) fn stop(&self) -> io::Result<()> {
+        self.signal(super::GroupStop::Kill)
+    }
+
+    pub(super) fn signal(&self, how: super::GroupStop) -> io::Result<()> {
+        let signal = match how {
+            super::GroupStop::Ask => Signal::TERM,
+            super::GroupStop::Kill => Signal::KILL,
+        };
         if self.wait(Some(std::time::Duration::ZERO))? {
             return Ok(());
         }
@@ -1117,9 +1133,8 @@ impl ForeignHandle {
             unsafe_code,
             reason = "the kernel validates the retained PID generation atomically before signaling, preventing numeric PID reuse"
         )]
-        let stopped = unsafe {
-            proc_signal_with_audittoken(std::ptr::addr_of_mut!(token), Signal::KILL.as_raw())
-        };
+        let stopped =
+            unsafe { proc_signal_with_audittoken(std::ptr::addr_of_mut!(token), signal.as_raw()) };
         if stopped == 0 {
             return Ok(());
         }

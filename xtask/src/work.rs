@@ -59,6 +59,13 @@ pub enum WorkError {
         /// Why.
         source: std::io::Error,
     },
+    /// The original native leader was reached while another retained member refused cancellation.
+    #[cfg(unix)]
+    #[error("the retained process group was reached only in part: {source}")]
+    Outlived {
+        /// Every actual native member refusal.
+        source: std::io::Error,
+    },
 }
 
 impl crate::error::Coded for WorkError {
@@ -67,6 +74,8 @@ impl crate::error::Coded for WorkError {
             Self::Start { .. } | Self::Watch { .. } | Self::Signals { .. } => {
                 crate::error::XtCode::WorkUnrun
             }
+            #[cfg(unix)]
+            Self::Outlived { .. } => crate::error::XtCode::WorkUnrun,
         }
     }
 }
@@ -77,6 +86,8 @@ impl WorkError {
             Self::Start { source, .. } | Self::Watch { source } | Self::Signals { source } => {
                 source.kind()
             }
+            #[cfg(unix)]
+            Self::Outlived { source } => source.kind(),
         }
     }
 }
@@ -741,4 +752,159 @@ pub fn listed() -> Option<Vec<Listed>> {
         });
     }
     Some(processes)
+}
+
+/// The original two cancellation strengths, in their inherited escalation order.
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
+pub(crate) enum Sent {
+    /// Gives every retained member its original graceful cancellation request.
+    Ask,
+    /// Forcefully cancels every retained native member.
+    Kill,
+}
+
+/// Retained native generations acquired only after validating the complete original lane record.
+#[cfg(unix)]
+#[derive(Debug)]
+pub(crate) struct GroupAuthority {
+    leader: u32,
+    members: Vec<njutest_process::ForeignProcess>,
+}
+
+#[cfg(unix)]
+impl GroupAuthority {
+    pub(crate) fn capture(
+        recorded: &crate::lanes::Recorded,
+        start_of: impl Fn(u32) -> crate::lanes::Start,
+        session_of: impl Fn(u32) -> crate::lanes::Session,
+    ) -> Result<Option<Self>, WorkError> {
+        let census = listed().ok_or_else(|| WorkError::Watch {
+            source: std::io::Error::other("the recorded group could not be listed"),
+        })?;
+        match crate::lanes::group_liveness(
+            recorded,
+            &start_of(recorded.pid),
+            Some(&census),
+            &session_of,
+        ) {
+            crate::lanes::Liveness::Gone => return Ok(None),
+            crate::lanes::Liveness::Unseen => {
+                return Err(WorkError::Watch {
+                    source: std::io::Error::other(
+                        "the original recorded group could not be identified",
+                    ),
+                });
+            }
+            crate::lanes::Liveness::Alive => {}
+        }
+        let mut members = Vec::new();
+        for listed in census
+            .into_iter()
+            .filter(|one| one.group == recorded.pid && !one.ended)
+        {
+            if let Some(member) = retain_group_member(listed.pid, recorded.pid)? {
+                members.push(member);
+            }
+        }
+        let confirmed = listed().ok_or_else(|| WorkError::Watch {
+            source: std::io::Error::other("the retained original group could not be confirmed"),
+        })?;
+        match crate::lanes::group_liveness(
+            recorded,
+            &start_of(recorded.pid),
+            Some(&confirmed),
+            &session_of,
+        ) {
+            crate::lanes::Liveness::Gone => Ok(None),
+            crate::lanes::Liveness::Unseen => Err(WorkError::Watch {
+                source: std::io::Error::other(
+                    "the retained original group identity became unknown",
+                ),
+            }),
+            crate::lanes::Liveness::Alive => Ok(Some(Self {
+                leader: recorded.pid,
+                members,
+            })),
+        }
+    }
+}
+
+/// Delivers cancellation only through retained native generations, never a numeric group facade.
+#[cfg(unix)]
+pub(crate) fn signal_group(group: &GroupAuthority, sent: Sent) -> Result<(), WorkError> {
+    use njutest_process::{Delivered, Others, StopDecision, Stopped, decide_stop};
+
+    let how = match sent {
+        Sent::Ask => njutest_process::GroupStop::Ask,
+        Sent::Kill => njutest_process::GroupStop::Kill,
+    };
+    let mut delivered = Delivered::Sent;
+    let mut leader = Delivered::Gone;
+    let mut others = Others::Nobody;
+    let mut failures = Vec::new();
+    for member in &group.members {
+        let answer = member.signal(how);
+        let actual = match &answer {
+            Ok(()) => Delivered::Sent,
+            Err(source) if source.kind() == std::io::ErrorKind::PermissionDenied => {
+                Delivered::Refused
+            }
+            Err(_source) => Delivered::Failed,
+        };
+        if member.identity().pid() == group.leader {
+            leader = actual;
+        } else {
+            others = Others::Somebody;
+        }
+        match actual {
+            Delivered::Sent | Delivered::Gone => {}
+            Delivered::Refused if delivered != Delivered::Failed => delivered = Delivered::Refused,
+            Delivered::Refused => {}
+            Delivered::Failed => delivered = Delivered::Failed,
+        }
+        if let Err(source) = answer {
+            failures.push(format!("{}: {source}", member.identity().token()));
+        }
+    }
+    match decide_stop(delivered, leader, others) {
+        StopDecision::Reached(Stopped::Group) => Ok(()),
+        StopDecision::Reached(Stopped::LeaderOnly) => Err(WorkError::Outlived {
+            source: std::io::Error::other(failures.join("; ")),
+        }),
+        StopDecision::Failed => Err(WorkError::Watch {
+            source: std::io::Error::other(failures.join("; ")),
+        }),
+    }
+}
+
+#[cfg(unix)]
+fn retain_group_member(
+    pid: u32,
+    expected: u32,
+) -> Result<Option<njutest_process::ForeignProcess>, WorkError> {
+    let Some(member) = njutest_process::ForeignProcess::retain(pid)
+        .map_err(|source| WorkError::Watch { source })?
+    else {
+        return Ok(None);
+    };
+    let raw = i32::try_from(member.identity().pid()).map_err(|source| WorkError::Watch {
+        source: std::io::Error::other(source),
+    })?;
+    let pid = rustix::process::Pid::from_raw(raw).ok_or_else(|| WorkError::Watch {
+        source: std::io::Error::other("the retained member has no positive native PID"),
+    })?;
+    match rustix::process::getpgid(Some(pid)) {
+        Ok(group) => {
+            let actual =
+                u32::try_from(group.as_raw_nonzero().get()).map_err(|source| WorkError::Watch {
+                    source: std::io::Error::other(source),
+                })?;
+            Ok((actual == expected).then_some(member))
+        }
+        Err(rustix::io::Errno::SRCH) => Ok(None),
+        Err(source) => Err(WorkError::Watch {
+            source: source.into(),
+        }),
+    }
 }

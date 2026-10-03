@@ -165,6 +165,10 @@ pub(super) fn publish(
         Some(leader) => Launch::Observed { leader },
         None => match outcome {
             Err(WorkError::Start { .. }) => Launch::NotStarted,
+            #[cfg(unix)]
+            Err(WorkError::Outlived { .. }) => Launch::Unobserved {
+                reason: "the owned runner did not publish a leader identity".to_owned(),
+            },
             Ok(
                 Ended::Exited(_)
                 | Ended::Interrupted { .. }
