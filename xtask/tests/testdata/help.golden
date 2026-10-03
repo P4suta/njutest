@@ -25,6 +25,8 @@ Commands:
   skipped           Every skipped target in the mutation configuration is a target Cargo declares
   claims            Every claim of `.rust-mutants.toml` names as many mutations as it says, asked of
                     the engine's own locator
+  originals         Every retained reader binding names complete versioned original files rather
+                    than ignored working-tree artifacts
   fuzz-clippy       Clippy every independent fuzz target under the root workspace lint policy
   docflows          Every workflow the documentation shows passes actionlint against this
                     repository's own actions
@@ -54,6 +56,8 @@ Commands:
                     one reusable tree
   tidy              Runs a command with a temporary directory of its own, and fails naming whatever
                     the command left in it (ADR 0006)
+  codeql            An exclusively owned local security analysis with retained actual input
+                    identities
   tools             Every pinned cargo plugin, selected by mise and answering through Cargo's
                     complete external-subcommand protocol
   tool              Runs a mise-selected Cargo plugin through Cargo's complete external-subcommand
