@@ -548,7 +548,9 @@ impl ReaderWait {
             .changed
             .wait_timeout_while(stopped, super::ANONYMOUS_PIPE_BACKSTOP, |stopped| !*stopped)
             .map_err(|source| io::Error::other(source.to_string()))?;
-        if *stopped {
+        let observed_stop = *stopped;
+        drop(stopped);
+        if observed_stop {
             Ok(super::ReaderReady::Stopped)
         } else if timeout.timed_out() {
             Ok(super::ReaderReady::AnonymousPipeBackstop)
@@ -594,14 +596,15 @@ pub(crate) struct ForeignHandle {
 
 impl ForeignHandle {
     pub(super) fn retain(pid: u32) -> io::Result<Option<Self>> {
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
+        };
+
         if pid == 0 {
             return Err(io::Error::other(
                 "a retained process identity needs a positive PID",
             ));
         }
-        use windows_sys::Win32::System::Threading::{
-            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
-        };
         #[expect(
             unsafe_code,
             reason = "OpenProcess retains the exact foreign kernel process object for identity, cancellation and completion"
