@@ -404,6 +404,12 @@ Inside a held lane `NJUTEST_SLOT_HELD` names it, and asking for it again passes 
 The gate's tree has a lane of its own, taken whatever `NJUTEST_SLOT_HELD` says, so two gates never write one tree at once.
 The work a lane admits runs in a process group of its own; `SIGINT`, `SIGTERM` and `SIGHUP` stop that whole group before the holder ends, and a bound stops it with `SIGTERM`, then `SIGKILL` after five seconds.
 
+Native filesystem subscriptions are retained before the first lane observation.
+On macOS they use the pinned notify kqueue backend so each external producer write can wake a reader while the log descriptor remains open.
+Other platforms retain their native recommended backend.
+Resource changes coalesce into a retained wake, while observation failures and counted-event overflow remain sticky refusals.
+Waiting uses the original semantic deadline and never a polling interval.
+
 **One pass, bounded by quiet.** The gate runs `mise run check` once, with its output passed on as it arrives.
 Following [ADR 0026](adr/0026-a-bound-measures-quiet-not-duration.md), what stops it is quiet rather than duration: a check that says nothing for `NJUTEST_PUSH_QUIET_SECONDS` (600 by default) is stopped, and `NJUTEST_PUSH_BUDGET_SECONDS` (3600) is only the ceiling behind it.
 A check that is slow because the machine is loaded keeps talking, so it is not stopped for how long it took.

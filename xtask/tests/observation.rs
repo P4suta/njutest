@@ -154,3 +154,131 @@ fn concurrent_completion_cannot_erase_a_retained_producer_failure() -> std::io::
     }
     Ok(())
 }
+
+#[test]
+fn an_open_log_publishes_each_write_before_its_producer_closes_it() -> std::io::Result<()> {
+    use std::io::{Seek as _, Write as _};
+    use std::time::{Duration, Instant};
+
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("waiting.log");
+    let mut writer = std::fs::File::create(&path)?;
+    let observed = Observation::filesystem(directory.path(), true)?;
+    std::thread::scope(|scope| {
+        const PENDING_LOG_WRITES: usize = 1;
+        let (send, received) = std::sync::mpsc::sync_channel::<String>(PENDING_LOG_WRITES);
+        let producer = njutest_devkit::thread::ScopedThread::launch(scope, move || {
+            for text in received {
+                writer.set_len(0)?;
+                writer.rewind()?;
+                writer.write_all(text.as_bytes())?;
+                writer.flush()?;
+            }
+            Ok::<(), std::io::Error>(())
+        });
+        let result = (|| {
+            for text in [
+                "waiting for the first lane\n",
+                "waiting for the next lane\n",
+            ] {
+                send.send(text.to_owned()).map_err(std::io::Error::other)?;
+                let deadline = Instant::now()
+                    .checked_add(Duration::from_secs(2))
+                    .ok_or_else(|| std::io::Error::other("the native log deadline overflowed"))?;
+                loop {
+                    let waited = observed.wait(
+                        "open-lane-progress-file",
+                        "actual producer write before descriptor closure",
+                        Some(deadline),
+                    )?;
+                    eprintln!(
+                        "{}",
+                        serde_json::to_string(&waited.note).map_err(std::io::Error::other)?
+                    );
+                    match waited.event? {
+                        Event::Changed => {}
+                        event @ (Event::Completed | Event::Cancelled | Event::Deadline) => {
+                            return Err(std::io::Error::other(format!(
+                                "the open producer log holds {:?}, but the native reader received {event:?} instead of a write wake",
+                                std::fs::read_to_string(&path)?
+                            )));
+                        }
+                    }
+                    if std::fs::read_to_string(&path)? == text {
+                        break;
+                    }
+                }
+            }
+            Ok::<(), std::io::Error>(())
+        })();
+        drop(send);
+        producer.join().map_err(std::io::Error::other)??;
+        result
+    })
+}
+
+#[test]
+fn a_new_external_log_publishes_writes_while_its_producer_keeps_it_open() -> std::io::Result<()> {
+    use std::io::Write as _;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    let directory = tempfile::tempdir()?;
+    let turns = directory.path().join("turns");
+    std::fs::create_dir_all(&turns)?;
+    let observed = Observation::filesystem(directory.path(), true)?;
+    let path = turns.join("waiting.log");
+    let mut command = Command::new(njutest_devkit::paths::posix_sh());
+    command
+        .args([
+            "-c",
+            "while IFS= read -r text; do printf '%s\\n' \"$text\" >&2; done",
+        ])
+        .stdin(Stdio::piped())
+        .stderr(Stdio::from(std::fs::File::create(&path)?));
+    let mut producer = njutest_devkit::process::SupervisedChild::launch(&mut command)
+        .map_err(std::io::Error::other)?;
+    let mut input = producer
+        .take_stdin()
+        .ok_or_else(|| std::io::Error::other("the actual producer has no control descriptor"))?;
+    let result = (|| {
+        for text in ["first lane", "next lane", "final lane"] {
+            writeln!(input, "{text}")?;
+            input.flush()?;
+            let deadline = Instant::now()
+                .checked_add(Duration::from_secs(2))
+                .ok_or_else(|| std::io::Error::other("the native log deadline overflowed"))?;
+            loop {
+                let waited = observed.wait(
+                    "external-open-lane-progress-file",
+                    "actual producer write before descriptor closure",
+                    Some(deadline),
+                )?;
+                eprintln!(
+                    "{}",
+                    serde_json::to_string(&waited.note).map_err(std::io::Error::other)?
+                );
+                match waited.event? {
+                    Event::Changed => {}
+                    event @ (Event::Completed | Event::Cancelled | Event::Deadline) => {
+                        return Err(std::io::Error::other(format!(
+                            "the external open producer log holds {:?}, but the native reader received {event:?} instead of a write wake",
+                            std::fs::read_to_string(&path)?
+                        )));
+                    }
+                }
+                if std::fs::read_to_string(&path)?.ends_with(&format!("{text}\n")) {
+                    break;
+                }
+            }
+        }
+        Ok::<(), std::io::Error>(())
+    })();
+    drop(input);
+    let ended = producer.wait().map_err(std::io::Error::other)?;
+    assert!(
+        ended.success(),
+        "the released actual producer failed: {ended}"
+    );
+    result
+}

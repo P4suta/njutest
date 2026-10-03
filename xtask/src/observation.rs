@@ -14,6 +14,12 @@ use std::time::{Duration, Instant};
 use notify::Watcher as _;
 use serde::Serialize;
 
+#[cfg(target_os = "macos")]
+type FilesystemWatcher = notify::KqueueWatcher;
+
+#[cfg(not(target_os = "macos"))]
+type FilesystemWatcher = notify::RecommendedWatcher;
+
 /// The bounded backlog, whose overflow remains a sticky refusal for the entire subscription.
 const BACKLOG: usize = 64;
 
@@ -189,7 +195,7 @@ impl Invalidation {
 pub struct Observation {
     received: Receiver<io::Result<Event>>,
     signal: Signal,
-    watcher: Option<notify::RecommendedWatcher>,
+    watcher: Option<FilesystemWatcher>,
 }
 
 impl std::fmt::Debug for Observation {
@@ -226,13 +232,15 @@ impl Observation {
     pub fn filesystem(root: &Path, recursive: bool) -> io::Result<Self> {
         let mut observed = Self::subscribe();
         let signal = observed.invalidation();
-        let mut watcher =
-            notify::recommended_watcher(move |event: notify::Result<notify::Event>| match event {
+        let mut watcher = FilesystemWatcher::new(
+            move |event: notify::Result<notify::Event>| match event {
                 Ok(event) if event.kind.is_access() => {}
                 Ok(_changed) => signal.changed(),
                 Err(source) => signal.failed(io::Error::other(source)),
-            })
-            .map_err(io::Error::other)?;
+            },
+            notify::Config::default(),
+        )
+        .map_err(io::Error::other)?;
         watcher
             .watch(
                 root,
