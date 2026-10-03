@@ -44,11 +44,12 @@ pub(super) fn inputs(
     options: &CompileOptions,
     env: &Variables,
     files: &mut BTreeMap<PathBuf, File>,
-) -> io::Result<()> {
+) -> io::Result<super::loaders::Inputs> {
     let root = toolchain
         .sysroot()
         .ok_or_else(|| io::Error::other("unbound compiler sysroot"))?;
-    environment(root, toolchain.rustc(), env)?;
+    let loaders = super::loaders::Inputs::of(env, toolchain.identities())?;
+    environment(root, toolchain.rustc(), env, &loaders)?;
     for path in [toolchain.cargo(), toolchain.rustc()] {
         files.insert(path.to_path_buf(), identity(path, toolchain.identities())?);
     }
@@ -88,10 +89,15 @@ pub(super) fn inputs(
             files.insert(path.clone(), identity(&path, toolchain.identities())?);
         }
     }
-    Ok(())
+    Ok(loaders)
 }
 
-pub(in crate::cargo) fn environment(root: &Path, rustc: &Path, env: &Variables) -> io::Result<()> {
+pub(in crate::cargo) fn environment(
+    root: &Path,
+    rustc: &Path,
+    env: &Variables,
+    loaders: &super::loaders::Inputs,
+) -> io::Result<()> {
     for (name, value) in env.canonical() {
         let Some(name) = name.to_str() else {
             return Err(io::Error::other("non-textual environment name"));
@@ -102,7 +108,8 @@ pub(in crate::cargo) fn environment(root: &Path, rustc: &Path, env: &Variables) 
                     == root
                         .join("bin")
                         .join(format!("rustdoc{}", std::env::consts::EXE_SUFFIX));
-        if !value.is_empty() && !known_compiler && opaque_variable(name) {
+        let bound_loader = loaders.admits(name, value);
+        if !value.is_empty() && !known_compiler && !bound_loader && opaque_variable(name) {
             return Err(io::Error::other(format!(
                 "the {name} input names an opaque compiler, linker or loader graph"
             )));
@@ -185,7 +192,7 @@ fn stamp(path: &Path) -> io::Result<Stamp> {
     })
 }
 
-fn identity(path: &Path, identities: &Identities) -> io::Result<File> {
+pub(in crate::cargo) fn identity(path: &Path, identities: &Identities) -> io::Result<File> {
     let before = stamp(path)?;
     let mut memo = identities
         .files

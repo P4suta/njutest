@@ -14,6 +14,7 @@ use super::{CompileOptions, Compiled, Completion, Driver, Exited, Message};
 use crate::vars::Variables;
 
 mod failure;
+pub(super) mod loaders;
 pub(super) mod toolchain;
 pub(super) use failure::FailedStage;
 
@@ -111,7 +112,14 @@ impl Request {
     ) -> io::Result<Self> {
         let root = source_root(driver, options)?;
         let environment = env.clone();
+        let mut flags = BTreeMap::new();
+        let classified = flag_files(root, options, env, &mut flags);
+        if !flags.is_empty() {
+            fingerprint_link_inputs(&flags, env)?;
+        }
+        classified?;
         let mut inputs = BTreeMap::new();
+        inputs.extend(flags);
         tree(root, options.target_dir.path(), &mut inputs)?;
         match options.target_dir.cache_roots() {
             Some(roots) => {
@@ -132,17 +140,11 @@ impl Request {
             }
         }
         configurations(root, env, &mut inputs)?;
-        toolchain::inputs(driver.toolchain, options, env, &mut inputs)?;
-        let mut flags = BTreeMap::new();
-        let classified = flag_files(root, options, env, &mut flags);
-        if !flags.is_empty() {
-            inputs.extend(flags);
-            fingerprint_link_inputs(&inputs, env)?;
-        }
-        classified?;
+        let loaders = toolchain::inputs(driver.toolchain, options, env, &mut inputs)?;
         let inputs = BoundInputs::of(inputs)?;
         let mut digest = Sha256::new();
         field(&mut digest, SCHEMA.as_bytes());
+        field(&mut digest, loaders.digest().as_bytes());
         field(
             &mut digest,
             format!(
@@ -926,8 +928,9 @@ fn fingerprint_link_inputs(
         return Ok(());
     };
     let mut digest = Sha256::new();
-    for (path, state) in inputs {
-        field(&mut digest, path.as_os_str().as_encoded_bytes());
+    let mut states: Vec<_> = inputs.values().collect();
+    states.sort_by_key(|state| (&state.digest, state.mode));
+    for state in states {
         field(&mut digest, state.digest.as_bytes());
         field(&mut digest, &state.mode.to_be_bytes());
     }

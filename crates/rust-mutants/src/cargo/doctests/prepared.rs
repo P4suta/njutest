@@ -118,12 +118,33 @@ fn trace(driver: &Driver<'_>) -> Result<Recorder, CargoError> {
     }
 }
 
+enum Binding {
+    Complete(Box<Request>),
+    Unbound(String),
+}
+
+impl Binding {
+    fn request(&self) -> Option<&Request> {
+        match self {
+            Self::Complete(request) => Some(request),
+            Self::Unbound(_) => None,
+        }
+    }
+
+    fn identity(&self) -> InputIdentity {
+        match self {
+            Self::Complete(request) => InputIdentity::Complete(request.key.clone()),
+            Self::Unbound(reason) => InputIdentity::Unbound(reason.clone()),
+        }
+    }
+}
+
 fn binding(
     (driver, options): (&Driver<'_>, &CompileOptions),
     spec: &mut Spec,
     (kind, paths): (Kind, &[PathBuf]),
     trace: &Recorder,
-) -> Option<Request> {
+) -> Binding {
     let result = match &mut spec.env {
         Some(env) => Request::of(driver, options, env)
             .and_then(|request| request.augment(kind.name(), &spec.argv, paths))
@@ -135,30 +156,24 @@ fn binding(
             }),
         None => Err(io::Error::other("an inherited capture environment")),
     };
-    match result {
-        Ok(request) => {
-            trace.note(
-                if kind == Kind::Program {
-                    "capture-program-request"
-                } else {
-                    "fixture-build-request"
-                },
-                &request.key,
-            );
-            Some(request)
-        }
-        Err(source) => {
-            trace.note(
-                if kind == Kind::Program {
-                    "capture-program-request"
-                } else {
-                    "fixture-build-request"
-                },
-                &format!("unbound: {source}"),
-            );
-            None
-        }
+    let binding = match result {
+        Ok(request) => Binding::Complete(Box::new(request)),
+        Err(source) => Binding::Unbound(format!("unbound: {source}")),
+    };
+    trace.note(
+        if kind == Kind::Program {
+            "capture-program-request"
+        } else {
+            "fixture-build-request"
+        },
+        binding.identity().detail(),
+    );
+    if kind != Kind::Program
+        && let Some(request) = binding.request()
+    {
+        trace.note("build-cache-bound", &request.key);
     }
+    binding
 }
 
 fn record_path(directory: &Path, key: &str) -> PathBuf {
@@ -300,16 +315,19 @@ fn publish(
 
 fn completed(
     (driver, options): (&Driver<'_>, &CompileOptions),
-    (spec, request): (&Spec, Option<&Request>),
+    (spec, binding): (&Spec, &Binding),
     (directory, staging, preparation): (&Path, tempfile::TempDir, &Preparation),
     (kind, trace): (Kind, &Recorder),
 ) -> Result<Product, CargoError> {
     let result = run(spec, driver.cancel);
     trace.exec_result(ExecRecord::of(spec, &result));
+    if kind != Kind::Program {
+        super::super::compile::note_launch(trace, &binding.identity(), &result);
+    }
     if driver.cancel.is_cancelled() || Exited::of(&result.termination).is_none() {
         let error = command_failed(spec, &result);
         failed(
-            (request, options),
+            (binding.request(), options),
             (driver, spec),
             (&error, preparation),
             (trace, Some(&result), FailedStage::Process),
@@ -319,25 +337,16 @@ fn completed(
     if result.stdout_truncated || kind == Kind::Program && !result.succeeded() {
         let error = command_failed(spec, &result);
         failed(
-            (request, options),
+            (binding.request(), options),
             (driver, spec),
             (&error, preparation),
             (trace, Some(&result), FailedStage::Process),
         );
         return Err(error);
     }
-    if kind != Kind::Program && result.leader.is_some() {
-        trace.note(
-            "fixture-build-process",
-            match request {
-                Some(request) => &request.key,
-                None => "unbound: doctest inputs",
-            },
-        );
-    }
     let product = products(
         (driver, options),
-        (spec, request),
+        (spec, binding),
         (directory, staging),
         (kind, trace, &result),
     );
@@ -353,7 +362,7 @@ fn completed(
         }
         Err(error) => {
             failed(
-                (request, options),
+                (binding.request(), options),
                 (driver, spec),
                 (&error, preparation),
                 (trace, Some(&result), FailedStage::Publication),
@@ -365,17 +374,14 @@ fn completed(
 
 fn products(
     (driver, options): (&Driver<'_>, &CompileOptions),
-    (spec, request): (&Spec, Option<&Request>),
+    (spec, binding): (&Spec, &Binding),
     (directory, staging): (&Path, tempfile::TempDir),
     (kind, trace, result): (Kind, &Recorder, &RunResult),
 ) -> Result<Product, CargoError> {
-    let identity = match request {
-        Some(request) => InputIdentity::Complete(request.key.clone()),
-        None => InputIdentity::Unbound("unbound: capture inputs".to_owned()),
-    };
-    let observation = CompilerObservation::actual((spec, result), identity, Witness::Any)?;
+    let observation =
+        CompilerObservation::actual((spec, result), binding.identity(), Witness::Any)?;
     let (report, mut messages) = streams(&result.stdout, kind).map_err(refused)?;
-    if let Some(request) = request {
+    if let Some(request) = binding.request() {
         request
             .capture_files(&mut messages, staging.path())
             .map_err(refused)?;
@@ -413,11 +419,21 @@ fn products(
 }
 
 fn cached(
-    (directory, request): (&Path, Option<&Request>),
+    (directory, binding): (&Path, &Binding),
     (spec, preparation): (&Spec, &Preparation),
     (kind, trace): (Kind, &Recorder),
 ) -> Option<Result<Product, CargoError>> {
-    let request = request?;
+    let Some(request) = binding.request() else {
+        trace.note(
+            if kind == Kind::Program {
+                "capture-program-miss"
+            } else {
+                "build-cache-miss"
+            },
+            binding.identity().detail(),
+        );
+        return None;
+    };
     if let Some(env) = &spec.env {
         match request.failure((env, preparation)) {
             Ok(error) => {
@@ -504,7 +520,7 @@ pub(super) fn program(driver: &Driver<'_>, directory: &Path) -> Result<PathBuf, 
         &trace,
     );
     if let Some(result) = cached(
-        (directory, request.as_ref()),
+        (directory, &request),
         (&spec, &preparation),
         (Kind::Program, &trace),
     ) {
@@ -521,7 +537,7 @@ pub(super) fn program(driver: &Driver<'_>, directory: &Path) -> Result<PathBuf, 
         staging.path().join(&program).into_os_string();
     let result = completed(
         (driver, &options),
-        (&spec, request.as_ref()),
+        (&spec, &request),
         (directory, staging, &preparation),
         (Kind::Program, &trace),
     );
@@ -555,15 +571,11 @@ pub fn capture_prepared_doctests(
         (kind, &[capture.capture.0.to_path_buf(), rustdoc]),
         &trace,
     );
-    if let Some(result) = cached(
-        (directory, request.as_ref()),
-        (&spec, &preparation),
-        (kind, &trace),
-    ) {
+    if let Some(result) = cached((directory, &request), (&spec, &preparation), (kind, &trace)) {
         return result.map(PreparedDoctests);
     }
     capture.compile.target_dir.settle()?;
-    if request.is_some() {
+    if request.request().is_some() {
         capture.compile.target_dir.independent()?;
     }
     let staging = tempfile::Builder::new()
@@ -577,7 +589,7 @@ pub fn capture_prepared_doctests(
     spec.argv = capture_spec(driver, &staged)?.argv;
     let result = completed(
         (driver, capture.compile),
-        (&spec, request.as_ref()),
+        (&spec, &request),
         (directory, staging, &preparation),
         (kind, &trace),
     );

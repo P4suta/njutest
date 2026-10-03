@@ -531,6 +531,62 @@ fn a_changed_platform_object_cannot_publish_a_stale_cargo_artifact() {
     );
 }
 
+#[test]
+fn an_opaque_graph_still_relinks_a_changed_known_platform_object() {
+    let directory = tempfile::tempdir().expect("an owned opaque fixture");
+    let root = directory.path().join("source");
+    copy_tree(
+        &njutest_devkit::paths::fixtures_dir().join("fixture-simple"),
+        &root,
+    );
+    let tc = unwrapped_toolchain(&root);
+    let cancel = Cancel::new();
+    let trace = notes_trace();
+    let target = directory.path().join("target");
+    let driver = Driver {
+        toolchain: &tc,
+        dir: &root,
+        cancel: &cancel,
+        trace: &trace,
+    };
+    let modules = rust_mutants::sealed::ModuleOwner::default();
+    let object =
+        match rust_mutants::sealed::platform::ready(&modules, &driver, &target.join("platform"))
+            .expect("the real platform object and probe")
+        {
+            rust_mutants::sealed::platform::Readied::Object(object) => object,
+            rust_mutants::sealed::platform::Readied::Unanswered(said) => panic!("{said}"),
+        };
+    let mut options = sealed_compile_options(&root, &target, &object);
+    options.env.set("COMPILER_PATH", directory.path());
+    let first = compile(&driver, &options).expect("the opaque graph goes through Cargo");
+    assert_eq!(first.completion(), rust_mutants::cargo::Completion::Built);
+    assert!(!linked_digests(&first).is_empty());
+    std::fs::write(&object, b"corrupt").expect("changed known link bytes");
+    let changed = compile(&driver, &options).expect("Cargo judges the changed link input");
+    let repeat = compile(&driver, &options).expect("Cargo judges the invalid repeat");
+    let held = notes(&trace);
+    let starts = cargo_builds(&trace);
+    directory.close().expect("remove the owned fixture");
+    assert_eq!(
+        changed.completion(),
+        rust_mutants::cargo::Completion::Refused
+    );
+    assert_eq!(
+        repeat.completion(),
+        rust_mutants::cargo::Completion::Refused
+    );
+    assert_eq!(
+        starts, 3,
+        "all opaque attempts retain actual Cargo: {held:?}"
+    );
+    assert!(
+        held.iter()
+            .any(|(kind, _)| kind == "fixture-build-uncacheable")
+    );
+    assert!(!held.iter().any(|(kind, _)| kind == "build-cache-hit"));
+}
+
 /// Whether the pinned compiler compiles a trivial library for the sealed target with `flags` as given.
 fn rustc_accepts(
     tc: &Toolchain,

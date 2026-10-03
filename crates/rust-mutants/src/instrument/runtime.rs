@@ -789,7 +789,7 @@ mod {{MODULE}} {
     fn open_step_state(
         path: &str,
     ) -> __rm_std::result::Result<__rm_std::fs::File, Why> {
-        use __rm_std::os::unix::fs::OpenOptionsExt as _;
+        use self::__rm_std::os::unix::fs::OpenOptionsExt as _;
 
         __rm_std::fs::OpenOptions::new()
             .read(true)
@@ -803,7 +803,7 @@ mod {{MODULE}} {
     fn open_step_state(
         path: &str,
     ) -> __rm_std::result::Result<__rm_std::fs::File, Why> {
-        use __rm_std::os::windows::fs::OpenOptionsExt as _;
+        use self::__rm_std::os::windows::fs::OpenOptionsExt as _;
 
         // FILE_FLAG_OPEN_REPARSE_POINT makes the final component itself the
         // opened object. The regular-file check below then rejects links and

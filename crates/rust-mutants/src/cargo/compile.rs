@@ -505,16 +505,7 @@ fn produce(
         return Err(error);
     }
     let result = run(spec, driver.cancel);
-    if result.leader.is_some() {
-        trace.note("fixture-build-process", identity.detail());
-    } else {
-        let cause = match result.termination.error() {
-            Some(failure) => failure.to_string(),
-            None => "cancelled before start".to_owned(),
-        };
-        let failed = serde_json::json!({"identity": identity.detail(), "cause": cause});
-        trace.note("fixture-build-failed", &failed.to_string());
-    }
+    note_launch(trace, &identity, &result);
     let mut compiled = match completed((driver, options), (spec, &result, trace), identity, witness)
     {
         Ok(compiled) => compiled,
@@ -565,6 +556,23 @@ fn produce(
         return Err(error);
     }
     Ok(compiled)
+}
+
+pub(super) fn note_launch(
+    trace: &crate::trace::Recorder,
+    identity: &InputIdentity,
+    result: &crate::runner::RunResult,
+) {
+    if result.leader.is_some() {
+        trace.note("fixture-build-process", identity.detail());
+    } else {
+        let cause = match result.termination.error() {
+            Some(failure) => failure.to_string(),
+            None => "cancelled before start".to_owned(),
+        };
+        let failed = serde_json::json!({"identity": identity.detail(), "cause": cause});
+        trace.note("fixture-build-failed", &failed.to_string());
+    }
 }
 
 fn prepare(options: &CompileOptions, witness: Witness, bound: bool) -> Result<(), CargoError> {

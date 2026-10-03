@@ -220,6 +220,14 @@ impl Toolchain {
         &self.identities
     }
 
+    pub(super) fn with_identities(
+        mut self,
+        identities: &super::build_cache::toolchain::Identities,
+    ) -> Self {
+        self.identities = identities.clone();
+        self
+    }
+
     /// The environment the tests are given, with this toolchain's own directory first on its search path where a bare `cargo` from `dir` would answer with another toolchain or not at all, and what it said that made it so.
     ///
     /// A bare `cargo` is asked twice: with `env`, as a test that runs with the home the run was given asks it, and with `confined`, as a test in a home of its own does (ADR 0044), since a shim that reads its state from the home answers the two differently.

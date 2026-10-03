@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
+use super::build_cache::toolchain::Identities;
 use super::build_cache::{File, configurations, file, tree};
 use super::{CargoError, CargoErrorKind, LocateOptions, Toolchain, VersionInfo};
 use crate::runner::{Cancel, RunResult, Spec, Watch};
@@ -18,6 +19,114 @@ use crate::trace::ExecRecord;
 use crate::vars::Variables;
 
 const SCHEMA: &str = "rust-mutants-tool-observation-v2";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Inputs {
+    files: BTreeMap<PathBuf, File>,
+    programs: BTreeMap<PathBuf, Executable>,
+    loader_digest: String,
+}
+
+impl Inputs {
+    fn verify(&self, actual: &Self, root: &Path) -> io::Result<()> {
+        let mut changes = Vec::new();
+        for path in self.files.keys().chain(
+            actual
+                .files
+                .keys()
+                .filter(|path| !self.files.contains_key(*path)),
+        ) {
+            if self.files.get(path) != actual.files.get(path) {
+                changes.push(InputChange::File {
+                    path: path.clone(),
+                    before: self.files.get(path).cloned(),
+                    after: actual.files.get(path).cloned(),
+                });
+            }
+        }
+        for path in self.programs.keys().chain(
+            actual
+                .programs
+                .keys()
+                .filter(|path| !self.programs.contains_key(*path)),
+        ) {
+            if self.programs.get(path) != actual.programs.get(path) {
+                changes.push(InputChange::Program {
+                    path: path.clone(),
+                    before: self.programs.get(path).cloned(),
+                    after: actual.programs.get(path).cloned(),
+                });
+            }
+        }
+        if self.loader_digest != actual.loader_digest {
+            changes.push(InputChange::Loader {
+                before: self.loader_digest.clone(),
+                after: actual.loader_digest.clone(),
+            });
+        }
+        if changes.is_empty() {
+            return Ok(());
+        }
+        Err(io::Error::other(ObservationInputsChangedError {
+            root: root.to_path_buf(),
+            changes,
+        }))
+    }
+}
+
+#[derive(Debug, Serialize)]
+enum InputChange {
+    File {
+        path: PathBuf,
+        before: Option<File>,
+        after: Option<File>,
+    },
+    Program {
+        path: PathBuf,
+        before: Option<Executable>,
+        after: Option<Executable>,
+    },
+    Loader {
+        before: String,
+        after: String,
+    },
+}
+
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+#[error("{code}: observation inputs changed for {}: {changes:?}", root.display(), code = ObservationInputsChangedError::code().code)]
+struct ObservationInputsChangedError {
+    root: PathBuf,
+    changes: Vec<InputChange>,
+}
+
+impl ObservationInputsChangedError {
+    const fn code() -> crate::error::ErrorCode {
+        crate::error::COMPILER_INPUT_UNREADABLE
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Executable {
+    resolved: PathBuf,
+    content: File,
+}
+
+impl Executable {
+    fn of(path: &Path, identities: &Identities) -> io::Result<Self> {
+        let resolved = std::fs::canonicalize(path)?;
+        let content = super::build_cache::toolchain::identity(&resolved, identities)?;
+        if std::fs::canonicalize(path)? != resolved {
+            return Err(io::Error::other(format!(
+                "the observed executable {} changed its resolution",
+                path.display()
+            )));
+        }
+        Ok(Self { resolved, content })
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -118,7 +227,7 @@ struct Record {
     schema: String,
     key: String,
     located: Located,
-    inputs: BTreeMap<PathBuf, File>,
+    inputs: Inputs,
     processes: Vec<Process>,
 }
 
@@ -150,7 +259,8 @@ struct Owner {
     key: String,
     record: PathBuf,
     lease: std::fs::File,
-    initial: BTreeMap<PathBuf, File>,
+    initial: Inputs,
+    identities: Identities,
 }
 
 impl Owner {
@@ -177,8 +287,9 @@ impl Owner {
             field(&mut digest, name.as_encoded_bytes())?;
             field(&mut digest, value.as_encoded_bytes())?;
         }
-        let sysroot = selecting_root((cargo, rustc), env)?;
-        let initial = observation_inputs((cargo, rustc, cargo), (&sysroot, dir, env))?;
+        let identities = Identities::empty();
+        let sysroot = selecting_root((cargo, rustc), env, &identities)?;
+        let initial = observation_inputs((cargo, rustc, cargo), (&sysroot, dir, env), &identities)?;
         field(
             &mut digest,
             &serde_json::to_vec(&initial).map_err(io::Error::other)?,
@@ -205,6 +316,7 @@ impl Owner {
             record: directory.join("located.json"),
             lease,
             initial,
+            identities,
         })
     }
 
@@ -214,13 +326,13 @@ impl Owner {
         if record.schema != SCHEMA || record.key != self.key || record.processes.is_empty() {
             return Err(io::Error::other("an unbound tool observation record"));
         }
-        let observed =
-            Toolchain::observed(record.located, options.env.clone()).map_err(io::Error::other)?;
-        if observed_inputs(&observed, dir)? != record.inputs || self.initial != record.inputs {
-            return Err(io::Error::other(
-                "the executable, environment or graph observation inputs changed",
-            ));
-        }
+        let observed = Toolchain::observed(record.located, options.env.clone())
+            .map_err(io::Error::other)?
+            .with_identities(&self.identities);
+        record
+            .inputs
+            .verify(&observed_inputs(&observed, dir)?, dir)?;
+        record.inputs.verify(&self.initial, dir)?;
         validate_processes(&observed, dir, &record.processes)?;
         Ok(observed)
     }
@@ -231,11 +343,7 @@ impl Owner {
         processes: Vec<Process>,
     ) -> io::Result<()> {
         let inputs = observed_inputs(toolchain, dir)?;
-        if inputs != self.initial {
-            return Err(io::Error::other(
-                "complete tool observation inputs changed while the actual processes ran",
-            ));
-        }
+        self.initial.verify(&inputs, dir)?;
         validate_processes(toolchain, dir, &processes)?;
         let record = Record {
             schema: SCHEMA.to_owned(),
@@ -293,6 +401,10 @@ pub(super) fn locate<W: Watch>(
         unavailable: RefCell::new(None),
     };
     let toolchain = fresh(&collected)?;
+    let toolchain = match &owner {
+        Some(owner) => toolchain.with_identities(&owner.identities),
+        None => toolchain,
+    };
     if let Some(owner) = &owner {
         let publication = match collected.unavailable.into_inner() {
             Some(source) => Err(io::Error::other(source)),
@@ -326,7 +438,7 @@ fn retained(env: &Variables) -> io::Result<PathBuf> {
     Ok(root.join("rust-mutants-tool-observations-v1"))
 }
 
-fn observed_inputs(toolchain: &Toolchain, dir: &Path) -> io::Result<BTreeMap<PathBuf, File>> {
+fn observed_inputs(toolchain: &Toolchain, dir: &Path) -> io::Result<Inputs> {
     let env = toolchain
         .env()
         .ok_or_else(|| io::Error::other("an inherited compiler environment"))?;
@@ -340,18 +452,36 @@ fn observed_inputs(toolchain: &Toolchain, dir: &Path) -> io::Result<BTreeMap<Pat
             toolchain.selecting().path(),
         ),
         (sysroot, dir, env),
+        toolchain.identities(),
     )
 }
 
 fn observation_inputs(
     (cargo, rustc, selecting): (&Path, &Path, &Path),
     (sysroot, dir, env): (&Path, &Path, &Variables),
-) -> io::Result<BTreeMap<PathBuf, File>> {
-    super::build_cache::toolchain::environment(sysroot, rustc, env)?;
+    identities: &Identities,
+) -> io::Result<Inputs> {
+    let loaders = super::build_cache::loaders::Inputs::of(env, identities)?;
+    super::build_cache::toolchain::environment(sysroot, rustc, env, &loaders)?;
     let mut inputs = BTreeMap::new();
-    for program in <[&Path; 3]>::from((cargo, rustc, selecting)) {
-        known_program(program, sysroot, env)?;
-        inputs.insert(program.to_path_buf(), file(program)?);
+    let mut programs = BTreeMap::new();
+    let selected_rustc = selecting.with_file_name(format!("rustc{}", std::env::consts::EXE_SUFFIX));
+    let direct_cargo = sysroot
+        .join("bin")
+        .join(format!("cargo{}", std::env::consts::EXE_SUFFIX));
+    let direct_rustc = sysroot
+        .join("bin")
+        .join(format!("rustc{}", std::env::consts::EXE_SUFFIX));
+    for program in [
+        cargo,
+        rustc,
+        selecting,
+        selected_rustc.as_path(),
+        direct_cargo.as_path(),
+        direct_rustc.as_path(),
+    ] {
+        known_program(program, sysroot, env, identities)?;
+        programs.insert(program.to_path_buf(), Executable::of(program, identities)?);
     }
     tree(dir, &dir.join("target"), &mut inputs)?;
     configurations(dir, env, &mut inputs)?;
@@ -372,7 +502,10 @@ fn observation_inputs(
     for entry in std::fs::read_dir(sysroot.join("lib"))? {
         let entry = entry?;
         if entry.file_type()?.is_file() {
-            inputs.insert(entry.path(), file(&entry.path())?);
+            inputs.insert(
+                entry.path(),
+                super::build_cache::toolchain::identity(&entry.path(), identities)?,
+            );
         }
     }
     #[cfg(windows)]
@@ -383,13 +516,25 @@ fn observation_inputs(
             .extension()
             .is_some_and(|extension| extension.eq_ignore_ascii_case("dll"))
         {
-            inputs.insert(entry.path(), file(&entry.path())?);
+            inputs.insert(
+                entry.path(),
+                super::build_cache::toolchain::identity(&entry.path(), identities)?,
+            );
         }
     }
-    Ok(inputs)
+    Ok(Inputs {
+        files: inputs,
+        programs,
+        loader_digest: loaders.digest().to_owned(),
+    })
 }
 
-fn known_program(program: &Path, sysroot: &Path, env: &Variables) -> io::Result<()> {
+fn known_program(
+    program: &Path,
+    sysroot: &Path,
+    env: &Variables,
+    identities: &Identities,
+) -> io::Result<()> {
     if program.parent() == Some(sysroot.join("bin").as_path()) {
         return Ok(());
     }
@@ -398,7 +543,8 @@ fn known_program(program: &Path, sysroot: &Path, env: &Variables) -> io::Result<
     let rustup = home
         .join("bin")
         .join(format!("rustup{}", std::env::consts::EXE_SUFFIX));
-    if file(program)? == file(&rustup)? {
+    if Executable::of(program, identities)?.content == Executable::of(&rustup, identities)?.content
+    {
         return Ok(());
     }
     Err(io::Error::other(
@@ -513,7 +659,7 @@ struct Answer {
     schema: String,
     key: String,
     role: Role,
-    inputs: BTreeMap<PathBuf, File>,
+    inputs: Inputs,
     process: Process,
 }
 
@@ -522,7 +668,7 @@ struct Response {
     key: String,
     record: PathBuf,
     role: Role,
-    inputs: BTreeMap<PathBuf, File>,
+    inputs: Inputs,
     lease: std::fs::File,
     toolchain: Toolchain,
 }
@@ -607,11 +753,10 @@ impl Response {
         if !result.succeeded() || result.stdout_truncated || result.leader.is_none() {
             return Err(io::Error::other("an incomplete actual observation"));
         }
-        if response_inputs(spec, &self.toolchain, self.role)? != self.inputs {
-            return Err(io::Error::other(
-                "complete observation inputs changed during execution",
-            ));
-        }
+        self.inputs.verify(
+            &response_inputs(spec, &self.toolchain, self.role)?,
+            toolchain_root(spec).map_err(io::Error::other)?,
+        )?;
         let answer = Answer {
             schema: SCHEMA.to_owned(),
             key: self.key.clone(),
@@ -640,11 +785,7 @@ impl Drop for Response {
     }
 }
 
-fn response_inputs(
-    spec: &Spec,
-    toolchain: &Toolchain,
-    role: Role,
-) -> io::Result<BTreeMap<PathBuf, File>> {
+fn response_inputs(spec: &Spec, toolchain: &Toolchain, role: Role) -> io::Result<Inputs> {
     let (dir, env) = match (&spec.dir, &spec.env) {
         (Some(dir), Some(env)) => (dir, env),
         (Some(_), None) | (None, Some(_) | None) => {
@@ -676,13 +817,18 @@ fn response_inputs(
         .sysroot()
         .ok_or_else(|| io::Error::other("an unobserved observation sysroot"))?;
     if Path::new(program).parent() != Some(sysroot.join("bin").as_path())
-        && selecting_root((Path::new(program), Path::new(program)), env)? != sysroot
+        && selecting_root(
+            (Path::new(program), Path::new(program)),
+            env,
+            toolchain.identities(),
+        )? != sysroot
     {
         return Err(io::Error::other("an opaque observation selector"));
     }
     let mut inputs = observation_inputs(
         (toolchain.cargo(), toolchain.rustc(), Path::new(program)),
         (sysroot, dir, env),
+        toolchain.identities(),
     )?;
     for argument in &spec.argv {
         let path = Path::new(argument);
@@ -691,11 +837,12 @@ fn response_inputs(
             .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
         {
             let path = dir.join(path);
-            inputs.insert(path.clone(), file(&path)?);
+            inputs.files.insert(path.clone(), file(&path)?);
         }
     }
     if role == Role::Metadata
         && inputs
+            .files
             .keys()
             .filter(|path| path.file_name().is_some_and(|name| name == "Cargo.toml"))
             .any(|path| !super::build_cache::plain_manifest(path))
@@ -818,7 +965,11 @@ pub(super) fn standalone(
     run(spec, toolchain, role, &watch)
 }
 
-fn selecting_root((cargo, rustc): (&Path, &Path), env: &Variables) -> io::Result<PathBuf> {
+fn selecting_root(
+    (cargo, rustc): (&Path, &Path),
+    env: &Variables,
+    identities: &Identities,
+) -> io::Result<PathBuf> {
     if cargo.parent() == rustc.parent()
         && let Some(parent) = cargo
             .parent()
@@ -832,7 +983,10 @@ fn selecting_root((cargo, rustc): (&Path, &Path), env: &Variables) -> io::Result
     let rustup = home
         .join("bin")
         .join(format!("rustup{}", std::env::consts::EXE_SUFFIX));
-    if file(cargo)? != file(&rustup)? || file(rustc)? != file(&rustup)? {
+    let selector = Executable::of(&rustup, identities)?;
+    if Executable::of(cargo, identities)?.content != selector.content
+        || Executable::of(rustc, identities)?.content != selector.content
+    {
         return Err(io::Error::other("an opaque initial toolchain selector"));
     }
     let named = env
@@ -878,5 +1032,67 @@ fn installed(sysroot: &Path) -> io::Result<bool> {
         Ok(metadata) => Ok(metadata.is_dir()),
         Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(source) => Err(source),
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use crate::cargo::{LocateOptions, Toolchain};
+    use crate::runner::{Cancel, Watched};
+    use crate::trace::{MemorySink, Payload, Recorder, Sink};
+
+    fn recorder() -> Recorder {
+        Recorder::wall(
+            Sink::Memory(MemorySink::unbounded()),
+            crate::testkit::trace::standalone_context(),
+        )
+    }
+
+    #[test]
+    fn a_known_rustup_selector_reuses_its_actual_toolchain_observation() {
+        let directory = tempfile::tempdir().expect("owned observation source and cache");
+        let source = directory.path().join("source");
+        std::fs::create_dir_all(&source).expect("source directory");
+        let mut env: crate::vars::Variables = njutest_devkit::paths::environment_for_a_run()
+            .into_iter()
+            .collect();
+        env.set("RUSTC_WRAPPER", "");
+        env.set(
+            "NJUTEST_FIXTURE_BUILD_CACHE",
+            directory.path().join("cache"),
+        );
+        let options = LocateOptions {
+            cargo: None,
+            search_path: env.search_path().map(std::ffi::OsStr::to_os_string),
+            env: Some(env),
+        };
+        let cancel = Cancel::new();
+        let first_trace = recorder();
+        let first = Toolchain::locate(&options, &source, &Watched::new(&cancel, &first_trace))
+            .expect("actual known selector observation");
+        assert!(
+            first_trace
+                .events()
+                .iter()
+                .any(|event| { matches!(&event.payload, Payload::Exec { .. }) }),
+            "the original observation retains actual processes"
+        );
+        let second_trace = recorder();
+        let second = Toolchain::locate(&options, &source, &Watched::new(&cancel, &second_trace))
+            .expect("unchanged selector observation");
+        assert_eq!(first.cargo_version(), second.cargo_version());
+        assert_eq!(first.rustc_version(), second.rustc_version());
+        let repeated = second_trace.events();
+        let processes = repeated
+            .iter()
+            .filter(|event| matches!(&event.payload, Payload::Exec { .. }))
+            .count();
+        assert_eq!(
+            processes, 0,
+            "unchanged banners reuse actual provenance: {repeated:?}"
+        );
+        assert!(repeated.iter().any(|event| {
+            matches!(&event.payload, Payload::Note { note } if note.kind == "toolchain-observation-reuse")
+        }));
     }
 }

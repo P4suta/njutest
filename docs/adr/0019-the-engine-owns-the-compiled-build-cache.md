@@ -152,7 +152,7 @@ A later prepare must measure an altered execution copy without changing the immu
    A hit starts no process, and actual standalone probes are counted once at their producer.
    Private standalone purpose types own an uncosted watch, while metadata retains its caller's actual execution recorder.
    Retained commands must match the executable, purpose, arguments, working directory and environment identity they claim.
-   External dynamic-loader search graphs remain opaque inputs and always use actual probes.
+   Unbound dynamic-loader search graphs remain opaque inputs and always use actual probes.
    Unknown executable selectors and incomplete metadata graphs use actual processes.
 7. Unreadable compiler flag inputs expose a typed I/O cause and named input path.
    Refusal tests inspect that cause and identity rather than localized operating-system display text.
@@ -214,3 +214,16 @@ One owned kernel lease covers preparation, all three actual processes and public
 Concurrent questions retain that one pair, and a corrupt record or artifact requires new actual work.
 Opaque source macros, build scripts, compiler selectors and configuration inputs retain the original actual compiler fallback.
 No cache entry manufactures an independent compiler process or changes Cargo's original freshness evidence.
+
+## Amendment, 2026-10-03: loader namespaces and acquisition identities are inputs
+
+A macOS fallback-library search is reusable only after each absolute search namespace, absent directory, alias and regular-file content has been captured and checked unchanged.
+The same owned loader observation binds compiler products, toolchain banners and metadata; unknown loader selectors still require actual processes.
+Known link-file bytes alter Cargo freshness before complete-graph eligibility is decided, including when the rest of the graph is opaque.
+That link-content fingerprint excludes source placement, while the complete cache key retains path, environment and source-graph identity.
+Generated native extension imports resolve the standard-library alias in their own runtime module on every supported edition.
+
+A doctest acquisition retains either its complete request or its original unbound refusal identity.
+Requests, misses, actual launches, failed launches and compiler provenance carry that same owned identity.
+Actual launch presence is recorded before interpreting the process result, including cancellation and supervision failures.
+The existing accounting law, independent compiler requirements and original cost records remain authoritative.
