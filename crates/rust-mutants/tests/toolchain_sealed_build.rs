@@ -135,6 +135,40 @@ fn opaque_graphs_separate_full_environment_inputs_while_pure_copies_share_target
         assert_eq!(snapshots.first(), snapshots.last());
         assert_eq!(targets.first() != targets.last(), opaque, "{name}");
     }
+    let whole = whole_keys_below(cache.path());
+    assert!(
+        whole.is_empty(),
+        "a directory below a fixture build root spells more of a key than its {}-digit name: \
+         {whole:?}",
+        rust_mutants::keyed::NAME_LENGTH
+    );
+}
+
+/// Every directory below `root` whose name holds a run of hex digits longer than a key's name.
+fn whole_keys_below(root: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        for entry in std::fs::read_dir(&directory).expect("a directory below the root") {
+            let entry = entry.expect("a directory entry");
+            if !entry.file_type().expect("the entry's type").is_dir() {
+                continue;
+            }
+            let name = entry.file_name();
+            let longest = name
+                .to_str()
+                .expect("an engine-named directory is UTF-8")
+                .split(|character: char| !matches!(character, '0'..='9' | 'a'..='f'))
+                .map(str::len)
+                .max()
+                .unwrap_or(0);
+            if longest > rust_mutants::keyed::NAME_LENGTH {
+                found.push(entry.path());
+            }
+            pending.push(entry.path());
+        }
+    }
+    found
 }
 
 #[test]

@@ -58,3 +58,33 @@ fn a_platform_build_directory_cannot_supply_its_own_module_cache_lifetime() {
             if path.as_os_str().is_empty() && source.kind() == std::io::ErrorKind::InvalidInput
     ));
 }
+
+#[test]
+fn a_platform_directory_answers_only_for_the_whole_identity_its_record_keeps() {
+    let directory = tempfile::tempdir().expect("a platform directory");
+    let identity = "0123456789abcdef".repeat(4);
+    let sharing = format!("0123456789abcdef{}", "f".repeat(48));
+    let answers = || super::answers(directory.path(), &identity).expect("a readable directory");
+    let write = |name: &str, bytes: &[u8]| {
+        std::fs::write(directory.path().join(name), bytes).expect("a planted file");
+    };
+    write(super::OBJECT, b"object");
+    assert!(
+        !answers(),
+        "an object whose probe never answered answers nothing"
+    );
+    write(super::ANSWERED, super::PROBE_ANSWER.as_bytes());
+    assert!(
+        !answers(),
+        "a record that keeps no identity answers nothing"
+    );
+    write(super::ANSWERED, sharing.as_bytes());
+    assert!(
+        !answers(),
+        "another identity that shares the directory's name answers nothing"
+    );
+    write(super::ANSWERED, identity.as_bytes());
+    assert!(answers(), "the whole identity answers");
+    std::fs::remove_file(directory.path().join(super::OBJECT)).expect("the object is removed");
+    assert!(!answers(), "a record without its object answers nothing");
+}

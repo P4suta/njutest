@@ -29,6 +29,7 @@ pub mod glob;
 pub mod id;
 pub mod instrument;
 pub mod interval;
+pub mod keyed;
 pub mod killers;
 pub mod libtest;
 pub mod limitation;

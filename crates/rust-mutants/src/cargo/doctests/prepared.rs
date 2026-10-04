@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use super::super::build_cache::{FailedStage, File, Preparation, Request, file, tree};
 use super::super::{
     BuildDir, CargoError, CargoErrorKind, CompileOptions, CompilerObservation, Driver,
-    InputIdentity, Witness,
+    InputIdentity, Witness, products_name,
 };
 use super::{DoctestCapture, Exited, REPORT_LIMIT, capture_arguments, command_failed};
 use crate::runner::{RunResult, Spec, run};
@@ -186,8 +186,8 @@ fn binding(
     binding
 }
 
-fn record_path(directory: &Path, key: &str) -> PathBuf {
-    directory.join(format!("{key}.capture.json"))
+fn record_path(directory: &Path, key: &str) -> io::Result<PathBuf> {
+    Ok(directory.join(format!("{}.capture.json", crate::keyed::name(key)?)))
 }
 
 fn inventory(directory: &Path) -> io::Result<BTreeMap<PathBuf, File>> {
@@ -209,7 +209,7 @@ fn read(
     identities: &super::super::build_cache::toolchain::Identities,
 ) -> io::Result<Product> {
     let record: Record =
-        crate::strictjson::decode_slice(&std::fs::read(record_path(directory, &request.key))?)
+        crate::strictjson::decode_slice(&std::fs::read(record_path(directory, &request.key)?)?)
             .map_err(io::Error::other)?;
     if record.schema != SCHEMA
         || record.key != request.key
@@ -220,11 +220,7 @@ fn read(
     {
         return Err(io::Error::other("an unverified capture producer"));
     }
-    let directory = directory.join(format!(
-        "{}.{}.products",
-        request.key,
-        record.observation.id()
-    ));
+    let directory = directory.join(products_name(&request.key, record.observation.id())?);
     if inventory(&directory)? != record.files {
         return Err(io::Error::other("capture products changed"));
     }
@@ -312,7 +308,7 @@ fn publish(
     (report, runtime): (Vec<u8>, runtime::Inputs),
 ) -> io::Result<Product> {
     let files = inventory(staging.path())?;
-    let product = directory.join(format!("{}.{}.products", request.key, observation.id()));
+    let product = directory.join(products_name(&request.key, observation.id())?);
     std::fs::rename(staging.path(), &product)?;
     if inventory(&product)? != files {
         return Err(io::Error::other(
@@ -338,7 +334,7 @@ fn publish(
     let mut pending = tempfile::NamedTempFile::new_in(directory)?;
     pending.write_all(&serde_json::to_vec(&record).map_err(io::Error::other)?)?;
     pending
-        .persist(record_path(directory, &request.key))
+        .persist(record_path(directory, &request.key)?)
         .map_err(io::Error::other)?;
     Ok(Product {
         origin: Origin::Published,

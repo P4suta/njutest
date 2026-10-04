@@ -81,6 +81,36 @@ pub(crate) fn compilation_input(spelling: crate::vars::Spelling, name: &std::ffi
     build_cache::compilation_input(spelling, name)
 }
 
+/// The directory inside a target directory that holds verified compilations and their products.
+pub(crate) const COMPILATIONS: &str = "rust-mutants-compilations";
+
+/// The ending of a directory that holds one actual producer's immutable products.
+const PRODUCTS: &str = ".products";
+
+/// The directory inside a capture's products that holds the compiler products it copied.
+pub(crate) const CAPTURED_COMPILER: &str = "compiler";
+
+/// The name of the directory that holds the products the producer `observation` made for `key`, whose records keep both whole.
+///
+/// # Errors
+/// `key` or `observation` is not a key.
+pub(crate) fn products_name(key: &str, observation: &str) -> std::io::Result<String> {
+    Ok(format!(
+        "{}.{}{PRODUCTS}",
+        crate::keyed::name(key)?,
+        crate::keyed::name(observation)?
+    ))
+}
+
+/// Whether `name` is one [`products_name`] spells.
+fn names_products(name: &str) -> bool {
+    name.strip_suffix(PRODUCTS)
+        .and_then(|named| named.split_once('.'))
+        .is_some_and(|(key, observation)| {
+            crate::keyed::names(key) && crate::keyed::names(observation)
+        })
+}
+
 pub(crate) fn input_identity(
     driver: &Driver<'_>,
     options: &CompileOptions,

@@ -54,6 +54,12 @@ pub const PROBE_SOURCE: &str = r#"fn main() {
 /// What the probe prints where the standard library answers from the environment it is given.
 const PROBE_ANSWER: &str = "/probe/tmp\nSome(\"/probe/home\")\n";
 
+/// The object a platform directory holds.
+const OBJECT: &str = "platform.o";
+
+/// The record a platform directory keeps the whole identity of its answered object in.
+const ANSWERED: &str = "answered";
+
 /// Every function of the standard library a sealed module is rewritten to answer through the object's.
 pub const REDIRECTS: [Redirect; 2] = [
     Redirect {
@@ -87,7 +93,7 @@ pub fn flags(object: &str) -> Vec<String> {
     flags
 }
 
-/// The object for the toolchain `driver` runs, built and probed in a directory of `root` named by everything that makes it, unless that directory already holds one whose probe answered.
+/// The object for the toolchain `driver` runs, built and probed in a directory of `root` its identity names, unless that directory keeps one answered for the whole identity.
 ///
 /// # Errors
 /// A `rustc` that could not be started, or a run that was cancelled.
@@ -104,30 +110,31 @@ pub fn ready(
         None => driver.trace.clone(),
     };
     trace.note("sealed-platform-request", "1");
-    let directory = directory(root, driver.toolchain);
-    let object = directory.join("platform.o");
-    let Some(text) = object.to_str().map(str::to_owned) else {
-        return Ok(Readied::Unanswered(format!(
-            "{} is not text, which a flag cannot carry",
-            object.display()
-        )));
-    };
-    let answered = directory.join("answered");
     let failed = |path: &Path, error: std::io::Error| {
         CargoError::new(
             CargoErrorKind::CommandFailed,
             format!("{}: {error}", path.display()),
         )
     };
-    let held = |path: &Path| match std::fs::metadata(path) {
-        Ok(metadata) => Ok(metadata.is_file()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(failed(path, error)),
+    let identity = identity(driver.toolchain);
+    let directory = root.join(crate::keyed::name(&identity).map_err(|error| failed(root, error))?);
+    let object = directory.join(OBJECT);
+    let Some(text) = object.to_str().map(str::to_owned) else {
+        return Ok(Readied::Unanswered(format!(
+            "{} is not text, which a flag cannot carry",
+            object.display()
+        )));
     };
-    if held(&object)? && held(&answered)? {
+    let answered = directory.join(ANSWERED);
+    if answers(&directory, &identity).map_err(|error| failed(&directory, error))? {
         return Ok(Readied::Object(text));
     }
     std::fs::create_dir_all(&directory).map_err(|error| failed(&directory, error))?;
+    match std::fs::remove_file(&answered) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(failed(&answered, error)),
+    }
     let source = directory.join("platform.rs");
     std::fs::write(&source, SOURCE).map_err(|error| failed(&source, error))?;
     let built = compiled(
@@ -164,7 +171,7 @@ pub fn ready(
     if let Some(said) = unanswered(modules, &bytes, &trace, Some(&cache)) {
         return Ok(Readied::Unanswered(said));
     }
-    std::fs::write(&answered, PROBE_ANSWER).map_err(|error| failed(&answered, error))?;
+    std::fs::write(&answered, &identity).map_err(|error| failed(&answered, error))?;
     Ok(Readied::Object(text))
 }
 
@@ -192,9 +199,9 @@ fn retained_cache(vars: Option<&crate::vars::Variables>) -> Result<CompilationCa
     })
 }
 
-/// The platform object's directory, pinned to its compiler and source inputs.
-fn directory(root: &Path, toolchain: &crate::cargo::Toolchain) -> std::path::PathBuf {
-    let identity = crate::id::digest(
+/// The identity of the platform object a toolchain's compiler makes from the sources.
+fn identity(toolchain: &crate::cargo::Toolchain) -> String {
+    crate::id::digest(
         [
             toolchain.rustc_version().summary.as_str(),
             SOURCE,
@@ -203,12 +210,24 @@ fn directory(root: &Path, toolchain: &crate::cargo::Toolchain) -> std::path::Pat
         ]
         .join("\0")
         .as_bytes(),
-    );
-    let short = match identity.get(..16) {
-        Some(short) => short,
-        None => identity.as_str(),
+    )
+}
+
+/// Whether `directory` holds the object `identity` names, its probe answered, and its record keeps that whole identity.
+fn answers(directory: &Path, identity: &str) -> std::io::Result<bool> {
+    let held = |name: &str| match std::fs::metadata(directory.join(name)) {
+        Ok(metadata) => Ok(metadata.is_file()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
     };
-    root.join(short)
+    if !held(OBJECT)? {
+        return Ok(false);
+    }
+    match std::fs::read(directory.join(ANSWERED)) {
+        Ok(kept) => Ok(kept == identity.as_bytes()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 /// What `rustc` said where it did not compile `source` into `output` for the sealed target with `arguments`, or nothing where it did.

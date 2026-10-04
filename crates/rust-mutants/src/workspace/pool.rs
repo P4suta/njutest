@@ -94,9 +94,10 @@ impl Graph {
         }
         let root =
             Root::of(rules.layout.source_root(), options, Path::new(root)).map_err(unavailable)?;
-        let parent = root.path().join("source-graphs-v1").join(&key);
+        let parent = graph(root.path(), &key).map_err(unavailable)?;
         std::fs::create_dir_all(&parent).map_err(unavailable)?;
         let lease = graph_lease(&parent, &options.trace).map_err(unavailable)?;
+        crate::keyed::bind(&parent, &key).map_err(unavailable)?;
         let record = parent.join("graph.json");
         let frozen = match std::fs::read(&record) {
             Ok(bytes) => crate::strictjson::decode_slice::<crate::snapshot::FrozenGraph>(&bytes)
@@ -300,23 +301,48 @@ pub(super) fn claim(
         hashed(&mut digest, name.as_encoded_bytes())?;
         hashed(&mut digest, value.as_encoded_bytes())?;
     }
-    let key = hex::encode(digest.finalize());
-    let mut slot = 0_u64;
+    lease(&root, &hex::encode(digest.finalize()), now).map(Some)
+}
+
+/// The first slot of `key` under `root` that no other run holds and no other key's record keeps.
+fn lease(root: &Path, key: &str, now: jiff::Timestamp) -> io::Result<Owner> {
+    let mut at = 0_u64;
     loop {
-        let directory = root.join(&key).join(slot.to_string());
+        let directory = slot(root, key, at)?;
         std::fs::create_dir_all(&directory)?;
         match tempowner::claim_cache(&directory, now, "njutest-fixture-build-owner-v1") {
-            Ok(owner) => return Ok(Some(owner)),
-            Err(ClaimError::Owned { .. }) => {
-                slot = slot
-                    .checked_add(1)
-                    .ok_or_else(|| io::Error::other("source lease identities exhausted"))?;
-            }
+            Ok(mut owner) => match crate::keyed::binding(&directory, key) {
+                Ok(crate::keyed::Binding::Bound) => return Ok(owner),
+                Ok(crate::keyed::Binding::Another) => owner.release()?,
+                Err(source) => {
+                    owner.release()?;
+                    return Err(source);
+                }
+            },
+            Err(ClaimError::Owned { .. }) => {}
             Err(source @ (ClaimError::Lock { .. } | ClaimError::Marker { .. })) => {
                 return Err(io::Error::other(source));
             }
         }
+        at = at
+            .checked_add(1)
+            .ok_or_else(|| io::Error::other("source lease identities exhausted"))?;
     }
+}
+
+/// Where the immutable source graph `key` names is retained under `root`.
+fn graph(root: &Path, key: &str) -> io::Result<std::path::PathBuf> {
+    Ok(root.join("source-graphs-v1").join(crate::keyed::name(key)?))
+}
+
+/// The `at`th editable source slot of the build `key` names under `root`.
+fn slot(root: &Path, key: &str, at: u64) -> io::Result<std::path::PathBuf> {
+    Ok(root.join(crate::keyed::name(key)?).join(at.to_string()))
+}
+
+/// The parent in `slot` of the target directory for the complete input environment `digest` names.
+fn inputs(slot: &Path, digest: &str) -> io::Result<std::path::PathBuf> {
+    Ok(slot.join(format!("inputs-{}", crate::keyed::name(digest)?)))
 }
 
 /// Graphs with arbitrary compiler programs get separate targets for every full input environment.
@@ -342,7 +368,11 @@ pub(super) fn target(
             hashed(&mut digest, name.as_encoded_bytes())?;
             hashed(&mut digest, value.as_encoded_bytes())?;
         }
-        slot.join(format!("inputs-{}", hex::encode(digest.finalize())))
+        let digest = hex::encode(digest.finalize());
+        let parent = inputs(slot, &digest)?;
+        std::fs::create_dir_all(&parent)?;
+        crate::keyed::bind(&parent, &digest)?;
+        parent
     } else {
         slot.to_path_buf()
     };
@@ -356,3 +386,6 @@ fn hashed(digest: &mut Sha256, bytes: &[u8]) -> io::Result<()> {
     digest.update(bytes);
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

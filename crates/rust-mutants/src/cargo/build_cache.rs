@@ -10,7 +10,10 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-use super::{CompileOptions, Compiled, Completion, Driver, Exited, Message};
+use super::{
+    CAPTURED_COMPILER, COMPILATIONS as DIRECTORY, CompileOptions, Compiled, Completion, Driver,
+    Exited, Message, products_name,
+};
 use crate::vars::Variables;
 
 mod failure;
@@ -19,7 +22,6 @@ pub(super) mod toolchain;
 pub(super) use failure::FailedStage;
 
 const SCHEMA: &str = "rust-mutants-compilation-v3";
-const DIRECTORY: &str = "rust-mutants-compilations";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -177,7 +179,7 @@ impl Request {
                 .target_dir
                 .path()
                 .join(DIRECTORY)
-                .join(format!("{key}.json")),
+                .join(format!("{}.json", crate::keyed::name(&key)?)),
             key,
             inputs,
             target: options.target_dir.path().to_path_buf(),
@@ -223,7 +225,7 @@ impl Request {
                 return Err(io::Error::other("compiler environment changed"));
             }
         }
-        let products = self.products(record.observation.id());
+        let products = self.products(record.observation.id())?;
         if completion == Completion::Built || !record.files.is_empty() {
             verified_files(&record.files, &products)?;
         }
@@ -343,7 +345,7 @@ impl Request {
         temporary.write_all(&serde_json::to_vec(&record).map_err(io::Error::other)?)?;
         temporary.persist(&self.record).map_err(io::Error::other)?;
         preparation.publish(&generation)?;
-        let products = self.products(compiled.observation().id());
+        let products = self.products(compiled.observation().id())?;
         for message in &mut compiled.messages {
             if let Message::CompilerArtifact(artifact) = message {
                 for path in artifact
@@ -390,7 +392,7 @@ impl Request {
             .prefix("products-")
             .tempdir_in(parent)?;
         let mut frozen = BTreeMap::new();
-        let products = self.products(compiled.observation().id());
+        let products = self.products(compiled.observation().id())?;
         for (path, state) in files {
             let relative = product_relative(&path, target)?;
             let copied = staging.path().join(relative);
@@ -462,7 +464,8 @@ impl Request {
             field(&mut digest, value.as_encoded_bytes());
         }
         self.key = hex::encode(digest.finalize());
-        self.record.set_file_name(format!("{}.json", self.key));
+        self.record
+            .set_file_name(format!("{}.json", crate::keyed::name(&self.key)?));
         self.augmentation = Some(Augmentation {
             role: role.to_owned(),
             arguments: arguments.to_vec(),
@@ -491,7 +494,7 @@ impl Request {
                     .chain(&mut artifact.executable)
                 {
                     let copied = directory
-                        .join("compiler")
+                        .join(CAPTURED_COMPILER)
                         .join(product_relative(path, &self.target)?);
                     let parent = copied
                         .parent()
@@ -506,7 +509,7 @@ impl Request {
                         && held(&depinfo)?
                     {
                         let kept = directory
-                            .join("compiler")
+                            .join(CAPTURED_COMPILER)
                             .join(product_relative(&depinfo, &self.target)?);
                         std::fs::copy(&depinfo, &kept)?;
                         if file(&depinfo)? != file(&kept)? {
@@ -533,7 +536,7 @@ impl Request {
                     .chain(&mut artifact.executable)
                 {
                     *path = directory
-                        .join("compiler")
+                        .join(CAPTURED_COMPILER)
                         .join(product_relative(path, &self.target)?);
                 }
             }
@@ -549,15 +552,19 @@ impl Request {
             .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
     }
 
-    pub(super) fn independent(mut self, observation: &str) -> Self {
-        self.record
-            .set_file_name(format!("{}.witness-{observation}.json", self.key));
-        self
+    pub(super) fn independent(&mut self, observation: &str) -> io::Result<()> {
+        self.record.set_file_name(format!(
+            "{}.witness-{}.json",
+            crate::keyed::name(&self.key)?,
+            crate::keyed::name(observation)?
+        ));
+        Ok(())
     }
 
-    fn products(&self, observation: &str) -> PathBuf {
-        self.record
-            .with_file_name(format!("{}.{observation}.products", self.key))
+    fn products(&self, observation: &str) -> io::Result<PathBuf> {
+        Ok(self
+            .record
+            .with_file_name(products_name(&self.key, observation)?))
     }
 
     fn product(&self, original: &Path, products: &Path) -> io::Result<PathBuf> {

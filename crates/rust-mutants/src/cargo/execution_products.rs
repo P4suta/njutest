@@ -105,24 +105,11 @@ fn unavailable(source: io::Error) -> CargoError {
 
 fn archive<'a>(path: &'a Path, target: &Path) -> Option<&'a Path> {
     path.ancestors().find(|ancestor| {
-        ancestor.parent() == Some(target.join("rust-mutants-compilations").as_path())
+        ancestor.parent() == Some(target.join(super::COMPILATIONS).as_path())
             && ancestor
                 .file_name()
                 .and_then(|name| name.to_str())
-                .is_some_and(|name| {
-                    let Some(name) = name.strip_suffix(".products") else {
-                        return false;
-                    };
-                    let Some((key, observation)) = name.split_once('.') else {
-                        return false;
-                    };
-                    key.len() == 64
-                        && observation.len() == 32
-                        && key
-                            .bytes()
-                            .chain(observation.bytes())
-                            .all(|byte| byte.is_ascii_hexdigit())
-                })
+                .is_some_and(super::names_products)
     })
 }
 
@@ -184,3 +171,6 @@ fn publish(origin: &Path, destination: &Path) -> io::Result<()> {
     )?;
     std::fs::rename(staging.path(), destination)
 }
+
+#[cfg(test)]
+mod tests;

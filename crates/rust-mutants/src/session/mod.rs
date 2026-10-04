@@ -47,6 +47,24 @@ use crate::trace::{MutantExecRecord, ReachRecord};
 use crate::validate::{Rejection, Validated};
 use crate::workspace::{SessionError, Workspace};
 
+/// The directory inside a sealed build an active mutant's instrumented tree is compiled in.
+pub(crate) const COMPILED_MUTANT: &str = "compiled-mutant";
+
+/// The directory inside a sealed build's target directory its doctests are captured in.
+pub(crate) const DOCTESTS: &str = "doctests";
+
+/// The directory inside [`DOCTESTS`] the capture program is built in.
+pub(crate) const CAPTURE: &str = "capture";
+
+/// The directory inside [`DOCTESTS`] a library's listed doctests are captured in.
+pub(crate) const LISTED: &str = "listed";
+
+/// The directory inside [`DOCTESTS`] a library's ignored doctests are listed in.
+pub(crate) const IGNORED: &str = "ignored";
+
+/// The directory inside [`DOCTESTS`] a library's standalone doctests are kept in.
+pub(crate) const KEPT: &str = "kept";
+
 /// Where a mutation is and what it edits, which is how a reviewer names one that outlives an edit elsewhere in the file.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]

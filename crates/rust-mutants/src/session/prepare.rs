@@ -8,7 +8,10 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::compiled::Compiler;
-use super::{PrepareOptions, Session, Verified, verify};
+use super::{
+    CAPTURE, COMPILED_MUTANT, DOCTESTS, IGNORED, KEPT, LISTED, PrepareOptions, Session, Verified,
+    verify,
+};
 use crate::EngineError;
 use crate::cargo::{CompileKind, CompileOptions, compile};
 use crate::catalog::Catalog;
@@ -1165,9 +1168,9 @@ fn sealed_build(
     if !held {
         return Ok(SealedBuild::none(targets, Unsealed::TargetMissing));
     }
-    let (dir, owner) = workspace.sealed_build_dir();
+    let (dir, owner) = workspace.sealed_build_dir()?;
     let dir = if active.is_some() {
-        dir.nested("compiled-mutant")
+        dir.nested(COMPILED_MUTANT)
     } else {
         dir
     };
@@ -1435,8 +1438,8 @@ fn sealed_doctests(
         return Ok(answers);
     }
     let driver = building.workspace.driver(building.cancel);
-    let root = compile.target_dir.path().join("doctests");
-    let program = crate::cargo::build_capture(&driver, &root.join("capture"))?;
+    let root = compile.target_dir.path().join(DOCTESTS);
+    let program = crate::cargo::build_capture(&driver, &root.join(CAPTURE))?;
     for target in documented {
         let answer = captured_library(building, (&driver, &program, &root), (target, compile))?;
         answers.insert(target.id().to_owned(), answer);
@@ -1478,7 +1481,7 @@ fn captured_library(
             (target.package(), compile, baked),
         )
     };
-    let (stdout, held) = capture("listed", Baked::List)?;
+    let (stdout, held) = capture(LISTED, Baked::List)?;
     let (listed, merged) = match listing(&stdout)
         .and_then(|listed| merged_binaries(&listed, &held).map(|merged| (listed, merged)))
     {
@@ -1488,7 +1491,7 @@ fn captured_library(
     let ignored = if merged.is_empty() {
         Vec::new()
     } else {
-        let (stdout, held) = capture("ignored", Baked::ListIgnored)?;
+        let (stdout, held) = capture(IGNORED, Baked::ListIgnored)?;
         match listing(&stdout).and_then(|listed| merged_binaries(&listed, &held)) {
             Ok(ignored) => ignored,
             Err(uncaptured) => return Ok(Err(refused(uncaptured))),
@@ -1502,7 +1505,7 @@ fn captured_library(
             unbuilt: Vec::new(),
         })
     } else {
-        let (stdout, held) = capture("kept", Baked::Run)?;
+        let (stdout, held) = capture(KEPT, Baked::Run)?;
         match captured(&stdout, &held) {
             Ok(ran) => Ok(Captured {
                 merged,

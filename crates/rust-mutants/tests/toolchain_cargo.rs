@@ -468,7 +468,7 @@ fn bound_compilation_record(
     })?;
     let record = target
         .join("rust-mutants-compilations")
-        .join(format!("{key}.json"));
+        .join(format!("{}.json", rust_mutants::keyed::name(key.as_str())?));
     if !std::fs::symlink_metadata(&record)?.file_type().is_file() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,

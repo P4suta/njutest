@@ -305,7 +305,8 @@ fn identity_publication<W: Watch>(
     ] {
         field(&mut publication, bytes)?;
     }
-    let directory = parent.join(hex::encode(publication.finalize()));
+    let key = hex::encode(publication.finalize());
+    let directory = parent.join(crate::keyed::name(&key)?);
     std::fs::create_dir_all(&directory)?;
     let lease = std::fs::OpenOptions::new()
         .read(true)
@@ -321,6 +322,7 @@ fn identity_publication<W: Watch>(
         "machine": {"os": std::env::consts::OS, "cpus": std::thread::available_parallelism()?.get()}
     }).to_string());
     locked?;
+    crate::keyed::bind(&directory, &key)?;
     Ok((directory.join("located.json"), lease))
 }
 
@@ -376,8 +378,9 @@ impl Owner {
             &serde_json::to_vec(&initial).map_err(io::Error::other)?,
         )?;
         let key = hex::encode(digest.finalize());
-        let products = parent.join(&key);
+        let products = parent.join(crate::keyed::name(&key)?);
         std::fs::create_dir_all(&products)?;
+        crate::keyed::bind(&products, &key)?;
         Ok(Self {
             key,
             record: products.join("located.json"),
@@ -471,7 +474,12 @@ fn restore_identities(path: &Path) -> io::Result<Identities> {
         .parent()
         .and_then(Path::parent)
         .ok_or_else(|| io::Error::other("the identity publication has no owner"))?;
-    if std::fs::read(owner.join(&record.key).join("located.json"))? != bytes {
+    if std::fs::read(
+        owner
+            .join(crate::keyed::name(&record.key)?)
+            .join("located.json"),
+    )? != bytes
+    {
         return Err(io::Error::other(
             "the identity cursor is not its original publication",
         ));
@@ -524,8 +532,13 @@ pub(in crate::cargo) fn persist_identities(
             .ok_or_else(|| io::Error::other("the identity publication has no owner"))?;
         let bytes = serde_json::to_vec(&published).map_err(io::Error::other)?;
         crate::replace::file(cursor, &bytes).map_err(|error| error.source)?;
-        crate::replace::file(&owner.join(&published.key).join("located.json"), &bytes)
-            .map_err(|error| error.source)?;
+        crate::replace::file(
+            &owner
+                .join(crate::keyed::name(&published.key)?)
+                .join("located.json"),
+            &bytes,
+        )
+        .map_err(|error| error.source)?;
         let older = serde_json::to_vec(&record).map_err(io::Error::other)?;
         crate::replace::file(path, &older).map_err(|error| error.source)?;
         return identities.accept(published.identities);
@@ -927,7 +940,7 @@ impl Response {
             &serde_json::to_vec(&inputs).map_err(io::Error::other)?,
         )?;
         let key = hex::encode(digest.finalize());
-        let directory = retained(env)?.join(&key);
+        let directory = retained(env)?.join(crate::keyed::name(&key)?);
         std::fs::create_dir_all(&directory)?;
         let lease = std::fs::OpenOptions::new()
             .read(true)
@@ -943,6 +956,7 @@ impl Response {
             "machine": {"os": std::env::consts::OS, "cpus": std::thread::available_parallelism()?.get()}
         }).to_string());
         locked?;
+        crate::keyed::bind(&directory, &key)?;
         Ok(Self {
             key,
             record: directory.join("answer.json"),
@@ -1510,7 +1524,9 @@ mod tests {
         let Some(newer_key) = keys.last() else {
             panic!("both actual content keys must publish: {keys:?}");
         };
-        let newer_record = root.join(newer_key).join("located.json");
+        let newer_record = root
+            .join(crate::keyed::name(newer_key).expect("a publication key"))
+            .join("located.json");
         let (cursor, lease) = super::identity_publication(
             &root,
             (

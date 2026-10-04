@@ -521,12 +521,13 @@ fn produce(
             return Err(error);
         }
     };
-    let request = request.map(|request| match witness {
-        Witness::Any => request,
-        Witness::Compiler => request.independent(compiled.observation().id()),
-    });
-    if let (Some(request), Some(env)) = (request, &spec.env)
-        && let Err(source) = request.unchanged(driver, options).and_then(|()| {
+    if let (Some(mut request), Some(env)) = (request, &spec.env)
+        && let Err(source) = match witness {
+            Witness::Any => Ok(()),
+            Witness::Compiler => request.independent(compiled.observation().id()),
+        }
+        .and_then(|()| request.unchanged(driver, options))
+        .and_then(|()| {
             let exit = Exited::of(&result.termination)
                 .ok_or_else(|| std::io::Error::other("compiler exit is not observed"))?;
             request.write(

@@ -135,6 +135,8 @@ So the command line each binary records for its cost record, `NJUTEST_COST_COMMA
 It loads the final snapshot's complete Cargo graph once.
 Graphs with build scripts or procedural macros use a separate target directory for every full environment because those programs may consume undeclared inputs.
 Graphs without either share the slot's target directory; compiler dep-info binds compile-time `env!` inputs.
+A directory the engine names by a key — a source slot, an input environment, a retained source graph, a tool observation, a compilation's products or the sealed platform object — spells only the key's first 16 hex digits, and the record it holds keeps the whole key, which every reuse compares before it trusts the directory, so two keys that share a name are told apart rather than taken for one.
+The deepest directory the engine names below a fixture build root is 181 characters plus a package's name, which leaves 78 of the 259 a Windows path holds for the root and for what cargo and rustc name below it; whole keys made it 389.
 Each claim gets a fresh source copy and separate execution scratch, and existing per-member content settling invalidates units whenever instrumentation or a catalog changes their source bytes.
 The claim lasts through the prepared session and every shared set of its sealed modules.
 A busy four-slot pool falls back to a private build directory.

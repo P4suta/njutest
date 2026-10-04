@@ -970,9 +970,12 @@ fn root() -> io::Result<PathBuf> {
     std::fs::canonicalize(root)
 }
 
-/// The directory one key's pair lives in, named by half the key so its deepest build product stays inside the Windows linker's path limit.
+/// How many leading hex digits of a pair's key name the directory whose `pair.json` keeps the whole key.
+const NAME_LENGTH: usize = 16;
+
+/// The directory one key's pair lives in, named by a short prefix of the key so its deepest build product stays inside the Windows linker's path limit.
 fn owner(root: &Path, key: &str) -> io::Result<PathBuf> {
-    key.get(..32)
+    key.get(..NAME_LENGTH)
         .map(|prefix| root.join(prefix))
         .ok_or_else(|| io::Error::other("a compiler pair key is shorter than its directory name"))
 }
@@ -1115,6 +1118,22 @@ mod tests {
     use super::{Inputs, Pair, answer_in, file, record};
     use sha2::Digest as _;
     use std::io;
+
+    #[test]
+    fn a_pair_directory_spells_sixteen_digits_of_the_key_its_record_keeps_whole() -> io::Result<()>
+    {
+        let root = std::path::Path::new("pairs");
+        let key = "0123456789abcdef".repeat(4);
+        assert_eq!(
+            super::owner(root, &key)?,
+            root.join("0123456789abcdef"),
+            "a pair's directory spells 16 of its key's 64 digits, and pair.json keeps all 64"
+        );
+        let refused = super::owner(root, "0123456789abcde")
+            .expect_err("a key shorter than a name names no directory");
+        assert!(refused.to_string().contains("shorter"), "{refused}");
+        Ok(())
+    }
 
     #[test]
     fn restored_input_bytes_recover_their_semantic_identity() -> io::Result<()> {

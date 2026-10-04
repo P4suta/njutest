@@ -73,6 +73,17 @@ pub fn target_of(parent: &Path, root: &Path) -> PathBuf {
     parent.join(format!("{TARGET_DIR_PREFIX}{}", keyed(root)))
 }
 
+/// The sealed build cache beside the target directory `target`, named by the tree's content `digest`.
+fn sealed_target_of(target: &Path, digest: &str) -> std::io::Result<PathBuf> {
+    Ok(target.with_file_name(format!(
+        "{TARGET_DIR_PREFIX}sealed-{}",
+        crate::keyed::name(digest)?
+    )))
+}
+
+/// The directory inside a sealed build cache cargo is handed as its target directory.
+const SEALED_BUILD: &str = "sealed";
+
 /// The `at`th scratch directory under `parent`, where a run's test processes work.
 #[must_use]
 pub fn scratch_of(parent: &Path, at: u32) -> PathBuf {
@@ -1441,23 +1452,31 @@ impl Workspace {
     }
 
     /// A sealed build cache named by the tree's content, with ownership held until its modules are dropped.
+    ///
+    /// # Errors
+    /// The tree's content digest names no directory.
     pub(crate) fn sealed_build_dir(
         &self,
-    ) -> (
-        crate::cargo::BuildDir,
-        Option<std::sync::Arc<crate::sealed::BuildClaim>>,
-    ) {
-        let key: String = self.snapshot.workspace_digest().chars().take(16).collect();
-        let path = self
-            .target_dir
-            .with_file_name(format!("{TARGET_DIR_PREFIX}sealed-{key}"));
+    ) -> Result<
+        (
+            crate::cargo::BuildDir,
+            Option<std::sync::Arc<crate::sealed::BuildClaim>>,
+        ),
+        SessionError,
+    > {
+        let path = sealed_target_of(&self.target_dir, self.snapshot.workspace_digest()).map_err(
+            |source| SessionError::WriteFailed {
+                path: "sealed build directory".to_owned(),
+                source,
+            },
+        )?;
         let owner = claim_target(&path, jiff::Timestamp::now(), self.root()).map(|owner| {
             std::sync::Arc::new(crate::sealed::BuildClaim::new(
                 owner,
                 self.build_owner.clone(),
             ))
         });
-        (self.build_dir().at(path).nested("sealed"), owner)
+        Ok((self.build_dir().at(path).nested(SEALED_BUILD), owner))
     }
 
     /// Ends every process this run started that is still running, having left every execution's process group, and says so in the trace.
