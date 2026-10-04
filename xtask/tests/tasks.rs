@@ -1842,3 +1842,30 @@ fn tidy_prevents_compiler_wrappers_from_retaining_its_temporary_context() {
         "a nested compiler can retain an expiring wrapper context: {output:?}"
     );
 }
+
+#[test]
+fn tidy_keeps_the_coverage_shim_and_clears_the_wrapper_it_chains_to() {
+    let shim = "/opt/cargo-llvm-cov/bin/cargo-llvm-cov";
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["tidy", "--"])
+        .arg(njutest_devkit::paths::posix_sh())
+        .args(["-c", "test \"$RUSTC_WRAPPER\" = \"$EXPECTED_SHIM\" && test -z \"${__CARGO_LLVM_COV_RUSTC_WRAPPER_PRE_EXISTING+chained}\" && test -z \"$RUSTC_WORKSPACE_WRAPPER\" && test -z \"$CARGO_BUILD_RUSTC_WRAPPER\" && test -z \"$CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER\""])
+        .envs([
+            ("CARGO_LLVM_COV", "1"),
+            ("__CARGO_LLVM_COV_RUSTC_WRAPPER", "1"),
+            ("RUSTC_WRAPPER", shim),
+            ("EXPECTED_SHIM", shim),
+            ("__CARGO_LLVM_COV_RUSTC_WRAPPER_PRE_EXISTING", "sccache"),
+            ("RUSTC_WORKSPACE_WRAPPER", "expired-workspace-wrapper"),
+            ("CARGO_BUILD_RUSTC_WRAPPER", "expired-cargo-wrapper"),
+            ("CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER", "expired-cargo-workspace-wrapper"),
+        ])
+        .output()
+        .expect("the actual tidy child runs");
+    assert!(
+        output.status.success(),
+        "a coverage run under tidy lost the shim that instruments its build, so the suite it \
+         measures is compiled without coverage, or kept the cache the shim chains to, which \
+         can retain an expiring temporary context: {output:?}"
+    );
+}

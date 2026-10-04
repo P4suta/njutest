@@ -798,7 +798,7 @@ fn tidy(command: &[OsString], process: &Process<'_>, stderr: &mut dyn Write) -> 
     for name in TEMPORARY_VARIABLES {
         running.env(name, scratch.path());
     }
-    clear_wrappers(&mut running);
+    clear_wrappers(&mut running, process.environment);
     let inside = match lanes::Lanes::from_environment(process.environment) {
         Ok(lanes) => lanes.inside(lanes::Lane::Heavy),
         Err(_no_lanes) => None,
@@ -824,15 +824,36 @@ fn tidy(command: &[OsString], process: &Process<'_>, stderr: &mut dyn Write) -> 
     tidy_outcome(ran, scratch, cache, stderr)
 }
 
-fn clear_wrappers(running: &mut Command) {
+/// Clears every compiler wrapper the work could inherit but cargo-llvm-cov's coverage shim, and clears what that shim chains to in its place.
+fn clear_wrappers(running: &mut Command, environment: &environment::Environment) {
+    let shim = coverage_shim(environment);
     for name in [
         "RUSTC_WRAPPER",
         "RUSTC_WORKSPACE_WRAPPER",
         "CARGO_BUILD_RUSTC_WRAPPER",
         "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER",
     ] {
-        running.env(name, "");
+        if !(shim && name == "RUSTC_WRAPPER") {
+            running.env(name, "");
+        }
     }
+    if shim {
+        running.env_remove(CHAINED_BY_THE_SHIM);
+    }
+}
+
+/// The variable cargo-llvm-cov's coverage shim reads the wrapper it chains to from.
+const CHAINED_BY_THE_SHIM: &str = "__CARGO_LLVM_COV_RUSTC_WRAPPER_PRE_EXISTING";
+
+/// Whether the compiler wrapper is cargo-llvm-cov's coverage shim, the instrumentation a coverage run measures by, which ends with each compilation rather than outliving it.
+fn coverage_shim(environment: &environment::Environment) -> bool {
+    environment.value("CARGO_LLVM_COV").is_some()
+        && environment
+            .value("__CARGO_LLVM_COV_RUSTC_WRAPPER")
+            .is_some()
+        && environment.value("RUSTC_WRAPPER").is_some_and(|wrapper| {
+            Path::new(wrapper).file_stem() == Some(OsStr::new("cargo-llvm-cov"))
+        })
 }
 
 /// Finishes tidy after the work owner reports its actual outcome, retaining unknown completion.
