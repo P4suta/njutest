@@ -861,10 +861,9 @@ fn retained_session_members(session: Pid) -> io::Result<Vec<super::ForeignProces
         if pid == session {
             continue;
         }
-        match rustix::process::getsid(Some(pid)) {
-            Ok(actual) if actual == session => {}
-            Ok(_) | Err(rustix::io::Errno::SRCH) => continue,
-            Err(source) => return Err(source.into()),
+        match session_of(pid)? {
+            Some(actual) if actual == session => {}
+            Some(_) | None => continue,
         }
         let raw = u32::try_from(pid.as_raw_nonzero().get()).map_err(io::Error::other)?;
         let Some(member) = super::ForeignProcess::retain(raw)? else {
@@ -873,13 +872,49 @@ fn retained_session_members(session: Pid) -> io::Result<Vec<super::ForeignProces
         if member.wait(Some(std::time::Duration::ZERO))? {
             continue;
         }
-        match rustix::process::getsid(Some(pid)) {
-            Ok(actual) if actual == session => members.push(member),
-            Ok(_) | Err(rustix::io::Errno::SRCH) => {}
-            Err(source) => return Err(source.into()),
+        match session_of(pid)? {
+            Some(actual) if actual == session => members.push(member),
+            Some(_) | None => {}
         }
     }
     Ok(members)
+}
+
+/// The session a process is in, as `/proc` says: absent once it is gone or for a kernel thread, which is in no session and whose `getsid` answers 0.
+#[cfg(target_os = "linux")]
+fn session_of(pid: Pid) -> io::Result<Option<Pid>> {
+    let stat = match std::fs::read_to_string(format!("/proc/{}/stat", pid.as_raw_nonzero())) {
+        Ok(stat) => stat,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => return Err(source),
+    };
+    session_of_stat(&stat)
+}
+
+/// The session field of one `/proc/<pid>/stat` line, read after the command name, which may itself hold spaces and parentheses.
+#[cfg(target_os = "linux")]
+fn session_of_stat(stat: &str) -> io::Result<Option<Pid>> {
+    let fields = stat
+        .rsplit_once(')')
+        .map(|(_name, fields)| fields)
+        .ok_or_else(|| io::Error::other("a process status line without its command name"))?;
+    let session = fields
+        .split_whitespace()
+        .nth(3)
+        .ok_or_else(|| io::Error::other("a process status line without its session"))?
+        .parse::<i32>()
+        .map_err(io::Error::other)?;
+    Ok(Pid::from_raw(session))
+}
+
+/// The session a process is in: absent once it is gone.
+#[cfg(not(target_os = "linux"))]
+fn session_of(pid: Pid) -> io::Result<Option<Pid>> {
+    match rustix::process::getsid(Some(pid)) {
+        Ok(actual) => Ok(Some(actual)),
+        Err(rustix::io::Errno::SRCH) => Ok(None),
+        Err(source) => Err(source.into()),
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -1082,6 +1117,26 @@ fn mac_state(pid: i32) -> io::Result<Option<MacState>> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_process_in_no_session_has_none_rather_than_session_zero() {
+        let kernel = "2 (kthreadd) S 0 0 0 0 -1 2129984 0 0 0 0 0 1 0 0 20 0 1 0 2 0 0";
+        assert_eq!(
+            super::session_of_stat(kernel).expect("a complete status line"),
+            None
+        );
+        let named = "4242 (a (b) c) S 1 4242 4241 0 -1 4194560";
+        assert_eq!(
+            super::session_of_stat(named).expect("a complete status line"),
+            rustix::process::Pid::from_raw(4241)
+        );
+        let own = rustix::process::getpid();
+        assert_eq!(
+            super::session_of(own).expect("this process"),
+            Some(rustix::process::getsid(None).expect("this session"))
+        );
+    }
+
     use super::{delivered, snapshot_has_member_besides_leader};
 
     #[test]
