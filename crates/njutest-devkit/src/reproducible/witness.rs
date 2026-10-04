@@ -972,6 +972,13 @@ fn root() -> io::Result<PathBuf> {
     std::fs::canonicalize(root)
 }
 
+/// The directory one key's pair lives in, named by half the key so its deepest build product stays inside the Windows linker's path limit.
+fn owner(root: &Path, key: &str) -> io::Result<PathBuf> {
+    key.get(..32)
+        .map(|prefix| root.join(prefix))
+        .ok_or_else(|| io::Error::other("a compiler pair key is shorter than its directory name"))
+}
+
 fn lease(root: &Path) -> io::Result<std::fs::File> {
     let lease = std::fs::OpenOptions::new()
         .read(true)
@@ -1049,7 +1056,7 @@ fn answer_in(root: &Path, source: &Path) -> io::Result<bool> {
         }
     };
     let inputs = Inputs::of(source, root, previous)?;
-    let owner = root.join(inputs.key()?);
+    let owner = owner(root, &inputs.key()?)?;
     std::fs::create_dir_all(&owner)?;
     let original = owner.join("source");
     let target = owner.join("target");
@@ -1137,10 +1144,13 @@ mod tests {
         let temporary = tempfile::tempdir()?;
         let directory = std::fs::canonicalize(temporary.path())?;
         let source = crate::paths::fixtures_dir().join("fixture-equivalent");
-        assert!(answer_in(&directory, &source)?);
+        assert_eq!(
+            answer_in(&directory, &source)?,
+            super::super::REVERTED_CHANGE_REPRODUCES
+        );
         let mut pair = record(&directory.join("latest.json"))?;
         let inputs = Inputs::of(&source, &directory, Some(&pair.inputs))?;
-        let owner = directory.join(inputs.key()?);
+        let owner = super::owner(&directory, &inputs.key()?)?;
         pair.changed.pid = pair.original.pid;
         assert!(
             pair.answer(
@@ -1228,17 +1238,23 @@ mod tests {
         let temporary = tempfile::tempdir()?;
         let directory = std::fs::canonicalize(temporary.path())?;
         let source = crate::paths::fixtures_dir().join("fixture-equivalent");
-        assert!(answer_in(&directory, &source)?);
+        assert_eq!(
+            answer_in(&directory, &source)?,
+            super::super::REVERTED_CHANGE_REPRODUCES
+        );
         let original = directory.join("latest.json");
         let actual = record(&original)?;
         let inputs = Inputs::of(&source, &directory, Some(&actual.inputs))?;
-        let owner = directory.join(inputs.key()?);
+        let owner = super::owner(&directory, &inputs.key()?)?;
         let paths = (
             owner.join("source"),
             owner.join("target"),
             owner.join("products"),
         );
-        assert!(actual.answer(&inputs, (&paths.0, &paths.1, &paths.2))?);
+        assert_eq!(
+            actual.answer(&inputs, (&paths.0, &paths.1, &paths.2))?,
+            super::super::REVERTED_CHANGE_REPRODUCES
+        );
         let mut remaining = Some(Tampering::OriginalControl);
         while let Some(alteration) = remaining {
             let mut pair = record(&original)?;
@@ -1264,7 +1280,10 @@ mod tests {
             .expect_err("altered actual compiler products remain refused");
         assert_eq!(refusal.kind(), io::ErrorKind::Other);
         std::fs::write(&product, bytes)?;
-        assert!(actual.answer(&inputs, (&paths.0, &paths.1, &paths.2))?);
+        assert_eq!(
+            actual.answer(&inputs, (&paths.0, &paths.1, &paths.2))?,
+            super::super::REVERTED_CHANGE_REPRODUCES
+        );
         drop(temporary);
         Ok(())
     }
@@ -1275,22 +1294,31 @@ mod tests {
         let directory = std::fs::canonicalize(temporary.path())?;
         let fixture = crate::fixture::Fixture::copy("fixture-equivalent");
         let source = fixture.root();
-        assert!(answer_in(&directory, source)?);
+        assert_eq!(
+            answer_in(&directory, source)?,
+            super::super::REVERTED_CHANGE_REPRODUCES
+        );
         let original = record(&directory.join("latest.json"))?;
         let bytes = fixture.read("src/lib.rs");
         let changed = std::str::from_utf8(&bytes)
             .map_err(io::Error::other)?
             .replace("n * 2", "n / 2");
         fixture.write("src/lib.rs", changed.as_bytes());
-        assert!(answer_in(&directory, source)?);
+        assert_eq!(
+            answer_in(&directory, source)?,
+            super::super::REVERTED_CHANGE_REPRODUCES
+        );
         let different = record(&directory.join("latest.json"))?;
         assert_ne!(original.key, different.key);
         assert_ne!(original.original.identity, different.original.identity);
         fixture.write("src/lib.rs", &bytes);
-        assert!(answer_in(&directory, source)?);
+        assert_eq!(
+            answer_in(&directory, source)?,
+            super::super::REVERTED_CHANGE_REPRODUCES
+        );
         let current = Inputs::of(source, &directory, Some(&different.inputs))?;
         assert_eq!(current.key()?, original.key);
-        let retained = record(&directory.join(current.key()?).join("pair.json"))?;
+        let retained = record(&super::owner(&directory, &current.key()?)?.join("pair.json"))?;
         assert_eq!(retained.original.identity, original.original.identity);
         assert_eq!(retained.changed.identity, original.changed.identity);
         assert_eq!(retained.restored.identity, original.restored.identity);
@@ -1314,12 +1342,15 @@ mod tests {
                 })
                 .collect();
             for worker in workers {
-                assert!(worker.join().map_err(io::Error::other)??);
+                assert_eq!(
+                    worker.join().map_err(io::Error::other)??,
+                    super::super::REVERTED_CHANGE_REPRODUCES
+                );
             }
             Ok::<(), io::Error>(())
         })?;
         let pair = record(&directory.join("latest.json"))?;
-        let owner = directory.join(&pair.key);
+        let owner = super::owner(&directory, &pair.key)?;
         let mut observations = Vec::new();
         for entry in std::fs::read_dir(owner.join("products"))? {
             observations.push(entry?.file_name());

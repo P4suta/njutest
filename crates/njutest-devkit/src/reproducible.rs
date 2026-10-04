@@ -131,14 +131,24 @@ fn configure_build_command(command: &mut std::process::Command, root: &Path, tar
         .current_dir(root);
 }
 
+/// Whether this platform rebuilds a reverted change to the same bytes; an MSVC link stamps each image with its time and a fresh PDB identity.
+#[cfg(test)]
+const REVERTED_CHANGE_REPRODUCES: bool = cfg!(not(windows));
+
 #[cfg(test)]
 mod tests {
     #[test]
     fn identical_reproducibility_questions_share_one_actual_independent_pair() {
         const CHILD: &str = "NJUTEST_REPRODUCIBILITY_CHILD";
         if std::env::var_os(CHILD).is_some() {
-            assert!(super::builds_a_reverted_change_to_the_same_bytes());
-            assert!(super::builds_a_reverted_change_to_the_same_bytes());
+            assert_eq!(
+                super::builds_a_reverted_change_to_the_same_bytes(),
+                super::REVERTED_CHANGE_REPRODUCES
+            );
+            assert_eq!(
+                super::builds_a_reverted_change_to_the_same_bytes(),
+                super::REVERTED_CHANGE_REPRODUCES
+            );
             return;
         }
         let directory = tempfile::tempdir().expect("the actual work owner");
