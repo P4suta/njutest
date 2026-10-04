@@ -652,12 +652,21 @@ fn a_changed_observation_command_cannot_certify_its_old_actual_result() {
     let trace = rust_mutants::testkit::trace::memory_recorder();
     let cancel = Cancel::new();
     let first = observed_toolchain(&fixture, &cancel, &trace);
-    let root = fixture.cache().join("rust-mutants-tool-observations-v1");
-    let record = std::fs::read_dir(&root)
-        .expect("the bound observation owner")
-        .map(|entry| entry.expect("an observation").path().join("located.json"))
-        .find(|path| std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file()))
-        .expect("the actual located record");
+    let bound = trace
+        .events()
+        .iter()
+        .find_map(|event| match &event.payload {
+            Payload::Note { note } if note.kind == "toolchain-observation-bound" => {
+                Some(note.detail.clone())
+            }
+            _ => None,
+        })
+        .expect("the actual observation binds its content key");
+    let record = fixture
+        .cache()
+        .join("rust-mutants-tool-observations-v1")
+        .join(rust_mutants::keyed::name(&bound).expect("a bound content key"))
+        .join("located.json");
     let mut value: serde_json::Value = njutest_devkit::strictjson::decode_slice(
         &std::fs::read(&record).expect("the actual observation"),
     )
