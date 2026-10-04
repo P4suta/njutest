@@ -38,7 +38,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     # The backstop for a runner that stops answering; a test that stalls is nextest's slow-timeout to name, well inside this.
     # On a hosted macOS runner the toolchain suite alone took 36.5 of the 45 minutes, and the job was cancelled in clippy with every test passed.
-    timeout-minutes: 75
+    # The suite has since grown to 4,745 tests, and a hosted macOS runner reached 2,565 of them in the step's former 60 minutes.
+    timeout-minutes: 150
     strategy:
       # Each platform answers for itself.
       # `fail-fast: true` read "this commit is red" as "stop asking", and the platforms it stopped asking were the ones nothing else can answer for: a Windows failure cancelled both macOS jobs on four consecutive pushes, so a macOS fix went four rounds without ever being run.
@@ -72,7 +73,7 @@ jobs:
           cargo fetch --locked
           cargo fetch --locked --manifest-path fuzz/Cargo.toml
       - name: Test every target
-        timeout-minutes: 60
+        timeout-minutes: 130
         env:
           NJUTEST_TEST_COST_DIR: ${{ github.workspace }}/target/suite-cost/ci
           NJUTEST_FIXTURE_BUILD_CACHE: ${{ runner.temp }}/fixture-builds
@@ -208,7 +209,7 @@ jobs:
   coverage:
     name: coverage
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -228,7 +229,7 @@ jobs:
       # `nextest` builds the test targets and nothing else, and part of this suite drives a scripted `cargo` that lives in an example.
       # Building it takes the same environment the instrumented run uses, which is what `show-env` is for.
       - name: Collect coverage (run the suite once)
-        timeout-minutes: 35
+        timeout-minutes: 85
         env:
           NJUTEST_TEST_COST_DIR: ${{ github.workspace }}/target/suite-cost/ci
           NJUTEST_FIXTURE_BUILD_CACHE: ${{ runner.temp }}/fixture-builds
