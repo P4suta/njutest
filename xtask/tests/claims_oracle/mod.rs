@@ -156,6 +156,8 @@ fn listing(
         .arg(workspace)
         .arg("--cargo")
         .arg(njutest_devkit::paths::cargo_binary())
+        .arg("--build-jobs")
+        .arg(njutest_devkit::paths::sole_build_jobs().to_string())
         .args(flags)
         .current_dir(repository)
         .env_clear()

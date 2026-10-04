@@ -380,12 +380,28 @@ pub const TOOLCHAIN_TESTS_AT_ONCE: usize = 4;
 /// # Panics
 /// `CARGO_BUILD_JOBS` is present but is not a positive textual count.
 #[must_use]
+pub fn nested_build_jobs() -> usize {
+    let (cores, ceiling) = build_budget();
+    nested_job_share(cores, ceiling)
+}
+
+/// The jobs a cargo started by a test that holds every test thread may use: this machine's whole budget, since no test runs beside it.
+///
+/// # Panics
+/// `CARGO_BUILD_JOBS` is present but is not a positive textual count.
+#[must_use]
+pub fn sole_build_jobs() -> usize {
+    let (cores, ceiling) = build_budget();
+    whole_budget(cores, ceiling)
+}
+
+/// This machine's cores and the caller's `CARGO_BUILD_JOBS`, which bound every cargo a test starts.
 #[expect(
     clippy::expect_used,
     clippy::panic,
     reason = "invalid nested Cargo setup must fail the test before measuring any fixture"
 )]
-pub fn nested_build_jobs() -> usize {
+fn build_budget() -> (usize, Option<usize>) {
     let cores = match std::thread::available_parallelism() {
         Ok(cores) => cores.get(),
         Err(_unknown) => 1,
@@ -400,15 +416,19 @@ pub fn nested_build_jobs() -> usize {
         Err(std::env::VarError::NotPresent) => None,
         Err(std::env::VarError::NotUnicode(_)) => panic!("CARGO_BUILD_JOBS must be textual"),
     };
-    nested_job_share(cores, ceiling)
+    (cores, ceiling)
+}
+
+fn whole_budget(cores: usize, ceiling: Option<usize>) -> usize {
+    match ceiling {
+        Some(ceiling) => cores.min(ceiling),
+        None => cores,
+    }
+    .max(1)
 }
 
 fn nested_job_share(cores: usize, ceiling: Option<usize>) -> usize {
-    let budget = match ceiling {
-        Some(ceiling) => cores.min(ceiling),
-        None => cores,
-    };
-    (budget / TOOLCHAIN_TESTS_AT_ONCE).max(1)
+    (whole_budget(cores, ceiling) / TOOLCHAIN_TESTS_AT_ONCE).max(1)
 }
 
 /// The parent's environment for a new in-process run, with the variables that run must compose for itself taken out and the harness's build output off the loader's search path.
@@ -811,6 +831,14 @@ mod target_tests {
         assert_eq!(super::nested_job_share(24, Some(3)), 1);
         assert_eq!(super::nested_job_share(24, Some(8)), 2);
         assert_eq!(super::nested_job_share(8, None), 2);
+    }
+
+    #[test]
+    fn a_test_that_holds_every_test_thread_takes_the_callers_whole_build_budget() {
+        assert_eq!(super::whole_budget(24, Some(3)), 3);
+        assert_eq!(super::whole_budget(24, Some(8)), 8);
+        assert_eq!(super::whole_budget(8, None), 8);
+        assert_eq!(super::whole_budget(2, Some(8)), 2);
     }
 
     #[test]
