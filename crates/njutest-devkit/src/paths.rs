@@ -411,7 +411,7 @@ fn nested_job_share(cores: usize, ceiling: Option<usize>) -> usize {
     (budget / TOOLCHAIN_TESTS_AT_ONCE).max(1)
 }
 
-/// The parent's environment for a new in-process run, with the variables that run must compose for itself taken out.
+/// The parent's environment for a new in-process run, with the variables that run must compose for itself taken out and the harness's build output off the loader's search path.
 #[must_use]
 pub fn environment_for_a_run() -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
     let composed: [&str; 7] = [
@@ -436,6 +436,9 @@ pub fn environment_for_a_run() -> Vec<(std::ffi::OsString, std::ffi::OsString)> 
                 .any(|reserved| same_name(name, std::ffi::OsStr::new(reserved)));
             !(reserved || (outer_coverage && cargo_llvm_cov_owns(name)))
         })
+        .filter_map(|(name, value)| {
+            without_harness_output(name, value, harness_output().as_deref())
+        })
         .collect();
     if !kept
         .iter()
@@ -451,6 +454,53 @@ pub fn environment_for_a_run() -> Vec<(std::ffi::OsString, std::ffi::OsString)> 
     }
     kept.push(jobs());
     kept
+}
+
+/// The variables a dynamic loader searches libraries by, which a test harness extends with its own build output.
+const LOADER_SEARCH: [&str; 4] = [
+    "DYLD_LIBRARY_PATH",
+    "DYLD_FALLBACK_LIBRARY_PATH",
+    "LD_LIBRARY_PATH",
+    "PATH",
+];
+
+/// The build output directory this test binary lies in, which the harness puts on the loader's search path and a user's run never has.
+#[must_use]
+pub fn harness_output() -> Option<PathBuf> {
+    match std::env::current_exe() {
+        Ok(current) => current
+            .parent()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf),
+        Err(_unknown) => None,
+    }
+}
+
+/// A variable as a user's run would see it: a loader search path keeps every entry outside the harness's build output, and is absent when none is left.
+fn without_harness_output(
+    name: std::ffi::OsString,
+    value: std::ffi::OsString,
+    harness: Option<&Path>,
+) -> Option<(std::ffi::OsString, std::ffi::OsString)> {
+    let Some(harness) = harness else {
+        return Some((name, value));
+    };
+    if !LOADER_SEARCH
+        .iter()
+        .any(|searched| same_name(&name, std::ffi::OsStr::new(searched)))
+    {
+        return Some((name, value));
+    }
+    let entries: Vec<PathBuf> = std::env::split_paths(&value)
+        .filter(|entry| !entry.starts_with(harness))
+        .collect();
+    if entries.is_empty() {
+        return None;
+    }
+    match std::env::join_paths(entries) {
+        Ok(joined) => Some((name, joined)),
+        Err(_unjoinable) => Some((name, value)),
+    }
 }
 
 /// The variable a nested cargo reads its job count from.
@@ -815,6 +865,28 @@ mod target_tests {
                 "the suite builds for {SEALED_TARGET}, so rust-toolchain.toml installs its \
                  standard library wherever the pinned toolchain is installed: targets = {targets}"
             )))
+        }
+    }
+}
+
+#[cfg(test)]
+mod harness_tests {
+    #[test]
+    fn an_in_process_run_does_not_inherit_the_harness_build_output_on_its_loader_path() {
+        let harness = super::harness_output().expect("this test binary's build output");
+        for (name, value) in super::environment_for_a_run() {
+            if super::LOADER_SEARCH
+                .iter()
+                .any(|searched| super::same_name(&name, std::ffi::OsStr::new(searched)))
+            {
+                assert!(
+                    std::env::split_paths(&value).all(|entry| !entry.starts_with(&harness)),
+                    "{} still names the harness's build output {}: {}",
+                    name.display(),
+                    harness.display(),
+                    value.display()
+                );
+            }
         }
     }
 }
