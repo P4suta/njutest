@@ -65,6 +65,13 @@ fn trace_text(value: &std::ffi::OsStr, field: &'static str) -> Result<String, Ex
         .ok_or(ExecRecordError::NonUtf8 { field })
 }
 
+/// Takes the labels a product names its cost records by out of `vars` once a recorder has read them, so no process the run starts is handed them and no build identity counts them.
+pub(crate) fn unlabelled(vars: &mut crate::vars::Variables) {
+    for label in cost::ORIGIN_LABELS {
+        vars.remove(label);
+    }
+}
+
 fn trace_env_names(env: Option<&crate::vars::Variables>) -> Result<Vec<String>, ExecRecordError> {
     let Some(env) = env else {
         return Ok(Vec::new());

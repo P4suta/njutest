@@ -220,6 +220,58 @@ fn a_variable_that_only_labels_work_is_no_input_of_the_slot_a_copy_shares() {
     );
 }
 
+#[test]
+fn an_opaque_graph_opened_by_two_commands_keeps_one_target_and_hands_neither_label_on() {
+    let cache = tempfile::tempdir().expect("the shared source slots");
+    let temporary = cache.path().join("temporary");
+    std::fs::create_dir_all(&temporary).expect("the caller's temporary directory");
+    let mut targets = Vec::new();
+    let mut handed = Vec::new();
+    for command in [r#"["list","--json"]"#, r#"["list","--claims"]"#] {
+        let fixture = njutest_devkit::fixture::Fixture::copy("fixture-build-script");
+        let trace = notes_trace();
+        let mut options = rust_mutants::workspace::OpenOptions {
+            cargo: Some(njutest_devkit::paths::cargo_binary()),
+            env: njutest_devkit::paths::environment_for_a_toolchain_run(&[])
+                .into_iter()
+                .collect(),
+            temp_directory: cache.path().to_path_buf(),
+            offline: true,
+            trace: trace.clone(),
+            ..rust_mutants::workspace::OpenOptions::default()
+        };
+        options.env.set("NJUTEST_FIXTURE_BUILD_CACHE", cache.path());
+        options.env.set("TMPDIR", &temporary);
+        options.env.set("NJUTEST_COST_PRODUCT", "rust-mutants");
+        options.env.set("NJUTEST_COST_COMMAND", command);
+        let workspace =
+            rust_mutants::workspace::Workspace::open(fixture.root(), options, &Cancel::new())
+                .expect("the complete copied graph opens");
+        targets.push(workspace.target_dir().to_path_buf());
+        workspace.close().expect("the source slot is released");
+        for event in trace.events() {
+            if let Payload::Exec { exec } = &event.payload {
+                handed.extend(
+                    exec.env_names
+                        .iter()
+                        .filter(|name| name.starts_with("NJUTEST_COST_"))
+                        .cloned(),
+                );
+            }
+        }
+    }
+    assert_eq!(
+        targets.first(),
+        targets.last(),
+        "the command line that labels a cost record became an input of the build, so every \
+         command opened on an opaque graph compiles it again from nothing"
+    );
+    assert!(
+        handed.is_empty(),
+        "a process the opening started was handed a cost label: {handed:?}"
+    );
+}
+
 fn sysroot() -> PathBuf {
     let root = njutest_devkit::paths::fixtures_dir().join("fixture-simple");
     toolchain(&root)

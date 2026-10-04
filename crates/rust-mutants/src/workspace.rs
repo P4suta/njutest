@@ -1004,6 +1004,7 @@ impl Workspace {
                 source,
             }
         })?;
+        crate::trace::unlabelled(&mut options.env);
         let phase = options.trace.phase("open");
         let root = match crate::canonical::canonical(root) {
             Ok(root) => root,

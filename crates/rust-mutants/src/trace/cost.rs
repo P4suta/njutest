@@ -245,6 +245,15 @@ pub fn record_probe(
     Ok(())
 }
 
+/// The variable a product's composition root names the product in, for its cost records.
+const PRODUCT_LABEL: &str = "NJUTEST_COST_PRODUCT";
+
+/// The variable a product's composition root spells its command line in, for its cost records.
+const COMMAND_LABEL: &str = "NJUTEST_COST_COMMAND";
+
+/// Every variable a product labels its cost records by, which only the recorder reads.
+pub(super) const ORIGIN_LABELS: [&str; 2] = [PRODUCT_LABEL, COMMAND_LABEL];
+
 impl Origin {
     fn of(vars: &crate::vars::Variables) -> io::Result<Self> {
         let label = |name: &str| {
@@ -260,10 +269,7 @@ impl Origin {
                 test: label("NEXTEST_TEST_NAME")?,
             });
         }
-        let program = match vars
-            .var("NJUTEST_COST_PRODUCT")
-            .and_then(std::ffi::OsStr::to_str)
-        {
+        let program = match vars.var(PRODUCT_LABEL).and_then(std::ffi::OsStr::to_str) {
             Some("rust-mutants") => Product::RustMutants,
             Some("njutest") => Product::Njutest,
             Some(other) => return Err(io::Error::other(format!("unknown cost product {other:?}"))),
@@ -273,7 +279,7 @@ impl Origin {
                 ));
             }
         };
-        let command = label("NJUTEST_COST_COMMAND")?;
+        let command = label(COMMAND_LABEL)?;
         let command = crate::strictjson::decode_str(&command)
             .map_err(|source| io::Error::other(format!("cost command is invalid: {source}")))?;
         Ok(Self::Product { program, command })
