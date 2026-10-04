@@ -93,14 +93,14 @@ fn repeated_runs_over_one_pool_reuse_every_verified_compilation_and_capture() {
         );
     }
     let report = document(&fixture);
-    let path = fixture
+    let engine = fixture
         .root
         .join(".njutest/trace")
         .join(text(&report["run_id"]))
-        .join("builds/0000000000/engine")
-        .join(rust_mutants::trace::FILE_NAME);
+        .join("builds/0000000000/engine");
     let events = rust_mutants::trace::read_events(std::io::BufReader::new(
-        std::fs::File::open(&path).expect("the repeated run's build trace"),
+        std::fs::File::open(engine.join(rust_mutants::trace::FILE_NAME))
+            .expect("the repeated run's build trace"),
     ))
     .expect("the engine's trace");
     let notes: Vec<_> = events
@@ -171,24 +171,51 @@ fn repeated_runs_over_one_pool_reuse_every_verified_compilation_and_capture() {
         started, 0,
         "every original compilation/capture is reused without a physical Cargo start: {notes:?}"
     );
-    let attempts = events
+    let (documentation, attempts): (Vec<_>, Vec<_>) = events
         .iter()
-        .filter(|event| {
+        .filter_map(|event| {
             if let rust_mutants::trace::Payload::Exec { exec } = &event.payload {
                 let program = exec
                     .argv
                     .first()
                     .expect("the actual execution has a program");
-                Path::new(program).file_stem() == Some(std::ffi::OsStr::new("cargo"))
+                (Path::new(program).file_stem() == Some(std::ffi::OsStr::new("cargo")))
+                    .then_some(exec)
             } else {
-                false
+                None
             }
         })
-        .count();
-    assert_eq!(
-        attempts, 0,
-        "the reused build trace contains no physical or failed Cargo attempt: {events:?}"
+        .partition(|exec| {
+            exec.argv.iter().any(|arg| arg == "--doc")
+                && !exec
+                    .argv
+                    .iter()
+                    .any(|arg| arg == rust_mutants::sealed::TARGET)
+        });
+    assert!(
+        attempts.is_empty(),
+        "the reused build trace contains no physical or failed Cargo attempt besides the documentation target's own execution: {attempts:?}"
     );
+    assert!(
+        !documentation.is_empty(),
+        "every verification executes the library's documentation target, which Cargo runs: {events:?}"
+    );
+    for exec in documentation {
+        let printed = std::fs::read_to_string(
+            engine.join(
+                exec.output_path
+                    .as_deref()
+                    .expect("the trace keeps what the documentation printed"),
+            ),
+        )
+        .expect("the documentation's recorded output");
+        assert!(
+            !printed
+                .lines()
+                .any(|line| line.trim_start().starts_with("Compiling ")),
+            "the documentation runs against the units the reused compilation stands for, so it compiles none of them again:\n{printed}"
+        );
+    }
 }
 
 #[cfg(unix)]

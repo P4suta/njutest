@@ -282,6 +282,77 @@ fn an_identical_build_verifies_artifacts_without_starting_cargo() {
 }
 
 #[test]
+fn a_verified_hit_leaves_the_documentation_cargo_runs_nothing_to_compile() {
+    let directory = scratch_target("settled-hit");
+    let root = directory.path().join("source");
+    copy_tree(&fixture("fixture-simple"), &root);
+    let tc = toolchain(&root);
+    let cancel = Cancel::new();
+    let trace = build_trace();
+    let member = rust_mutants::cargo::Member {
+        name: "fixture-simple".to_owned(),
+        files: njutest_devkit::fixture::fingerprint(&root)
+            .into_iter()
+            .map(|(rel_path, _digest)| rust_mutants::cargo::MemberFile {
+                path: root.join(&rel_path),
+                rel_path,
+            })
+            .collect(),
+    };
+    let target = directory.path().join("target");
+    let mut options = rust_mutants::cargo::CompileOptions::new(
+        rust_mutants::cargo::BuildDir::new(target.clone(), vec![member]).rooted(root.clone()),
+    );
+    options.kind = rust_mutants::cargo::CompileKind::Tests;
+    options.locked = true;
+    options.offline = true;
+    let driver = Driver {
+        toolchain: &tc,
+        dir: &root,
+        cancel: &cancel,
+        trace: &trace,
+    };
+    rust_mutants::cargo::compile(&driver, &options).expect("cold compilation");
+    let library = root.join("src/lib.rs");
+    std::fs::write(
+        &library,
+        std::fs::read(&library).expect("the library's source"),
+    )
+    .expect("the same bytes written later, as every new copy of the tree writes them");
+    rust_mutants::cargo::compile(&driver, &options).expect("verified cached compilation");
+    assert_eq!(
+        cargo_builds(&trace),
+        1,
+        "the second compilation is answered by its verified record"
+    );
+    let mut documentation: Vec<OsString> = ["test", "--doc", "--locked", "--offline"]
+        .into_iter()
+        .map(OsString::from)
+        .collect();
+    documentation.push(OsString::from("--target-dir"));
+    documentation.push(target.into_os_string());
+    documentation.extend(
+        options
+            .build
+            .cargo_arguments()
+            .into_iter()
+            .map(OsString::from),
+    );
+    let ran = run(&tc.command(&root, documentation), &Cancel::new());
+    let printed = njutest_devkit::process::strict_utf8(&ran.output);
+    assert!(
+        printed.contains("test result: ok."),
+        "the documentation ran: {printed}"
+    );
+    assert!(
+        !printed
+            .lines()
+            .any(|line| line.trim_start().starts_with("Compiling ")),
+        "a verified hit settles the directory it answers for, so the Cargo that runs the documentation there compiles nothing again:\n{printed}"
+    );
+}
+
+#[test]
 fn every_changed_build_input_misses_and_then_reuses_only_its_verified_result() {
     let directory = scratch_target("changed-build");
     let root = directory.path().join("source");

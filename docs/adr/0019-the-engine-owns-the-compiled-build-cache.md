@@ -258,3 +258,11 @@ A publication whose content key the cursor has superseded merges its captures in
 The input memo cannot create a compiler unit, a fresh artifact, or an independent reproducibility witness.
 Actual hash reads and completed bytes remain recorded separately from process starts.
 An unchanged second listing must read zero toolchain bytes and start zero physical processes.
+
+## Amendment, 2026-10-05: a verified hit settles the directory it answers for
+
+A verified hit answers without Cargo, but Cargo still reads its target directory afterwards: the documentation target runs there through `cargo test --doc`.
+Every new copy of a tree writes its files later than the units an earlier build left, so after an unsettled hit Cargo judged those units stale, and the documentation compiled the library again where no build note counted it.
+A hit therefore settles its directory under its preparation lease before it returns, as an actual build settles before Cargo starts, which decision 4 of the 2026-09-26 amendment already asks of every build into a shared directory.
+An unchanged tree keeps every unit, so the documentation runs against the units the reused compilation stands for; a member the directory last built from other bytes loses its units, and Cargo compiles it again there.
+A doctest capture hit leaves its directory as it found it, because every Cargo command into a capture directory settles before it starts.

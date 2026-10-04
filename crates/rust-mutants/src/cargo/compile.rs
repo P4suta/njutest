@@ -475,7 +475,9 @@ pub fn compile_with(
                 "the compilation was cancelled",
             ));
         }
-        return compiled;
+        let compiled = compiled?;
+        options.target_dir.settle()?;
+        return Ok(compiled);
     }
     produce(
         (driver, options),
