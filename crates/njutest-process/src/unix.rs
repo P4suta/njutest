@@ -898,13 +898,29 @@ fn exit_watcher(pid: i32) -> io::Result<Asked<kqueue::Watcher>> {
     )?;
     match asked_io(watcher.watch())? {
         Asked::Answered(()) => Ok(Asked::Answered(watcher)),
-        Asked::Gone => match mac_state(pid)? {
-            Asked::Answered(state) if state.exited => Ok(Asked::Gone),
-            Asked::Gone => Ok(Asked::Gone),
-            Asked::Answered(_running) => Err(io::Error::other(format!(
-                "process {pid} refused an exit subscription as gone while it still runs"
-            ))),
-        },
+        Asked::Gone => exiting(pid),
+    }
+}
+
+/// A process the kernel refused an exit subscription for, which it does from the moment the process begins to exit: gone once it is a zombie or reaped within the reaping grace.
+#[cfg(target_os = "macos")]
+fn exiting(pid: i32) -> io::Result<Asked<kqueue::Watcher>> {
+    let deadline = Instant::now()
+        .checked_add(super::REAPING_GRACE)
+        .ok_or_else(|| io::Error::other("the exiting process deadline cannot be represented"))?;
+    loop {
+        match mac_state(pid)? {
+            Asked::Answered(state) if state.exited => return Ok(Asked::Gone),
+            Asked::Gone => return Ok(Asked::Gone),
+            Asked::Answered(_running) => {
+                if Instant::now() >= deadline {
+                    return Err(io::Error::other(format!(
+                        "process {pid} refused an exit subscription as gone and still ran after the reaping grace"
+                    )));
+                }
+                std::thread::yield_now();
+            }
+        }
     }
 }
 
