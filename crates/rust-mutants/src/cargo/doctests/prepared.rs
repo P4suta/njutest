@@ -19,7 +19,9 @@ use super::{DoctestCapture, Exited, REPORT_LIMIT, capture_arguments, command_fai
 use crate::runner::{RunResult, Spec, run};
 use crate::trace::{ExecRecord, Recorder};
 
-const SCHEMA: &str = "rust-mutants-capture-products-v1";
+mod runtime;
+
+const SCHEMA: &str = "rust-mutants-capture-products-v2";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -28,6 +30,7 @@ enum Kind {
     Listing,
     Ignored,
     Run,
+    NativeRun,
 }
 
 impl Kind {
@@ -37,6 +40,7 @@ impl Kind {
             Self::Listing => "doctest-listing",
             Self::Ignored => "doctest-ignored",
             Self::Run => "doctest-run",
+            Self::NativeRun => "native-doctest-run",
         }
     }
 
@@ -60,6 +64,7 @@ struct Record {
     observation: CompilerObservation,
     exit: i32,
     files: BTreeMap<PathBuf, File>,
+    runtime: runtime::Attestation,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -74,6 +79,7 @@ struct Product {
     directory: PathBuf,
     report: Vec<u8>,
     observation: CompilerObservation,
+    runtime: runtime::Inputs,
 }
 
 /// An actual doctest report and captured binaries kept together under immutable ownership.
@@ -97,6 +103,10 @@ impl PreparedDoctests {
     #[must_use]
     pub const fn observation(&self) -> &CompilerObservation {
         &self.0.observation
+    }
+
+    pub(in crate::cargo) fn verify_native_runtime_inputs(&self) -> Result<(), CargoError> {
+        self.0.runtime.verify().map_err(refused)
     }
 }
 
@@ -192,7 +202,12 @@ fn inventory(directory: &Path) -> io::Result<BTreeMap<PathBuf, File>> {
         .collect()
 }
 
-fn read(directory: &Path, request: &Request, kind: Kind, spec: &Spec) -> io::Result<Product> {
+fn read(
+    (directory, request): (&Path, &Request),
+    kind: Kind,
+    spec: &Spec,
+    identities: &super::super::build_cache::toolchain::Identities,
+) -> io::Result<Product> {
     let record: Record =
         crate::strictjson::decode_slice(&std::fs::read(record_path(directory, &request.key))?)
             .map_err(io::Error::other)?;
@@ -229,11 +244,27 @@ fn read(directory: &Path, request: &Request, kind: Kind, spec: &Spec) -> io::Res
         return Err(io::Error::other("unverified captured compiler inputs"));
     }
     verify(kind, &record.report, &directory)?;
+    match (&record.runtime, kind) {
+        (runtime::Attestation::Original(_), Kind::NativeRun)
+        | (
+            runtime::Attestation::NotNative,
+            Kind::Program | Kind::Listing | Kind::Ignored | Kind::Run,
+        ) => {}
+        (runtime::Attestation::NotNative, Kind::NativeRun)
+        | (
+            runtime::Attestation::Original(_),
+            Kind::Program | Kind::Listing | Kind::Ignored | Kind::Run,
+        ) => return Err(io::Error::other("capture runtime provenance differs")),
+    }
+    let runtime = record
+        .runtime
+        .restore(&directory, &record.files, identities)?;
     Ok(Product {
         origin: Origin::Published,
         directory,
         report: record.report,
         observation: record.observation,
+        runtime,
     })
 }
 
@@ -249,7 +280,7 @@ fn verify(kind: Kind, report: &[u8], directory: &Path) -> io::Result<()> {
             crate::sealed::doctest::merged_binaries(&listing, &held)
                 .map_err(|source| io::Error::other(source.to_string()))?;
         }
-        Kind::Run => {
+        Kind::Run | Kind::NativeRun => {
             let held = crate::sealed::doctest::Held::read(directory)?;
             crate::sealed::doctest::captured(report, &held)
                 .map_err(|source| io::Error::other(source.to_string()))?;
@@ -278,7 +309,7 @@ fn publish(
     (directory, staging): (&Path, tempfile::TempDir),
     (request, kind): (&Request, Kind),
     (result, observation): (&RunResult, CompilerObservation),
-    report: Vec<u8>,
+    (report, runtime): (Vec<u8>, runtime::Inputs),
 ) -> io::Result<Product> {
     let files = inventory(staging.path())?;
     let product = directory.join(format!("{}.{}.products", request.key, observation.id()));
@@ -290,6 +321,9 @@ fn publish(
     }
     let exited = Exited::of(&result.termination)
         .ok_or_else(|| io::Error::other("an incomplete capture process"))?;
+    if kind == Kind::NativeRun {
+        runtime.verify()?;
+    }
     let record = Record {
         schema: SCHEMA.to_owned(),
         key: request.key.clone(),
@@ -299,6 +333,7 @@ fn publish(
         observation: observation.clone(),
         exit: exited.code(),
         files,
+        runtime: runtime.attestation(),
     };
     let mut pending = tempfile::NamedTempFile::new_in(directory)?;
     pending.write_all(&serde_json::to_vec(&record).map_err(io::Error::other)?)?;
@@ -310,6 +345,7 @@ fn publish(
         directory: product,
         report,
         observation,
+        runtime,
     })
 }
 
@@ -399,13 +435,23 @@ fn products(
                 directory: staging.keep(),
                 report,
                 observation,
+                runtime: runtime::Inputs::NotNative,
             });
         }
+        let runtime = match kind {
+            Kind::NativeRun => runtime::Inputs::capture(
+                staging.path(),
+                &inventory(staging.path()).map_err(refused)?,
+                driver.toolchain.identities(),
+            )
+            .map_err(refused)?,
+            Kind::Program | Kind::Listing | Kind::Ignored | Kind::Run => runtime::Inputs::NotNative,
+        };
         publish(
             (directory, staging),
             (request, kind),
             (result, observation),
-            report,
+            (report, runtime),
         )
         .map_err(refused)
     } else {
@@ -414,13 +460,14 @@ fn products(
             directory: staging.keep(),
             report,
             observation,
+            runtime: runtime::Inputs::NotNative,
         })
     }
 }
 
 fn cached(
     (directory, binding): (&Path, &Binding),
-    (spec, preparation): (&Spec, &Preparation),
+    (driver, spec, preparation): (&Driver<'_>, &Spec, &Preparation),
     (kind, trace): (Kind, &Recorder),
 ) -> Option<Result<Product, CargoError>> {
     let Some(request) = binding.request() else {
@@ -443,7 +490,12 @@ fn cached(
             Err(source) => trace.note("capture-refusal-miss", &source.to_string()),
         }
     }
-    match read(directory, request, kind, spec) {
+    match read(
+        (directory, request),
+        kind,
+        spec,
+        driver.toolchain.identities(),
+    ) {
         Ok(product) => {
             trace.note(
                 if kind == Kind::Program {
@@ -521,7 +573,7 @@ pub(super) fn program(driver: &Driver<'_>, directory: &Path) -> Result<PathBuf, 
     );
     if let Some(result) = cached(
         (directory, &request),
-        (&spec, &preparation),
+        (driver, &spec, &preparation),
         (Kind::Program, &trace),
     ) {
         return result.map(|product| product.directory.join(program));
@@ -552,13 +604,38 @@ pub fn capture_prepared_doctests(
     driver: &Driver<'_>,
     capture: &DoctestCapture<'_>,
 ) -> Result<PreparedDoctests, CargoError> {
+    prepare(driver, capture, None, Kind::of(capture.baked))
+}
+
+pub(super) fn configured_native(
+    driver: &Driver<'_>,
+    capture: &DoctestCapture<'_>,
+    harness_args: &[String],
+) -> Result<PreparedDoctests, CargoError> {
+    match capture.baked {
+        crate::sealed::doctest::Baked::Run => {
+            prepare(driver, capture, Some(harness_args), Kind::NativeRun)
+        }
+        crate::sealed::doctest::Baked::List | crate::sealed::doctest::Baked::ListIgnored => {
+            Err(refused(io::Error::other(
+                "native harness arguments require a run capture",
+            )))
+        }
+    }
+}
+
+fn prepare(
+    driver: &Driver<'_>,
+    capture: &DoctestCapture<'_>,
+    harness_args: Option<&[String]>,
+    kind: Kind,
+) -> Result<PreparedDoctests, CargoError> {
     let trace = trace(driver)?;
     let preparation =
         Preparation::own(capture.compile.target_dir.path(), &trace).map_err(refused)?;
     let directory = capture.capture.1;
     std::fs::create_dir_all(directory).map_err(refused)?;
-    let mut spec = capture_spec(driver, capture)?;
-    let kind = Kind::of(capture.baked);
+    let mut spec = capture_spec(driver, capture, harness_args)?;
     let rustdoc = driver
         .toolchain
         .sysroot()
@@ -571,7 +648,11 @@ pub fn capture_prepared_doctests(
         (kind, &[capture.capture.0.to_path_buf(), rustdoc]),
         &trace,
     );
-    if let Some(result) = cached((directory, &request), (&spec, &preparation), (kind, &trace)) {
+    if let Some(result) = cached(
+        (directory, &request),
+        (driver, &spec, &preparation),
+        (kind, &trace),
+    ) {
         return result.map(PreparedDoctests);
     }
     capture.compile.target_dir.settle()?;
@@ -586,7 +667,7 @@ pub fn capture_prepared_doctests(
         capture: (capture.capture.0, staging.path()),
         ..*capture
     };
-    spec.argv = capture_spec(driver, &staged)?.argv;
+    spec.argv = capture_spec(driver, &staged, harness_args)?.argv;
     let result = completed(
         (driver, capture.compile),
         (&spec, &request),
@@ -596,12 +677,23 @@ pub fn capture_prepared_doctests(
     result.map(PreparedDoctests)
 }
 
-fn capture_spec(driver: &Driver<'_>, capture: &DoctestCapture<'_>) -> Result<Spec, CargoError> {
+fn capture_spec(
+    driver: &Driver<'_>,
+    capture: &DoctestCapture<'_>,
+    harness_args: Option<&[String]>,
+) -> Result<Spec, CargoError> {
     let mut args = capture_arguments(capture)?;
     let split = args
         .iter()
-        .position(|arg| arg == "--")
+        .rposition(|arg| arg == "--")
         .ok_or_else(|| refused(io::Error::other("doctest arguments")))?;
+    if let Some(harness_args) = harness_args {
+        let tail = split
+            .checked_add(1)
+            .ok_or_else(|| refused(io::Error::other("doctest argument boundary overflow")))?;
+        args.truncate(tail);
+        args.extend(harness_args.iter().map(OsString::from));
+    }
     args.insert(split, OsString::from("--message-format=json"));
     let mut spec = driver.toolchain.command(driver.dir, args);
     if let Some(env) = &mut spec.env {

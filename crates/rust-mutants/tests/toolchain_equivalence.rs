@@ -1040,3 +1040,444 @@ fn a_complete_doctest_capture_has_one_owned_actual_compiler() {
     );
     workspace.close().expect("the source owner closes");
 }
+
+struct NativeCaptureInvocation {
+    cwd: std::path::PathBuf,
+    argv: [std::ffi::OsString; 3],
+    environment: std::collections::BTreeMap<std::ffi::OsString, std::ffi::OsString>,
+}
+
+const fn native_invocation_take<'a>(bytes: &mut &'a [u8], length: usize) -> &'a [u8] {
+    let (value, rest) = bytes
+        .split_at_checked(length)
+        .expect("the actual invocation has every framed byte");
+    *bytes = rest;
+    value
+}
+
+fn native_invocation_number(bytes: &mut &[u8]) -> usize {
+    let value = u64::from_le_bytes(
+        native_invocation_take(bytes, 8)
+            .try_into()
+            .expect("an exact count"),
+    );
+    usize::try_from(value).expect("the count fits this actual host")
+}
+
+fn native_invocation_string(bytes: &mut &[u8]) -> std::ffi::OsString {
+    let length = native_invocation_number(bytes);
+    let value = native_invocation_take(bytes, length);
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt as _;
+        std::ffi::OsString::from_vec(value.to_vec())
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStringExt as _;
+        let mut chunks = value.chunks_exact(2);
+        let wide: Vec<_> = chunks
+            .by_ref()
+            .map(|pair| u16::from_le_bytes(pair.try_into().expect("two actual Windows bytes")))
+            .collect();
+        assert!(chunks.remainder().is_empty());
+        std::ffi::OsString::from_wide(&wide)
+    }
+}
+
+fn native_capture_invocation(bytes: &[u8]) -> NativeCaptureInvocation {
+    assert!(bytes.starts_with(b"rust-mutants-native-invocation-v1\0"));
+    let mut frames = bytes
+        .strip_prefix(b"rust-mutants-native-invocation-v1\0")
+        .expect("the exact native invocation schema");
+    assert_eq!(
+        native_invocation_take(&mut frames, 1),
+        [u8::from(cfg!(windows))]
+    );
+    let cwd = std::path::PathBuf::from(native_invocation_string(&mut frames));
+    let arguments: Vec<_> = (0..native_invocation_number(&mut frames))
+        .map(|_| native_invocation_string(&mut frames))
+        .collect();
+    assert_eq!(arguments.len(), 3);
+    let argv = arguments
+        .try_into()
+        .expect("the complete original native argv");
+    let mut environment = std::collections::BTreeMap::new();
+    for _ in 0..native_invocation_number(&mut frames) {
+        assert!(
+            environment
+                .insert(
+                    native_invocation_string(&mut frames),
+                    native_invocation_string(&mut frames)
+                )
+                .is_none()
+        );
+    }
+    assert!(frames.is_empty());
+    NativeCaptureInvocation {
+        cwd,
+        argv,
+        environment,
+    }
+}
+
+fn native_capture_markers(options: &mut rust_mutants::cargo::CompileOptions) -> std::ffi::OsString {
+    options.env.set(
+        "NJUTEST_CAPTURE_INVOCATION_CONTROL",
+        "actual-native-capture\noriginal-environment\t",
+    );
+    #[cfg(unix)]
+    let raw_marker = {
+        use std::os::unix::ffi::OsStringExt as _;
+        std::ffi::OsString::from_vec(vec![0xff, b'\n', b'\t'])
+    };
+    #[cfg(windows)]
+    let raw_marker = {
+        use std::os::windows::ffi::OsStringExt as _;
+        std::ffi::OsString::from_wide(&[0xd800, 10, 9])
+    };
+    options
+        .env
+        .set("NJUTEST_CAPTURE_RAW_OS_CONTROL", &raw_marker);
+    raw_marker
+}
+
+fn assert_native_capture_sidecar(
+    binary: &std::path::Path,
+    (cwd, program, directory): (&std::path::Path, &std::path::Path, &std::path::Path),
+    raw_marker: &std::ffi::OsString,
+) {
+    let sidecar = binary.with_extension("invocation");
+    let bytes = std::fs::read(&sidecar)
+        .expect("each actual rustdoc invocation must retain its original argv/cwd/environment");
+    let marker = "actual-native-capture\noriginal-environment\t";
+    #[cfg(unix)]
+    let encoded_marker = marker.as_bytes().to_vec();
+    #[cfg(windows)]
+    let encoded_marker: Vec<u8> = marker.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    assert!(
+        bytes
+            .windows(encoded_marker.len())
+            .any(|part| part == encoded_marker)
+    );
+    let invocation = native_capture_invocation(&bytes);
+    assert_eq!(invocation.cwd, cwd);
+    let [helper, claimed_directory, original] = invocation.argv;
+    assert_eq!(std::path::Path::new(&helper), program);
+    assert_eq!(
+        std::path::Path::new(&claimed_directory).parent(),
+        Some(directory)
+    );
+    assert!(std::path::Path::new(&original).is_absolute());
+    assert_ne!(std::path::Path::new(&original), binary);
+    assert_eq!(
+        invocation
+            .environment
+            .get(std::ffi::OsStr::new("NJUTEST_CAPTURE_INVOCATION_CONTROL")),
+        Some(&std::ffi::OsString::from(marker)),
+    );
+    assert_eq!(
+        invocation
+            .environment
+            .get(std::ffi::OsStr::new("NJUTEST_CAPTURE_RAW_OS_CONTROL")),
+        Some(raw_marker),
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        assert_eq!(
+            std::fs::metadata(&sidecar)
+                .expect("private original invocation")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+}
+
+fn assert_native_sidecar_corruption_recompiles(
+    driver: &rust_mutants::cargo::Driver<'_>,
+    capture: &rust_mutants::cargo::DoctestCapture<'_>,
+    first: &rust_mutants::cargo::PreparedDoctests,
+    binary: &std::path::Path,
+) {
+    std::fs::write(
+        binary.with_extension("invocation"),
+        b"changed original invocation",
+    )
+    .expect("change only this control's owned sidecar");
+    let repaired = rust_mutants::cargo::capture_prepared_doctests(driver, capture)
+        .expect("corrupted invocation custody needs a new actual producer");
+    assert_ne!(repaired.directory(), first.directory());
+    assert_eq!(compiler_processes(driver.trace), 2);
+    assert_eq!(capture_program_processes(driver.trace), 1);
+}
+
+fn assert_native_sidecar_publication_refuses(
+    driver: &rust_mutants::cargo::Driver<'_>,
+    program: &std::path::Path,
+    binary: &std::path::Path,
+    directory: &std::path::Path,
+) {
+    std::fs::create_dir_all(directory).expect("owned failed-publication directory");
+    let original_sidecar = directory.join("0.invocation");
+    std::fs::write(&original_sidecar, b"original private record")
+        .expect("a pre-existing invocation must never be overwritten");
+    let mut spec = rust_mutants::runner::Spec::new(
+        [
+            program.as_os_str().to_owned(),
+            directory.as_os_str().to_owned(),
+            binary.as_os_str().to_owned(),
+        ],
+        rust_mutants::runner::Bound::After(rust_mutants::runner::PROBE),
+    );
+    spec.env = driver.toolchain.env().cloned();
+    spec.dir = Some(driver.dir.to_path_buf());
+    let result = rust_mutants::runner::run(&spec, driver.cancel);
+    driver
+        .trace
+        .exec_result(rust_mutants::trace::ExecRecord::of(&spec, &result));
+    assert_eq!(result.termination.exit_code(), Some(3));
+    assert!(result.stdout.is_empty());
+    assert_eq!(
+        std::fs::metadata(directory.join("0.wasm"))
+            .expect_err("failed invocation publication cannot publish a program")
+            .kind(),
+        std::io::ErrorKind::NotFound
+    );
+    assert_eq!(
+        std::fs::read(original_sidecar).expect("the original private record remains"),
+        b"original private record"
+    );
+}
+
+#[test]
+fn a_real_native_doctest_capture_retains_every_actual_invocation() {
+    let fixture = Fixture::copy("fixture-doctest");
+    let trace = rust_mutants::testkit::trace::memory_recorder();
+    let workspace = compiler_workspace(&fixture, &trace);
+    let cancel = Cancel::new();
+    let driver = rust_mutants::cargo::Driver {
+        toolchain: workspace.toolchain(),
+        dir: workspace.snapshot_root(),
+        cancel: &cancel,
+        trace: &trace,
+    };
+    let mut options = compiler_options(&workspace);
+    options.build.target = Some(workspace.toolchain().host().to_owned());
+    let raw_marker = native_capture_markers(&mut options);
+    let program = rust_mutants::cargo::build_capture(&driver, &fixture.temp().join("capture"))
+        .expect("the single actual shared host helper");
+    let directory = fixture.temp().join("native-doctests");
+    let capture = rust_mutants::cargo::DoctestCapture {
+        package: "fixture-doctest",
+        capture: (&program, &directory),
+        compile: &options,
+        baked: rust_mutants::sealed::doctest::Baked::Run,
+    };
+    let first = rust_mutants::cargo::capture_prepared_doctests(&driver, &capture)
+        .expect("the actual native Cargo/rustdoc capture");
+    let held = rust_mutants::sealed::doctest::Held::read(first.directory())
+        .expect("the original compiler's captured claims");
+    assert!(
+        !held.binaries.is_empty(),
+        "real native doctests were compiled"
+    );
+    for binary in held.binaries.values() {
+        assert_native_capture_sidecar(
+            binary,
+            (workspace.snapshot_root(), &program, &directory),
+            &raw_marker,
+        );
+    }
+    let reused = rust_mutants::cargo::capture_prepared_doctests(&driver, &capture)
+        .expect("the same complete capture is verified again");
+    assert_eq!(reused.directory(), first.directory());
+    assert_eq!(reused.report(), first.report());
+    assert_eq!(
+        compiler_processes(&trace),
+        1,
+        "verified invocation reuse starts no additional Cargo"
+    );
+    assert_eq!(
+        capture_program_processes(&trace),
+        1,
+        "native capture uses one actual host helper"
+    );
+    let binary = held
+        .binaries
+        .values()
+        .next()
+        .expect("an actual original native program");
+    assert_native_sidecar_corruption_recompiles(&driver, &capture, &first, binary);
+    assert_native_sidecar_publication_refuses(
+        &driver,
+        &program,
+        binary,
+        &fixture.temp().join("refused-invocation"),
+    );
+    workspace.close().expect("the owned source closes");
+}
+
+#[cfg(unix)]
+fn execute_original_native_products(
+    driver: &rust_mutants::cargo::Driver<'_>,
+    products: &rust_mutants::cargo::NativeDoctestProducts,
+) {
+    for program in products.programs() {
+        products
+            .verify()
+            .expect("original runtime inputs before execution");
+        let mut spec = rust_mutants::runner::Spec::new(
+            std::iter::once(program.executable().as_os_str().to_owned())
+                .chain(program.arguments().iter().cloned()),
+            rust_mutants::runner::Bound::After(rust_mutants::runner::PROBE),
+        );
+        spec.dir = Some(program.cwd().to_path_buf());
+        spec.env = Some(program.environment().clone());
+        let result = rust_mutants::runner::run(&spec, driver.cancel);
+        driver
+            .trace
+            .exec_result(rust_mutants::trace::ExecRecord::of(&spec, &result));
+        assert!(result.succeeded(), "actual native execution: {result:?}");
+        products
+            .verify()
+            .expect("original runtime inputs after execution");
+    }
+}
+
+#[cfg(unix)]
+fn native_program_processes(
+    trace: &Recorder,
+    products: &rust_mutants::cargo::NativeDoctestProducts,
+) -> usize {
+    trace.events().iter().filter(|event| {
+        matches!(&event.payload, Payload::Exec { exec } if products.programs().iter().any(|program| {
+            program.executable().to_str().is_some_and(|path| exec.argv.first().is_some_and(|arg| arg == path))
+        }))
+    }).count()
+}
+
+#[cfg(unix)]
+fn native_library_change_refuses_originals(
+    (first, reused): (
+        &rust_mutants::cargo::NativeDoctestProducts,
+        &rust_mutants::cargo::NativeDoctestProducts,
+    ),
+    library: &std::path::Path,
+) {
+    let added = library.join("added-native-library");
+    std::fs::write(&added, b"changed original native search namespace")
+        .expect("the actual original search namespace changes");
+    for products in [first, reused] {
+        assert_eq!(
+            products
+                .verify()
+                .expect_err("a retained original namespace cannot attest a new library")
+                .kind(),
+            rust_mutants::cargo::CargoErrorKind::BuildLedger
+        );
+    }
+    std::fs::remove_file(added).expect("the original native namespace is restored");
+    first
+        .verify()
+        .expect("original namespace after restoration");
+    reused
+        .verify()
+        .expect("reused original namespace after restoration");
+}
+
+#[cfg(unix)]
+fn assert_original_native_reuse(
+    driver: &rust_mutants::cargo::Driver<'_>,
+    first: &rust_mutants::cargo::NativeDoctestProducts,
+    (package, options): (
+        &rust_mutants::cargo::Package,
+        &rust_mutants::cargo::CompileOptions,
+    ),
+    harness_args: &[String],
+) -> rust_mutants::cargo::NativeDoctestProducts {
+    let reused =
+        rust_mutants::cargo::prepare_native_doctests(driver, package, options, harness_args)
+            .expect("reuse restores the original serialized runtime attestations");
+    assert_eq!(first.observation().id(), reused.observation().id());
+    assert_eq!(first.capture_program(), reused.capture_program());
+    assert_eq!(reused.harness_args(), harness_args);
+    assert_eq!(
+        compiler_processes(driver.trace),
+        1,
+        "unchanged native reuse starts no Cargo"
+    );
+    assert_eq!(
+        capture_program_processes(driver.trace),
+        1,
+        "native reuse has one actual helper compiler"
+    );
+    execute_original_native_products(driver, &reused);
+    assert_eq!(
+        native_program_processes(driver.trace, first),
+        first
+            .programs()
+            .len()
+            .checked_mul(2)
+            .expect("paired actual native execution count")
+    );
+    reused
+}
+
+#[cfg(unix)]
+#[test]
+fn actual_native_products_retain_original_runtime_inputs_and_fresh_executions() {
+    let fixture = Fixture::copy("fixture-doctest");
+    let trace = rust_mutants::testkit::trace::memory_recorder();
+    let workspace = compiler_workspace(&fixture, &trace);
+    let cancel = Cancel::new();
+    let driver = rust_mutants::cargo::Driver {
+        toolchain: workspace.toolchain(),
+        dir: workspace.snapshot_root(),
+        cancel: &cancel,
+        trace: &trace,
+    };
+    let package = workspace
+        .metadata()
+        .packages
+        .iter()
+        .find(|package| package.name == "fixture-doctest")
+        .expect("the original documented package");
+    let library = fixture.temp().join("original-native-libraries");
+    std::fs::create_dir_all(&library).expect("the original native library namespace");
+    let mut options = compiler_options(&workspace);
+    options.env.set(
+        if cfg!(target_os = "macos") {
+            "DYLD_LIBRARY_PATH"
+        } else {
+            "LD_LIBRARY_PATH"
+        },
+        library.as_os_str(),
+    );
+    let harness_args = ["--test-threads=1".to_owned()];
+    let first =
+        rust_mutants::cargo::prepare_native_doctests(&driver, package, &options, &harness_args)
+            .expect("actual original native compiler and invocation publication");
+    assert!(
+        !first.programs().is_empty(),
+        "actual native programs were captured"
+    );
+    assert_eq!(
+        first.compiler_only().len(),
+        1,
+        "the original compile-fail attestation remains compiler-only"
+    );
+    execute_original_native_products(&driver, &first);
+    let reused = assert_original_native_reuse(&driver, &first, (package, &options), &harness_args);
+    native_library_change_refuses_originals((&first, &reused), &library);
+    assert_eq!(
+        compiler_processes(&trace),
+        1,
+        "namespace verification starts no phantom Cargo"
+    );
+    workspace
+        .close()
+        .expect("the original native source owner closes");
+}

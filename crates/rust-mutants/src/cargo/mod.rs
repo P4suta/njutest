@@ -41,8 +41,10 @@ pub use depinfo::{
     parse_dep_info, units_of,
 };
 pub use doctests::{
-    DoctestCapture, PreparedDoctests, build_capture, capture_arguments, capture_doctests,
-    capture_prepared_doctests, empty_capture,
+    DoctestCapture, NativeCompileExpectation, NativeCompiledDoctest, NativeDoctestKind,
+    NativeDoctestProducts, NativeDoctestProgram, PreparedDoctests, build_capture,
+    capture_arguments, capture_doctests, capture_prepared_doctests, empty_capture,
+    prepare_native_doctests,
 };
 pub use execution_products::ExecutionProducts;
 pub use provenance::{CompilerObservation, CompilerPurpose, InputIdentity};

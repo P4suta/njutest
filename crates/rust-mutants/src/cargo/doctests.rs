@@ -12,7 +12,12 @@ use super::{CargoError, CargoErrorKind, Driver};
 use crate::runner::{Termination, run};
 use crate::trace::ExecRecord;
 
+mod native;
 mod prepared;
+pub use native::{
+    NativeCompileExpectation, NativeCompiledDoctest, NativeDoctestKind, NativeDoctestProducts,
+    NativeDoctestProgram, prepare_native_doctests,
+};
 pub use prepared::{PreparedDoctests, capture_prepared_doctests};
 
 /// How much of rustdoc's report is kept.

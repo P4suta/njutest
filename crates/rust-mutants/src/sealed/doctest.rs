@@ -7,26 +7,94 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// The program rustdoc runs each doctest binary through: it keeps the binary under the next free claim, prints the claim, and fails, so that rustdoc prints which doctest the claim holds.
-pub const CAPTURE_SOURCE: &str = r#"use std::io::ErrorKind;
+pub const CAPTURE_SOURCE: &str = r#"use std::io::{ErrorKind, Write as _};
+
+fn number(file: &mut std::fs::File, value: usize) -> std::io::Result<()> {
+    let value = u64::try_from(value).map_err(std::io::Error::other)?;
+    file.write_all(&value.to_le_bytes())
+}
+
+fn frame(file: &mut std::fs::File, bytes: &[u8]) -> std::io::Result<()> {
+    number(file, bytes.len())?;
+    file.write_all(bytes)
+}
+
+#[cfg(unix)]
+fn os_frame(file: &mut std::fs::File, value: &std::ffi::OsStr) -> std::io::Result<()> {
+    use std::os::unix::ffi::OsStrExt as _;
+    frame(file, value.as_bytes())
+}
+
+#[cfg(windows)]
+fn os_frame(file: &mut std::fs::File, value: &std::ffi::OsStr) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt as _;
+    let bytes: Vec<u8> = value.encode_wide().flat_map(u16::to_le_bytes).collect();
+    frame(file, &bytes)
+}
+
+fn invocation(
+    path: &std::path::Path,
+    argv: &[std::ffi::OsString],
+    cwd: &std::path::Path,
+    environment: &[(std::ffi::OsString, std::ffi::OsString)],
+) -> std::io::Result<()> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    file.write_all(b"rust-mutants-native-invocation-v1\0")?;
+    file.write_all(&[u8::from(cfg!(windows))])?;
+    os_frame(&mut file, cwd.as_os_str())?;
+    number(&mut file, argv.len())?;
+    for argument in argv {
+        os_frame(&mut file, argument)?;
+    }
+    number(&mut file, environment.len())?;
+    for (name, value) in environment {
+        os_frame(&mut file, name)?;
+        os_frame(&mut file, value)?;
+    }
+    file.sync_all()
+}
 
 fn main() -> std::process::ExitCode {
-    let mut arguments = std::env::args_os().skip(1);
+    let argv: Vec<_> = std::env::args_os().collect();
+    let mut arguments = argv.iter().skip(1);
     let (Some(directory), Some(binary)) = (arguments.next(), arguments.last()) else {
         return std::process::ExitCode::from(3);
     };
+    let cwd = match std::env::current_dir() {
+        Ok(cwd) => cwd,
+        Err(_) => return std::process::ExitCode::from(3),
+    };
+    let environment: Vec<_> = std::env::vars_os().collect();
     let directory = std::path::PathBuf::from(directory);
     let mut claim: u64 = 0;
     loop {
         let path = directory.join(format!("{claim}.claim"));
         match std::fs::OpenOptions::new().write(true).create_new(true).open(path) {
             Ok(_) => break,
-            Err(error) if error.kind() == ErrorKind::AlreadyExists => claim += 1,
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                let Some(next) = claim.checked_add(1) else {
+                    return std::process::ExitCode::from(3);
+                };
+                claim = next;
+            }
             Err(_) => return std::process::ExitCode::from(3),
         }
     }
     let part = directory.join(format!("{claim}.part"));
     let kept = directory.join(format!("{claim}.wasm"));
-    if std::fs::copy(&binary, &part).is_err() || std::fs::rename(&part, &kept).is_err() {
+    if invocation(
+        &directory.join(format!("{claim}.invocation")), &argv, &cwd, &environment,
+    ).is_err()
+        || std::fs::copy(binary, &part).is_err()
+        || std::fs::rename(&part, &kept).is_err()
+    {
         return std::process::ExitCode::from(3);
     }
     println!("rust-mutants-captured {claim}");

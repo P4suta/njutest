@@ -140,7 +140,7 @@ impl Request {
             }
         }
         configurations(root, env, &mut inputs)?;
-        let loaders = toolchain::inputs(driver.toolchain, options, env, &mut inputs)?;
+        let loaders = toolchain::inputs((driver.toolchain, root), options, env, &mut inputs)?;
         let inputs = BoundInputs::of(inputs)?;
         let mut digest = Sha256::new();
         field(&mut digest, SCHEMA.as_bytes());

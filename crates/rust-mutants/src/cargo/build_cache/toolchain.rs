@@ -40,7 +40,7 @@ impl Identities {
 }
 
 pub(super) fn inputs(
-    toolchain: &Toolchain,
+    (toolchain, cwd): (&Toolchain, &Path),
     options: &CompileOptions,
     env: &Variables,
     files: &mut BTreeMap<PathBuf, File>,
@@ -48,7 +48,7 @@ pub(super) fn inputs(
     let root = toolchain
         .sysroot()
         .ok_or_else(|| io::Error::other("unbound compiler sysroot"))?;
-    let loaders = super::loaders::Inputs::of(env, toolchain.identities())?;
+    let loaders = super::loaders::Inputs::compiler(env, cwd, toolchain.identities())?;
     environment(root, toolchain.rustc(), env, &loaders)?;
     for path in [toolchain.cargo(), toolchain.rustc()] {
         files.insert(path.to_path_buf(), identity(path, toolchain.identities())?);

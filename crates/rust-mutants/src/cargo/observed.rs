@@ -480,7 +480,7 @@ fn observation_inputs(
     (sysroot, dir, env): (&Path, &Path, &Variables),
     (identities, exclusions): (&Identities, &[crate::glob::Pattern]),
 ) -> io::Result<Inputs> {
-    let loaders = super::build_cache::loaders::Inputs::of(env, identities)?;
+    let loaders = super::build_cache::loaders::Inputs::observation(env, identities)?;
     super::build_cache::toolchain::environment(sysroot, rustc, env, &loaders)?;
     let mut inputs = BTreeMap::new();
     let mut programs = BTreeMap::new();
