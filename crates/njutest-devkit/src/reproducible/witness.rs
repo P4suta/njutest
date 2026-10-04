@@ -9,14 +9,16 @@ use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use njutest_fixture_tree::settled::{self, Taken};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-const SCHEMA: &str = "njutest-independent-compiler-pair-v2";
+const SCHEMA: &str = "njutest-independent-compiler-pair-v3";
 const CHANGE: &[u8] = b"\npub const A_THING_NOTHING_READS: u8 = 7;\n";
 const MANIFEST: &[u8] = include_bytes!("../../../../fixtures/fixture-equivalent/Cargo.toml");
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// What a compiler input's metadata says about the generation of its content.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Stamp {
     length: u64,
@@ -28,11 +30,74 @@ struct Stamp {
     changed: (i64, i64, u64),
 }
 
+impl settled::Stamp for Stamp {
+    fn newest(&self) -> Option<std::time::SystemTime> {
+        #[cfg(unix)]
+        {
+            settled::since_unix_epoch(self.changed.0, self.changed.1)
+                .map(|changed| self.modified.max(changed))
+        }
+        #[cfg(not(unix))]
+        {
+            None
+        }
+    }
+
+    fn same(&self, other: &Self, _: settled::Comparing) -> bool {
+        let Self {
+            length,
+            modified,
+            readonly,
+            #[cfg(unix)]
+            mode,
+            #[cfg(unix)]
+            changed,
+        } = self;
+        #[cfg(unix)]
+        let platform = *mode == other.mode && *changed == other.changed;
+        #[cfg(not(unix))]
+        let platform = true;
+        *length == other.length
+            && *modified == other.modified
+            && *readonly == other.readonly
+            && platform
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, from = "Observed", into = "Observed")]
+struct File {
+    stamp: Taken<Stamp>,
+    digest: String,
+}
+
+/// A compiler input's identity as a record holds it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct File {
+struct Observed {
     stamp: Stamp,
+    moment: std::time::SystemTime,
     digest: String,
+}
+
+impl From<Observed> for File {
+    fn from(observed: Observed) -> Self {
+        Self {
+            stamp: Taken::recorded(observed.stamp, observed.moment),
+            digest: observed.digest,
+        }
+    }
+}
+
+impl From<File> for Observed {
+    fn from(file: File) -> Self {
+        let (stamp, moment) = file.stamp.into_parts();
+        Self {
+            stamp,
+            moment,
+            digest: file.digest,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
@@ -46,12 +111,13 @@ struct Content<'a> {
 
 impl File {
     const fn content(&self) -> Content<'_> {
+        let stamp = self.stamp.stamp();
         Content {
             digest: self.digest.as_str(),
-            length: self.stamp.length,
-            readonly: self.stamp.readonly,
+            length: stamp.length,
+            readonly: stamp.readonly,
             #[cfg(unix)]
-            mode: self.stamp.mode,
+            mode: stamp.mode,
         }
     }
 }
@@ -90,15 +156,14 @@ fn stamp(path: &Path) -> io::Result<Stamp> {
 }
 
 fn file(path: &Path, previous: Option<&File>) -> io::Result<File> {
-    let before = stamp(path)?;
+    let before = Taken::take(|| stamp(path))?;
     if let Some(previous) = previous
-        && cfg!(unix)
-        && previous.stamp == before
+        && previous.stamp.holds(before.stamp())
     {
         return Ok(previous.clone());
     }
     let digest = hex::encode(Sha256::digest(std::fs::read(path)?));
-    if stamp(path)? != before {
+    if before.changed(&stamp(path)?) {
         return Err(io::Error::other(format!(
             "the compiler input {} changed during observation",
             path.display()
@@ -1152,6 +1217,60 @@ mod tests {
         assert_eq!(
             original, restored,
             "restored input bytes recover their original identity after verified reobservation"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_stamp_taken_within_the_granularity_of_its_write_is_not_reused() -> io::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("compiler-input");
+        std::fs::write(&path, b"input A")?;
+        let original = file(&path, None)?;
+        let mut forged = original.clone();
+        forged.digest = "0".repeat(64);
+        assert_eq!(
+            file(&path, Some(&forged))?.digest,
+            original.digest,
+            "a stamp taken within the granularity of its write cannot stand for the bytes"
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn settle(path: &std::path::Path) -> io::Result<()> {
+        let started = std::time::Instant::now();
+        while !super::Taken::take(|| super::stamp(path))?.settled() {
+            assert!(
+                started.elapsed() < std::time::Duration::from_mins(1),
+                "{} has not settled within a minute of being written",
+                path.display()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_settled_stamp_is_reused_and_a_same_length_rewrite_after_it_is_read() -> io::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("compiler-input");
+        std::fs::write(&path, b"input A")?;
+        settle(&path)?;
+        let original = file(&path, None)?;
+        let mut held = original.clone();
+        held.digest = "0".repeat(64);
+        assert_eq!(
+            file(&path, Some(&held))?.digest,
+            held.digest,
+            "a settled stamp stands for the bytes it was taken with, which are not read again"
+        );
+        std::fs::write(&path, b"input B")?;
+        assert_ne!(
+            file(&path, Some(&original))?,
+            original,
+            "a write after a settled stamp is dated newer than it"
         );
         Ok(())
     }

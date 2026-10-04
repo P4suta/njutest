@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Toolchain content identities memoized only while their filesystem change stamps agree.
+//! Toolchain content identities memoized only while their filesystem change stamps agree with stamps that had settled when they were taken.
 
 use std::collections::BTreeMap;
 use std::io::{self, Read as _};
@@ -9,13 +9,15 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
+use njutest_fixture_tree::settled::{self, Taken};
 use sha2::{Digest as _, Sha256};
 
 use super::File;
 use crate::cargo::{CompileOptions, Toolchain};
 use crate::vars::Variables;
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// What a toolchain input's metadata says about the generation of its content.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Stamp {
     length: u64,
@@ -27,27 +29,102 @@ struct Stamp {
     changed: (i64, i64, u64, u64),
 }
 
+impl settled::Stamp for Stamp {
+    fn newest(&self) -> Option<SystemTime> {
+        #[cfg(unix)]
+        let changed = settled::since_unix_epoch(self.changed.0, self.changed.1)?;
+        #[cfg(windows)]
+        let changed = settled::since_windows_epoch(self.changed.2)?;
+        Some(self.modified.max(changed))
+    }
+
+    fn same(&self, other: &Self, _: settled::Comparing) -> bool {
+        let Self {
+            length,
+            modified,
+            mode,
+            changed,
+        } = self;
+        *length == other.length
+            && *modified == other.modified
+            && *mode == other.mode
+            && *changed == other.changed
+    }
+}
+
+/// One actual read of an input: the stamp it was taken under and the content it found.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields, from = "Recorded", into = "Recorded")]
+struct Capture {
+    taken: Taken<Stamp>,
+    content: File,
+}
+
+/// A capture as a published record holds it.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Recorded {
+    stamp: Stamp,
+    moment: SystemTime,
+    content: File,
+}
+
+impl From<Recorded> for Capture {
+    fn from(recorded: Recorded) -> Self {
+        Self {
+            taken: Taken::recorded(recorded.stamp, recorded.moment),
+            content: recorded.content,
+        }
+    }
+}
+
+impl From<Capture> for Recorded {
+    fn from(capture: Capture) -> Self {
+        let (stamp, moment) = capture.taken.into_parts();
+        Self {
+            stamp,
+            moment,
+            content: capture.content,
+        }
+    }
+}
+
+impl Capture {
+    /// Whether `other` found the same content under the same stamp, whenever either was taken.
+    fn same(&self, other: &Self) -> bool {
+        !self.taken.changed(other.taken.stamp()) && self.content == other.content
+    }
+
+    /// Whether `other` found other content under a stamp both had settled at, which no file can do.
+    fn contradicts(&self, other: &Self) -> bool {
+        other.taken.settled()
+            && self.taken.holds(other.taken.stamp())
+            && self.content != other.content
+    }
+}
+
 #[derive(Debug, Default)]
 struct Memo {
-    files: BTreeMap<PathBuf, (Stamp, File)>,
-    captures: BTreeMap<PathBuf, Vec<(Stamp, File)>>,
+    files: BTreeMap<PathBuf, Capture>,
+    captures: BTreeMap<PathBuf, Vec<Capture>>,
     attempts: Vec<PathBuf>,
     completed_bytes: u64,
     published_reads: usize,
     opened: u64,
-    images: BTreeMap<PathBuf, (Stamp, bool)>,
+    images: BTreeMap<PathBuf, (Taken<Stamp>, bool)>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(in crate::cargo) struct Retained {
-    files: BTreeMap<PathBuf, (Stamp, File)>,
-    captures: BTreeMap<PathBuf, Vec<(Stamp, File)>>,
+    files: BTreeMap<PathBuf, Capture>,
+    captures: BTreeMap<PathBuf, Vec<Capture>>,
 }
 
 impl Retained {
     fn verify(&self, admitted: &BTreeMap<PathBuf, File>) -> io::Result<()> {
-        for (path, (stamp, content)) in &self.files {
+        for (path, capture) in &self.files {
+            let (stamp, content) = (capture.taken.stamp(), &capture.content);
             if !path.is_absolute()
                 || content.size != stamp.length
                 || content.mode != stamp.mode
@@ -62,7 +139,7 @@ impl Retained {
                 || !self
                     .captures
                     .get(path)
-                    .is_some_and(|captures| captures.contains(&(stamp.clone(), content.clone())))
+                    .is_some_and(|captures| captures.iter().any(|known| known.same(capture)))
             {
                 return Err(io::Error::other(
                     "retained identities differ from their original observation",
@@ -78,25 +155,26 @@ impl Retained {
         for (path, captures) in &incoming.captures {
             let original = self.captures.entry(path.clone()).or_default();
             for capture in captures {
-                if original
-                    .iter()
-                    .any(|(stamp, content)| stamp == &capture.0 && content != &capture.1)
-                {
+                if original.iter().any(|known| known.contradicts(capture)) {
                     return Err(io::Error::other("conflicting original input generation"));
                 }
-                if !original.contains(capture) {
+                if !original.iter().any(|known| known.same(capture)) {
                     original.push(capture.clone());
                 }
             }
         }
         for (path, incoming) in &incoming.files {
             match self.files.get(path) {
-                Some(previous) if previous == incoming => {}
+                Some(previous) if previous.same(incoming) => {
+                    if incoming.taken.moment() > previous.taken.moment() {
+                        self.files.insert(path.clone(), incoming.clone());
+                    }
+                }
                 Some(previous) => {
                     let current = open(path)?.1;
-                    if current == incoming.0 {
+                    if !incoming.taken.changed(current.stamp()) {
                         self.files.insert(path.clone(), incoming.clone());
-                    } else if current != previous.0 {
+                    } else if previous.taken.changed(current.stamp()) {
                         return Err(io::Error::other("input publication changed generation"));
                     }
                 }
@@ -445,7 +523,7 @@ fn directory(
     Ok(())
 }
 
-/// The identity the memo already holds for a canonical regular file whose stamp is unchanged, without reading or canonicalizing it.
+/// The identity the memo already holds for a canonical regular file whose stamp still agrees with a settled one, without reading or canonicalizing it.
 ///
 /// # Errors
 ///
@@ -463,15 +541,18 @@ pub(in crate::cargo) fn reused(
         .map_err(|source| io::Error::other(source.to_string()))?
         .files
         .get(canonical)
-        .filter(|(previous, _)| reusable(previous, &current))
-        .map(|(_, identity)| identity.clone());
-    if held.is_some() && path_stamp(canonical)?.as_ref() != Some(&current) {
+        .filter(|held| held.taken.holds(&current))
+        .cloned();
+    let Some(held) = held else {
         return Ok(None);
+    };
+    match path_stamp(canonical)? {
+        Some(again) if held.taken.holds(&again) => Ok(Some(held.content)),
+        Some(_) | None => Ok(None),
     }
-    Ok(held)
 }
 
-/// Whether a canonical regular file begins an image a dynamic loader can load as a library, read once per unchanged stamp.
+/// Whether a canonical regular file begins an image a dynamic loader can load as a library, read again until its stamp has settled.
 ///
 /// # Errors
 ///
@@ -484,10 +565,10 @@ pub(in crate::cargo) fn loadable(canonical: &Path, identities: &Identities) -> i
             .map_err(|source| io::Error::other(source.to_string()))?
             .images
             .get(canonical)
-            .filter(|(previous, _)| reusable(previous, &current))
-            .map(|(_, image)| *image);
-        if let Some(image) = known
-            && path_stamp(canonical)?.as_ref() == Some(&current)
+            .filter(|(taken, _)| taken.holds(&current))
+            .cloned();
+        if let Some((taken, image)) = known
+            && path_stamp(canonical)?.is_some_and(|again| taken.holds(&again))
         {
             return Ok(image);
         }
@@ -495,7 +576,7 @@ pub(in crate::cargo) fn loadable(canonical: &Path, identities: &Identities) -> i
     let (header, before) = open(canonical)?;
     let mut head = Vec::new();
     io::Read::take(&header, 4096).read_to_end(&mut head)?;
-    if stamp(&header)? != before {
+    if before.changed(&stamp(&header)?) {
         return Err(io::Error::other(
             "a loader input changed while its header was read",
         ));
@@ -565,19 +646,24 @@ fn stamp(input: &std::fs::File) -> io::Result<Stamp> {
     }
 }
 
-fn open(path: &Path) -> io::Result<(std::fs::File, Stamp)> {
+fn open(path: &Path) -> io::Result<(std::fs::File, Taken<Stamp>)> {
     if !std::fs::symlink_metadata(path)?.is_file() {
         return Err(io::Error::other("a toolchain input is not a regular file"));
     }
     let held = std::fs::File::open(path)?;
-    let current = stamp(&held)?;
+    let current = Taken::take(|| stamp(&held))?;
     Ok((held, current))
 }
 
-fn unchanged(path: &Path, resolved: &Path, held: &std::fs::File, before: &Stamp) -> io::Result<()> {
+fn unchanged(
+    path: &Path,
+    resolved: &Path,
+    held: &std::fs::File,
+    before: &Taken<Stamp>,
+) -> io::Result<()> {
     if std::fs::canonicalize(path)? != resolved
-        || stamp(held)? != *before
-        || open(resolved)?.1 != *before
+        || before.changed(&stamp(held)?)
+        || before.changed(open(resolved)?.1.stamp())
     {
         return Err(io::Error::other(
             "the toolchain changed while its content was read",
@@ -621,27 +707,30 @@ pub(in crate::cargo) fn identity(path: &Path, identities: &Identities) -> io::Re
         .files
         .lock()
         .map_err(|source| io::Error::other(source.to_string()))?;
-    if let Some((previous, identity)) = memo.files.get(&resolved)
-        && reusable(previous, &before)
+    if let Some(previous) = memo.files.get(&resolved)
+        && previous.taken.holds(before.stamp())
     {
         unchanged(path, &resolved, &held, &before)?;
-        return Ok(identity.clone());
+        return Ok(previous.content.clone());
     }
     memo.attempts.push(path.to_path_buf());
-    let identity = content(&mut held, &before)?;
+    let identity = content(&mut held, before.stamp())?;
     memo.completed_bytes = memo
         .completed_bytes
         .checked_add(identity.size)
         .ok_or_else(|| io::Error::other("toolchain input byte count overflow"))?;
     unchanged(path, &resolved, &held, &before)?;
-    if identity.size != before.length {
+    if identity.size != before.stamp().length {
         return Err(io::Error::other(
             "the toolchain content length changed while read",
         ));
     }
-    let captured = (before, identity.clone());
+    let captured = Capture {
+        taken: before,
+        content: identity.clone(),
+    };
     let history = memo.captures.entry(resolved.clone()).or_default();
-    if !history.contains(&captured) {
+    if !history.iter().any(|known| known.same(&captured)) {
         history.push(captured.clone());
     }
     memo.files.insert(resolved, captured);
@@ -649,16 +738,25 @@ pub(in crate::cargo) fn identity(path: &Path, identities: &Identities) -> io::Re
     Ok(identity)
 }
 
-fn reusable(previous: &Stamp, current: &Stamp) -> bool {
-    #[cfg(windows)]
-    if current.changed.2 <= 0 {
-        return false;
-    }
-    previous == current
-}
-
 #[cfg(test)]
-mod tests {
+pub(in crate::cargo) mod tests {
+    /// Waits until a stamp of `path` taken now has settled, so an observation made after it may be reused.
+    pub(in crate::cargo) fn settle(path: &std::path::Path) {
+        let started = std::time::Instant::now();
+        while !super::open(path)
+            .expect("the stamp of a written input")
+            .1
+            .settled()
+        {
+            assert!(
+                started.elapsed() < std::time::Duration::from_mins(1),
+                "{} has not settled within a minute of being written",
+                path.display()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+
     #[test]
     fn an_accept_conserves_a_later_same_arc_capture() {
         let directory = tempfile::tempdir().expect("owned compiler inputs");
@@ -712,7 +810,7 @@ mod tests {
             .files
             .get_mut(&std::fs::canonicalize(&supplemental).expect("supplemental object"))
             .expect("supplemental capture")
-            .1
+            .content
             .digest = "a".repeat(64);
         assert_eq!(
             super::Identities::restore(retained, &admitted)
@@ -731,6 +829,7 @@ mod tests {
             .expect("original metadata")
             .modified()
             .expect("original mtime");
+        settle(&path);
         let identities = super::Identities::empty();
         let original = super::identity(&path, &identities).expect("original actual digest");
         let resolved = std::fs::canonicalize(&path).expect("original canonical object");
@@ -815,8 +914,8 @@ mod tests {
         let resolved = std::fs::canonicalize(&path).expect("canonical input");
         let admitted = std::collections::BTreeMap::from([(resolved, original)]);
         let mut retained = identities.retain(&admitted).expect("original identity");
-        for (_stamp, content) in retained.files.values_mut() {
-            content.digest = "a".repeat(64);
+        for capture in retained.files.values_mut() {
+            capture.content.digest = "a".repeat(64);
         }
         assert_eq!(
             super::Identities::restore(retained, &admitted)
@@ -928,6 +1027,163 @@ mod tests {
     }
 
     #[test]
+    fn a_stamp_taken_within_the_granularity_of_its_write_is_read_again() {
+        let directory = tempfile::tempdir().expect("owned compiler input");
+        let path = directory.path().join("compiler");
+        std::fs::write(&path, b"first").expect("freshly written compiler bytes");
+        let identities = super::Identities::empty();
+        let first = super::identity(&path, &identities).expect("first actual digest");
+        assert_eq!(
+            super::identity(&path, &identities).expect("second actual digest"),
+            first
+        );
+        assert_eq!(
+            identities.work().expect("both actual reads"),
+            (2, 10, vec![path.clone(), path]),
+            "a stamp taken within the granularity of the write it describes is read again"
+        );
+    }
+
+    #[test]
+    fn a_retained_stamp_taken_within_the_granularity_of_its_write_is_read_again() {
+        let directory = tempfile::tempdir().expect("owned compiler input");
+        let path = directory.path().join("compiler");
+        std::fs::write(&path, b"first").expect("freshly written compiler bytes");
+        let identities = super::Identities::empty();
+        let original = super::identity(&path, &identities).expect("original actual digest");
+        let admitted = std::collections::BTreeMap::from([(
+            std::fs::canonicalize(&path).expect("canonical compiler"),
+            original.clone(),
+        )]);
+        let restored = super::Identities::restore(
+            identities
+                .retain(&admitted)
+                .expect("original identity custody"),
+            &admitted,
+        )
+        .expect("retained original identity");
+        assert_eq!(
+            super::identity(&path, &restored).expect("restored actual digest"),
+            original
+        );
+        assert_eq!(
+            restored.work().expect("the restored actual read"),
+            (1, 5, vec![path]),
+            "a retained stamp taken within the granularity of its write is read again"
+        );
+    }
+
+    #[test]
+    fn a_loader_input_stamped_within_the_granularity_of_its_write_is_not_reused() {
+        let directory = tempfile::tempdir().expect("owned loader input");
+        let path = directory.path().join("library");
+        std::fs::write(&path, b"first").expect("freshly written loader bytes");
+        let identities = super::Identities::empty();
+        super::identity(&path, &identities).expect("actual loader digest");
+        let resolved = std::fs::canonicalize(&path).expect("canonical loader input");
+        assert_eq!(
+            super::reused(&resolved, &identities).expect("loader input stamp"),
+            None,
+            "a stamp taken within the granularity of its write cannot stand for the bytes"
+        );
+    }
+
+    #[test]
+    fn a_loader_image_stamped_within_the_granularity_of_its_write_is_classified_again() {
+        let directory = tempfile::tempdir().expect("owned loader input");
+        let path = directory.path().join("archive");
+        std::fs::write(&path, b"!<arch>\nfirst").expect("freshly written archive");
+        let resolved = std::fs::canonicalize(&path).expect("canonical loader input");
+        let identities = super::Identities::empty();
+        assert!(!super::loadable(&resolved, &identities).expect("actual classification"));
+        identities
+            .files
+            .lock()
+            .expect("unpoisoned memo")
+            .images
+            .get_mut(&resolved)
+            .expect("the classification the memo holds")
+            .1 = true;
+        assert!(
+            !super::loadable(&resolved, &identities).expect("actual classification again"),
+            "a stamp taken within the granularity of its write cannot stand for the header"
+        );
+    }
+
+    /// One input's stamp, the moments its newest time makes unsettled and settled, and a capture of it under either with the digest `digit` repeated.
+    fn captures(
+        path: &std::path::Path,
+    ) -> (
+        [std::time::SystemTime; 2],
+        impl Fn(std::time::SystemTime, &str) -> super::Capture,
+    ) {
+        let stamp = super::open(path).expect("an input stamp").1.into_parts().0;
+        let newest = njutest_fixture_tree::settled::Stamp::newest(&stamp).expect("a change time");
+        let settled = newest
+            .checked_add(njutest_fixture_tree::settled::GRANULARITY)
+            .and_then(|ripe| ripe.checked_add(std::time::Duration::from_secs(1)))
+            .expect("a representable settled moment");
+        let capture = move |moment, digit: &str| super::Capture {
+            taken: super::Taken::recorded(stamp.clone(), moment),
+            content: super::File {
+                size: stamp.length,
+                digest: digit.repeat(64),
+                mode: stamp.mode,
+            },
+        };
+        ([newest, settled], capture)
+    }
+
+    fn retained(path: &std::path::Path, capture: &super::Capture) -> super::Retained {
+        let resolved = std::fs::canonicalize(path).expect("canonical input");
+        super::Retained {
+            files: std::collections::BTreeMap::from([(resolved.clone(), capture.clone())]),
+            captures: std::collections::BTreeMap::from([(resolved, vec![capture.clone()])]),
+        }
+    }
+
+    #[test]
+    fn captures_of_one_stamp_contradict_each_other_only_when_both_had_settled() {
+        let directory = tempfile::tempdir().expect("owned compiler input");
+        let path = directory.path().join("compiler");
+        std::fs::write(&path, b"first").expect("compiler bytes");
+        let ([unsettled, settled], capture) = captures(&path);
+        retained(&path, &capture(unsettled, "a"))
+            .merge(&retained(&path, &capture(unsettled, "b")))
+            .expect("an unsettled capture beside another is the history of a racy rewrite");
+        let refusal = retained(&path, &capture(settled, "a"))
+            .merge(&retained(&path, &capture(settled, "b")))
+            .expect_err("one settled stamp cannot stand for two contents");
+        assert!(
+            refusal
+                .to_string()
+                .contains("conflicting original input generation"),
+            "{refusal}"
+        );
+    }
+
+    #[test]
+    fn a_settled_capture_of_the_same_content_supersedes_an_unsettled_one() {
+        let directory = tempfile::tempdir().expect("owned compiler input");
+        let path = directory.path().join("compiler");
+        std::fs::write(&path, b"first").expect("compiler bytes");
+        let ([unsettled, settled], capture) = captures(&path);
+        let held = capture(settled, "a");
+        let mut merged = retained(&path, &capture(unsettled, "a"));
+        merged
+            .merge(&retained(&path, &held))
+            .expect("one content under one stamp");
+        let restored = super::Identities::restore(merged, &std::collections::BTreeMap::new())
+            .expect("merged identities");
+        assert_eq!(
+            super::identity(&path, &restored).expect("the merged identity"),
+            held.content,
+            "the later, settled moment is the one the merged record keeps"
+        );
+        assert_eq!(restored.work().expect("merged reuse"), (0, 0, Vec::new()));
+    }
+
+    #[test]
     fn changed_toolchain_bytes_are_hashed_even_when_the_old_mtime_is_restored() {
         let directory = tempfile::tempdir().expect("toolchain identity");
         let path = directory.path().join("compiler");
@@ -936,6 +1192,36 @@ mod tests {
             .expect("original stamp")
             .modified()
             .expect("original mtime");
+        let identities = super::Identities::empty();
+        let before = super::identity(&path, &identities).expect("original digest");
+        std::fs::write(&path, b"other").expect("changed bytes of the same length");
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .expect("compiler metadata")
+            .set_modified(modified)
+            .expect("restore the original mtime");
+        let after = super::identity(&path, &identities).expect("changed digest");
+        assert_ne!(
+            before.digest, after.digest,
+            "a same-length rewrite within one tick of the observation is read"
+        );
+        assert_eq!(
+            identities.work().expect("the changed actual read"),
+            (2, 10, vec![path.clone(), path])
+        );
+    }
+
+    #[test]
+    fn a_settled_stamp_is_reused_and_a_same_length_rewrite_after_it_is_read() {
+        let directory = tempfile::tempdir().expect("toolchain identity");
+        let path = directory.path().join("compiler");
+        std::fs::write(&path, b"first").expect("original bytes");
+        let modified = std::fs::metadata(&path)
+            .expect("original stamp")
+            .modified()
+            .expect("original mtime");
+        settle(&path);
         let identities = super::Identities::empty();
         let before = super::identity(&path, &identities).expect("original digest");
         assert_eq!(

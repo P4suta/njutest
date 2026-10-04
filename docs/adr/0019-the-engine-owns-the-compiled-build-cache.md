@@ -274,3 +274,37 @@ The record left out every `NJUTEST_` and `NEXTEST_` variable; the slot named thr
 Two runs of one tree from two roots, or with and without `--no-cache`, then claimed two slots, compiled their modules at two paths, and one execution of one tree came to two transcript digests.
 Both identities now ask one function, `cargo::compilation_input`, so a label the product adds is left out of both or of neither.
 A variable a build does read, such as one Cargo reads, still separates slots, and a unit whose dep-info names a left-out variable is still never a verified hit.
+
+## Amendment, 2026-10-05: a stamp stands for content only once it has settled
+
+A rewrite of the same length within one tick of the filesystem's clock leaves every field of a stamp equal: length, modification and change time, file identity and mode.
+Linux dates a write from a coarse clock that advances once a scheduler tick, so two writes a few milliseconds apart carry the same change time.
+On the Linux build host the toolchain identity memo, its published record, the loader-input reuse, the loader image classification and the devkit's reproducibility witness each handed back the identity of bytes that were gone.
+
+Each of them now holds a stamp as `njutest_fixture_tree::settled::Taken`, the stamp and the moment the clock read just before it was taken.
+A stamp justifies reuse only once its newest time is older than that moment by more than `settled::GRANULARITY`.
+Every write after the moment is then dated newer than the stamp, so a stamp that still agrees proves that no write happened since.
+This is how git treats a racily clean index entry, with the moment recorded beside each stamp rather than read from the index file's own time.
+
+The newest time is the later of the modification and the change time.
+The change time is the one time no writer can set: restoring a modification time with `utimensat` or `SetFileTime` stamps a new change time as it does so.
+A stamp without a change time therefore never settles, which is the devkit's witness on Windows and the engine's stamp on a filesystem that reports a zero `ChangeTime`.
+
+The granularity is three seconds.
+FAT dates writes in two-second steps and ext3 and HFS+ in whole seconds, and the coarse clock a write is dated by lags the precise one `SystemTime::now` reads by up to a scheduler tick: ten milliseconds at Linux's lowest rate and about sixteen on Windows.
+A second above FAT's resolution covers that lag with room to spare.
+What the margin costs is that a file written in the last three seconds is read again rather than reused, and an installed toolchain or a finished build product is older than that.
+A network filesystem whose server dates writes by a clock further off than that is outside the rule.
+
+The moment is published with the stamp, in the tool observation record (`rust-mutants-tool-observation-v4`) and in the witness pair (`njutest-independent-compiler-pair-v3`).
+A stamp recorded within the granularity of its write stays unable to justify reuse in every later process, until an observation of the same file with a settled moment replaces it.
+Two captures of one stamp contradict each other only when both were taken settled; an unsettled capture beside a different one is the history of a racy rewrite, not a conflict.
+
+A stamp is compared only through `Taken`.
+`Taken::holds` justifies reuse, and `Taken::changed` proves a change and justifies nothing.
+`settled::Stamp::same` takes a `settled::Comparing` that only `Taken` can make, so a stamp type has no equality of its own for a memo to key by.
+
+A test that needs a reuse waits until the stamp of the file it wrote has settled, because a change time cannot be set into the past, and a test that restores an old modification time still gets a new change time.
+A test that rewrites a file within one tick of observing it is the reproduction of the defect, and is not made to wait.
+
+The apparatus's survey of test executables and `njutest watch` compare stamps to notice a change rather than to reuse an identity, and they hold no content to fall back on, so they are outside this decision.

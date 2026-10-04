@@ -711,6 +711,11 @@ mod macos_tests {
             )
             .expect("owned library");
         }
+        for index in 0..64 {
+            crate::cargo::build_cache::toolchain::tests::settle(
+                &directory.path().join(format!("lib{index}.dylib")),
+            );
+        }
         let mut env = Variables::default();
         env.set("DYLD_FALLBACK_LIBRARY_PATH", directory.path());
         let identities = Identities::empty();
@@ -785,6 +790,7 @@ mod macos_tests {
             .expect("original metadata")
             .modified()
             .expect("original mtime");
+        crate::cargo::build_cache::toolchain::tests::settle(&path);
         let mut env = Variables::default();
         env.set("DYLD_FALLBACK_LIBRARY_PATH", directory.path());
         let identities = Identities::empty();
@@ -986,6 +992,41 @@ mod namespace_tests {
         std::fs::set_permissions(&library, mode).expect("change owned mode");
         changed.verify().expect_err("file mode is a bound input");
         std::fs::set_permissions(&library, unchanged).expect("owned cleanup");
+    }
+
+    #[test]
+    fn a_settled_library_rewritten_under_its_old_mtime_is_bound_again() {
+        let directory = tempfile::tempdir().expect("owned search directory");
+        let library = directory.path().join("library");
+        std::fs::write(&library, super::tests::test_library(b"AAAA")).expect("original contents");
+        let modified = std::fs::metadata(&library)
+            .expect("original metadata")
+            .modified()
+            .expect("original mtime");
+        crate::cargo::build_cache::toolchain::tests::settle(&library);
+        let env = environment(
+            search_variables()
+                .first()
+                .expect("supported native variable"),
+            directory.path(),
+        );
+        let identities = Identities::empty();
+        let original =
+            RuntimeInputs::capture(&env, directory.path(), &identities).expect("original capture");
+        original
+            .verify()
+            .expect("a settled unchanged library is reused");
+        std::fs::write(&library, super::tests::test_library(b"BBBB"))
+            .expect("same length replacement");
+        std::fs::File::options()
+            .write(true)
+            .open(&library)
+            .expect("owned library")
+            .set_modified(modified)
+            .expect("restore the original mtime");
+        original
+            .verify()
+            .expect_err("a write after a settled stamp is dated newer than it");
     }
 
     #[test]

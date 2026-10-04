@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Classify a fixture tree from its immediate directory entries, independently of how they are read.
+//! Filesystem policy shared by the engine, gates and tests: a fixture tree classified from its immediate entries, and when a file's stamp may stand for its content.
 
 #![forbid(unsafe_code)]
+
+pub mod settled;
 
 use std::path::{Path, PathBuf};
 

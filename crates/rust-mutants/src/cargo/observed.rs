@@ -18,7 +18,7 @@ use crate::runner::{Cancel, RunResult, Spec, Watch};
 use crate::trace::ExecRecord;
 use crate::vars::Variables;
 
-const SCHEMA: &str = "rust-mutants-tool-observation-v3";
+const SCHEMA: &str = "rust-mutants-tool-observation-v4";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1369,7 +1369,7 @@ mod tests {
             .get_mut("files")
             .and_then(|files| files.get_mut(key.as_str()))
             .expect("the genuine publication retains the supplemental capture")
-            .get_mut(1)
+            .get_mut("content")
             .and_then(|content| content.as_object_mut())
             .expect("a retained file content")
             .insert(String::from("digest"), serde_json::json!(&forged));
@@ -1380,7 +1380,7 @@ mod tests {
             .expect("the genuine publication retains its actual captures");
         for capture in captures {
             capture
-                .get_mut(1)
+                .get_mut("content")
                 .and_then(|content| content.as_object_mut())
                 .expect("a retained capture content")
                 .insert(String::from("digest"), serde_json::json!(&forged));
@@ -1436,6 +1436,9 @@ mod tests {
         let q = extra.path().join("q");
         std::fs::write(&p, b"first").expect("first actual supplemental input");
         std::fs::write(&q, b"other").expect("second actual supplemental input");
+        for path in [&p, &q] {
+            super::super::build_cache::toolchain::tests::settle(path);
+        }
         super::super::build_cache::toolchain::identity(&p, first.identities())
             .expect("first actual capture");
         super::super::build_cache::toolchain::identity(&q, second.identities())
@@ -1712,6 +1715,9 @@ mod tests {
         let size = u64::try_from(library.len()).expect("a small library");
         for name in ["one", "two", "three"] {
             std::fs::write(directory.path().join(name), &library).expect("owned input");
+        }
+        for name in ["one", "two", "three"] {
+            super::super::build_cache::toolchain::tests::settle(&directory.path().join(name));
         }
         let env = crate::vars::Variables::of([(
             "DYLD_FALLBACK_LIBRARY_PATH".into(),
