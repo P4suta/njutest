@@ -309,3 +309,13 @@ A test that needs a reuse waits until the stamp of the file it wrote has settled
 A test that rewrites a file within one tick of observing it is the reproduction of the defect, and is not made to wait.
 
 The apparatus's survey of test executables and `njutest watch` compare stamps to notice a change rather than to reuse an identity, and they hold no content to fall back on, so they are outside this decision.
+
+## Amendment, 2026-10-05: an app execution alias is a named loader entry
+
+Windows puts `%LOCALAPPDATA%\Microsoft\WindowsApps` on every user's `PATH`, which is the DLL search namespace a compile binds, and that directory holds app execution aliases such as `python.exe` and `winget.exe`.
+An alias is a reparse point tagged `IO_REPARSE_TAG_APPEXECLINK`, which only process creation interprets: a file open that follows it fails with `ERROR_CANT_ACCESS_FILE`, and `std::fs::read_link` refuses its tag as an unsupported reparse point.
+The capture took every reparse point for a link to read, so that one directory left every compile on a GitHub Windows runner unbound, and nothing was reused.
+
+`capdir::Kind::ExecutionAlias` now names the tag where the capability directory reads an entry without following it, so every match on an entry's kind decides what an alias is.
+The loader binds an alias by its name and its kind and never opens it, as it binds a file no loader can map by its name alone: no loader can map an alias, so neither its reparse data nor its target is a loader input.
+Every other reparse point is still a link to read and resolve, and one that cannot be read still refuses the capture.

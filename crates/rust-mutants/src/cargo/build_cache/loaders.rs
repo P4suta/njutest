@@ -425,6 +425,7 @@ fn capture_entry(
                 }
             },
         },
+        Kind::ExecutionAlias => super::field(digest, b"app-execution-alias"),
         Kind::Other => capture_link(&path, identities, digest, (descend, ancestors))?,
     }
     if directory.status_at(name)? != Some(status) {
@@ -459,7 +460,7 @@ fn capture_link(
                         capture(&canonical, identities, digest, (true, ancestors))?;
                     }
                 }
-                Kind::Other => {
+                Kind::ExecutionAlias | Kind::Other => {
                     return Err(io::Error::new(
                         io::ErrorKind::Unsupported,
                         "a loader alias target is not a file or directory",
@@ -491,7 +492,7 @@ fn captured_file(
     let held = crate::capdir::file_status(file)?;
     match held.kind {
         Kind::File => {}
-        Kind::Directory | Kind::Other => {
+        Kind::Directory | Kind::ExecutionAlias | Kind::Other => {
             return Err(io::Error::other("a loader input is not a regular file"));
         }
     }

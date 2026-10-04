@@ -99,6 +99,8 @@ pub enum Kind {
     File,
     /// A directory.
     Directory,
+    /// A Windows app execution alias: a reparse point only process creation follows, which no open of it as a file can.
+    ExecutionAlias,
     /// Anything else: a link, a device, a pipe.
     Other,
 }
@@ -201,7 +203,7 @@ impl Dir {
         Ok(match kind {
             Kind::File => Entry::File(handle),
             Kind::Directory => Entry::Dir(Self { handle }),
-            Kind::Other => Entry::Other,
+            Kind::ExecutionAlias | Kind::Other => Entry::Other,
         })
     }
 

@@ -33,9 +33,8 @@ use windows_sys::Win32::Security::{
     WinBuiltinAdministratorsSid, WinLocalSystemSid,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    DELETE, FILE_ADD_FILE, FILE_ALL_ACCESS, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL,
-    FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_TAG_INFO, FILE_BASIC_INFO,
-    FILE_DISPOSITION_FLAG_DELETE, FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE,
+    DELETE, FILE_ADD_FILE, FILE_ALL_ACCESS, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_TAG_INFO,
+    FILE_BASIC_INFO, FILE_DISPOSITION_FLAG_DELETE, FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE,
     FILE_DISPOSITION_FLAG_POSIX_SEMANTICS, FILE_DISPOSITION_INFO_EX, FILE_FLAG_BACKUP_SEMANTICS,
     FILE_FLAG_OPEN_REPARSE_POINT, FILE_FLAGS_AND_ATTRIBUTES, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
     FILE_ID_128, FILE_ID_INFO, FILE_INFO_BY_HANDLE_CLASS, FILE_LIST_DIRECTORY,
@@ -93,7 +92,7 @@ pub(super) fn open(path: &Path) -> io::Result<File> {
         .open(path)?;
     match kind_of(&directory)? {
         Kind::Directory => {}
-        Kind::Other => return Err(link_refused()),
+        Kind::ExecutionAlias | Kind::Other => return Err(link_refused()),
         Kind::File => {
             return Err(io::Error::new(
                 io::ErrorKind::NotADirectory,
@@ -118,7 +117,7 @@ pub(super) fn open_dir(dir: &File, name: Name<'_>) -> io::Result<File> {
     )?;
     match kind_of(&opened)? {
         Kind::Directory => Ok(opened),
-        Kind::Other | Kind::File => Err(link_refused()),
+        Kind::ExecutionAlias | Kind::Other | Kind::File => Err(link_refused()),
     }
 }
 
@@ -126,7 +125,7 @@ pub(super) fn open_file(dir: &File, name: Name<'_>) -> io::Result<File> {
     let (opened, kind) = open_entry(dir, name)?;
     match kind {
         Kind::File | Kind::Directory => Ok(opened),
-        Kind::Other => Err(link_refused()),
+        Kind::ExecutionAlias | Kind::Other => Err(link_refused()),
     }
 }
 
@@ -153,7 +152,7 @@ pub(super) fn open_file_at(path: &Path) -> io::Result<File> {
         .open(path)?;
     match kind_of(&opened)? {
         Kind::File | Kind::Directory => Ok(opened),
-        Kind::Other => Err(link_refused()),
+        Kind::ExecutionAlias | Kind::Other => Err(link_refused()),
     }
 }
 
@@ -272,12 +271,14 @@ pub(super) fn remove(dir: &File, name: Name<'_>, directory: bool) -> io::Result<
     retried(|| {
         let entry = create(dir, &spelled, &Create::to_move())?;
         match (kind_of(&entry)?, directory) {
-            (Kind::Directory, true) | (Kind::File | Kind::Other, false) => dispose(&entry),
+            (Kind::Directory, true) | (Kind::File | Kind::ExecutionAlias | Kind::Other, false) => {
+                dispose(&entry)
+            }
             (Kind::Directory, false) => Err(io::Error::new(
                 io::ErrorKind::IsADirectory,
                 "a directory is removed as a directory",
             )),
-            (Kind::File | Kind::Other, true) => Err(io::Error::new(
+            (Kind::File | Kind::ExecutionAlias | Kind::Other, true) => Err(io::Error::new(
                 io::ErrorKind::NotADirectory,
                 "only a directory is removed as one",
             )),
@@ -443,17 +444,7 @@ fn kind_of(file: &File) -> io::Result<Kind> {
         ReparseTag: 0,
     };
     by_handle(file, FileAttributeTagInfo, &mut tag)?;
-    Ok(kind_of_attributes(tag.FileAttributes))
-}
-
-const fn kind_of_attributes(attributes: u32) -> Kind {
-    if attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-        Kind::Other
-    } else if attributes & FILE_ATTRIBUTE_DIRECTORY != 0 {
-        Kind::Directory
-    } else {
-        Kind::File
-    }
+    Ok(records::kind(tag.FileAttributes, tag.ReparseTag))
 }
 
 fn link_refused() -> io::Error {
@@ -1044,9 +1035,21 @@ fn succeeded_nt(status: NTSTATUS) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::records::Record;
-    use super::volume_verdict;
-    use windows_sys::Win32::Storage::FileSystem::FILE_FULL_DIR_INFO;
+    use std::fs::File;
+    use std::os::windows::io::AsRawHandle as _;
+    use std::ptr;
+
+    use super::records::{self, Buffer, Record};
+    use super::{
+        Create, FILE_CREATE, FILE_NON_DIRECTORY_FILE, FILE_WRITE_DATA, Kind, Name, create, open,
+        open_entry, open_file, remove, status_at, succeeded, volume_verdict, wide,
+    };
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_FULL_DIR_INFO,
+        FILE_WRITE_ATTRIBUTES,
+    };
+    use windows_sys::Win32::System::IO::DeviceIoControl;
+    use windows_sys::Win32::System::SystemServices::IO_REPARSE_TAG_APPEXECLINK;
 
     #[test]
     fn bounded_directory_records_follow_the_windows_abi() {
@@ -1055,7 +1058,97 @@ mod tests {
         assert_eq!(std::mem::offset_of!(super::ACCESS_ALLOWED_ACE, Mask), 4);
         assert_eq!(std::mem::offset_of!(super::ACCESS_ALLOWED_ACE, SidStart), 8);
     }
-    use super::{Grant, Kind, Me, Privacy, Security, Sid, Volume, kind_of_attributes, privacy_of};
+
+    #[test]
+    fn the_attributes_and_the_tag_a_kind_is_read_from_follow_the_windows_headers() {
+        assert_eq!(records::DIRECTORY_ATTRIBUTE, FILE_ATTRIBUTE_DIRECTORY);
+        assert_eq!(
+            records::REPARSE_POINT_ATTRIBUTE,
+            FILE_ATTRIBUTE_REPARSE_POINT
+        );
+        assert_eq!(records::EXECUTION_ALIAS_TAG, IO_REPARSE_TAG_APPEXECLINK);
+    }
+
+    /// Makes `name` in `dir` an app execution alias naming a packaged app's executable, as the Store puts one on every user's path.
+    fn execution_alias(dir: &File, name: Name<'_>) {
+        const FSCTL_SET_REPARSE_POINT: u32 = 0x0009_00a4;
+        let alias = create(
+            dir,
+            &wide(name),
+            &Create {
+                access: FILE_WRITE_DATA | FILE_WRITE_ATTRIBUTES,
+                disposition: FILE_CREATE,
+                options: FILE_NON_DIRECTORY_FILE,
+                security: None,
+            },
+        )
+        .expect("a new file to make an alias of");
+        let mut data = 3_u32.to_le_bytes().to_vec();
+        for field in [
+            "Fabricated.Package_0123456789abc",
+            "Fabricated.Package_0123456789abc!App",
+            r"C:\Program Files\WindowsApps\Fabricated\app.exe",
+            "0",
+        ] {
+            data.extend(field.encode_utf16().chain([0]).flat_map(u16::to_le_bytes));
+        }
+        let mut request = IO_REPARSE_TAG_APPEXECLINK.to_le_bytes().to_vec();
+        request.extend_from_slice(
+            &u16::try_from(data.len())
+                .expect("an alias record fits its length field")
+                .to_le_bytes(),
+        );
+        request.extend_from_slice(&[0, 0]);
+        request.extend_from_slice(&data);
+        let length = u32::try_from(request.len()).expect("an alias record fits a request");
+        let buffer = Buffer::from_bytes(&request);
+        let mut returned: u32 = 0;
+        #[expect(unsafe_code, reason = "DeviceIoControl has no safe binding")]
+        let set = unsafe {
+            DeviceIoControl(
+                alias.as_raw_handle(),
+                FSCTL_SET_REPARSE_POINT,
+                buffer.pointer(),
+                length,
+                ptr::null_mut(),
+                0,
+                &raw mut returned,
+                ptr::null_mut(),
+            )
+        };
+        succeeded(set).expect("an app execution alias any user may set on a file they made");
+    }
+
+    #[test]
+    fn an_app_execution_alias_is_seen_as_one_and_never_opened_as_what_it_starts() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let dir = open(temp.path()).expect("the directory");
+        let alias = Name::new("python.exe").expect("a component");
+        execution_alias(&dir, alias);
+        assert_eq!(
+            status_at(&dir, alias)
+                .expect("an alias is inspected without being followed")
+                .map(|status| status.kind),
+            Some(Kind::ExecutionAlias),
+            "an alias is seen as what it is, not as a link to read"
+        );
+        let followed = File::open(temp.path().join("python.exe"));
+        assert!(
+            followed.is_err(),
+            "no file open follows an alias to what it starts: {followed:?}"
+        );
+        assert!(
+            matches!(open_entry(&dir, alias), Ok((_, Kind::ExecutionAlias))),
+            "an entry opened without following it is the alias itself"
+        );
+        assert!(
+            open_file(&dir, alias).is_err(),
+            "and an alias is never handed out as a file to read"
+        );
+        remove(&dir, alias, false).expect("an alias is removed as an entry");
+        assert_eq!(status_at(&dir, alias).expect("stat"), None);
+    }
+    use super::{Grant, Me, Privacy, Security, Sid, Volume, privacy_of};
 
     fn sid(last: u32) -> Sid {
         let bytes: Vec<u8> = [0x0000_0201_u32, 0x0500_0000, 21, last]
@@ -1169,14 +1262,6 @@ mod tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn a_reparse_point_is_never_what_it_points_at() {
-        assert_eq!(kind_of_attributes(0x10 | 0x400), Kind::Other);
-        assert_eq!(kind_of_attributes(0x20 | 0x400), Kind::Other);
-        assert_eq!(kind_of_attributes(0x10), Kind::Directory);
-        assert_eq!(kind_of_attributes(0x20), Kind::File);
     }
 
     #[test]

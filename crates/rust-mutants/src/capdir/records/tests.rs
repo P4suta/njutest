@@ -1,7 +1,79 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use super::{Ace, Buffer, Record, directory_names, security};
+use super::{Ace, Buffer, Record, directory_names, kind, security};
+use crate::capdir::Kind;
+
+const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+const FILE_ATTRIBUTE_ARCHIVE: u32 = 0x20;
+const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+const IO_REPARSE_TAG_MOUNT_POINT: u32 = 0xa000_0003;
+const IO_REPARSE_TAG_SYMLINK: u32 = 0xa000_000c;
+const IO_REPARSE_TAG_CLOUD: u32 = 0x9000_001a;
+const IO_REPARSE_TAG_APPEXECLINK: u32 = 0x8000_001b;
+
+#[test]
+fn an_app_execution_alias_is_its_own_kind_and_no_other_reparse_point_is_what_it_points_at() {
+    let alias = FILE_ATTRIBUTE_ARCHIVE | FILE_ATTRIBUTE_REPARSE_POINT;
+    for (attributes, tag, expected, what) in [
+        (
+            alias,
+            IO_REPARSE_TAG_APPEXECLINK,
+            Kind::ExecutionAlias,
+            "an app execution alias, which only process creation follows and a file open fails on",
+        ),
+        (
+            FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT,
+            IO_REPARSE_TAG_APPEXECLINK,
+            Kind::ExecutionAlias,
+            "an app execution alias on a directory, which no path traverses either",
+        ),
+        (
+            alias,
+            IO_REPARSE_TAG_SYMLINK,
+            Kind::Other,
+            "a file symbolic link, never followed",
+        ),
+        (
+            FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT,
+            IO_REPARSE_TAG_SYMLINK,
+            Kind::Other,
+            "a directory symbolic link, never followed",
+        ),
+        (
+            FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT,
+            IO_REPARSE_TAG_MOUNT_POINT,
+            Kind::Other,
+            "a junction, never followed",
+        ),
+        (
+            alias,
+            IO_REPARSE_TAG_CLOUD,
+            Kind::Other,
+            "a cloud placeholder, whose content a filter supplies",
+        ),
+        (
+            FILE_ATTRIBUTE_ARCHIVE,
+            IO_REPARSE_TAG_APPEXECLINK,
+            Kind::File,
+            "a file without the reparse attribute, whose tag Windows leaves undefined",
+        ),
+        (
+            FILE_ATTRIBUTE_DIRECTORY,
+            IO_REPARSE_TAG_APPEXECLINK,
+            Kind::Directory,
+            "a directory without the reparse attribute, whose tag Windows leaves undefined",
+        ),
+        (FILE_ATTRIBUTE_ARCHIVE, 0, Kind::File, "a regular file"),
+        (FILE_ATTRIBUTE_DIRECTORY, 0, Kind::Directory, "a directory"),
+    ] {
+        assert_eq!(
+            kind(attributes, tag),
+            expected,
+            "{what}: attributes {attributes:#x}, reparse tag {tag:#x}"
+        );
+    }
+}
 
 fn put(bytes: &mut [u8], at: usize, value: &[u8]) {
     let end = at.checked_add(value.len()).expect("fixture fits");

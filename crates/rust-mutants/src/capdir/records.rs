@@ -1,10 +1,36 @@
 // SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Owned, initialized FFI storage and borrowed, bounds-checked Windows variable-length records.
+//! Owned, initialized FFI storage, borrowed, bounds-checked Windows variable-length records, and the kind an entry's attributes name.
 
 use std::ffi::c_void;
 use std::io;
+
+use super::Kind;
+
+/// `FILE_ATTRIBUTE_DIRECTORY`.
+pub(super) const DIRECTORY_ATTRIBUTE: u32 = 0x10;
+
+/// `FILE_ATTRIBUTE_REPARSE_POINT`.
+pub(super) const REPARSE_POINT_ATTRIBUTE: u32 = 0x400;
+
+/// `IO_REPARSE_TAG_APPEXECLINK`, the tag of an app execution alias.
+pub(super) const EXECUTION_ALIAS_TAG: u32 = 0x8000_001b;
+
+/// What an entry is by the attributes and reparse tag `FILE_ATTRIBUTE_TAG_INFO` reports, its tag read only where its attributes say it has one.
+pub(super) const fn kind(attributes: u32, reparse_tag: u32) -> Kind {
+    if attributes & REPARSE_POINT_ATTRIBUTE != 0 {
+        if reparse_tag == EXECUTION_ALIAS_TAG {
+            Kind::ExecutionAlias
+        } else {
+            Kind::Other
+        }
+    } else if attributes & DIRECTORY_ATTRIBUTE != 0 {
+        Kind::Directory
+    } else {
+        Kind::File
+    }
+}
 
 /// Initialized storage with the alignment every Windows record here requires.
 #[derive(Debug, Clone, PartialEq, Eq)]
