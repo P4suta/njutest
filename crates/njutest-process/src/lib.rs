@@ -10,6 +10,8 @@
 
 mod event;
 mod group;
+#[cfg(target_os = "linux")]
+pub mod procfs;
 #[cfg(unix)]
 mod unix;
 #[cfg(windows)]
@@ -34,6 +36,8 @@ pub use rust_mutants_decision::group::{Delivered, Others, StopDecision, Stopped,
 #[cfg(unix)]
 pub use session::{OutputEndpoint, ParentSession, SESSION_CUSTODY, SessionOwner};
 pub use sys::{Membership, ReaderStop, ReaderWait, configure_reader, stream_ended};
+#[cfg(unix)]
+pub use unix::Asked;
 
 /// What the leader's non-reaping completion observation established.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

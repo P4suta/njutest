@@ -475,6 +475,49 @@ fn status(code: u8) -> ExitStatus {
     ExitStatus::from_raw(u32::from(code))
 }
 
+/// Every process whose group is `group` and that has not ended, as `/proc` lists them.
+///
+/// # Errors
+/// `/proc` refused to list the processes, or to say of one that has not been reaped which group it is in.
+#[cfg(target_os = "linux")]
+pub fn in_group(group: u32) -> std::io::Result<Option<Vec<u32>>> {
+    use njutest_process::{Asked, procfs};
+
+    let mut found = Vec::new();
+    for pid in procfs::processes()? {
+        let stat = match procfs::stat(pid)? {
+            Asked::Answered(stat) => stat,
+            Asked::Gone => continue,
+        };
+        let fields: Vec<&str> = stat
+            .rsplit_once(')')
+            .map(|(_name, after)| after.split_whitespace().collect())
+            .unwrap_or_default();
+        let (Some(state), Some(its_group)) = (fields.first(), fields.get(2)) else {
+            return Err(std::io::Error::other(format!(
+                "process {pid} has a stat line without its state and group: {stat:?}"
+            )));
+        };
+        if its_group.parse::<u32>().map_err(std::io::Error::other)? == group && *state != "Z" {
+            found.push(pid);
+        }
+    }
+    Ok(Some(found))
+}
+
+/// Nothing, where no `/proc` lists the processes of a group.
+///
+/// # Errors
+/// None; the signature is the one a platform with `/proc` has.
+#[cfg(all(unix, not(target_os = "linux")))]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "the same signature as the reader of `/proc`, which can fail"
+)]
+pub const fn in_group(_group: u32) -> std::io::Result<Option<Vec<u32>>> {
+    Ok(None)
+}
+
 /// The name libtest runs the test `name` under, from the `module_path!()` of the file that declares it: the module path without the crate, so the name is right whether the file is a binary of its own or a module of a crate's one suite.
 #[must_use]
 pub fn test_name(module: &str, name: &str) -> String {
@@ -491,6 +534,29 @@ mod tests {
     use super::{ChildError, ChildOwner, test_name};
 
     const OWNERSHIP_CHILD: &str = "NJUTEST_DEVKIT_OWNERSHIP_CHILD";
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_group_holds_its_running_leader_and_nobody_once_it_is_reaped() {
+        let mut command = Command::new("cat");
+        command.stdin(Stdio::piped()).stdout(Stdio::null());
+        let mut child = njutest_process::GroupChild::start(&mut command).expect("cat starts");
+        let leader = child.id().expect("the unreaped leader");
+        assert_eq!(
+            super::in_group(leader).expect("the running group"),
+            Some(vec![leader])
+        );
+        let input = child.stdin().expect("the owned input");
+        drop(input);
+        assert!(
+            child.wait_status().expect("cat is reaped").success(),
+            "cat ends at its input's end"
+        );
+        assert_eq!(
+            super::in_group(leader).expect("the reaped group"),
+            Some(Vec::new())
+        );
+    }
 
     #[cfg(unix)]
     #[test]

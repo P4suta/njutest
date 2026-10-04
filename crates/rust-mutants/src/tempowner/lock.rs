@@ -72,13 +72,15 @@ pub(super) use sys::{boot, start_of};
 
 #[cfg(target_os = "linux")]
 mod started {
+    use njutest_process::Asked;
+
     use super::Start;
 
     /// The start of `pid` in clock ticks since boot, field 22 of its `stat`, read past the command name, which may hold spaces and parentheses.
     pub(super) fn start_of(pid: u32) -> Start {
-        let stat = match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
-            Ok(stat) => stat,
-            Err(gone) if gone.kind() == std::io::ErrorKind::NotFound => return Start::Absent,
+        let stat = match njutest_process::procfs::stat(pid) {
+            Ok(Asked::Answered(stat)) => stat,
+            Ok(Asked::Gone) => return Start::Absent,
             Err(_unreadable) => return Start::Unread,
         };
         match stat
@@ -95,6 +97,27 @@ mod started {
         match std::fs::read_to_string("/proc/sys/kernel/random/boot_id") {
             Ok(id) => Some(id.trim().to_owned()),
             Err(_unreadable) => None,
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::Start;
+
+        #[test]
+        fn a_reaped_holder_is_absent_rather_than_unread_and_this_process_runs() {
+            let mut ended =
+                njutest_process::GroupChild::start(&mut std::process::Command::new("true"))
+                    .expect("true starts");
+            let pid = ended.id().expect("the unreaped leader");
+            ended.wait().expect("true is reaped");
+            assert_eq!(
+                super::start_of(pid),
+                Start::Absent,
+                "a holder that has been reaped no longer runs, which is no unread start"
+            );
+            let own = super::start_of(std::process::id());
+            assert!(matches!(own, Start::Running(_)), "{own:?}");
         }
     }
 }

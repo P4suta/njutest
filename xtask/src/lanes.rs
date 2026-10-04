@@ -1271,9 +1271,9 @@ pub fn session(pid: u32) -> Option<u32> {
 /// When the process `pid` started, as the operating system spells it, so a recycled pid is not taken for the process that had it.
 #[cfg(target_os = "linux")]
 fn started_at(pid: u32) -> Option<String> {
-    let stat = match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
-        Ok(stat) => stat,
-        Err(_gone) => return None,
+    let stat = match njutest_process::procfs::stat(pid) {
+        Ok(njutest_process::Asked::Answered(stat)) => stat,
+        Ok(njutest_process::Asked::Gone) | Err(_) => return None,
     };
     let after_name = stat.rsplit_once(')')?.1;
     after_name.split_whitespace().nth(19).map(str::to_owned)
@@ -1298,9 +1298,9 @@ const fn started_at(_pid: u32) -> Option<String> {
 /// When the process `pid` started, and whether it runs at all, telling a process that is gone from one that could not be read.
 #[cfg(target_os = "linux")]
 fn start_of(pid: u32) -> Start {
-    let stat = match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
-        Ok(stat) => stat,
-        Err(gone) if gone.kind() == std::io::ErrorKind::NotFound => return Start::Absent,
+    let stat = match njutest_process::procfs::stat(pid) {
+        Ok(njutest_process::Asked::Answered(stat)) => stat,
+        Ok(njutest_process::Asked::Gone) => return Start::Absent,
         Err(_unreadable) => return Start::Unread,
     };
     let Some((_, after)) = stat.rsplit_once(')') else {

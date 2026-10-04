@@ -39,39 +39,6 @@ impl RunningChild {
     }
 }
 
-/// Every observable process on Linux whose process group is `group`; other POSIX kernels expose no `/proc` assertion surface here.
-fn in_group(group: u32) -> Option<Vec<u32>> {
-    let mut found = Vec::new();
-    let Ok(entries) = std::fs::read_dir("/proc") else {
-        return None;
-    };
-    for entry in entries.map(|entry| entry.expect("read a /proc entry")) {
-        let name = njutest_devkit::paths::owned_utf8(entry.file_name());
-        let Ok(pid) = name.parse::<u32>() else {
-            continue;
-        };
-        let Ok(stat) = std::fs::read_to_string(entry.path().join("stat")) else {
-            continue;
-        };
-        let Some(after) = stat.rsplit_once(american_parenthesis()) else {
-            continue;
-        };
-        let fields: Vec<&str> = after.1.split_whitespace().collect();
-        let parsed_group = fields.get(2).and_then(|value| match value.parse::<u32>() {
-            Ok(group) => Some(group),
-            Err(_) => None,
-        });
-        if parsed_group == Some(group) && fields.first() != Some(&"Z") {
-            found.push(pid);
-        }
-    }
-    Some(found)
-}
-
-const fn american_parenthesis() -> char {
-    ')'
-}
-
 fn await_marker_or_child_exit(
     child: &RunningChild,
     observed: &ReadyPath,
@@ -269,7 +236,9 @@ fn a_run_that_is_interrupted_exits_130_and_releases_its_snapshot() {
 
     what_it_established(&root);
 
-    if let Some(stragglers) = in_group(pid) {
+    if let Some(stragglers) =
+        njutest_devkit::process::in_group(pid).expect("the processes of the run's group")
+    {
         assert!(
             stragglers.is_empty(),
             "the run left observable members {stragglers:?} in its inherited process group"
@@ -358,7 +327,9 @@ fn ctrl_c_during_a_compilation_exits_130_and_writes_no_rejection() {
         "a run that never got a session establishes nothing and writes nothing"
     );
 
-    if let Some(stragglers) = in_group(pid) {
+    if let Some(stragglers) =
+        njutest_devkit::process::in_group(pid).expect("the processes of the run's group")
+    {
         assert!(
             stragglers.is_empty(),
             "the run left observable members {stragglers:?} in its inherited process group"

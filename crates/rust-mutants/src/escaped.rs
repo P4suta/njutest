@@ -5,6 +5,9 @@
 
 use std::path::{Path, PathBuf};
 
+#[cfg(target_os = "linux")]
+use njutest_process::{Asked, procfs};
+
 /// Every process other than this one working under one of `dirs`, which only a process the run started does once its executions have ended.
 ///
 /// # Errors
@@ -102,25 +105,22 @@ fn roots(dirs: &[&Path]) -> std::io::Result<Vec<PathBuf>> {
 /// Every process of this user beside the directory it works in, as `/proc` says.
 #[cfg(target_os = "linux")]
 fn working_directories() -> std::io::Result<Vec<(u32, PathBuf)>> {
-    use std::os::unix::fs::MetadataExt as _;
-
-    let own_start = start_ticks(Path::new("/proc/self"))?;
-    let mut found = Vec::new();
-    for listed in std::fs::read_dir("/proc")? {
-        let listed = listed?;
-        let Some(Ok(pid)) = listed.file_name().to_str().map(str::parse::<u32>) else {
-            continue;
-        };
-        let metadata = match listed.metadata() {
-            Ok(metadata) => metadata,
-            Err(source) if source.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(source) => return Err(source),
-        };
-        if metadata.uid() != rustix::process::getuid().as_raw() {
-            continue;
+    let own_start = match start_ticks(std::process::id())? {
+        Asked::Answered(started) => started,
+        Asked::Gone => {
+            return Err(std::io::Error::other(
+                "the process reading the process table is not in it",
+            ));
         }
-        match std::fs::read_link(listed.path().join("cwd")) {
-            Ok(cwd) => {
+    };
+    let mut found = Vec::new();
+    for pid in procfs::processes()? {
+        match procfs::owner(pid)? {
+            Asked::Answered(owner) if owner == rustix::process::getuid().as_raw() => {}
+            Asked::Answered(_) | Asked::Gone => continue,
+        }
+        match procfs::working_directory(pid) {
+            Ok(Asked::Answered(cwd)) => {
                 use std::os::unix::ffi::OsStrExt as _;
                 let cwd = match cwd.as_os_str().as_bytes().strip_suffix(b" (deleted)") {
                     Some(original) => PathBuf::from(std::ffi::OsStr::from_bytes(original)),
@@ -128,17 +128,9 @@ fn working_directories() -> std::io::Result<Vec<(u32, PathBuf)>> {
                 };
                 found.push((pid, cwd));
             }
-            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+            Ok(Asked::Gone) => {}
             Err(source) if source.kind() == std::io::ErrorKind::PermissionDenied => {
-                match start_ticks(&listed.path()) {
-                    Ok(started) => {
-                        if started >= own_start {
-                            return Err(source);
-                        }
-                    }
-                    Err(gone) if gone.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(unreadable) => return Err(unreadable),
-                }
+                refused(source, start_ticks(pid)?, own_start)?;
             }
             Err(source) => return Err(source),
         }
@@ -146,11 +138,22 @@ fn working_directories() -> std::io::Result<Vec<(u32, PathBuf)>> {
     Ok(found)
 }
 
-/// When `/proc` says the process started, in clock ticks since boot: one started before this process cannot be a producer any run of it started.
+/// What a process whose working directory `/proc` refused comes to: nothing where it has gone or started before this process, which no run of it started, and the refusal otherwise.
 #[cfg(target_os = "linux")]
-fn start_ticks(process: &Path) -> std::io::Result<u64> {
-    let stat = std::fs::read_to_string(process.join("stat"))?;
-    start_ticks_of(&stat)
+fn refused(source: std::io::Error, started: Asked<u64>, own_start: u64) -> std::io::Result<()> {
+    match started {
+        Asked::Answered(started) if started >= own_start => Err(source),
+        Asked::Answered(_) | Asked::Gone => Ok(()),
+    }
+}
+
+/// When `/proc` says the process `pid` started, in clock ticks since boot: one started before this process cannot be a producer any run of it started.
+#[cfg(target_os = "linux")]
+fn start_ticks(pid: u32) -> std::io::Result<Asked<u64>> {
+    match procfs::stat(pid)? {
+        Asked::Answered(stat) => start_ticks_of(&stat).map(Asked::Answered),
+        Asked::Gone => Ok(Asked::Gone),
+    }
 }
 
 /// The start time field of one `/proc/<pid>/stat` line, read after the command name, which may itself hold spaces and parentheses.
@@ -225,6 +228,8 @@ pub fn stop(pid: u32) -> std::io::Result<()> {
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
+    use njutest_process::Asked;
+
     #[test]
     fn a_start_time_is_read_after_a_command_name_holding_spaces_and_parentheses() {
         let stat = "4242 (a (b) c) S 1 4242 4242 0 -1 4194560 100 0 0 0 1 2 0 0 20 0 1 0 987654 1000 10 18446744073709551615";
@@ -236,14 +241,44 @@ mod tests {
 
     #[test]
     fn this_process_did_not_start_before_itself_and_its_parent_did() {
-        let own = super::start_ticks(std::path::Path::new("/proc/self")).expect("this process");
-        let parent = super::start_ticks(
-            &std::path::Path::new("/proc").join(std::os::unix::process::parent_id().to_string()),
-        )
-        .expect("the parent process");
-        assert!(
-            parent <= own,
-            "the parent started at {parent}, after this process at {own}"
+        let own = super::start_ticks(std::process::id()).expect("this process");
+        let parent =
+            super::start_ticks(std::os::unix::process::parent_id()).expect("the parent process");
+        match (parent, own) {
+            (Asked::Answered(parent), Asked::Answered(own)) => assert!(
+                parent <= own,
+                "the parent started at {parent}, after this process at {own}"
+            ),
+            answered => panic!("this process and its parent both run: {answered:?}"),
+        }
+    }
+
+    #[test]
+    fn a_reaped_process_has_gone_rather_than_failed_to_say_when_it_started() {
+        let mut ended = njutest_process::GroupChild::start(&mut std::process::Command::new("true"))
+            .expect("true starts");
+        let pid = ended.id().expect("the unreaped leader");
+        ended.wait().expect("true is reaped");
+        assert_eq!(
+            super::start_ticks(pid).expect("a reaped process is no failure"),
+            Asked::Gone
         );
+    }
+
+    #[test]
+    fn a_refused_directory_is_refused_only_for_a_process_that_started_with_or_after_this_one() {
+        let refusal = || std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        for (started, refused) in [
+            (Asked::Gone, false),
+            (Asked::Answered(9), false),
+            (Asked::Answered(10), true),
+            (Asked::Answered(11), true),
+        ] {
+            assert_eq!(
+                super::refused(refusal(), started, 10).is_err(),
+                refused,
+                "a process that started at {started:?} beside this one at 10"
+            );
+        }
     }
 }

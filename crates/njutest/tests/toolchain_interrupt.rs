@@ -19,42 +19,6 @@ use std::process::{ChildStderr, Command, Output, Stdio};
 use std::sync::mpsc::{SyncSender, sync_channel};
 use std::time::{Duration, Instant};
 
-/// Every live process on this machine whose process group is `group`.
-fn in_group(group: u32) -> Vec<u32> {
-    let mut found = Vec::new();
-    let Ok(entries) = std::fs::read_dir("/proc") else {
-        return found;
-    };
-    for entry in entries.map(|entry| entry.expect("read a /proc entry")) {
-        let Ok(pid) = entry
-            .file_name()
-            .to_str()
-            .expect("test protocol paths are UTF-8")
-            .parse::<u32>()
-        else {
-            continue;
-        };
-        let Ok(stat) = std::fs::read_to_string(entry.path().join("stat")) else {
-            continue;
-        };
-        let Some((name, after)) = stat.rsplit_once(')') else {
-            continue;
-        };
-        if name.is_empty() {
-            continue;
-        }
-        let fields: Vec<&str> = after.split_whitespace().collect();
-        let parsed_group = fields.get(2).and_then(|value| match value.parse::<u32>() {
-            Ok(group) => Some(group),
-            Err(_) => None,
-        });
-        if parsed_group == Some(group) && fields.first() != Some(&"Z") {
-            found.push(pid);
-        }
-    }
-    found
-}
-
 fn interrupted_by(signal: rustix::process::Signal, expected: i32) {
     let dir = tempfile::Builder::new()
         .prefix("njutest-interrupt-")
@@ -81,11 +45,14 @@ fn interrupted_by(signal: rustix::process::Signal, expected: i32) {
         Some(expected),
         "a run that was asked to stop says so in its exit code rather than in a crash"
     );
-    let stragglers = in_group(pid);
-    assert!(
-        stragglers.is_empty(),
-        "the run left {stragglers:?} behind in its own process group"
-    );
+    if let Some(stragglers) =
+        njutest_devkit::process::in_group(pid).expect("the processes of the run's group")
+    {
+        assert!(
+            stragglers.is_empty(),
+            "the run left {stragglers:?} behind in its own process group"
+        );
+    }
 }
 
 #[test]

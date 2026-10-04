@@ -584,7 +584,7 @@ const fn delivered(answer: rustix::io::Result<()>) -> super::Delivered {
 
 /// What the kernel answered about one process it was asked about by id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Asked<T> {
+pub enum Asked<T> {
     /// The process answered.
     Answered(T),
     /// No process by that id was left to answer, which is that process having ended.
@@ -593,7 +593,7 @@ pub(super) enum Asked<T> {
 
 impl<T> Asked<T> {
     /// What the process answered, carried through `answered`.
-    fn map<U>(self, answered: impl FnOnce(T) -> U) -> Asked<U> {
+    pub(super) fn map<U>(self, answered: impl FnOnce(T) -> U) -> Asked<U> {
         match self {
             Self::Answered(answer) => Asked::Answered(answered(answer)),
             Self::Gone => Asked::Gone,
@@ -615,35 +615,17 @@ pub(super) fn asked<T>(answer: rustix::io::Result<T>) -> io::Result<Asked<T>> {
 }
 
 /// [`asked`] for a call whose binding answers with an [`io::Error`].
-fn asked_io<T>(answer: io::Result<T>) -> io::Result<Asked<T>> {
+pub(super) fn asked_io<T>(answer: io::Result<T>) -> io::Result<Asked<T>> {
     match answer {
         Ok(answered) => Ok(Asked::Answered(answered)),
         Err(source) => refused(source),
     }
 }
 
-/// One process's `/proc/<pid>/stat` line, or gone once it is reaped, which `/proc` says as `ENOENT` before the open and as `ESRCH` after it.
+/// One process's `/proc/<pid>/stat` line, as [`super::procfs::stat`] reads it.
 #[cfg(target_os = "linux")]
 fn proc_stat(pid: Pid) -> io::Result<Asked<String>> {
-    match open_stat(pid)? {
-        Asked::Answered(opened) => read_stat(opened),
-        Asked::Gone => Ok(Asked::Gone),
-    }
-}
-
-/// Opens one process's `/proc/<pid>/stat`.
-#[cfg(target_os = "linux")]
-fn open_stat(pid: Pid) -> io::Result<Asked<std::fs::File>> {
-    match std::fs::File::open(format!("/proc/{}/stat", pid.as_raw_nonzero())) {
-        Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(Asked::Gone),
-        opened => asked_io(opened),
-    }
-}
-
-/// Reads an opened `/proc/<pid>/stat`.
-#[cfg(target_os = "linux")]
-fn read_stat(opened: std::fs::File) -> io::Result<Asked<String>> {
-    asked_io(io::read_to_string(opened))
+    super::procfs::stat(u32::try_from(pid.as_raw_nonzero().get()).map_err(io::Error::other)?)
 }
 
 /// Whether `pid` is still in the group `leader` leads and in `session`, or gone once it has ended.
@@ -1001,19 +983,12 @@ fn session_of(pid: Pid) -> io::Result<Option<Pid>> {
 #[cfg(target_os = "linux")]
 fn native_pids() -> io::Result<Vec<Pid>> {
     let mut pids = Vec::new();
-    for entry in std::fs::read_dir("/proc")? {
-        let entry = entry?;
-        let filename = entry.file_name();
-        let name = filename.to_str().ok_or_else(|| {
-            io::Error::other("the native process inventory contains a non-text entry")
+    for listed in super::procfs::processes()? {
+        let raw = i32::try_from(listed).map_err(io::Error::other)?;
+        let pid = Pid::from_raw(raw).ok_or_else(|| {
+            io::Error::other("the native process inventory contains an invalid numeric PID")
         })?;
-        if !name.is_empty() && name.bytes().all(|byte| byte.is_ascii_digit()) {
-            let raw = name.parse::<i32>().map_err(io::Error::other)?;
-            let pid = Pid::from_raw(raw).ok_or_else(|| {
-                io::Error::other("the native process inventory contains an invalid numeric PID")
-            })?;
-            pids.push(pid);
-        }
+        pids.push(pid);
     }
     Ok(pids)
 }
@@ -1227,30 +1202,6 @@ mod tests {
         let pid = pid_of(ended.id().expect("the unreaped leader"));
         ended.wait().expect("true is reaped");
         pid
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn a_process_reaped_between_the_open_and_the_read_of_its_stat_is_gone() {
-        let mut ended =
-            crate::GroupChild::start(&mut std::process::Command::new("true")).expect("true starts");
-        let pid = pid_of(ended.id().expect("the unreaped leader"));
-        assert!(
-            ended
-                .completion()
-                .wait(None)
-                .expect("the leader's exit event"),
-            "the leader has exited and waits to be reaped"
-        );
-        let opened = match super::open_stat(pid).expect("an exited process keeps its stat") {
-            super::Asked::Answered(opened) => opened,
-            super::Asked::Gone => panic!("a process not yet reaped is still listed"),
-        };
-        ended.wait().expect("the leader is reaped");
-        assert_eq!(
-            super::read_stat(opened).expect("a process reaped under an open stat has gone"),
-            super::Asked::Gone
-        );
     }
 
     #[test]
