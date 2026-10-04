@@ -7,7 +7,7 @@
 )]
 
 use std::fmt::Write as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use njutest_devkit::fixture::Fixture;
@@ -88,23 +88,71 @@ enum Case {
     Unmatched,
 }
 
-fn listing(repository: &Path, workspace: &Path, temporary: &Path, flags: &[&str]) -> (i32, String) {
-    let output = Command::new(njutest_devkit::paths::cargo_binary())
+struct SuiteBuild {
+    engine: PathBuf,
+    compiled: usize,
+}
+
+fn suite_build(repository: &Path) -> SuiteBuild {
+    let mut command = Command::new(njutest_devkit::paths::cargo_binary());
+    command
         .args([
-            "run",
+            "test",
+            "--no-run",
             "--offline",
             "--locked",
-            "--quiet",
-            "--package",
-            "rust-mutants-cli",
-            "--bin",
-            "rust-mutants",
-            "--",
-            "list",
-            "--offline",
-            "--locked",
-            "--root",
+            "--workspace",
+            "--all-targets",
+            "--all-features",
+            "--message-format",
+            "json-render-diagnostics",
         ])
+        .current_dir(repository);
+    let output = njutest_devkit::cost::cargo(command, "the claims oracle's suite build")
+        .expect("the suite's build starts");
+    assert!(
+        output.status.success(),
+        "the suite's build completes: {}",
+        output.stderr.escape_ascii()
+    );
+    let text = String::from_utf8(output.stdout).expect("cargo prints UTF-8");
+    let mut engines = Vec::new();
+    let mut compiled = 0_usize;
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        let message = xtask::strictjson::from_str(line).expect("cargo prints JSON messages");
+        if message.get("reason").and_then(serde_json::Value::as_str) != Some("compiler-artifact") {
+            continue;
+        }
+        let artifact: cargo_metadata::Artifact =
+            serde_json::from_value(message).expect("a compiler artifact message");
+        if !artifact.fresh {
+            compiled = compiled.checked_add(1).expect("the unit count fits");
+        }
+        if artifact.target.name == "rust-mutants"
+            && artifact.target.is_bin()
+            && !artifact.profile.test
+            && let Some(executable) = artifact.executable
+        {
+            engines.push(executable.into_std_path_buf());
+        }
+    }
+    let engine = engines.pop().expect("the suite's build makes the engine");
+    assert!(engines.is_empty(), "the suite's build makes one engine");
+    SuiteBuild { engine, compiled }
+}
+
+fn engine(repository: &Path) -> PathBuf {
+    suite_build(repository).engine
+}
+
+fn listing(
+    (engine, repository): (&Path, &Path),
+    workspace: &Path,
+    temporary: &Path,
+    flags: &[&str],
+) -> (i32, String) {
+    let output = Command::new(engine)
+        .args(["list", "--offline", "--locked", "--root"])
         .arg(workspace)
         .arg("--cargo")
         .arg(njutest_devkit::paths::cargo_binary())
@@ -113,13 +161,14 @@ fn listing(repository: &Path, workspace: &Path, temporary: &Path, flags: &[&str]
         .env_clear()
         .envs(njutest_devkit::paths::environment_for_a_run())
         .envs(njutest_devkit::paths::temporary_directory(temporary))
+        .env("LLVM_PROFILE_FILE", njutest_devkit::paths::NULL_DEVICE)
         .output()
         .expect("the real command starts");
     let code = output.status.code().expect("the real command exits");
     assert!(
         code == 0 || code == 1,
-        "the real command ended {code}: {:?}",
-        output.stderr
+        "the real command ended {code}: {}",
+        output.stderr.escape_ascii()
     );
     (
         code,
@@ -159,12 +208,12 @@ fn claims(workspace: &Path) -> Vec<Claim> {
 }
 
 fn candidates(
-    repository: &Path,
+    engine: (&Path, &Path),
     workspace: &Path,
     temporary: &Path,
     flags: &[&str],
 ) -> Vec<Candidate> {
-    let (code, text) = listing(repository, workspace, temporary, flags);
+    let (code, text) = listing(engine, workspace, temporary, flags);
     assert_eq!(code, 0, "candidate listing completes: {text}");
     let document: CandidatesDocument =
         xtask::strictjson::decode_str(&text).expect("candidate JSON parses");
@@ -352,13 +401,45 @@ fn claim_text(case: Case) -> String {
 }
 
 #[test]
+fn the_engine_the_oracle_runs_is_the_one_the_suite_built_and_leaves_that_build_current() {
+    let repository = xtask::gates::workspace_root();
+    let established = suite_build(&repository);
+    let built_by_the_suite = njutest_devkit::reproducible::digest(&established.engine);
+    let engine = engine(&repository);
+    assert_eq!(
+        njutest_devkit::reproducible::digest(&established.engine),
+        built_by_the_suite,
+        "the oracle built the engine again under an environment of its own and put that build \
+         where the suite's engine was, so it ran a binary the suite never built and every test \
+         after it runs that one too"
+    );
+    assert_eq!(engine, established.engine);
+    let after = suite_build(&repository);
+    assert_eq!(
+        after.compiled, 0,
+        "the suite's own build is no longer current after the oracle took its engine"
+    );
+}
+
+#[test]
 fn repository_claims_are_rederived_from_source_and_candidate_json() {
     let repository = xtask::gates::workspace_root();
     let temporary = tempfile::tempdir().expect("an owned temporary directory for the oracle");
     let claims = claims(&repository);
     assert!(!claims.is_empty(), "the repository has claims to check");
-    let current = candidates(&repository, &repository, temporary.path(), &["--json"]);
-    let (code, report) = listing(&repository, &repository, temporary.path(), &["--claims"]);
+    let engine = engine(&repository);
+    let current = candidates(
+        (&engine, &repository),
+        &repository,
+        temporary.path(),
+        &["--json"],
+    );
+    let (code, report) = listing(
+        (&engine, &repository),
+        &repository,
+        temporary.path(),
+        &["--claims"],
+    );
     assert_eq!(code, 0, "repository claims are accepted: {report}");
     let predicted = check_rows(&repository, &claims, (&current, &[]), &report);
     assert!(
@@ -391,13 +472,19 @@ fn every_claim_resolution_is_observed_across_real_build_inputs() {
         "pub fn is_even(n: i32) -> bool { n % 2 == 0 }\n",
     )
     .expect("fixture source writes");
+    let engine = engine(&repository);
     let enabled = candidates(
-        &repository,
+        (&engine, &repository),
         fixture.root(),
         fixture.temp(),
         &["--json", "--features", "dormant"],
     );
-    let disabled = candidates(&repository, fixture.root(), fixture.temp(), &["--json"]);
+    let disabled = candidates(
+        (&engine, &repository),
+        fixture.root(),
+        fixture.temp(),
+        &["--json"],
+    );
     for case in Case::ALL {
         std::fs::write(fixture.root().join(".rust-mutants.toml"), claim_text(case))
             .expect("fixture claim writes");
@@ -415,7 +502,12 @@ fn every_claim_resolution_is_observed_across_real_build_inputs() {
         if case != Case::Uncompiled {
             flags.extend(["--features", "dormant"]);
         }
-        let (code, report) = listing(&repository, fixture.root(), fixture.temp(), &flags);
+        let (code, report) = listing(
+            (&engine, &repository),
+            fixture.root(),
+            fixture.temp(),
+            &flags,
+        );
         let expected_code = match case {
             Case::Names | Case::Uncompiled => 0,
             Case::Moved | Case::Unmatched => 1,
