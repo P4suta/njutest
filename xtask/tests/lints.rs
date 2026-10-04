@@ -2658,6 +2658,41 @@ fn a_shell_compiled_only_for_unix_or_only_compared_against_is_not_a_bare_one() {
 }
 
 #[test]
+fn only_the_process_crate_reads_the_process_table_and_the_kernel_settings_name_no_process() {
+    let reads = |file: &str, source: &str| {
+        scan_source(file, source)
+            .expect("the source parses")
+            .into_iter()
+            .any(|finding| finding.kind == Kind::RawProcfs)
+    };
+    let census =
+        "fn listed() -> std::io::Result<std::fs::ReadDir> { std::fs::read_dir(\"/proc\") }";
+    assert!(
+        reads("crates/rust-mutants/src/escaped.rs", census),
+        "a census outside the process crate decides again what a process reaped mid-read means"
+    );
+    assert!(
+        !reads("crates/njutest-process/src/procfs.rs", census),
+        "the process crate is where the race is read once for everybody"
+    );
+    for passing in [
+        "fn boot() -> std::io::Result<String> { std::fs::read_to_string(\"/proc/sys/kernel/random/boot_id\") }",
+        "fn settings() -> &'static str { \"/proc/sys\" }",
+        "fn other() -> &'static str { \"/process\" }",
+        "fn relative() -> &'static str { \"proc/1/stat\" }",
+        "fn module() -> &'static str { \"src/proc.rs\" }",
+        "/// Reads what `/proc/<pid>/stat` says.\nfn documented() {}",
+        "fn said() -> String { format!(\"{} has gone from /proc\", 42) }",
+    ] {
+        assert!(
+            !reads("crates/app/src/lib.rs", passing),
+            "the kernel settings, another root directory, a relative path and prose name no \
+             process: {passing}"
+        );
+    }
+}
+
+#[test]
 fn text_read_by_the_reader_or_for_a_test_or_as_no_rust_is_no_raw_lexing() {
     let found = |path: &str, source: &str| -> Vec<Kind> {
         scan_source(path, source)

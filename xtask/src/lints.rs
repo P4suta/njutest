@@ -15,6 +15,7 @@ mod cache_directories;
 mod compiler_diagnostics;
 mod ffi;
 mod git_doors;
+mod procfs;
 mod raw_buffers;
 mod sensitive_names;
 mod signals;
@@ -349,6 +350,7 @@ declare_kinds! {
     RawProcessEnd => "raw-process-end",
     DefaultedAbsence => "defaulted-absence",
     RawGit => "raw-git",
+    RawProcfs => "raw-procfs",
 }
 
 impl Kind {
@@ -396,6 +398,7 @@ impl Kind {
             Self::RawBufferPointer => raw_buffers::REMEDY,
             Self::SensitiveName => sensitive_names::REMEDY,
             Self::RawGit => RAW_GIT_REMEDY,
+            Self::RawProcfs => procfs::REMEDY,
             Self::UnownedSpawn => UNOWNED_SPAWN_REMEDY,
             Self::RawGroupSignal => RAW_GROUP_SIGNAL_REMEDY,
             Self::UnboundedChannel => UNBOUNDED_CHANNEL_REMEDY,
@@ -710,6 +713,9 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
     }
     if git_doors::held(file) {
         scan.found.extend(git_doors::found(&parsed, file));
+    }
+    if procfs::held(file) {
+        scan.found.extend(procfs::found(&parsed, file));
     }
     scan.found.extend(implied_cfgs(&parsed, file));
     if file != SHELL_FINDER {
