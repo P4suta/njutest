@@ -42,6 +42,12 @@ threads-required = "num-cpus"
 filter = 'binary(=suite) & test(/^depth::(a_chain_exactly_as_long_as_a_reading_holds_is_read_and_one_longer_is_refused|the_costliest_shapes_read_at_both_bounds_at_once)$/)'
 slow-timeout = { period = "60s", terminate-after = 4 }
 
+# The in-process command tests start a cargo and the toolchain's own work, about ten seconds each on this Mac.
+# A dozen of them starting at once ran each past the inner loop's minute, so they share the toolchain group's bound.
+[[profile.default.overrides]]
+filter = 'binary_id(rust-mutants-cli::suite) & test(/^(commands_in_process|commands_lines|doctor_checks)::/)'
+test-group = "toolchain"
+
 # The inner loop starts no toolchain, so a test there taking a minute is
 # already a test that has stopped answering.
 [[profile.default.overrides]]
