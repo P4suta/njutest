@@ -289,9 +289,10 @@ fn products(
     (host, harness_args): (&str, &[String]),
 ) -> Result<NativeDoctestProducts, CargoError> {
     if prepared.observation().identity().complete_key().is_none() {
-        return Err(refused(io::Error::other(
-            "native doctest input identity is incomplete",
-        )));
+        return Err(refused(io::Error::other(format!(
+            "native doctest input identity is incomplete: {}",
+            prepared.observation().identity().detail()
+        ))));
     }
     let files = inventory(prepared.directory()).map_err(refused)?;
     let held = Held::read(prepared.directory()).map_err(refused)?;

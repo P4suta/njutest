@@ -281,7 +281,10 @@ pub(super) fn inputs(
     let root = toolchain
         .sysroot()
         .ok_or_else(|| io::Error::other("unbound compiler sysroot"))?;
-    observation_environment((Some(root), toolchain.rustc()), env)?;
+    check_environment(env, |name, value| {
+        known_compiler((Some(root), toolchain.rustc()), name, value)
+            || super::loaders::search_variables().contains(&name)
+    })?;
     let loaders = super::loaders::Inputs::compiler(env, cwd, toolchain.identities())?;
     environment(root, toolchain.rustc(), env, &loaders)?;
     for path in [toolchain.cargo(), toolchain.rustc()] {

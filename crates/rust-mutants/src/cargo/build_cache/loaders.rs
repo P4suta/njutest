@@ -139,7 +139,8 @@ impl Inputs {
     }
 }
 
-const fn search_variables() -> &'static [&'static str] {
+/// The variables this platform's dynamic loader searches libraries by, which the loader inputs bind rather than refuse.
+pub(super) const fn search_variables() -> &'static [&'static str] {
     if cfg!(target_os = "linux") {
         &["LD_LIBRARY_PATH"]
     } else if cfg!(target_os = "macos") {
