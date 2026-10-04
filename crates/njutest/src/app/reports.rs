@@ -1437,7 +1437,7 @@ pub const DOCUMENT_NAME: &str = "njutest-assurance-report-v1.json";
 /// The published schema, copied in beside the document it describes.
 pub const SCHEMA_NAME: &str = "njutest-assurance-report-v1.schema.json";
 
-const SCHEMA_TEXT: &str = include_str!("../../../../schema/njutest-assurance-report-v1.json");
+const SCHEMA_TEXT: &str = include_str!("../../schema/njutest-assurance-report-v1.json");
 
 /// The page a person opens.
 pub const HTML_NAME: &str = "njutest-assurance-report-v1.html";

@@ -1033,3 +1033,15 @@ fn the_marks_the_contract_says_a_guard_draws_are_the_ones_it_draws() {
         "the contract names the mark of a file no run has asked about as it is now"
     );
 }
+
+#[test]
+fn the_schema_the_crate_embeds_is_the_one_the_repository_publishes() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    assert_eq!(
+        std::fs::read(root.join("schema/njutest-assurance-report-v1.json"))
+            .expect("the schema the crate embeds and ships"),
+        std::fs::read(root.join("../../schema/njutest-assurance-report-v1.json"))
+            .expect("the schema the repository publishes"),
+        "the copy the crate ships differs from the schema the repository publishes"
+    );
+}
