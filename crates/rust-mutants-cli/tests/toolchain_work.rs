@@ -263,7 +263,7 @@ fn a_second_run_of_a_tree_nothing_changed_measures_nothing_again() {
                 .chain(["--jobs", "1", "--ui", "quiet", "--trace"])
                 .chain(["--root", root.as_str()])
                 .map(OsString::from),
-            &environment(fixture),
+            &alone(fixture),
             &Cancel::new(),
             Streams {
                 out: &mut out,
@@ -327,7 +327,7 @@ fn a_tree_that_changed_is_measured_again_rather_than_remembered() {
                 .chain(["--jobs", "1", "--ui", "quiet", "--trace"])
                 .chain(["--root", root.as_str()])
                 .map(OsString::from),
-            &environment(fixture),
+            &alone(fixture),
             &Cancel::new(),
             Streams {
                 out: &mut out,
@@ -376,6 +376,15 @@ fn a_tree_that_changed_is_measured_again_rather_than_remembered() {
         "a measurement is only the same measurement while the tree is the same tree; this one \
          changed and was remembered anyway"
     );
+}
+
+/// The environment of a run whose fixture build pool no other test claims, so each run of one tree takes the slot the run before it released rather than whichever slot another test left free.
+fn alone(fixture: &Fixture) -> Environment {
+    let mut environment = environment(fixture);
+    environment
+        .vars
+        .set("NJUTEST_FIXTURE_BUILD_CACHE", fixture.temp().join("builds"));
+    environment
 }
 
 fn environment(fixture: &Fixture) -> Environment {
