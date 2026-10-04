@@ -44,9 +44,11 @@ slow-timeout = { period = "60s", terminate-after = 4 }
 
 # The in-process command tests start a cargo and the toolchain's own work, about ten seconds each on this Mac.
 # A dozen of them starting at once ran each past the inner loop's minute, so they share the toolchain group's bound.
+# Four of them at once, at the end of the pre-push suite, still each ran past the minute, so they keep a budget sized to the toolchain's work.
 [[profile.default.overrides]]
 filter = 'binary_id(rust-mutants-cli::suite) & test(/^(commands_in_process|commands_lines|doctor_checks)::/)'
 test-group = "toolchain"
+slow-timeout = { period = "60s", terminate-after = 4 }
 
 # Four observation tests locate a real toolchain in a fresh publication root, so each identifies the whole sysroot cold: 1.4 GB in 4,083 files on this Mac.
 # One takes 25s alone; the four at once took 41-45s each, and one ran past the inner loop's minute in the pre-push suite.
