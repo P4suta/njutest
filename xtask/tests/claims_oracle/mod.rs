@@ -13,6 +13,8 @@ use std::process::Command;
 use njutest_devkit::fixture::Fixture;
 use serde::Deserialize;
 
+use super::suite_build;
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Claim {
@@ -86,59 +88,6 @@ enum Case {
     Moved,
     Uncompiled,
     Unmatched,
-}
-
-struct SuiteBuild {
-    engine: PathBuf,
-    compiled: usize,
-}
-
-fn suite_build(repository: &Path) -> SuiteBuild {
-    let mut command = Command::new(njutest_devkit::paths::cargo_binary());
-    command
-        .args([
-            "test",
-            "--no-run",
-            "--offline",
-            "--locked",
-            "--workspace",
-            "--all-targets",
-            "--all-features",
-            "--message-format",
-            "json-render-diagnostics",
-        ])
-        .current_dir(repository);
-    let output = njutest_devkit::cost::cargo(command, "the claims oracle's suite build")
-        .expect("the suite's build starts");
-    assert!(
-        output.status.success(),
-        "the suite's build completes: {}",
-        output.stderr.escape_ascii()
-    );
-    let text = String::from_utf8(output.stdout).expect("cargo prints UTF-8");
-    let mut engines = Vec::new();
-    let mut compiled = 0_usize;
-    for line in text.lines().filter(|line| !line.trim().is_empty()) {
-        let message = xtask::strictjson::from_str(line).expect("cargo prints JSON messages");
-        if message.get("reason").and_then(serde_json::Value::as_str) != Some("compiler-artifact") {
-            continue;
-        }
-        let artifact: cargo_metadata::Artifact =
-            serde_json::from_value(message).expect("a compiler artifact message");
-        if !artifact.fresh {
-            compiled = compiled.checked_add(1).expect("the unit count fits");
-        }
-        if artifact.target.name == "rust-mutants"
-            && artifact.target.is_bin()
-            && !artifact.profile.test
-            && let Some(executable) = artifact.executable
-        {
-            engines.push(executable.into_std_path_buf());
-        }
-    }
-    let engine = engines.pop().expect("the suite's build makes the engine");
-    assert!(engines.is_empty(), "the suite's build makes one engine");
-    SuiteBuild { engine, compiled }
 }
 
 fn engine(repository: &Path) -> PathBuf {

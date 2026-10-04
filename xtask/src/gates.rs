@@ -74,7 +74,11 @@ pub(crate) enum RepositoryGate {
 }
 
 impl RepositoryGate {
-    pub(crate) fn run(self, root: &Path) -> Result<String, GateError> {
+    pub(crate) fn run(
+        self,
+        root: &Path,
+        engine: &crate::claims::Engine<'_>,
+    ) -> Result<String, GateError> {
         match self {
             Self::Devgates => devgates(root),
             Self::Lints => lints(root),
@@ -90,7 +94,7 @@ impl RepositoryGate {
             Self::Waivers => waivers(root),
             Self::Tracked => tracked(root),
             Self::Skipped => skipped(root),
-            Self::Claims => crate::claims::claims(root),
+            Self::Claims => crate::claims::claims(root, engine),
             Self::Originals => originals(root),
         }
     }
@@ -2530,14 +2534,14 @@ fn held_number(relative: &str, text: &str) -> Result<usize, GateError> {
     })
 }
 
-/// Every gate, in order, stopping at the first failure.
+/// Every gate, in order, stopping at the first failure, the claims gate asking `engine`.
 ///
 /// # Errors
 /// Returns the first gate's failure.
-pub fn all(root: &Path) -> Result<String, GateError> {
+pub fn all(root: &Path, engine: &crate::claims::Engine<'_>) -> Result<String, GateError> {
     let mut report = String::new();
     for gate in RepositoryGate::ALL {
-        line(&mut report, format_args!("{}", gate.run(root)?));
+        line(&mut report, format_args!("{}", gate.run(root, engine)?));
     }
     Ok(report.trim_end().to_owned())
 }

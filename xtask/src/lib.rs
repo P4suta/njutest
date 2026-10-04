@@ -299,9 +299,15 @@ where
         );
     }
     let root = gates::workspace_root();
+    let engine = claims::Engine {
+        cargo: process.cargo,
+        build: &claims::SHIPPED,
+        environment: process.environment,
+        running: process.executable,
+    };
     let outcome = match cli.task {
-        Task::Repository(gate) => gate.run(&root),
-        Task::All => gates::all(&root),
+        Task::Repository(gate) => gate.run(&root, &engine),
+        Task::All => gates::all(&root, &engine),
         Task::Slot { lane, command } => return slot(&lane, &command, process, stderr),
         Task::PrePush => return pre_push(process, &mut *streams.input, stderr),
         Task::Tidy { command } => return tidy(&command, process, stderr),

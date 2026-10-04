@@ -3,9 +3,109 @@
 
 //! Every claim the repository's configuration makes names what it says, asked of the engine's own locator on every push.
 
-use std::path::Path;
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
 
+use crate::environment::Environment;
 use crate::gates::GateError;
+
+/// The build of the engine a release ships, which `cargo xtask` asks.
+pub const SHIPPED: [&str; 5] = [
+    "build",
+    "--package",
+    "rust-mutants-cli",
+    "--bin",
+    "rust-mutants",
+];
+
+/// The engine the gate asks: built once by `cargo` with `build`, and started directly with no loader search entry under the build output of the program running the gate.
+#[derive(Debug, Clone, Copy)]
+pub struct Engine<'a> {
+    /// The cargo that builds it.
+    pub cargo: &'a OsStr,
+    /// The cargo subcommand and selection whose build makes exactly one engine executable.
+    pub build: &'a [&'a str],
+    /// The environment the gate was started with.
+    pub environment: &'a Environment,
+    /// The program running the gate, whose build output a harness puts on the loader's search path.
+    pub running: &'a Path,
+}
+
+/// The environment cargo and the engine start in: the gate's own, less every loader search entry under the build output of the program running it.
+fn started_in(engine: &Engine<'_>) -> Environment {
+    match engine.running.parent().and_then(Path::parent) {
+        Some(output) => engine.environment.without_output(output),
+        None => engine.environment.clone(),
+    }
+}
+
+/// The one engine executable `engine.build` makes in `repository`, built under `environment`.
+fn built(
+    engine: &Engine<'_>,
+    repository: &Path,
+    environment: &Environment,
+) -> Result<PathBuf, GateError> {
+    let asked = std::process::Command::new(engine.cargo)
+        .args(engine.build)
+        .args(["--locked", "--message-format", "json-render-diagnostics"])
+        .current_dir(repository)
+        .env_clear()
+        .envs(environment.pairs())
+        .output()
+        .map_err(|error| {
+            GateError(format!(
+                "claims: cargo could not start to build the engine: {error}"
+            ))
+        })?;
+    if !asked.status.success() {
+        let complaint = match String::from_utf8(asked.stderr) {
+            Ok(said) => said,
+            Err(_not_text) => "its diagnostics are not text".to_owned(),
+        };
+        return Err(GateError(format!(
+            "claims: cargo {} ended {}, so there is no engine to ask:\n{}",
+            engine.build.join(" "),
+            asked.status,
+            complaint.trim()
+        )));
+    }
+    let said = String::from_utf8(asked.stdout).map_err(|_not_text| {
+        GateError("claims: cargo printed build messages that are not text".to_owned())
+    })?;
+    let mut engines = Vec::new();
+    for line in said.lines().filter(|line| !line.trim().is_empty()) {
+        let message = crate::strictjson::from_str(line).map_err(|error| {
+            GateError(format!(
+                "claims: cargo printed a build message that is not JSON: {error}"
+            ))
+        })?;
+        if message.get("reason").and_then(serde_json::Value::as_str) != Some("compiler-artifact") {
+            continue;
+        }
+        let artifact: cargo_metadata::Artifact =
+            serde_json::from_value(message).map_err(|error| {
+                GateError(format!(
+                    "claims: cargo printed a compiler artifact it does not describe: {error}"
+                ))
+            })?;
+        if artifact.target.name == "rust-mutants"
+            && artifact.target.is_bin()
+            && !artifact.profile.test
+            && let Some(executable) = artifact.executable
+        {
+            engines.push(executable.into_std_path_buf());
+        }
+    }
+    match engines.as_slice() {
+        [executable] => Ok(executable.clone()),
+        _ => Err(GateError(format!(
+            "claims: cargo {} made {} engine executables rather than one, so which engine the \
+             gate asks would not be known: {engines:?}",
+            engine.build.join(" "),
+            engines.len()
+        ))),
+    }
+}
 
 /// The fixture the planted claims are written against.
 const FIXTURE: &str = "fixtures/fixture-simple";
@@ -57,29 +157,27 @@ fn planted((item, rule, original): (&str, &str, &str)) -> String {
     )
 }
 
-/// Asks the engine built from `repository` to resolve every claim of the workspace at `workspace`, putting every temporary artifact under `temporary`.
-fn listed(repository: &Path, workspace: &Path, temporary: &Path) -> Result<Listed, GateError> {
-    let asked = std::process::Command::new("cargo")
-        .args([
-            "run",
-            "--locked",
-            "--quiet",
-            "--package",
-            "rust-mutants-cli",
-            "--bin",
-            "rust-mutants",
-            "--",
-            "list",
-            "--offline",
-            "--locked",
-            "--claims",
-            "--root",
-        ])
+/// Asks the engine at `engine`, started from `repository` under `environment`, to resolve every claim of the workspace at `workspace`, putting every temporary artifact under `temporary`.
+fn listed(
+    (engine, environment): (&Path, &Environment),
+    repository: &Path,
+    workspace: &Path,
+    temporary: &Path,
+) -> Result<Listed, GateError> {
+    let asked = std::process::Command::new(engine)
+        .args(["list", "--offline", "--locked", "--claims", "--root"])
         .arg(workspace)
         .current_dir(repository)
+        .env_clear()
+        .envs(environment.pairs())
         .envs(super::TEMPORARY_VARIABLES.map(|name| (name, temporary)))
         .output()
-        .map_err(|error| GateError(format!("claims: cargo run could not start: {error}")))?;
+        .map_err(|error| {
+            GateError(format!(
+                "claims: the engine {} could not start: {error}",
+                engine.display()
+            ))
+        })?;
     let said = String::from_utf8(asked.stdout).map_err(|_not_text| {
         GateError("claims: rust-mutants list --claims printed bytes that are not text".to_owned())
     })?;
@@ -118,7 +216,10 @@ fn listed(repository: &Path, workspace: &Path, temporary: &Path) -> Result<Liste
 ///
 /// # Errors
 /// The planted claims are not told apart, the engine cannot be built or run, or a claim of the repository names nothing or not as many as it says.
-pub fn claims(root: &Path) -> Result<String, GateError> {
+pub fn claims(root: &Path, engine: &Engine<'_>) -> Result<String, GateError> {
+    let environment = started_in(engine);
+    let executable = built(engine, root, &environment)?;
+    let asked = (executable.as_path(), &environment);
     let scratch = tempfile::tempdir()
         .map_err(|error| GateError(format!("claims: a scratch directory: {error}")))?;
     let fixture = scratch.path().join("fixture");
@@ -134,7 +235,7 @@ pub fn claims(root: &Path) -> Result<String, GateError> {
         ),
     )
     .map_err(|error| GateError(format!("claims: {}: {error}", configuration.display())))?;
-    let control = listed(root, &fixture, scratch.path())?;
+    let control = listed(asked, root, &fixture, scratch.path())?;
     if !(control.refused
         && control.named("unmatched ", ROTTEN)
         && control.named("moved ", MOVED)
@@ -147,7 +248,7 @@ pub fn claims(root: &Path) -> Result<String, GateError> {
             control.said
         )));
     }
-    let repository = listed(root, root, scratch.path())?;
+    let repository = listed(asked, root, root, scratch.path())?;
     if repository.refused {
         return Err(GateError(format!(
             "claims: a claim of .rust-mutants.toml names nothing, not as many as it says, or a \

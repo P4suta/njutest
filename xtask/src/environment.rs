@@ -4,6 +4,15 @@
 //! The environment xtask was started with, read the way the host tells one variable's name from another.
 
 use std::ffi::{OsStr, OsString};
+use std::path::{Path, PathBuf};
+
+/// The variables a dynamic loader searches libraries by, which a harness extends with its own build output.
+const LOADER_SEARCH: [&str; 4] = [
+    "DYLD_LIBRARY_PATH",
+    "DYLD_FALLBACK_LIBRARY_PATH",
+    "LD_LIBRARY_PATH",
+    "PATH",
+];
 
 /// How a platform tells two environment variable names apart, held with the engine's `vars::Spelling` to one table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
@@ -120,5 +129,36 @@ impl Environment {
             .collect();
         kept.sort();
         kept
+    }
+
+    /// This environment as a run no harness started sees it: each loader search variable keeps its entries outside `output`, and goes when none is left.
+    #[must_use]
+    pub fn without_output(&self, output: &Path) -> Self {
+        let pairs = self
+            .pairs
+            .iter()
+            .filter_map(|(name, value)| {
+                if !LOADER_SEARCH
+                    .iter()
+                    .any(|searched| self.spelling.same(name, OsStr::new(searched)))
+                {
+                    return Some((name.clone(), value.clone()));
+                }
+                let entries: Vec<PathBuf> = std::env::split_paths(value)
+                    .filter(|entry| !entry.starts_with(output))
+                    .collect();
+                if entries.is_empty() {
+                    return None;
+                }
+                match std::env::join_paths(entries) {
+                    Ok(kept) => Some((name.clone(), kept)),
+                    Err(_unjoinable) => Some((name.clone(), value.clone())),
+                }
+            })
+            .collect();
+        Self {
+            spelling: self.spelling,
+            pairs,
+        }
     }
 }

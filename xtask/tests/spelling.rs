@@ -9,6 +9,7 @@
 )]
 
 use std::ffi::{OsStr, OsString};
+use std::path::{Path, PathBuf};
 
 use xtask::environment::{Environment, Spelling};
 
@@ -126,6 +127,57 @@ fn a_variable_is_read_by_the_rule_its_environment_is_spelled_under() {
             "{spelling:?}: what a remembered pass answers for is every variable cargo reads, by \
              the one spelling its rule gives it, so a lowercase one is neither missed nor a \
              second identity"
+        );
+    }
+}
+
+fn joined(entries: &[PathBuf]) -> String {
+    std::env::join_paths(entries)
+        .unwrap_or_else(|error| panic!("the entries join: {error}"))
+        .into_string()
+        .unwrap_or_else(|entries| panic!("the entries are text: {}", entries.display()))
+}
+
+#[test]
+fn a_loader_search_path_keeps_every_entry_outside_the_build_output_and_goes_when_none_is_left() {
+    let output = Path::new("work").join("target").join("debug");
+    let sysroot = Path::new("toolchain").join("lib");
+    let sibling = Path::new("work").join("target").join("debug-other");
+    let fallback = joined(&[output.join("deps"), output.clone(), sysroot.clone()]);
+    let library = joined(&[output.join("deps")]);
+    let search = joined(&[sibling.clone(), output.join("deps")]);
+    let target = output.display().to_string();
+    for spelling in Spelling::ALL {
+        let caseless = spelling == Spelling::AsciiCaseless;
+        let environment = spelled(
+            spelling,
+            &[
+                ("DYLD_FALLBACK_LIBRARY_PATH", &fallback),
+                ("LD_LIBRARY_PATH", &library),
+                ("Path", &search),
+                ("CARGO_TARGET_DIR", &target),
+            ],
+        );
+        let path = if caseless {
+            joined(std::slice::from_ref(&sibling))
+        } else {
+            search.clone()
+        };
+        let left = joined(std::slice::from_ref(&sysroot));
+        assert_eq!(
+            environment.without_output(&output),
+            spelled(
+                spelling,
+                &[
+                    ("DYLD_FALLBACK_LIBRARY_PATH", &left),
+                    ("Path", &path),
+                    ("CARGO_TARGET_DIR", &target),
+                ],
+            ),
+            "{spelling:?}: a program started by a harness binds every library its loader may \
+             search, and the harness's own build output is not one a user's run has, so only \
+             the entries under it go, a variable with nothing left goes whole, and `Path` is \
+             the search path only where its environment reads names without regard to case"
         );
     }
 }
