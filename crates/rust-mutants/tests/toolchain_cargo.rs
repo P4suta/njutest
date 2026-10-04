@@ -18,6 +18,7 @@ use rust_mutants::cargo::{
     CargoErrorKind, Diagnostic, Driver, LocateOptions, Message, Metadata, MetadataOptions,
     Toolchain, compile_time_inputs, emitted_of, parse_messages, resolve_executable, units_of,
 };
+use rust_mutants::id::HexDigest;
 use rust_mutants::runner::{Cancel, RunResult, Spec, Watched, run};
 use rust_mutants::trace::Recorder;
 
@@ -360,6 +361,63 @@ fn every_changed_build_input_misses_and_then_reuses_only_its_verified_result() {
         })
         .collect();
     assert_eq!(keys.len(), 10, "each complete input set has its own key");
+    let record = bound_compilation_record(&trace, options.target_dir.path());
+    assert!(record.is_err(), "multiple identities selected {record:?}");
+}
+
+/// The actual compiler publication names one canonical regular record, independently of directory order.
+fn bound_compilation_record(
+    trace: &Recorder,
+    target: &Path,
+) -> std::io::Result<(HexDigest, PathBuf)> {
+    let mut bound: Option<HexDigest> = None;
+    for event in trace.events() {
+        if let rust_mutants::trace::Payload::Note { note } = &event.payload
+            && note.kind == "build-cache-bound"
+        {
+            let key = HexDigest::try_from(note.detail.as_str())
+                .map_err(|source| std::io::Error::new(std::io::ErrorKind::InvalidData, source))?;
+            match &bound {
+                Some(previous) if previous != &key => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "the compiler trace binds more than one input identity",
+                    ));
+                }
+                Some(_same_identity) => {}
+                None => bound = Some(key),
+            }
+        }
+    }
+    let key = bound.ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "the compiler trace has no bound input identity",
+        )
+    })?;
+    let record = target
+        .join("rust-mutants-compilations")
+        .join(format!("{key}.json"));
+    if !std::fs::symlink_metadata(&record)?.file_type().is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "the named compiler cache record is not a regular file",
+        ));
+    }
+    Ok((key, record))
+}
+
+#[test]
+fn a_missing_or_invalid_compiler_binding_cannot_select_a_record() {
+    let trace = build_trace();
+    let missing = bound_compilation_record(&trace, Path::new("no compiler published here"));
+    assert!(matches!(missing, Err(source) if source.kind() == std::io::ErrorKind::NotFound));
+    trace.note(
+        "build-cache-bound",
+        "not a canonical complete input identity",
+    );
+    let invalid = bound_compilation_record(&trace, Path::new("no compiler published here"));
+    assert!(matches!(invalid, Err(source) if source.kind() == std::io::ErrorKind::InvalidData));
 }
 
 #[test]
@@ -383,15 +441,12 @@ fn missing_or_malformed_cache_records_cannot_replace_a_verified_compilation() {
         trace: &trace,
     };
     rust_mutants::cargo::compile(&driver, &options).expect("initial compilation");
-    let record = std::fs::read_dir(options.target_dir.path().join("rust-mutants-compilations"))
-        .expect("cache records")
-        .next()
-        .expect("one record")
-        .expect("the record entry")
-        .path();
+    let (identity, record) = bound_compilation_record(&trace, options.target_dir.path())
+        .expect("the actual compiler publication names its authoritative record");
     let bytes = std::fs::read(&record).expect("the complete record");
     let mut partial: serde_json::Value =
         njutest_devkit::strictjson::decode_slice(&bytes).expect("record JSON");
+    assert_eq!(partial["key"].as_str(), Some(identity.as_str()));
     partial["files"] = serde_json::json!({});
     let malformed = serde_json::to_vec(&partial).expect("incomplete record JSON");
     for payload in [None, Some(b"{".as_slice()), Some(malformed.as_slice())] {
