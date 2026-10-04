@@ -174,18 +174,23 @@ fn other_bytes_are_measured_again(
     measured.close().expect("close");
 }
 
+/// Opening options whose build pool no other test claims, so every open of the fixture's tree takes the one slot the open before it released.
+fn pooled(fixture: &Fixture, recorder: &Recorder) -> OpenOptions {
+    let mut options = OpenOptions {
+        trace: recorder.clone(),
+        ..opening(&njutest_devkit::paths::cargo_binary(), fixture.temp())
+    };
+    options
+        .env
+        .set("NJUTEST_FIXTURE_BUILD_CACHE", fixture.temp().join("builds"));
+    options
+}
+
 fn traced_prepare(fixture: &Fixture, recorder: &Recorder, options: &PrepareOptions) -> Session {
-    Workspace::open(
-        fixture.root(),
-        OpenOptions {
-            trace: recorder.clone(),
-            ..opening(&njutest_devkit::paths::cargo_binary(), fixture.temp())
-        },
-        &Cancel::new(),
-    )
-    .expect("open")
-    .prepare(options, &Cancel::new())
-    .expect("prepare")
+    Workspace::open(fixture.root(), pooled(fixture, recorder), &Cancel::new())
+        .expect("open")
+        .prepare(options, &Cancel::new())
+        .expect("prepare")
 }
 
 fn remembered(trace: &Recorder) -> bool {
@@ -393,10 +398,7 @@ fn an_exact_passing_baseline_is_reused_without_starting_its_targets_again() {
     let damaged_trace = memory_trace();
     let refused = Workspace::open(
         fixture.root(),
-        OpenOptions {
-            trace: damaged_trace.clone(),
-            ..opening(&njutest_devkit::paths::cargo_binary(), fixture.temp())
-        },
+        pooled(&fixture, &damaged_trace),
         &Cancel::new(),
     )
     .expect("open")
