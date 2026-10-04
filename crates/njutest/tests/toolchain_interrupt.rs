@@ -243,10 +243,9 @@ fn verify_in(root: &Path, extra: &[&str]) -> SupervisedChild {
     let mut args = vec!["verify", "--offline", "--locked", "--ui=plain"];
     args.extend_from_slice(extra);
     let mut command = Command::new(env!("CARGO_BIN_EXE_njutest"));
-    command
+    njutest_devkit::paths::clear_environment(&mut command)
         .args(args)
         .current_dir(root)
-        .env_clear()
         .env("NO_COLOR", "1")
         .env(
             "XDG_CACHE_HOME",

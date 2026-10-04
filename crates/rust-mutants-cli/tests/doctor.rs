@@ -23,8 +23,7 @@ const RUSTC_BANNER: &str = "rustc 1.98.0 (abc 2026-08-05)\nbinary: rustc\nreleas
 
 fn asked(fixture: &Fixture, path: &Path, extra: &[(&str, &str)]) -> Output {
     let mut command = njutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
-    command
-        .env_clear()
+    njutest_devkit::paths::clear_environment(&mut command)
         .env("NO_COLOR", "1")
         .env("PATH", path)
         .envs(njutest_devkit::paths::temporary_directory(fixture.temp()))
@@ -173,8 +172,7 @@ fn every_check_the_lines_show_is_a_check_the_document_holds() {
     std::fs::create_dir_all(&empty).expect("an empty directory");
 
     let mut command = njutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
-    let document = command
-        .env_clear()
+    let document = njutest_devkit::paths::clear_environment(&mut command)
         .env("NO_COLOR", "1")
         .env("PATH", &empty)
         .envs(njutest_devkit::paths::temporary_directory(fixture.temp()))
@@ -239,8 +237,7 @@ fn every_check_that_passed_names_what_it_looked_at() {
     let empty = fixture.temp().join("nothing");
     std::fs::create_dir_all(&empty).expect("an empty directory");
     let mut command = njutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
-    let document = command
-        .env_clear()
+    let document = njutest_devkit::paths::clear_environment(&mut command)
         .env("NO_COLOR", "1")
         .env("PATH", &empty)
         .envs(njutest_devkit::paths::temporary_directory(fixture.temp()))
@@ -293,8 +290,7 @@ fn a_cargo_named_on_the_command_line_is_used_where_the_path_has_none() {
             ),
     );
     let mut command = njutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
-    command
-        .env_clear()
+    njutest_devkit::paths::clear_environment(&mut command)
         .env("NO_COLOR", "1")
         .envs(installed.env())
         .env("PATH", &empty)

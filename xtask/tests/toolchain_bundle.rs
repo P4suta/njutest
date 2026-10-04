@@ -68,10 +68,9 @@ impl Workspace {
         for document in xtask::bundle::DOCUMENTS {
             workspace.write(document, &format!("{document} of the bundled workspace\n"));
         }
-        let locked = Command::new(cargo_binary())
+        let locked = njutest_devkit::paths::clear_environment(&mut Command::new(cargo_binary()))
             .args(["generate-lockfile", "--offline"])
             .current_dir(workspace.root())
-            .env_clear()
             .envs(workspace.environment.pairs())
             .status()
             .expect("cargo writes the lockfile of a workspace with no dependencies");

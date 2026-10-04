@@ -1168,8 +1168,7 @@ fn a_process_that_lost_the_runs_environment_says_so_where_the_run_looks() {
         "a process carrying what the run gave it has nothing to say: {:?}",
         left()
     );
-    let cleared = Command::new(dir.join("orphaned"))
-        .env_clear()
+    let cleared = njutest_devkit::paths::clear_environment(&mut Command::new(dir.join("orphaned")))
         .output()
         .expect("the program runs");
     assert!(

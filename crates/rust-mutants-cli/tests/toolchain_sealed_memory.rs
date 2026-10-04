@@ -53,7 +53,7 @@ struct Observed {
 /// A whole real run, with or without the cache, under the least environment a nested run needs.
 fn ran(placed: &Placed, temp: &Path, no_cache: bool) -> Observed {
     let mut command = njutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
-    command.env_clear();
+    njutest_devkit::paths::clear_environment(&mut command);
     command.envs(njutest_devkit::paths::environment_for_a_toolchain_run(&[]));
     command.env("NO_COLOR", "1");
     command.env("NJUTEST_FIXTURE_BUILD_CACHE", temp.join("builds"));

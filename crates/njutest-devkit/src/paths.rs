@@ -694,6 +694,12 @@ pub fn command(program: &Path) -> std::process::Command {
     command
 }
 
+/// Clears every variable `command` would inherit or was given, and tells it again to throw its coverage profile away rather than write one into the directory it runs in.
+pub fn clear_environment(command: &mut std::process::Command) -> &mut std::process::Command {
+    discard_profile(command.env_clear());
+    command
+}
+
 #[expect(
     unused_results,
     reason = "Command's infallible builder API returns self; this unit helper is the explicit boundary"

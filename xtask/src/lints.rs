@@ -12,6 +12,7 @@ use syn::visit::Visit;
 use super::cfg_conditions::{CfgScope, CfgTruth, CfgWorld, cfg_constant, item_attributes};
 
 mod cache_directories;
+mod clears;
 mod compiler_diagnostics;
 mod ffi;
 mod git_doors;
@@ -353,6 +354,7 @@ declare_kinds! {
     RawGit => "raw-git",
     RawProcfs => "raw-procfs",
     RawStamp => "raw-stamp",
+    RawEnvironmentClear => "raw-environment-clear",
 }
 
 impl Kind {
@@ -402,6 +404,7 @@ impl Kind {
             Self::RawGit => RAW_GIT_REMEDY,
             Self::RawProcfs => procfs::REMEDY,
             Self::RawStamp => stamps::REMEDY,
+            Self::RawEnvironmentClear => clears::REMEDY,
             Self::UnownedSpawn => UNOWNED_SPAWN_REMEDY,
             Self::RawGroupSignal => RAW_GROUP_SIGNAL_REMEDY,
             Self::UnboundedChannel => UNBOUNDED_CHANNEL_REMEDY,
@@ -721,6 +724,7 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
         scan.found.extend(procfs::found(&parsed, file));
     }
     scan.found.extend(stamps::found(&parsed, file));
+    scan.found.extend(clears::found(&parsed, file));
     scan.found.extend(implied_cfgs(&parsed, file));
     if file != SHELL_FINDER {
         scan.found.extend(bare_shells(&parsed, file));

@@ -100,7 +100,7 @@ fn listing(
     temporary: &Path,
     flags: &[&str],
 ) -> (i32, String) {
-    let output = Command::new(engine)
+    let output = njutest_devkit::paths::clear_environment(&mut Command::new(engine))
         .args(["list", "--offline", "--locked", "--root"])
         .arg(workspace)
         .arg("--cargo")
@@ -109,10 +109,8 @@ fn listing(
         .arg(njutest_devkit::paths::sole_build_jobs().to_string())
         .args(flags)
         .current_dir(repository)
-        .env_clear()
         .envs(njutest_devkit::paths::environment_for_a_run())
         .envs(njutest_devkit::paths::temporary_directory(temporary))
-        .env("LLVM_PROFILE_FILE", njutest_devkit::paths::NULL_DEVICE)
         .output()
         .expect("the real command starts");
     let code = output.status.code().expect("the real command exits");

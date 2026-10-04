@@ -67,7 +67,7 @@ fn fixture() -> Fixture {
 /// One command, the real binary with the least environment a nested run needs, saying its exit code and both streams.
 fn asked(root: &Path, args: &[&str]) -> (u8, String, String) {
     let mut command = njutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_njutest")));
-    command.env_clear();
+    njutest_devkit::paths::clear_environment(&mut command);
     command.envs(njutest_devkit::paths::environment_for_a_toolchain_run(&[]));
     command.env("NO_COLOR", "1");
     command.envs(njutest_devkit::paths::temporary_directory(

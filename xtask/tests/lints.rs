@@ -2717,6 +2717,57 @@ fn a_change_time_is_read_only_beside_a_settled_stamp_that_compares_through_its_m
 }
 
 #[test]
+fn a_test_clears_a_nested_environment_only_through_the_door_that_keeps_the_profile_away() {
+    let clears = |file: &str, source: &str| {
+        scan_source(file, source)
+            .expect("the source parses")
+            .into_iter()
+            .any(|finding| finding.kind == Kind::RawEnvironmentClear)
+    };
+    let shard = "fn asked(root: &std::path::Path) -> std::io::Result<std::process::Output> { \
+        let mut command = njutest_devkit::paths::command(std::path::Path::new(env!(\"CARGO_BIN_EXE_njutest\"))); \
+        command.env_clear(); command.current_dir(root).output() }";
+    assert!(
+        clears("crates/njutest/tests/toolchain_sharded_runs.rs", shard),
+        "a shard started with its environment cleared is told nothing about its profile, and \
+         writes one into the fixture it measures"
+    );
+    assert!(
+        !clears(
+            "crates/njutest/tests/toolchain_sharded_runs.rs",
+            &shard.replace(
+                "command.env_clear();",
+                "njutest_devkit::paths::clear_environment(&mut command);"
+            )
+        ),
+        "the devkit's door clears the environment and tells the process again where its \
+         profile goes"
+    );
+    for door in [
+        "crates/njutest-devkit/src/paths.rs",
+        "crates/rust-mutants/src/runner/mod.rs",
+        "crates/njutest/src/provider.rs",
+        "xtask/src/bundle.rs",
+    ] {
+        assert!(
+            !clears(door, shard),
+            "the devkit composes a nested environment for every test, and a product or gate \
+             composes the one it hands a program it does not instrument: {door}"
+        );
+    }
+    for passing in [
+        "fn kept(command: &mut std::process::Command) { command.env_remove(\"NO_COLOR\"); }",
+        "/// Says why `env_clear` is not called here.\nfn documented() {}",
+        "fn said() -> &'static str { \"env_clear\" }",
+    ] {
+        assert!(
+            !clears("crates/app/tests/nested.rs", passing),
+            "removing one variable, prose and a string clear nothing: {passing}"
+        );
+    }
+}
+
+#[test]
 fn only_the_process_crate_reads_the_process_table_and_the_kernel_settings_name_no_process() {
     let reads = |file: &str, source: &str| {
         scan_source(file, source)

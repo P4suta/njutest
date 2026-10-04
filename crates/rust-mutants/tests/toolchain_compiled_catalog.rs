@@ -75,8 +75,8 @@ mod tests {
 }
 
 fn capture(executable: &Path, output: &Path) -> String {
-    let answer = std::process::Command::new(executable)
-        .env_clear()
+    let mut command = std::process::Command::new(executable);
+    let answer = njutest_devkit::paths::clear_environment(&mut command)
         .env(CAPTURE, output)
         .args(["tests::capture", "--exact"])
         .output()

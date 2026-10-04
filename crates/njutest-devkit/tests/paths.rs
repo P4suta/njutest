@@ -247,6 +247,50 @@ fn a_subprocess_keeps_mutation_identity_and_drops_only_the_coverage_sink() {
 }
 
 #[test]
+fn a_subprocess_given_none_of_this_environment_is_still_told_to_throw_its_profile_away() {
+    const STAGE: &str = "NJUTEST_DEVKIT_CLEARED_STAGE";
+    if std::env::var_os(STAGE).is_some() {
+        assert_eq!(
+            std::env::var_os(PROFILE).as_deref(),
+            Some(std::ffi::OsStr::new(njutest_devkit::paths::NULL_DEVICE)),
+            "a child whose environment was cleared is told nothing about its profile, and an \
+             instrumented one then writes it into the directory it runs in, which is the tree \
+             under test"
+        );
+        return;
+    }
+    let working = test_ok(tempfile::tempdir(), "the child's working directory");
+    let executable = test_ok(std::env::current_exe(), "this test binary");
+    let mut command = std::process::Command::new(executable);
+    let output = test_ok(
+        njutest_devkit::paths::clear_environment(&mut command)
+            .args([
+                "--exact",
+                njutest_devkit::process::test_name(
+                    module_path!(),
+                    "a_subprocess_given_none_of_this_environment_is_still_told_to_throw_its_profile_away",
+                )
+                .as_str(),
+            ])
+            .current_dir(working.path())
+            .env(STAGE, "inspect")
+            .output(),
+        "the child with a cleared environment runs",
+    );
+    assert_ran_the_one_test(&output);
+    let left: Vec<std::path::PathBuf> = test_ok(
+        std::fs::read_dir(working.path()),
+        "the child's working directory",
+    )
+    .map(|entry| test_ok(entry, "an entry the child left").path())
+    .collect();
+    assert!(
+        left.is_empty(),
+        "the child left nothing where it ran: {left:?}"
+    );
+}
+
+#[test]
 fn only_a_compilation_cache_is_handed_to_a_nested_run_through_the_wrapper() {
     use njutest_devkit::paths::names_a_cache;
     use std::ffi::OsStr;
