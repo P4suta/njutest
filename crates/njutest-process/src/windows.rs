@@ -636,7 +636,11 @@ impl ForeignHandle {
             born,
             boot: "filetime".to_owned(),
         };
-        Ok(Some(Self { identity, handle }))
+        let retained = Self { identity, handle };
+        if retained.wait(Some(std::time::Duration::ZERO))? {
+            return Ok(None);
+        }
+        Ok(Some(retained))
     }
 
     pub(super) fn wait(&self, bound: Option<std::time::Duration>) -> io::Result<bool> {

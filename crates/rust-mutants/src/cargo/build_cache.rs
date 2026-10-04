@@ -1486,11 +1486,13 @@ mod tests {
             "-Clink-arg=/no/such/object.o",
         )
         .expect_err("a file that is not there cannot be bound");
-        assert_refused_input(
-            &refused,
-            Path::new("/no/such/object.o"),
-            io::ErrorKind::NotFound,
-        );
+        let rooted: PathBuf = directory
+            .path()
+            .components()
+            .filter(|part| matches!(part, std::path::Component::Prefix(_)))
+            .chain(Path::new("/no/such/object.o").components())
+            .collect();
+        assert_refused_input(&refused, &rooted, io::ErrorKind::NotFound);
     }
 
     fn assert_refused_input(refused: &io::Error, path: &Path, kind: io::ErrorKind) {
@@ -1501,7 +1503,11 @@ mod tests {
             .expect("a refusal exposes the named input and typed cause");
         assert_eq!(input.path, path);
         assert_eq!(input.source.kind(), kind);
-        assert!(refused.to_string().contains(&path.display().to_string()));
+        assert!(
+            refused
+                .to_string()
+                .contains(&input.path.display().to_string())
+        );
     }
 
     #[test]
