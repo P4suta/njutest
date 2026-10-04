@@ -1075,12 +1075,9 @@ fn native_invocation_string(bytes: &mut &[u8]) -> std::ffi::OsString {
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStringExt as _;
-        let mut chunks = value.chunks_exact(2);
-        let wide: Vec<_> = chunks
-            .by_ref()
-            .map(|pair| u16::from_le_bytes(pair.try_into().expect("two actual Windows bytes")))
-            .collect();
-        assert!(chunks.remainder().is_empty());
+        let (units, remainder) = value.as_chunks::<2>();
+        let wide: Vec<_> = units.iter().copied().map(u16::from_le_bytes).collect();
+        assert!(remainder.is_empty());
         std::ffi::OsString::from_wide(&wide)
     }
 }

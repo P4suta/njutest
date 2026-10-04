@@ -705,6 +705,7 @@ pub(crate) fn terminal(message: &str) -> ! {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use super::GroupChild;
 
     #[cfg(unix)]

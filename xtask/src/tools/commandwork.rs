@@ -13,6 +13,13 @@ use crate::environment::Environment;
 use crate::work::{self, Ended, Stops, WorkError, WorkEvents};
 
 /// Accepts only the explicitly selected inherited protocol before any command or probe starts.
+#[cfg_attr(
+    not(unix),
+    expect(
+        unused_variables,
+        reason = "only the native Unix owner of an inherited original session measures its admission against the retained stops"
+    )
+)]
 pub(super) fn recipient(environment: &Environment, stops: &Stops) -> io::Result<Recipient> {
     match environment.value("NJUTEST_SESSION_CUSTODY") {
         None => Ok(Recipient::Direct),
@@ -53,7 +60,6 @@ pub(super) fn recipient(environment: &Environment, stops: &Stops) -> io::Result<
             }
             #[cfg(not(unix))]
             {
-                let _stops = stops;
                 Err(io::Error::new(
                     io::ErrorKind::Unsupported,
                     "the inherited original-session protocol requires its native Unix owner",

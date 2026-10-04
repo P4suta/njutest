@@ -538,15 +538,17 @@ impl ReaderWait {
     /// # Errors
     /// The retained stop state became poisoned.
     pub fn wait(&self, _reader: &io::PipeReader) -> io::Result<super::ReaderReady> {
-        let stopped = self
-            .state
-            .stopped
-            .lock()
-            .map_err(|source| io::Error::other(source.to_string()))?;
         let (stopped, timeout) = self
             .state
             .changed
-            .wait_timeout_while(stopped, super::ANONYMOUS_PIPE_BACKSTOP, |stopped| !*stopped)
+            .wait_timeout_while(
+                self.state
+                    .stopped
+                    .lock()
+                    .map_err(|source| io::Error::other(source.to_string()))?,
+                super::ANONYMOUS_PIPE_BACKSTOP,
+                |stopped| !*stopped,
+            )
             .map_err(|source| io::Error::other(source.to_string()))?;
         let observed_stop = *stopped;
         drop(stopped);

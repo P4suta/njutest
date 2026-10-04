@@ -409,7 +409,7 @@ fn executable_bit(path: &Path) -> bool {
 
 /// Whether the file carries at least one execute bit, which Windows answers by extension.
 #[cfg(not(unix))]
-fn executable_bit(_path: &Path) -> bool {
+const fn executable_bit(_path: &Path) -> bool {
     true
 }
 

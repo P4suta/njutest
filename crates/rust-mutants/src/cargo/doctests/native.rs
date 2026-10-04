@@ -612,17 +612,9 @@ fn os_string(bytes: &[u8]) -> io::Result<OsString> {
 #[cfg(windows)]
 fn os_string(bytes: &[u8]) -> io::Result<OsString> {
     use std::os::windows::ffi::OsStringExt as _;
-    let mut chunks = bytes.chunks_exact(2);
-    let wide: Vec<u16> = chunks
-        .by_ref()
-        .map(|bytes| {
-            bytes
-                .try_into()
-                .map(u16::from_le_bytes)
-                .map_err(io::Error::other)
-        })
-        .collect::<io::Result<_>>()?;
-    if !chunks.remainder().is_empty() || wide.contains(&0) {
+    let (units, remainder) = bytes.as_chunks::<2>();
+    let wide: Vec<u16> = units.iter().copied().map(u16::from_le_bytes).collect();
+    if !remainder.is_empty() || wide.contains(&0) {
         return Err(io::Error::other("incomplete native Windows OS string"));
     }
     Ok(OsString::from_wide(&wide))

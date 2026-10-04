@@ -91,14 +91,12 @@ fn stamp(path: &Path) -> io::Result<Stamp> {
 
 fn file(path: &Path, previous: Option<&File>) -> io::Result<File> {
     let before = stamp(path)?;
-    #[cfg(unix)]
     if let Some(previous) = previous
+        && cfg!(unix)
         && previous.stamp == before
     {
         return Ok(previous.clone());
     }
-    #[cfg(windows)]
-    drop(previous);
     let digest = hex::encode(Sha256::digest(std::fs::read(path)?));
     if stamp(path)? != before {
         return Err(io::Error::other(format!(

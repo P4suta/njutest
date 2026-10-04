@@ -788,9 +788,10 @@ mod namespace_tests {
             .expect_err("content identity must not trust restored metadata");
         let changed = RuntimeInputs::capture(&env, directory.path(), &identities)
             .expect("changed original capture");
-        let mut mode = std::fs::metadata(&library)
+        let unchanged = std::fs::metadata(&library)
             .expect("owned mode")
             .permissions();
+        let mut mode = unchanged.clone();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt as _;
@@ -800,14 +801,7 @@ mod namespace_tests {
         mode.set_readonly(!mode.readonly());
         std::fs::set_permissions(&library, mode).expect("change owned mode");
         changed.verify().expect_err("file mode is a bound input");
-        #[cfg(windows)]
-        {
-            let mut mode = std::fs::metadata(&library)
-                .expect("cleanup mode")
-                .permissions();
-            mode.set_readonly(false);
-            std::fs::set_permissions(&library, mode).expect("owned cleanup");
-        }
+        std::fs::set_permissions(&library, unchanged).expect("owned cleanup");
     }
 
     #[test]

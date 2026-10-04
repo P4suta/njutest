@@ -96,7 +96,10 @@ impl WorkError {
 #[derive(Debug)]
 pub struct Stops {
     state: Arc<StopState>,
+    #[cfg(unix)]
     worker: SignalThread,
+    #[cfg(windows)]
+    worker: SignalWatcher,
 }
 
 #[derive(Debug, Default)]
@@ -164,10 +167,11 @@ impl Stops {
     /// The signal subscription or its owned worker could not be started.
     pub fn arm() -> Result<Self, WorkError> {
         let state = Arc::new(StopState::default());
-        let signals = signal_hook::iterator::Signals::new(STOPPING)
-            .map_err(|source| WorkError::Signals { source })?;
-        let worker = SignalThread::launch(signals, Arc::clone(&state))
-            .map_err(|source| WorkError::Signals { source })?;
+        #[cfg(unix)]
+        let worker = SignalThread::launch(Arc::clone(&state));
+        #[cfg(windows)]
+        let worker = SignalWatcher::launch(Arc::clone(&state));
+        let worker = worker.map_err(|source| WorkError::Signals { source })?;
         Ok(Self { state, worker })
     }
 
@@ -314,17 +318,17 @@ impl WorkEvents {
     }
 }
 
+#[cfg(unix)]
 #[derive(Debug)]
 struct SignalThread {
     handle: Option<std::thread::JoinHandle<()>>,
     close: signal_hook::iterator::Handle,
 }
 
+#[cfg(unix)]
 impl SignalThread {
-    fn launch(
-        mut signals: signal_hook::iterator::Signals,
-        state: Arc<StopState>,
-    ) -> std::io::Result<Self> {
+    fn launch(state: Arc<StopState>) -> std::io::Result<Self> {
+        let mut signals = signal_hook::iterator::Signals::new(STOPPING)?;
         let close = signals.handle();
         let handle = std::thread::Builder::new()
             .name("xtask-stop-observations".to_owned())
@@ -351,7 +355,92 @@ impl SignalThread {
     }
 }
 
+/// The stop signals observed on Windows, where a handler can only record a signal and a watcher publishes it.
+#[cfg(windows)]
+#[derive(Debug)]
+struct SignalWatcher {
+    handle: Option<std::thread::JoinHandle<()>>,
+    closed: Arc<std::sync::atomic::AtomicBool>,
+    _registrations: Registrations,
+}
+
+#[cfg(windows)]
+const SIGNAL_WATCH: Duration = Duration::from_millis(50);
+
+#[cfg(windows)]
+impl SignalWatcher {
+    fn launch(state: Arc<StopState>) -> std::io::Result<Self> {
+        let raised = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut registrations = Registrations(Vec::new());
+        for signal in STOPPING {
+            let recorded = usize::try_from(signal).map_err(std::io::Error::other)?;
+            registrations.0.push(signal_hook::flag::register_usize(
+                signal,
+                Arc::clone(&raised),
+                recorded,
+            )?);
+        }
+        let closed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let watched = Arc::clone(&closed);
+        let handle = std::thread::Builder::new()
+            .name("xtask-stop-observations".to_owned())
+            .spawn(move || {
+                while !watched.load(Ordering::SeqCst) {
+                    match i32::try_from(raised.swap(0, Ordering::SeqCst)) {
+                        Ok(0) => {}
+                        Ok(signal) => {
+                            state.raised.store(signal, Ordering::SeqCst);
+                            state.publish(crate::observation::Event::Cancelled);
+                        }
+                        Err(_unregistered_signal) => std::process::abort(),
+                    }
+                    std::thread::park_timeout(SIGNAL_WATCH);
+                }
+            })?;
+        Ok(Self {
+            handle: Some(handle),
+            closed,
+            _registrations: registrations,
+        })
+    }
+
+    fn finish(&mut self) {
+        self.closed.store(true, Ordering::SeqCst);
+        if let Some(handle) = self.handle.take() {
+            handle.thread().unpark();
+            if let Err(panic) = handle.join() {
+                drop(panic);
+                std::process::abort();
+            }
+        }
+    }
+}
+
+/// The handler registrations one Windows signal watcher owns, removed when it goes.
+#[cfg(windows)]
+#[derive(Debug)]
+struct Registrations(Vec<signal_hook::SigId>);
+
+#[cfg(windows)]
+impl Drop for Registrations {
+    fn drop(&mut self) {
+        while let Some(id) = self.0.pop() {
+            if !signal_hook::low_level::unregister(id) {
+                std::process::abort();
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
 impl Drop for SignalThread {
+    fn drop(&mut self) {
+        self.finish();
+    }
+}
+
+#[cfg(windows)]
+impl Drop for SignalWatcher {
     fn drop(&mut self) {
         self.finish();
     }
@@ -426,6 +515,7 @@ pub struct Request<'run, 'bound> {
 
 /// The actual recipient that retains a naturally completed producer scope.
 #[derive(Debug)]
+#[cfg_attr(not(unix), derive(Clone, Copy))]
 pub enum Custody {
     /// Every member settles before this command returns.
     Direct,
@@ -744,6 +834,13 @@ impl Group {
             })
     }
 
+    #[cfg_attr(
+        not(unix),
+        expect(
+            unused_variables,
+            reason = "only a unix original custody waits for its natural output end, and only it reads how the watch ended"
+        )
+    )]
     fn close(
         &mut self,
         watched: &Result<Option<Ended>, WorkError>,
