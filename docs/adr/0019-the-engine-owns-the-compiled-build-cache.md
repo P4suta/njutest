@@ -266,3 +266,11 @@ Every new copy of a tree writes its files later than the units an earlier build 
 A hit therefore settles its directory under its preparation lease before it returns, as an actual build settles before Cargo starts, which decision 4 of the 2026-09-26 amendment already asks of every build into a shared directory.
 An unchanged tree keeps every unit, so the documentation runs against the units the reused compilation stands for; a member the directory last built from other bytes loses its units, and Cargo compiles it again there.
 A doctest capture hit leaves its directory as it found it, because every Cargo command into a capture directory settles before it starts.
+
+## Amendment, 2026-10-05: one rule says what a build can read
+
+The source slot and the verified compilation record each named the variables they leave out, in two lists.
+The record left out every `NJUTEST_` and `NEXTEST_` variable; the slot named three `NJUTEST_` variables, and when each binary began to label its cost record with `NJUTEST_COST_PRODUCT` and its whole command line, `NJUTEST_COST_COMMAND`, the slot took both as build inputs.
+Two runs of one tree from two roots, or with and without `--no-cache`, then claimed two slots, compiled their modules at two paths, and one execution of one tree came to two transcript digests.
+Both identities now ask one function, `cargo::compilation_input`, so a label the product adds is left out of both or of neither.
+A variable a build does read, such as one Cargo reads, still separates slots, and a unit whose dep-info names a left-out variable is still never a verified hit.

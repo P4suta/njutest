@@ -3,7 +3,6 @@
 
 //! Exclusive source slots and build directories addressed by content, compiler and graph inputs.
 
-use std::ffi::OsStr;
 use std::io;
 use std::path::Path;
 
@@ -11,7 +10,7 @@ use sha2::{Digest as _, Sha256};
 
 use crate::cargo::Toolchain;
 use crate::tempowner::{self, ClaimError, Owner};
-use crate::vars::{Spelling, Variables};
+use crate::vars::Variables;
 
 /// A retained immutable graph with its single preparation lease held through the editable copy.
 pub(super) struct Graph {
@@ -296,7 +295,7 @@ pub(super) fn claim(
     for (name, value) in vars
         .canonical()
         .into_iter()
-        .filter(|(name, _value)| !diagnostic(spelling, name))
+        .filter(|(name, _value)| crate::cargo::compilation_input(spelling, name))
     {
         hashed(&mut digest, name.as_encoded_bytes())?;
         hashed(&mut digest, value.as_encoded_bytes())?;
@@ -348,22 +347,6 @@ pub(super) fn target(
         slot.to_path_buf()
     };
     Ok(super::target_of(&parent, snapshot.root()))
-}
-
-/// Names excluded from the source-slot identity, restored to opaque graphs' target identity.
-fn diagnostic(spelling: Spelling, name: &OsStr) -> bool {
-    spelling.begins(name, "NEXTEST_")
-        || [
-            "NJUTEST_TEST_COST_DIR",
-            "NJUTEST_FIXTURE_BUILD_CACHE",
-            "NJUTEST_TEST_CLOCK",
-            "TMPDIR",
-            "TMP",
-            "TEMP",
-            "XDG_CACHE_HOME",
-        ]
-        .iter()
-        .any(|ignored| spelling.same(name, OsStr::new(ignored)))
 }
 
 /// Adds one complete, length-prefixed input to the build identity.

@@ -76,6 +76,11 @@ pub struct Driver<'a> {
     pub trace: &'a Recorder,
 }
 
+/// Whether a variable can be an input of a build, which the verified compilation record and a shared source slot both ask by this one rule.
+pub(crate) fn compilation_input(spelling: crate::vars::Spelling, name: &std::ffi::OsStr) -> bool {
+    build_cache::compilation_input(spelling, name)
+}
+
 pub(crate) fn input_identity(
     driver: &Driver<'_>,
     options: &CompileOptions,

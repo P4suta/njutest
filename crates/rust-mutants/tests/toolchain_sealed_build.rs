@@ -137,6 +137,55 @@ fn opaque_graphs_separate_full_environment_inputs_while_pure_copies_share_target
     }
 }
 
+#[test]
+fn a_variable_that_only_labels_work_is_no_input_of_the_slot_a_copy_shares() {
+    let cache = tempfile::tempdir().expect("the shared source slots");
+    let slot = |variable: Option<(&str, &str)>| {
+        let fixture = njutest_devkit::fixture::Fixture::copy("fixture-simple");
+        let mut options = rust_mutants::workspace::OpenOptions {
+            cargo: Some(njutest_devkit::paths::cargo_binary()),
+            env: njutest_devkit::paths::environment_for_a_toolchain_run(&[])
+                .into_iter()
+                .collect(),
+            temp_directory: cache.path().to_path_buf(),
+            offline: true,
+            ..rust_mutants::workspace::OpenOptions::default()
+        };
+        options.env.set("NJUTEST_FIXTURE_BUILD_CACHE", cache.path());
+        if let Some((name, value)) = variable {
+            options.env.set(name, value);
+        }
+        let workspace =
+            rust_mutants::workspace::Workspace::open(fixture.root(), options, &Cancel::new())
+                .expect("the complete copied graph opens");
+        let snapshot = workspace.snapshot_root().to_path_buf();
+        workspace.close().expect("the source slot is released");
+        snapshot
+    };
+    let unlabelled = slot(None);
+    let moved: Vec<&str> = [
+        ("NJUTEST_COST_PRODUCT", "rust-mutants"),
+        ("NJUTEST_COST_COMMAND", r#"["run","--no-cache"]"#),
+        ("NJUTEST_A_LABEL_NO_RELEASE_SETS_YET", "any"),
+        ("NEXTEST_RUN_ID", "any"),
+    ]
+    .into_iter()
+    .filter(|&(name, value)| slot(Some((name, value))) != unlabelled)
+    .map(|(name, _value)| name)
+    .collect();
+    assert!(
+        moved.is_empty(),
+        "a variable the product or its test harness labels its own work with is read by no build, \
+         so an identical copy labelled with it shares the slot an unlabelled one takes, \
+         and its guest paths with it: {moved:?} took another slot"
+    );
+    assert_ne!(
+        slot(Some(("CARGO_PROFILE_TEST_OPT_LEVEL", "1"))),
+        unlabelled,
+        "a variable cargo reads is an input of the build, and a copy built under it takes a slot of its own"
+    );
+}
+
 fn sysroot() -> PathBuf {
     let root = njutest_devkit::paths::fixtures_dir().join("fixture-simple");
     toolchain(&root)

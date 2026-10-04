@@ -130,6 +130,8 @@ The dev and inherited test profiles optimize Wasmtime, Cranelift and regalloc2 a
 
 Tests can share native and sealed fixture builds by supplying an absolute `NJUTEST_FIXTURE_BUILD_CACHE` directory.
 The engine keys exclusive source slots by the complete copied content digest, cargo and rustc versions and paths, and build inputs apart from diagnostic labels and temporary/cache directory names.
+One rule says which variables those are, for the slot and for the verified compilation record below alike: every `NJUTEST_` and `NEXTEST_` variable, which label the product's and its test harness's own work, and `TMPDIR`, `TMP`, `TEMP` and `XDG_CACHE_HOME`.
+So the command line each binary records for its cost record, `NJUTEST_COST_COMMAND`, leaves one tree in one slot whatever root or flags named it, and its guest paths with it.
 It loads the final snapshot's complete Cargo graph once.
 Graphs with build scripts or procedural macros use a separate target directory for every full environment because those programs may consume undeclared inputs.
 Graphs without either share the slot's target directory; compiler dep-info binds compile-time `env!` inputs.

@@ -166,7 +166,7 @@ impl Request {
         for (name, value) in env
             .canonical()
             .into_iter()
-            .filter(|(name, _value)| cargo_variable(env.spelling(), name))
+            .filter(|(name, _value)| compilation_input(env.spelling(), name))
         {
             field(&mut digest, name.as_encoded_bytes());
             field(&mut digest, value.as_encoded_bytes());
@@ -238,7 +238,7 @@ impl Request {
             && (names != record.environment.keys().collect()
                 || names
                     .iter()
-                    .any(|name| !cargo_variable(env.spelling(), std::ffi::OsStr::new(name))))
+                    .any(|name| !compilation_input(env.spelling(), std::ffi::OsStr::new(name))))
         {
             return Err(io::Error::other(
                 "unverified compiler environment dependencies",
@@ -304,7 +304,7 @@ impl Request {
         let names = compiled.units.iter().flat_map(|unit| unit.env.keys());
         if names
             .clone()
-            .any(|name| !cargo_variable(env.spelling(), std::ffi::OsStr::new(name)))
+            .any(|name| !compilation_input(env.spelling(), std::ffi::OsStr::new(name)))
         {
             return Err(io::Error::other(
                 "the compiler reads a volatile diagnostic variable",
@@ -1083,7 +1083,8 @@ fn engine_linked(value: &str) -> bool {
         || rust_mutants_sealed::START_LINK_ARGS.contains(&value)
 }
 
-fn cargo_variable(spelling: crate::vars::Spelling, name: &std::ffi::OsStr) -> bool {
+/// Whether a variable can be an input of a build: every one but the labels this product and its test harness put on their own work, and the scratch and cache places a build's identity leaves out.
+pub(super) fn compilation_input(spelling: crate::vars::Spelling, name: &std::ffi::OsStr) -> bool {
     !["NEXTEST_", "NJUTEST_"]
         .iter()
         .any(|prefix| spelling.begins(name, prefix))
