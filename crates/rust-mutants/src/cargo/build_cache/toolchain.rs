@@ -168,8 +168,14 @@ impl Identities {
             .files
             .lock()
             .map_err(|source| io::Error::other(source.to_string()))?;
-        memo.files = retained.files;
-        memo.captures = retained.captures;
+        let mut merged = retained;
+        merged.merge(&Retained {
+            files: memo.files.clone(),
+            captures: memo.captures.clone(),
+        })?;
+        merged.verify(&BTreeMap::new())?;
+        memo.files = merged.files;
+        memo.captures = merged.captures;
         drop(memo);
         Ok(())
     }
@@ -536,6 +542,40 @@ fn reusable(previous: &Stamp, current: &Stamp) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_accept_conserves_a_later_same_arc_capture() {
+        let directory = tempfile::tempdir().expect("owned compiler inputs");
+        let p = directory.path().join("p");
+        let q = directory.path().join("q");
+        std::fs::write(&p, b"first").expect("first actual bytes");
+        std::fs::write(&q, b"second").expect("second actual bytes");
+        let identities = super::Identities::empty();
+        super::identity(&p, &identities).expect("first actual capture");
+        let retained = identities
+            .retain(&std::collections::BTreeMap::new())
+            .expect("publication snapshot of the memo");
+        super::identity(&q, &identities).expect("interleaved same-arc actual capture");
+        identities.accept(retained).expect("publication accepted");
+        let after = identities
+            .retain(&std::collections::BTreeMap::new())
+            .expect("current memo state");
+        let resolved_q = std::fs::canonicalize(&q).expect("canonical supplemental object");
+        assert!(
+            after.files.contains_key(&resolved_q),
+            "accept must conserve the later same-Arc capture, not replace it away: {:?}",
+            after
+                .files
+                .keys()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<String>>()
+        );
+        assert_eq!(
+            super::identity(&q, &identities).expect("conserved known capture"),
+            super::identity(&q, &super::Identities::empty()).expect("independently read q"),
+            "the conserved capture must keep the genuine digest"
+        );
+    }
+
     #[test]
     fn supplemental_retained_content_cannot_replace_its_actual_capture() {
         let directory = tempfile::tempdir().expect("owned input captures");
