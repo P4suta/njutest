@@ -34,6 +34,7 @@ struct Memo {
     attempts: Vec<PathBuf>,
     completed_bytes: u64,
     published_reads: usize,
+    opened: u64,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -157,6 +158,7 @@ impl Identities {
                 attempts: Vec::new(),
                 completed_bytes: 0,
                 published_reads: 0,
+                opened: 0,
             })),
             publication: Arc::new(Mutex::new(None)),
         })
@@ -231,6 +233,30 @@ impl Identities {
             .map_err(|source| io::Error::other(source.to_string()))?
             .published_reads = reads;
         Ok(())
+    }
+
+    /// Counts one loader input opened and identified in full.
+    pub(in crate::cargo) fn opened(&self) -> io::Result<()> {
+        let mut memo = self
+            .files
+            .lock()
+            .map_err(|source| io::Error::other(source.to_string()))?;
+        memo.opened = memo
+            .opened
+            .checked_add(1)
+            .ok_or_else(|| io::Error::other("loader open count overflow"))?;
+        drop(memo);
+        Ok(())
+    }
+
+    /// The loader inputs opened and identified in full so far.
+    #[cfg(test)]
+    pub(in crate::cargo) fn opens(&self) -> io::Result<u64> {
+        Ok(self
+            .files
+            .lock()
+            .map_err(|source| io::Error::other(source.to_string()))?
+            .opened)
     }
 
     pub(in crate::cargo) fn work(&self) -> io::Result<(u64, u64, Vec<PathBuf>)> {
@@ -414,38 +440,85 @@ fn directory(
     Ok(())
 }
 
+/// The identity the memo already holds for a canonical regular file whose stamp is unchanged, without reading or canonicalizing it.
+///
+/// # Errors
+///
+/// The file's stamp cannot be read, or the memo is poisoned.
+pub(in crate::cargo) fn reused(
+    canonical: &Path,
+    identities: &Identities,
+) -> io::Result<Option<File>> {
+    let Some(current) = path_stamp(canonical)? else {
+        return Ok(None);
+    };
+    let held = identities
+        .files
+        .lock()
+        .map_err(|source| io::Error::other(source.to_string()))?
+        .files
+        .get(canonical)
+        .filter(|(previous, _)| reusable(previous, &current))
+        .map(|(_, identity)| identity.clone());
+    if held.is_some() && path_stamp(canonical)?.as_ref() != Some(&current) {
+        return Ok(None);
+    }
+    Ok(held)
+}
+
+#[cfg(unix)]
+fn path_stamp(path: &Path) -> io::Result<Option<Stamp>> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    if metadata.is_file() {
+        unix_stamp(&metadata).map(Some)
+    } else {
+        Ok(None)
+    }
+}
+
+#[cfg(windows)]
+fn path_stamp(path: &Path) -> io::Result<Option<Stamp>> {
+    if !std::fs::symlink_metadata(path)?.is_file() {
+        return Ok(None);
+    }
+    stamp(&std::fs::File::open(path)?).map(Some)
+}
+
+#[cfg(unix)]
+fn unix_stamp(metadata: &std::fs::Metadata) -> io::Result<Stamp> {
+    use std::os::unix::fs::MetadataExt as _;
+    Ok(Stamp {
+        length: metadata.len(),
+        modified: metadata.modified()?,
+        mode: metadata.mode(),
+        changed: (
+            metadata.ctime(),
+            metadata.ctime_nsec(),
+            metadata.dev(),
+            metadata.ino(),
+        ),
+    })
+}
+
 fn stamp(input: &std::fs::File) -> io::Result<Stamp> {
     let metadata = input.metadata()?;
     if !metadata.is_file() {
         return Err(io::Error::other("a toolchain input is not a regular file"));
     }
     #[cfg(unix)]
-    let (changed, mode) = {
-        use std::os::unix::fs::MetadataExt as _;
-        (
-            (
-                metadata.ctime(),
-                metadata.ctime_nsec(),
-                metadata.dev(),
-                metadata.ino(),
-            ),
-            metadata.mode(),
-        )
-    };
+    {
+        unix_stamp(&metadata)
+    }
     #[cfg(windows)]
-    let (changed, mode) = {
+    {
         let (identity, time) = crate::capdir::change_stamp(input)?;
-        (
-            (identity.volume, identity.object, time),
-            u32::from(metadata.permissions().readonly()),
-        )
-    };
-    Ok(Stamp {
-        length: metadata.len(),
-        modified: metadata.modified()?,
-        mode,
-        changed,
-    })
+        Ok(Stamp {
+            length: metadata.len(),
+            modified: metadata.modified()?,
+            mode: u32::from(metadata.permissions().readonly()),
+            changed: (identity.volume, identity.object, time),
+        })
+    }
 }
 
 fn open(path: &Path) -> io::Result<(std::fs::File, Stamp)> {

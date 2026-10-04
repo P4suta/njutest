@@ -412,11 +412,14 @@ fn capture_entry(
                 capture(&path, identities, digest, (true, ancestors))?;
             }
         }
-        Kind::File => match directory.open_entry(name)? {
-            Entry::File(file) => captured_file(&path, &file, identities, digest)?,
-            Entry::Dir(_) | Entry::Other => {
-                return Err(io::Error::other("the loader search entry changed kind"));
-            }
+        Kind::File => match super::toolchain::reused(&path, identities)? {
+            Some(state) => bound(digest, &path, &state),
+            None => match directory.open_entry(name)? {
+                Entry::File(file) => captured_file(&path, &file, identities, digest)?,
+                Entry::Dir(_) | Entry::Other => {
+                    return Err(io::Error::other("the loader search entry changed kind"));
+                }
+            },
         },
         Kind::Other => capture_link(&path, identities, digest, (descend, ancestors))?,
     }
@@ -477,6 +480,7 @@ fn captured_file(
     identities: &Identities,
     digest: &mut Sha256,
 ) -> io::Result<()> {
+    identities.opened()?;
     let held = crate::capdir::file_status(file)?;
     match held.kind {
         Kind::File => {}
@@ -493,10 +497,14 @@ fn captured_file(
     if crate::capdir::file_status(&after)? != held {
         return Err(io::Error::other("the loader input changed identity"));
     }
+    bound(digest, path, &state);
+    Ok(())
+}
+
+fn bound(digest: &mut Sha256, path: &Path, state: &super::File) {
     super::field(digest, path.as_os_str().as_encoded_bytes());
     super::field(digest, state.digest.as_bytes());
     super::field(digest, &state.mode.to_be_bytes());
-    Ok(())
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -557,6 +565,34 @@ mod tests {
             Inputs::of(&env, &identities)
                 .expect("verified library alias")
                 .digest()
+        );
+    }
+
+    #[test]
+    fn an_unchanged_search_directory_is_bound_again_without_opening_its_libraries() {
+        let directory = tempfile::tempdir().expect("owned loader search");
+        for index in 0..64 {
+            std::fs::write(
+                directory.path().join(format!("lib{index}.dylib")),
+                b"actual library input",
+            )
+            .expect("owned library");
+        }
+        let mut env = Variables::default();
+        env.set("DYLD_FALLBACK_LIBRARY_PATH", directory.path());
+        let identities = Identities::empty();
+        let before = Inputs::of(&env, &identities).expect("original inputs");
+        let first = identities.opens().expect("first capture count");
+        assert!(
+            first >= 64,
+            "the first capture opened {first} libraries, not every one of the 64"
+        );
+        let again = Inputs::of(&env, &identities).expect("unchanged inputs");
+        assert_eq!(before.digest(), again.digest());
+        let second = identities.opens().expect("second capture count") - first;
+        assert_eq!(
+            second, 0,
+            "the unchanged second capture opened {second} libraries again"
         );
     }
 
