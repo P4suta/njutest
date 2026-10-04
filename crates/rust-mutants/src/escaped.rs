@@ -104,6 +104,7 @@ fn roots(dirs: &[&Path]) -> std::io::Result<Vec<PathBuf>> {
 fn working_directories() -> std::io::Result<Vec<(u32, PathBuf)>> {
     use std::os::unix::fs::MetadataExt as _;
 
+    let own_start = start_ticks(Path::new("/proc/self"))?;
     let mut found = Vec::new();
     for listed in std::fs::read_dir("/proc")? {
         let listed = listed?;
@@ -128,10 +129,43 @@ fn working_directories() -> std::io::Result<Vec<(u32, PathBuf)>> {
                 found.push((pid, cwd));
             }
             Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) if source.kind() == std::io::ErrorKind::PermissionDenied => {
+                match start_ticks(&listed.path()) {
+                    Ok(started) => {
+                        if started >= own_start {
+                            return Err(source);
+                        }
+                    }
+                    Err(gone) if gone.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(unreadable) => return Err(unreadable),
+                }
+            }
             Err(source) => return Err(source),
         }
     }
     Ok(found)
+}
+
+/// When `/proc` says the process started, in clock ticks since boot: one started before this process cannot be a producer any run of it started.
+#[cfg(target_os = "linux")]
+fn start_ticks(process: &Path) -> std::io::Result<u64> {
+    let stat = std::fs::read_to_string(process.join("stat"))?;
+    start_ticks_of(&stat)
+}
+
+/// The start time field of one `/proc/<pid>/stat` line, read after the command name, which may itself hold spaces and parentheses.
+#[cfg(target_os = "linux")]
+fn start_ticks_of(stat: &str) -> std::io::Result<u64> {
+    let fields = stat
+        .rsplit_once(')')
+        .map(|(_name, fields)| fields)
+        .ok_or_else(|| std::io::Error::other("a process status line without its command name"))?;
+    fields
+        .split_whitespace()
+        .nth(19)
+        .ok_or_else(|| std::io::Error::other("a process status line without its start time"))?
+        .parse::<u64>()
+        .map_err(std::io::Error::other)
 }
 
 /// Every process of this user beside the directory it works in, as `lsof` says.
@@ -187,4 +221,29 @@ const LISTING_LIMIT: usize = 16 * 1024 * 1024;
 /// The process could not be signalled for a reason other than having ended.
 pub fn stop(pid: u32) -> std::io::Result<()> {
     crate::runner::stop_process(pid)
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    #[test]
+    fn a_start_time_is_read_after_a_command_name_holding_spaces_and_parentheses() {
+        let stat = "4242 (a (b) c) S 1 4242 4242 0 -1 4194560 100 0 0 0 1 2 0 0 20 0 1 0 987654 1000 10 18446744073709551615";
+        assert_eq!(
+            super::start_ticks_of(stat).expect("a complete status line"),
+            987_654
+        );
+    }
+
+    #[test]
+    fn this_process_did_not_start_before_itself_and_its_parent_did() {
+        let own = super::start_ticks(std::path::Path::new("/proc/self")).expect("this process");
+        let parent = super::start_ticks(
+            &std::path::Path::new("/proc").join(std::os::unix::process::parent_id().to_string()),
+        )
+        .expect("the parent process");
+        assert!(
+            parent <= own,
+            "the parent started at {parent}, after this process at {own}"
+        );
+    }
 }
