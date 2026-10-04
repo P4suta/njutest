@@ -35,6 +35,7 @@ struct Memo {
     completed_bytes: u64,
     published_reads: usize,
     opened: u64,
+    images: BTreeMap<PathBuf, (Stamp, bool)>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -159,6 +160,7 @@ impl Identities {
                 completed_bytes: 0,
                 published_reads: 0,
                 opened: 0,
+                images: BTreeMap::new(),
             })),
             publication: Arc::new(Mutex::new(None)),
         })
@@ -467,6 +469,45 @@ pub(in crate::cargo) fn reused(
         return Ok(None);
     }
     Ok(held)
+}
+
+/// Whether a canonical regular file begins an image a dynamic loader can load as a library, read once per unchanged stamp.
+///
+/// # Errors
+///
+/// The file cannot be read, changed while its header was read, or the memo is poisoned.
+pub(in crate::cargo) fn loadable(canonical: &Path, identities: &Identities) -> io::Result<bool> {
+    if let Some(current) = path_stamp(canonical)? {
+        let known = identities
+            .files
+            .lock()
+            .map_err(|source| io::Error::other(source.to_string()))?
+            .images
+            .get(canonical)
+            .filter(|(previous, _)| reusable(previous, &current))
+            .map(|(_, image)| *image);
+        if let Some(image) = known
+            && path_stamp(canonical)?.as_ref() == Some(&current)
+        {
+            return Ok(image);
+        }
+    }
+    let (header, before) = open(canonical)?;
+    let mut head = Vec::new();
+    io::Read::take(&header, 4096).read_to_end(&mut head)?;
+    if stamp(&header)? != before {
+        return Err(io::Error::other(
+            "a loader input changed while its header was read",
+        ));
+    }
+    let image = super::loaders::image(&head);
+    identities
+        .files
+        .lock()
+        .map_err(|source| io::Error::other(source.to_string()))?
+        .images
+        .insert(canonical.to_path_buf(), (before, image));
+    Ok(image)
 }
 
 #[cfg(unix)]

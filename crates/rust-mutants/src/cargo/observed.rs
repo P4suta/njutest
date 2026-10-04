@@ -1692,8 +1692,10 @@ mod tests {
     #[test]
     fn a_bound_loader_namespace_counts_real_reads_and_reuses_only_stable_contents() {
         let directory = tempfile::tempdir().expect("owned loader inputs");
+        let library = super::super::build_cache::loaders::tests::test_library(b"owned-one");
+        let size = u64::try_from(library.len()).expect("a small library");
         for name in ["one", "two", "three"] {
-            std::fs::write(directory.path().join(name), b"owned-one").expect("owned input");
+            std::fs::write(directory.path().join(name), &library).expect("owned input");
         }
         let env = crate::vars::Variables::of([(
             "DYLD_FALLBACK_LIBRARY_PATH".into(),
@@ -1705,7 +1707,7 @@ mod tests {
         let root = std::fs::canonicalize(directory.path()).expect("canonical owned inputs");
         let expected = (
             3,
-            27,
+            3 * size,
             ["one", "three", "two"].map(|name| root.join(name)).to_vec(),
         );
         assert_eq!(identities.work().expect("actual file work"), expected);
@@ -1717,12 +1719,16 @@ mod tests {
             identities.work().expect("memo reuse does not read"),
             expected
         );
-        std::fs::write(root.join("one"), b"other-one").expect("changed actual loader input");
+        std::fs::write(
+            root.join("one"),
+            super::super::build_cache::loaders::tests::test_library(b"other-one"),
+        )
+        .expect("changed actual loader input");
         let changed = super::super::build_cache::loaders::Inputs::observation(&env, &identities)
             .expect("changed inputs are freshly captured");
         assert_ne!(first.digest(), changed.digest());
         let (attempts, bytes, paths) = identities.work().expect("actual changed file work");
-        assert_eq!((attempts, bytes), (4, 36));
+        assert_eq!((attempts, bytes), (4, 4 * size));
         assert_eq!(paths.last(), Some(&root.join("one")));
         println!("actual changed loader work: {attempts} attempts, {bytes} bytes, {paths:?}");
     }

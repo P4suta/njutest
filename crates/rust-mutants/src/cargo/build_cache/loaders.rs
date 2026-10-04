@@ -77,7 +77,7 @@ impl Inputs {
         }
         let mut namespaces = BTreeMap::new();
         let mut digest = Sha256::new();
-        super::field(&mut digest, b"native-library-inputs-v2");
+        super::field(&mut digest, b"native-library-inputs-v3");
         if let Some(cwd) = cwd {
             if !cwd.is_absolute() {
                 return Err(refused(
@@ -413,6 +413,9 @@ fn capture_entry(
                 capture(&path, identities, digest, (true, ancestors))?;
             }
         }
+        Kind::File if !super::toolchain::loadable(&path, identities)? => {
+            not_an_image(digest, &path);
+        }
         Kind::File => match super::toolchain::reused(&path, identities)? {
             Some(state) => bound(digest, &path, &state),
             None => match directory.open_entry(name)? {
@@ -443,6 +446,9 @@ fn capture_link(
             let file = crate::capdir::open_file_at(&canonical)?;
             let status = crate::capdir::file_status(&file)?;
             match status.kind {
+                Kind::File if !super::toolchain::loadable(&canonical, identities)? => {
+                    not_an_image(digest, &canonical);
+                }
                 Kind::File => captured_file(&canonical, &file, identities, digest)?,
                 Kind::Directory => {
                     super::field(digest, b"directory-alias");
@@ -502,6 +508,58 @@ fn captured_file(
     Ok(())
 }
 
+fn not_an_image(digest: &mut Sha256, path: &Path) {
+    super::field(digest, path.as_os_str().as_encoded_bytes());
+    super::field(digest, b"not-a-loadable-image");
+}
+
+/// Whether these leading bytes begin an image a dynamic loader can load as a library: anything it cannot rule out counts as one.
+pub(super) fn image(head: &[u8]) -> bool {
+    match head {
+        [0xcf | 0xce, 0xfa, 0xed, 0xfe, ..] => !matches!(
+            head.get(12..)
+                .and_then(<[u8]>::first_chunk::<4>)
+                .map(|filetype| u32::from_le_bytes(*filetype)),
+            Some(1 | 2 | 4 | 10)
+        ),
+        [0xfe, 0xed, 0xfa, 0xce | 0xcf, ..] | [0xca, 0xfe, 0xba, 0xbe | 0xbf, ..] => true,
+        [0x7f, b'E', b'L', b'F', ..] => elf_library(head),
+        [b'M', b'Z', ..] => pe_library(head),
+        _ => false,
+    }
+}
+
+fn elf_library(head: &[u8]) -> bool {
+    let Some(kind) = head.get(16..).and_then(<[u8]>::first_chunk::<2>) else {
+        return true;
+    };
+    let kind = match head.get(5) {
+        Some(2) => u16::from_be_bytes(*kind),
+        Some(_) | None => u16::from_le_bytes(*kind),
+    };
+    !matches!(kind, 1 | 2 | 4)
+}
+
+fn pe_library(head: &[u8]) -> bool {
+    let Some(offset) = head.get(0x3c..).and_then(<[u8]>::first_chunk::<4>) else {
+        return true;
+    };
+    let Ok(offset) = usize::try_from(u32::from_le_bytes(*offset)) else {
+        return true;
+    };
+    if head.get(offset..).and_then(<[u8]>::first_chunk::<4>) != Some(b"PE\0\0") {
+        return true;
+    }
+    let Some(characteristics) = offset
+        .checked_add(22)
+        .and_then(|at| head.get(at..))
+        .and_then(<[u8]>::first_chunk::<2>)
+    else {
+        return true;
+    };
+    u16::from_le_bytes(*characteristics) & 0x2000 != 0
+}
+
 fn bound(digest: &mut Sha256, path: &Path, state: &super::File) {
     super::field(digest, path.as_os_str().as_encoded_bytes());
     super::field(digest, state.digest.as_bytes());
@@ -532,8 +590,78 @@ fn refused(path: &Path, source: io::Error) -> io::Error {
     )
 }
 
+#[cfg(test)]
+pub(in crate::cargo) mod tests {
+    /// A library image this platform's loader would load, carrying `payload`, for the tests that bind one.
+    pub(in crate::cargo) fn test_library(payload: &[u8]) -> Vec<u8> {
+        let mut image = if cfg!(target_os = "macos") {
+            vec![
+                0xcf, 0xfa, 0xed, 0xfe, 0x0c, 0, 0, 0x01, 0, 0, 0, 0, 6, 0, 0, 0,
+            ]
+        } else if cfg!(windows) {
+            portable_executable(0x2000)
+        } else {
+            vec![
+                0x7f, b'E', b'L', b'F', 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0,
+            ]
+        };
+        image.extend_from_slice(payload);
+        image
+    }
+
+    /// The smallest portable executable header with these COFF characteristics.
+    fn portable_executable(characteristics: u16) -> Vec<u8> {
+        let mut image = b"MZ".to_vec();
+        image.resize(0x3c, 0);
+        image.extend_from_slice(&0x40_u32.to_le_bytes());
+        image.extend_from_slice(b"PE\0\0");
+        image.resize(0x40 + 22, 0);
+        image.extend_from_slice(&characteristics.to_le_bytes());
+        image
+    }
+
+    #[test]
+    fn only_an_image_a_loader_could_load_counts_as_a_library() {
+        let macho = |filetype: u8| {
+            vec![
+                0xcf, 0xfa, 0xed, 0xfe, 0x0c, 0, 0, 0x01, 0, 0, 0, 0, filetype, 0, 0, 0,
+            ]
+        };
+        let elf = |data: u8, kind: [u8; 2]| {
+            let mut image = vec![
+                0x7f, b'E', b'L', b'F', 2, data, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            ];
+            image.extend_from_slice(&kind);
+            image
+        };
+        for (head, library) in [
+            (macho(6), true),
+            (macho(8), true),
+            (macho(1), false),
+            (macho(2), false),
+            (macho(10), false),
+            (vec![0xca, 0xfe, 0xba, 0xbe, 0, 0, 0, 2], true),
+            (elf(1, [3, 0]), true),
+            (elf(1, [2, 0]), false),
+            (elf(1, [1, 0]), false),
+            (elf(2, [0, 3]), true),
+            (elf(2, [0, 2]), false),
+            (vec![0x7f, b'E', b'L', b'F'], true),
+            (portable_executable(0x2000), true),
+            (portable_executable(0x0002), false),
+            (b"MZ".to_vec(), true),
+            (b"!<arch>\n".to_vec(), false),
+            (b"#!/bin/sh\n".to_vec(), false),
+            (Vec::new(), false),
+            (test_library(b"payload"), true),
+        ] {
+            assert_eq!(super::image(&head), library, "{head:02x?}");
+        }
+    }
+}
+
 #[cfg(all(test, target_os = "macos"))]
-mod tests {
+mod macos_tests {
     use super::{Inputs, LoaderInputError};
     use crate::cargo::build_cache::toolchain::Identities;
     use crate::vars::Variables;
@@ -558,7 +686,11 @@ mod tests {
                 .digest()
         );
         let library = directory.path().join("library");
-        std::fs::write(&library, b"actual library input").expect("owned library target");
+        std::fs::write(
+            &library,
+            super::tests::test_library(b"actual library input"),
+        )
+        .expect("owned library target");
         std::fs::remove_file(&alias).expect("retarget owned alias");
         std::os::unix::fs::symlink(&library, &alias).expect("library alias");
         assert_ne!(
@@ -575,7 +707,7 @@ mod tests {
         for index in 0..64 {
             std::fs::write(
                 directory.path().join(format!("lib{index}.dylib")),
-                b"actual library input",
+                super::tests::test_library(b"actual library input"),
             )
             .expect("owned library");
         }
@@ -598,6 +730,46 @@ mod tests {
     }
 
     #[test]
+    fn a_file_no_loader_can_load_is_named_without_being_identified() {
+        let directory = tempfile::tempdir().expect("owned loader search");
+        let executable = directory.path().join("suite-0123456789abcdef");
+        let archive = directory.path().join("libdependency.rlib");
+        let library = directory.path().join("libmacro.dylib");
+        let mut program = vec![
+            0xcf, 0xfa, 0xed, 0xfe, 0x0c, 0, 0, 0x01, 0, 0, 0, 0, 2, 0, 0, 0,
+        ];
+        program.extend_from_slice(b"a test executable");
+        std::fs::write(&executable, program).expect("owned executable");
+        std::fs::write(&archive, b"!<arch>\nfirst").expect("owned archive");
+        std::fs::write(&library, super::tests::test_library(b"a proc macro"))
+            .expect("owned library");
+        let mut env = Variables::default();
+        env.set("DYLD_FALLBACK_LIBRARY_PATH", directory.path());
+        let identities = Identities::empty();
+        let before = Inputs::of(&env, &identities).expect("original inputs");
+        assert_eq!(
+            identities.opens().expect("capture count"),
+            1,
+            "only the one loadable image is identified in full"
+        );
+        std::fs::write(&archive, b"!<arch>\nother").expect("changed archive");
+        assert_eq!(
+            before.digest(),
+            Inputs::of(&env, &identities)
+                .expect("archive change")
+                .digest(),
+            "no loader reads an archive, so its bytes are not a loader input"
+        );
+        std::fs::write(&archive, super::tests::test_library(b"now an image"))
+            .expect("archive becomes an image");
+        assert_ne!(
+            before.digest(),
+            Inputs::of(&env, &identities).expect("new image").digest(),
+            "a file that becomes loadable is bound"
+        );
+    }
+
+    #[test]
     fn the_native_system_library_namespace_has_complete_typed_inputs() {
         let mut env = Variables::default();
         env.set("DYLD_FALLBACK_LIBRARY_PATH", "/usr/lib");
@@ -608,7 +780,7 @@ mod tests {
     fn a_fallback_library_change_is_bound_even_with_its_original_mtime() {
         let directory = tempfile::tempdir().expect("owned loader search");
         let path = directory.path().join("libcandidate.dylib");
-        std::fs::write(&path, b"first").expect("original library");
+        std::fs::write(&path, super::tests::test_library(b"first")).expect("original library");
         let modified = std::fs::metadata(&path)
             .expect("original metadata")
             .modified()
@@ -625,7 +797,8 @@ mod tests {
                 .expect("unchanged inputs")
                 .digest()
         );
-        std::fs::write(&path, b"other").expect("changed bytes of the same length");
+        std::fs::write(&path, super::tests::test_library(b"other"))
+            .expect("changed bytes of the same length");
         std::fs::OpenOptions::new()
             .write(true)
             .open(&path)
@@ -649,7 +822,11 @@ mod tests {
         let identities = Identities::empty();
         let absent = Inputs::of(&env, &identities).expect("observed absent directory");
         std::fs::create_dir_all(&search).expect("new search directory");
-        std::fs::write(search.join("library"), b"actual bytes").expect("new library");
+        std::fs::write(
+            search.join("library"),
+            super::tests::test_library(b"actual bytes"),
+        )
+        .expect("new library");
         assert_ne!(
             absent.digest(),
             Inputs::of(&env, &identities)
@@ -719,7 +896,11 @@ mod namespace_tests {
         for &name in search_variables() {
             let directory = tempfile::tempdir().expect("owned native search directory");
             let library = directory.path().join("library");
-            std::fs::write(&library, b"original library bytes").expect("original library");
+            std::fs::write(
+                &library,
+                super::tests::test_library(b"original library bytes"),
+            )
+            .expect("original library");
             let env = environment(name, directory.path());
             let identities = Identities::empty();
             let original = RuntimeInputs::capture(&env, directory.path(), &identities)
@@ -742,7 +923,8 @@ mod namespace_tests {
                     .admits(name, OsStr::new("a different value"))
             );
             let added = directory.path().join("new-library");
-            std::fs::write(&added, b"new candidate").expect("new search candidate");
+            std::fs::write(&added, super::tests::test_library(b"new candidate"))
+                .expect("new search candidate");
             original
                 .verify()
                 .expect_err("adding a search candidate invalidates the original namespace");
@@ -763,7 +945,7 @@ mod namespace_tests {
     fn an_original_attestation_refuses_same_stamp_content_changes_and_file_modes() {
         let directory = tempfile::tempdir().expect("owned search directory");
         let library = directory.path().join("library");
-        std::fs::write(&library, b"AAAA").expect("original contents");
+        std::fs::write(&library, super::tests::test_library(b"AAAA")).expect("original contents");
         let stamp = std::fs::metadata(&library)
             .expect("original metadata")
             .modified()
@@ -777,7 +959,8 @@ mod namespace_tests {
         let identities = Identities::empty();
         let original =
             RuntimeInputs::capture(&env, directory.path(), &identities).expect("original capture");
-        std::fs::write(&library, b"BBBB").expect("same length replacement");
+        std::fs::write(&library, super::tests::test_library(b"BBBB"))
+            .expect("same length replacement");
         std::fs::File::options()
             .write(true)
             .open(&library)
@@ -832,8 +1015,11 @@ mod namespace_tests {
         let other = tempfile::tempdir().expect("different actual cwd");
         RuntimeInputs::restore(&original.attestation(), &env, other.path(), &identities)
             .expect_err("changed or unsupported original loader input is refused");
-        std::fs::write(missing.join("library"), b"new relative candidate")
-            .expect("changed relative namespace");
+        std::fs::write(
+            missing.join("library"),
+            super::tests::test_library(b"new relative candidate"),
+        )
+        .expect("changed relative namespace");
         assert_ne!(
             compiler.digest(),
             Inputs::compiler(&env, directory.path(), &identities)
@@ -923,8 +1109,10 @@ mod namespace_tests {
         std::fs::create_dir_all(&search).expect("owned search root");
         let first = directory.path().join("first");
         let second = directory.path().join("second");
-        std::fs::write(&first, b"same candidate bytes").expect("first candidate");
-        std::fs::write(&second, b"same candidate bytes").expect("second candidate");
+        std::fs::write(&first, super::tests::test_library(b"same candidate bytes"))
+            .expect("first candidate");
+        std::fs::write(&second, super::tests::test_library(b"same candidate bytes"))
+            .expect("second candidate");
         let alias = search.join("alias");
         std::os::unix::fs::symlink(&first, &alias).expect("original alias");
         let env = environment(
@@ -947,7 +1135,8 @@ mod namespace_tests {
         std::os::unix::fs::symlink(&missing, &alias).expect("original absent alias target");
         let absent = RuntimeInputs::capture(&env, directory.path(), &identities)
             .expect("bound absent alias target");
-        std::fs::write(&missing, b"now present").expect("alias target becomes present");
+        std::fs::write(&missing, super::tests::test_library(b"now present"))
+            .expect("alias target becomes present");
         absent
             .verify()
             .expect_err("changed or unsupported original loader input is refused");
@@ -961,7 +1150,11 @@ mod namespace_tests {
         let optimized = search.join("glibc-hwcaps/x86-64-v3");
         std::fs::create_dir_all(&optimized).expect("native hwcaps namespace");
         let library = optimized.join("library.so");
-        std::fs::write(&library, b"original hwcaps bytes").expect("native optimized candidate");
+        std::fs::write(
+            &library,
+            super::tests::test_library(b"original hwcaps bytes"),
+        )
+        .expect("native optimized candidate");
         let mut env = Variables::default();
         env.set("LD_LIBRARY_PATH", format!("search;{}:", search.display()));
         let original = RuntimeInputs::capture(&env, directory.path(), &Identities::empty())
@@ -969,7 +1162,11 @@ mod namespace_tests {
         original
             .verify()
             .expect("unchanged complete hwcaps namespace");
-        std::fs::write(&library, b"changed hwcaps bytes").expect("changed optimized candidate");
+        std::fs::write(
+            &library,
+            super::tests::test_library(b"changed hwcaps bytes"),
+        )
+        .expect("changed optimized candidate");
         original
             .verify()
             .expect_err("changed or unsupported original loader input is refused");
@@ -985,7 +1182,11 @@ mod namespace_tests {
         let version = directory.path().join("Actual.framework/Versions/A");
         std::fs::create_dir_all(&version).expect("actual framework version");
         let library = version.join("Actual");
-        std::fs::write(&library, b"original framework bytes").expect("framework candidate");
+        std::fs::write(
+            &library,
+            super::tests::test_library(b"original framework bytes"),
+        )
+        .expect("framework candidate");
         std::os::unix::fs::symlink("A", version.parent().expect("versions").join("Current"))
             .expect("native version alias");
         std::os::unix::fs::symlink(directory.path(), version.join("ancestor"))
@@ -994,7 +1195,11 @@ mod namespace_tests {
         let original = RuntimeInputs::capture(&env, directory.path(), &Identities::empty())
             .expect("complete original framework graph");
         original.verify().expect("unchanged framework aliases");
-        std::fs::write(&library, b"changed framework bytes").expect("changed framework candidate");
+        std::fs::write(
+            &library,
+            super::tests::test_library(b"changed framework bytes"),
+        )
+        .expect("changed framework candidate");
         original
             .verify()
             .expect_err("changed or unsupported original loader input is refused");
