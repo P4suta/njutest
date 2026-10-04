@@ -244,3 +244,17 @@ The macro expands to the original expression without another scope, inference bo
 Every inserted byte maps through the existing splice offsets for branch and constant diagnostics, while source line counts remain unchanged.
 Statement-only files emit no unused expression macro.
 Generated imports retain their module-relative standard-library aliases under every supported edition.
+
+## Retained toolchain input identities
+
+The existing process identity memo is retained with its original toolchain observation.
+A cache hit still opens the current input and checks its canonical path, filesystem object, change time, length, modification time, and permissions before reusing the original digest.
+Changed or unreadable generations cannot use the retained identity.
+Unknown selectors, loader inputs, and incomplete observations retain actual hashing or Cargo fallback.
+Every capture still checks the complete source and loader namespace.
+Later compiler and runtime captures publish their identities through the same owned observation lease.
+The retained cursor restores only while it stays byte-identical to the original publication its own content key names.
+A publication whose content key the cursor has superseded merges its captures into the cursor's record without reading input bytes, and the cursor keeps naming the newer publication.
+The input memo cannot create a compiler unit, a fresh artifact, or an independent reproducibility witness.
+Actual hash reads and completed bytes remain recorded separately from process starts.
+An unchanged second listing must read zero toolchain bytes and start zero physical processes.

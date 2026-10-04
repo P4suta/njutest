@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-use super::build_cache::toolchain::Identities;
+use super::build_cache::toolchain::{Identities, Retained};
 use super::build_cache::{File, configurations, file};
 use super::{CargoError, CargoErrorKind, LocateOptions, Toolchain, VersionInfo};
 use crate::runner::{Cancel, RunResult, Spec, Watch};
@@ -30,6 +30,20 @@ struct Inputs {
 }
 
 impl Inputs {
+    fn admitted_identities(&self) -> io::Result<BTreeMap<PathBuf, File>> {
+        let mut files = self.files.clone();
+        for program in self.programs.values() {
+            if let Some(previous) = files.insert(program.resolved.clone(), program.content.clone())
+                && previous != program.content
+            {
+                return Err(io::Error::other(
+                    "one original executable has conflicting content identities",
+                ));
+            }
+        }
+        Ok(files)
+    }
+
     fn verify(&self, actual: &Self, root: &Path) -> io::Result<()> {
         let mut changes = Vec::new();
         for path in self.files.keys().chain(
@@ -139,7 +153,7 @@ impl Executable {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Located {
     pub(super) cargo: PathBuf,
@@ -240,6 +254,7 @@ struct Record {
     located: Located,
     inputs: Inputs,
     processes: Vec<Process>,
+    identities: Retained,
 }
 
 struct Collected<'a, W> {
@@ -269,10 +284,44 @@ impl<W: Watch> Watch for Collected<'_, W> {
 struct Owner {
     key: String,
     record: PathBuf,
+    cursor: PathBuf,
     lease: std::fs::File,
     initial: Inputs,
     identities: Identities,
     exclusions: Vec<crate::glob::Pattern>,
+}
+
+fn identity_publication<W: Watch>(
+    parent: &Path,
+    (cargo, rustc): (&Path, &Path),
+    watch: &W,
+) -> io::Result<(PathBuf, std::fs::File)> {
+    let mut publication = Sha256::new();
+    for bytes in [
+        SCHEMA.as_bytes(),
+        b"owned-input-identities",
+        cargo.as_os_str().as_encoded_bytes(),
+        rustc.as_os_str().as_encoded_bytes(),
+    ] {
+        field(&mut publication, bytes)?;
+    }
+    let directory = parent.join(hex::encode(publication.finalize()));
+    std::fs::create_dir_all(&directory)?;
+    let lease = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(directory.join("observation.lock"))?;
+    let started = std::time::Instant::now();
+    let locked = lease.lock();
+    watch.note("host-wait", &serde_json::json!({
+        "owner": directory.display().to_string(), "cause": "bound tool observation publication",
+        "elapsed_ns": u64::try_from(started.elapsed().as_nanos()).map_err(io::Error::other)?,
+        "machine": {"os": std::env::consts::OS, "cpus": std::thread::available_parallelism()?.get()}
+    }).to_string());
+    locked?;
+    Ok((directory.join("located.json"), lease))
 }
 
 impl Owner {
@@ -300,37 +349,39 @@ impl Owner {
             field(&mut digest, name.as_encoded_bytes())?;
             field(&mut digest, value.as_encoded_bytes())?;
         }
-        let identities = Identities::empty();
-        let sysroot = selecting_root((cargo, rustc), env, &identities)?;
-        let initial = observation_inputs(
-            (cargo, rustc, cargo),
-            (&sysroot, dir, env),
-            (&identities, exclusions),
-        )?;
+        let (cursor, lease) = identity_publication(&parent, (cargo, rustc), watch)?;
+        let identities = match restore_identities(&cursor) {
+            Ok(identities) => identities,
+            Err(source) => {
+                watch.note("toolchain-identity-miss", &source.to_string());
+                Identities::empty()
+            }
+        };
+        let initial = super::build_cache::toolchain::observation_environment((None, rustc), env)
+            .and_then(|()| selecting_root((cargo, rustc), env, &identities))
+            .and_then(|sysroot| {
+                observation_inputs(
+                    (cargo, rustc, cargo),
+                    (&sysroot, dir, env),
+                    (&identities, exclusions),
+                )
+            });
+        watch.note(
+            "toolchain-input-work",
+            &serde_json::to_string(&identities.work()?).map_err(io::Error::other)?,
+        );
+        let initial = initial?;
         field(
             &mut digest,
             &serde_json::to_vec(&initial).map_err(io::Error::other)?,
         )?;
         let key = hex::encode(digest.finalize());
-        let directory = parent.join(&key);
-        std::fs::create_dir_all(&directory)?;
-        let lease = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(directory.join("observation.lock"))?;
-        let started = std::time::Instant::now();
-        let locked = lease.lock();
-        watch.note("host-wait", &serde_json::json!({
-            "owner": directory.display().to_string(), "cause": "bound tool observation publication",
-            "elapsed_ns": u64::try_from(started.elapsed().as_nanos()).map_err(io::Error::other)?,
-            "machine": {"os": std::env::consts::OS, "cpus": std::thread::available_parallelism()?.get()}
-        }).to_string());
-        locked?;
+        let products = parent.join(&key);
+        std::fs::create_dir_all(&products)?;
         Ok(Self {
             key,
-            record: directory.join("located.json"),
+            record: products.join("located.json"),
+            cursor,
             lease,
             initial,
             identities,
@@ -339,12 +390,12 @@ impl Owner {
     }
 
     fn read(&self, (options, dir): (&LocateOptions, &Path)) -> io::Result<Toolchain> {
-        let record: Record = crate::strictjson::decode_slice(&std::fs::read(&self.record)?)
+        let mut record: Record = crate::strictjson::decode_slice(&std::fs::read(&self.record)?)
             .map_err(io::Error::other)?;
         if record.schema != SCHEMA || record.key != self.key || record.processes.is_empty() {
             return Err(io::Error::other("an unbound tool observation record"));
         }
-        let observed = Toolchain::observed(record.located, options.env.clone())
+        let observed = Toolchain::observed(record.located.clone(), options.env.clone())
             .map_err(io::Error::other)?
             .with_identities(&self.identities)
             .with_exclusions(&self.exclusions);
@@ -353,6 +404,17 @@ impl Owner {
             .verify(&observed_inputs(&observed, dir)?, dir)?;
         record.inputs.verify(&self.initial, dir)?;
         validate_processes(&observed, dir, &record.processes)?;
+        record.identities.merge(
+            &self
+                .identities
+                .retain(&record.inputs.admitted_identities()?)?,
+        )?;
+        self.identities.accept(record.identities.clone())?;
+        let bytes = serde_json::to_vec(&record).map_err(io::Error::other)?;
+        crate::replace::file(&self.record, &bytes).map_err(|error| error.source)?;
+        crate::replace::file(&self.cursor, &bytes).map_err(|error| error.source)?;
+        self.identities
+            .attach((&self.record, &self.cursor), &self.key)?;
         Ok(observed)
     }
 
@@ -364,19 +426,114 @@ impl Owner {
         let inputs = observed_inputs(toolchain, dir)?;
         self.initial.verify(&inputs, dir)?;
         validate_processes(toolchain, dir, &processes)?;
+        let identities = toolchain
+            .identities()
+            .retain(&inputs.admitted_identities()?)?;
         let record = Record {
             schema: SCHEMA.to_owned(),
             key: self.key.clone(),
             located: Located::of(toolchain)?,
             inputs,
             processes,
+            identities,
         };
         crate::replace::file(
             &self.record,
             &serde_json::to_vec(&record).map_err(io::Error::other)?,
         )
-        .map_err(|error| error.source)
+        .map_err(|error| error.source)?;
+        crate::replace::file(
+            &self.cursor,
+            &serde_json::to_vec(&record).map_err(io::Error::other)?,
+        )
+        .map_err(|error| error.source)?;
+        self.identities
+            .attach((&self.record, &self.cursor), &self.key)
     }
+}
+
+fn restore_identities(path: &Path) -> io::Result<Identities> {
+    let bytes = std::fs::read(path)?;
+    let record: Record = crate::strictjson::decode_slice(&bytes).map_err(io::Error::other)?;
+    if record.schema != SCHEMA
+        || record.key.len() != 64
+        || !record
+            .key
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        || record.processes.is_empty()
+    {
+        return Err(io::Error::other(
+            "an unbound toolchain identity publication",
+        ));
+    }
+    let owner = path
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| io::Error::other("the identity publication has no owner"))?;
+    if std::fs::read(owner.join(&record.key).join("located.json"))? != bytes {
+        return Err(io::Error::other(
+            "the identity cursor is not its original publication",
+        ));
+    }
+    let original = Toolchain::observed(record.located, None).map_err(io::Error::other)?;
+    let root = record
+        .processes
+        .first()
+        .and_then(|process| process.exec.dir.as_deref())
+        .ok_or_else(|| io::Error::other("the original toolchain producer has no source root"))?;
+    validate_processes(&original, Path::new(root), &record.processes)?;
+    Identities::restore(record.identities, &record.inputs.admitted_identities()?)
+}
+
+pub(in crate::cargo) fn persist_identities(
+    (path, cursor): (&Path, &Path),
+    key: &str,
+    identities: &Identities,
+) -> io::Result<()> {
+    let directory = cursor
+        .parent()
+        .ok_or_else(|| io::Error::other("the identity publication has no owner"))?;
+    let lease = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(directory.join("observation.lock"))?;
+    lease.lock()?;
+    let mut record: Record =
+        crate::strictjson::decode_slice(&std::fs::read(path)?).map_err(io::Error::other)?;
+    if record.schema != SCHEMA || record.key != key {
+        return Err(io::Error::other(
+            "the original identity publication changed ownership",
+        ));
+    }
+    let mut published: Record =
+        crate::strictjson::decode_slice(&std::fs::read(cursor)?).map_err(io::Error::other)?;
+    let repointed = published.key != record.key;
+    let current = restore_identities(cursor)?;
+    record
+        .identities
+        .merge(&current.retain(&BTreeMap::new())?)?;
+    record
+        .identities
+        .merge(&identities.retain(&record.inputs.admitted_identities()?)?)?;
+    if repointed {
+        published.identities.merge(&record.identities)?;
+        let owner = cursor
+            .parent()
+            .and_then(Path::parent)
+            .ok_or_else(|| io::Error::other("the identity publication has no owner"))?;
+        let bytes = serde_json::to_vec(&published).map_err(io::Error::other)?;
+        crate::replace::file(cursor, &bytes).map_err(|error| error.source)?;
+        crate::replace::file(&owner.join(&published.key).join("located.json"), &bytes)
+            .map_err(|error| error.source)?;
+        let older = serde_json::to_vec(&record).map_err(io::Error::other)?;
+        crate::replace::file(path, &older).map_err(|error| error.source)?;
+        return identities.accept(published.identities);
+    }
+    let bytes = serde_json::to_vec(&record).map_err(io::Error::other)?;
+    crate::replace::file(path, &bytes).map_err(|error| error.source)?;
+    crate::replace::file(cursor, &bytes).map_err(|error| error.source)?;
+    identities.accept(record.identities)
 }
 
 /// Reuses only a complete, unchanged observation whose original actual processes remain retained.
@@ -480,6 +637,7 @@ fn observation_inputs(
     (sysroot, dir, env): (&Path, &Path, &Variables),
     (identities, exclusions): (&Identities, &[crate::glob::Pattern]),
 ) -> io::Result<Inputs> {
+    super::build_cache::toolchain::observation_environment((Some(sysroot), rustc), env)?;
     let loaders = super::build_cache::loaders::Inputs::observation(env, identities)?;
     super::build_cache::toolchain::environment(sysroot, rustc, env, &loaders)?;
     let mut inputs = BTreeMap::new();
@@ -541,6 +699,7 @@ fn observation_inputs(
             );
         }
     }
+    identities.persist()?;
     Ok(Inputs {
         files: inputs,
         programs,
@@ -743,7 +902,12 @@ impl Response {
                 return Err(io::Error::other("an unbound observation command"));
             }
         };
-        let inputs = response_inputs(spec, toolchain, role)?;
+        let inputs = response_inputs(spec, toolchain, role);
+        watch.note(
+            "tool-observation-input-work",
+            &serde_json::to_string(&toolchain.identities().work()?).map_err(io::Error::other)?,
+        );
+        let inputs = inputs?;
         let mut digest = Sha256::new();
         field(&mut digest, SCHEMA.as_bytes())?;
         field(
@@ -875,6 +1039,10 @@ fn response_inputs(spec: &Spec, toolchain: &Toolchain, role: Role) -> io::Result
     let sysroot = toolchain
         .sysroot()
         .ok_or_else(|| io::Error::other("an unobserved observation sysroot"))?;
+    super::build_cache::toolchain::observation_environment(
+        (Some(sysroot), toolchain.rustc()),
+        env,
+    )?;
     if Path::new(program).parent() != Some(sysroot.join("bin").as_path())
         && selecting_root(
             (Path::new(program), Path::new(program)),
@@ -1068,12 +1236,6 @@ fn selecting_root(
     let rustup = home
         .join("bin")
         .join(format!("rustup{}", std::env::consts::EXE_SUFFIX));
-    let selector = Executable::of(&rustup, identities)?;
-    if Executable::of(cargo, identities)?.content != selector.content
-        || Executable::of(rustc, identities)?.content != selector.content
-    {
-        return Err(io::Error::other("an opaque initial toolchain selector"));
-    }
     let named = env
         .var("RUSTUP_TOOLCHAIN")
         .and_then(|name| name.to_str())
@@ -1100,7 +1262,16 @@ fn selecting_root(
             chosen = Some(entry.path());
         }
     }
-    chosen.ok_or_else(|| io::Error::other("the selected toolchain is not installed"))
+    let chosen =
+        chosen.ok_or_else(|| io::Error::other("the selected toolchain is not installed"))?;
+    super::build_cache::toolchain::observation_environment((Some(&chosen), rustc), env)?;
+    let selector = Executable::of(&rustup, identities)?;
+    if Executable::of(cargo, identities)?.content != selector.content
+        || Executable::of(rustc, identities)?.content != selector.content
+    {
+        return Err(io::Error::other("an opaque initial toolchain selector"));
+    }
+    Ok(chosen)
 }
 
 fn toolchain_root(spec: &Spec) -> Result<&Path, CargoError> {
@@ -1122,6 +1293,287 @@ fn installed(sysroot: &Path) -> io::Result<bool> {
 
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
+    fn one_publication_with_a_supplemental_capture<W: crate::runner::Watch>(
+        (source, cache, supplemental): (&Path, &Path, &Path),
+        watch: &W,
+    ) -> std::io::Result<(Toolchain, crate::vars::Variables)> {
+        let mut env: crate::vars::Variables = njutest_devkit::paths::environment_for_a_run()
+            .into_iter()
+            .collect();
+        env.set("RUSTC_WRAPPER", "");
+        env.set("RUSTC_WORKSPACE_WRAPPER", "");
+        env.set("NJUTEST_FIXTURE_BUILD_CACHE", cache);
+        let options = LocateOptions {
+            cargo: Some(njutest_devkit::paths::cargo_binary()),
+            env: Some(env.clone()),
+            ..LocateOptions::default()
+        };
+        let owner = Toolchain::locate(&options, source, watch).map_err(std::io::Error::other)?;
+        let p = supplemental.join("p");
+        std::fs::write(&p, b"genuine")?;
+        super::super::build_cache::toolchain::identity(&p, owner.identities())?;
+        owner.identities().persist()?;
+        Ok((owner, env))
+    }
+
+    #[test]
+    fn a_consistently_rewritten_cursor_is_refused_without_its_publication() {
+        let source = tempfile::tempdir().expect("owned observation source");
+        let cache = tempfile::tempdir().expect("owned observation publication");
+        let extra = tempfile::tempdir().expect("owned supplemental inputs");
+        let cargo = njutest_devkit::paths::cargo_binary();
+        let rustc = cargo.with_file_name(format!("rustc{}", std::env::consts::EXE_SUFFIX));
+        let cancel = Cancel::new();
+        let trace = recorder();
+        let watch = Watched::new(&cancel, &trace);
+        let (_, env) = one_publication_with_a_supplemental_capture(
+            (source.path(), cache.path(), extra.path()),
+            &watch,
+        )
+        .expect("one genuine publication with a supplemental capture");
+        let p = extra.path().join("p");
+        let (cursor, lease) = super::identity_publication(
+            &super::retained(&env).expect("owned publication root"),
+            (&cargo, &rustc),
+            &watch,
+        )
+        .expect("owned publication read lease");
+        drop(lease);
+        let genuine = std::fs::read(&cursor).expect("published cursor bytes");
+        let mut rewritten: serde_json::Value = crate::strictjson::decode_slice(&genuine)
+            .map_err(std::io::Error::other)
+            .expect("published record");
+        let key = std::fs::canonicalize(&p)
+            .expect("canonical supplemental object")
+            .display()
+            .to_string();
+        let forged = "b".repeat(64);
+        let identities = rewritten
+            .get_mut("identities")
+            .expect("the publication retains its identities");
+        identities
+            .get_mut("files")
+            .and_then(|files| files.get_mut(key.as_str()))
+            .expect("the genuine publication retains the supplemental capture")
+            .get_mut(1)
+            .and_then(|content| content.as_object_mut())
+            .expect("a retained file content")
+            .insert(String::from("digest"), serde_json::json!(&forged));
+        let captures = identities
+            .get_mut("captures")
+            .and_then(|captures| captures.get_mut(key.as_str()))
+            .and_then(|captures| captures.as_array_mut())
+            .expect("the genuine publication retains its actual captures");
+        for capture in captures {
+            capture
+                .get_mut(1)
+                .and_then(|content| content.as_object_mut())
+                .expect("a retained capture content")
+                .insert(String::from("digest"), serde_json::json!(&forged));
+        }
+        std::fs::write(
+            &cursor,
+            serde_json::to_vec(&rewritten)
+                .map_err(std::io::Error::other)
+                .expect("rewritten record bytes"),
+        )
+        .expect("consistently rewritten cursor");
+        let refusal = super::restore_identities(&cursor)
+            .expect_err("two mutually consistent maps cannot attest alone");
+        assert!(
+            refusal.to_string().contains("not its original publication"),
+            "{refusal}"
+        );
+        std::fs::write(&cursor, &genuine).expect("restored genuine cursor");
+        let restored = super::restore_identities(&cursor).expect("genuine original publication");
+        assert_eq!(
+            super::super::build_cache::toolchain::identity(&p, &restored)
+                .expect("genuine retained capture"),
+            super::super::build_cache::toolchain::identity(&p, &super::Identities::empty())
+                .expect("independently read genuine capture")
+        );
+    }
+
+    #[test]
+    fn independent_identity_owners_keep_both_actual_supplemental_captures() {
+        let source = tempfile::tempdir().expect("owned observation source");
+        let cache = tempfile::tempdir().expect("owned observation publication");
+        let extra = tempfile::tempdir().expect("owned supplemental inputs");
+        let mut env: crate::vars::Variables = njutest_devkit::paths::environment_for_a_run()
+            .into_iter()
+            .collect();
+        env.set("RUSTC_WRAPPER", "");
+        env.set("RUSTC_WORKSPACE_WRAPPER", "");
+        env.set("NJUTEST_FIXTURE_BUILD_CACHE", cache.path());
+        let cargo = njutest_devkit::paths::cargo_binary();
+        let rustc = cargo.with_file_name(format!("rustc{}", std::env::consts::EXE_SUFFIX));
+        let options = LocateOptions {
+            cargo: Some(cargo.clone()),
+            env: Some(env.clone()),
+            ..LocateOptions::default()
+        };
+        let cancel = Cancel::new();
+        let trace = recorder();
+        let watch = Watched::new(&cancel, &trace);
+        let first = Toolchain::locate(&options, source.path(), &watch).expect("actual first owner");
+        let second =
+            Toolchain::locate(&options, source.path(), &watch).expect("actual second owner");
+        let p = extra.path().join("p");
+        let q = extra.path().join("q");
+        std::fs::write(&p, b"first").expect("first actual supplemental input");
+        std::fs::write(&q, b"other").expect("second actual supplemental input");
+        super::super::build_cache::toolchain::identity(&p, first.identities())
+            .expect("first actual capture");
+        super::super::build_cache::toolchain::identity(&q, second.identities())
+            .expect("second actual capture");
+        first
+            .identities()
+            .persist()
+            .expect("first actual publication");
+        second
+            .identities()
+            .persist()
+            .expect("second actual publication");
+        let (cursor, lease) = super::identity_publication(
+            &super::retained(&env).expect("owned publication root"),
+            (&cargo, &rustc),
+            &watch,
+        )
+        .expect("owned publication read lease");
+        drop(lease);
+        let restored = super::restore_identities(&cursor).expect("original actual captures");
+        for path in [&p, &q] {
+            super::super::build_cache::toolchain::identity(path, &restored)
+                .expect("unchanged actual input");
+        }
+        assert_eq!(
+            restored.work().expect("actual cumulative publication work"),
+            (0, 0, Vec::new()),
+            "serialized owners must retain both genuine additions"
+        );
+    }
+
+    fn two_content_keys<W: crate::runner::Watch>(
+        (source, cache): (&Path, &Path),
+        (trace, watch): (&Recorder, &W),
+    ) -> std::io::Result<(Toolchain, PathBuf, [String; 2])> {
+        let mut env: crate::vars::Variables = njutest_devkit::paths::environment_for_a_run()
+            .into_iter()
+            .collect();
+        env.set("RUSTC_WRAPPER", "");
+        env.set("RUSTC_WORKSPACE_WRAPPER", "");
+        env.set("NJUTEST_FIXTURE_BUILD_CACHE", cache);
+        let options = LocateOptions {
+            cargo: Some(njutest_devkit::paths::cargo_binary()),
+            env: Some(env.clone()),
+            ..LocateOptions::default()
+        };
+        let older = Toolchain::locate(&options, source, watch).map_err(std::io::Error::other)?;
+        std::fs::write(source.join("later"), b"changed source inputs")?;
+        let newer = Toolchain::locate(&options, source, watch).map_err(std::io::Error::other)?;
+        if older.cargo_version() != newer.cargo_version() {
+            return Err(std::io::Error::other(
+                "both actual content keys must observe one toolchain",
+            ));
+        }
+        let keys = trace
+            .events()
+            .iter()
+            .filter_map(|event| match &event.payload {
+                Payload::Note { note } if note.kind == "toolchain-observation-bound" => {
+                    Some(note.detail.clone())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        println!("actual publication keys: {keys:?}");
+        let [older_key, newer_key] = keys.as_slice() else {
+            return Err(std::io::Error::other(format!(
+                "both actual content keys must publish: {keys:?}"
+            )));
+        };
+        let root = super::retained(&env)?;
+        Ok((older, root, [older_key.clone(), newer_key.clone()]))
+    }
+
+    #[test]
+    fn an_older_content_key_neither_rehashes_nor_repoints_the_identity_cursor() {
+        let source = tempfile::tempdir().expect("owned observation source");
+        let cache = tempfile::tempdir().expect("owned observation publication");
+        let extra = tempfile::tempdir().expect("owned supplemental inputs");
+        let cargo = njutest_devkit::paths::cargo_binary();
+        let cancel = Cancel::new();
+        let trace = recorder();
+        let watch = Watched::new(&cancel, &trace);
+        let (older, root, keys) = two_content_keys((source.path(), cache.path()), (&trace, &watch))
+            .expect("both actual content key publications");
+        let Some(newer_key) = keys.last() else {
+            panic!("both actual content keys must publish: {keys:?}");
+        };
+        let newer_record = root.join(newer_key).join("located.json");
+        let (cursor, lease) = super::identity_publication(
+            &root,
+            (
+                &cargo,
+                &cargo.with_file_name(format!("rustc{}", std::env::consts::EXE_SUFFIX)),
+            ),
+            &watch,
+        )
+        .expect("owned publication read lease");
+        drop(lease);
+        let cursor_bytes = std::fs::read(&cursor).expect("current cursor publication");
+        assert_eq!(
+            cursor_bytes,
+            std::fs::read(&newer_record).expect("newer original publication"),
+            "the cursor must hold the newer actual content key"
+        );
+        let p = extra.path().join("p");
+        std::fs::write(&p, b"older").expect("older actual supplemental input");
+        super::super::build_cache::toolchain::identity(&p, older.identities())
+            .expect("older actual capture");
+        let before = older.identities().work().expect("older actual work");
+        println!("actual older owner work before the superseded publication: {before:?}");
+        older
+            .identities()
+            .persist()
+            .expect("a superseded content key still publishes its actual captures");
+        assert_eq!(
+            older.identities().work().expect("unchanged older work"),
+            before,
+            "the superseded older publication must read no input bytes"
+        );
+        let cursor_record: serde_json::Value = crate::strictjson::decode_slice(
+            &std::fs::read(&cursor).expect("current cursor publication"),
+        )
+        .map_err(std::io::Error::other)
+        .expect("cursor publication record");
+        assert_eq!(
+            cursor_record.get("key").and_then(serde_json::Value::as_str),
+            Some(newer_key.as_str()),
+            "the superseded older publication must not repoint the cursor"
+        );
+        assert_eq!(
+            std::fs::read(&cursor).expect("current cursor publication"),
+            std::fs::read(&newer_record).expect("newer original publication"),
+            "the cursor must stay bound to the newer original publication"
+        );
+        let restored = super::restore_identities(&cursor).expect("bound cursor publication");
+        assert_eq!(
+            restored.work().expect("restored publication work"),
+            (0, 0, Vec::new()),
+            "the retained captures restore without reading"
+        );
+        assert_eq!(
+            super::super::build_cache::toolchain::identity(&p, &restored)
+                .expect("cumulative retained capture"),
+            super::super::build_cache::toolchain::identity(&p, &super::Identities::empty())
+                .expect("independently read older capture"),
+            "the superseded publication's captures must be retained cumulatively"
+        );
+    }
+
+    use std::path::{Path, PathBuf};
+
     use crate::cargo::{LocateOptions, Toolchain};
     use crate::runner::{Cancel, Watched};
     use crate::trace::{MemorySink, Payload, Recorder, Sink};
@@ -1131,6 +1583,148 @@ mod tests {
             Sink::Memory(MemorySink::unbounded()),
             crate::testkit::trace::standalone_context(),
         )
+    }
+
+    #[test]
+    fn a_refused_observation_digests_no_loader_inputs() {
+        let directory = tempfile::tempdir().expect("owned observation inputs");
+        let fallback = directory.path().join("fallback");
+        std::fs::create_dir_all(&fallback).expect("owned fallback namespace");
+        for name in ["one", "two", "three"] {
+            std::fs::write(fallback.join(name), b"owned-one").expect("owned loader input");
+        }
+        let mut env = crate::vars::Variables::of([(
+            "DYLD_FALLBACK_LIBRARY_PATH".into(),
+            fallback.into_os_string(),
+        )]);
+        env.set("HOME", directory.path());
+        for name in [
+            "LD_LIBRARY_PATH",
+            "RUSTC_WRAPPER",
+            "RUSTC_WORKSPACE_WRAPPER",
+            "RUSTC",
+            "RUSTDOC",
+            "LD_PRELOAD",
+            "DYLD_INSERT_LIBRARIES",
+            "DYLD_LIBRARY_PATH",
+            "DYLD_FRAMEWORK_PATH",
+            "DYLD_FALLBACK_FRAMEWORK_PATH",
+            "COMPILER_PATH",
+            "GCC_EXEC_PREFIX",
+            "LIBRARY_PATH",
+            "CARGO_TARGET_OWNED_LINKER",
+            "CARGO_TARGET_OWNED_RUNNER",
+            "CARGO_TARGET_OWNED_RUSTC",
+            "CARGO_TARGET_OWNED_RUSTDOC",
+            "CARGO_TARGET_OWNED_RUSTC_WRAPPER",
+            "CARGO_TARGET_OWNED_RUSTC_WORKSPACE_WRAPPER",
+            "CARGO_TARGET_OWNED_RUSTFLAGS",
+            "CARGO_TARGET_OWNED_RUSTDOCFLAGS",
+        ] {
+            let mut rejected = env.clone();
+            rejected.set(name, "opaque");
+            let identities = super::Identities::empty();
+            let result = super::observation_inputs(
+                (directory.path(), directory.path(), directory.path()),
+                (directory.path(), directory.path(), &rejected),
+                (&identities, &[]),
+            );
+            let refusal = result.expect_err("an opaque graph is still refused");
+            assert!(refusal.to_string().contains(name), "{name}: {refusal}");
+            let work = identities.work().expect("actual file-boundary work");
+            println!("{name}: actual observation input work: {work:?}");
+            assert_eq!(
+                work,
+                (0, 0, Vec::new()),
+                "{name}: actual input work: {work:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_refused_rustdoc_selector_digests_no_executables_or_loaders() {
+        let directory = tempfile::tempdir().expect("owned selector observation");
+        let mut env: crate::vars::Variables = njutest_devkit::paths::environment_for_a_run()
+            .into_iter()
+            .collect();
+        env.set("RUSTC_WRAPPER", "");
+        env.set("RUSTC_WORKSPACE_WRAPPER", "");
+        env.set("RUSTDOC", "opaque");
+        env.set("NJUTEST_FIXTURE_BUILD_CACHE", directory.path());
+        let bin = super::super::config::home(&env)
+            .expect("actual selector home")
+            .join("bin");
+        let cargo = bin.join("cargo");
+        let rustc = bin.join("rustc");
+        let options = LocateOptions {
+            cargo: Some(cargo.clone()),
+            env: Some(env),
+            ..LocateOptions::default()
+        };
+        let cancel = Cancel::new();
+        let trace = recorder();
+        let result = super::Owner::acquire(
+            (&options, directory.path()),
+            (&cargo, &rustc),
+            &[],
+            &Watched::new(&cancel, &trace),
+        );
+        let refusal = match result {
+            Err(source) => source,
+            Ok(_) => panic!("opaque RUSTDOC must refuse ownership"),
+        };
+        assert!(refusal.to_string().contains("RUSTDOC"), "{refusal}");
+        let work: Vec<(u64, u64, Vec<PathBuf>)> = trace
+            .events()
+            .iter()
+            .filter_map(|event| match &event.payload {
+                Payload::Note { note } if note.kind == "toolchain-input-work" => Some(
+                    crate::strictjson::decode_slice(note.detail.as_bytes())
+                        .expect("actual selector work"),
+                ),
+                _ => None,
+            })
+            .collect();
+        println!("actual refused selector work: {work:?}");
+        assert_eq!(work, vec![(0, 0, Vec::new())]);
+    }
+
+    #[test]
+    fn a_bound_loader_namespace_counts_real_reads_and_reuses_only_stable_contents() {
+        let directory = tempfile::tempdir().expect("owned loader inputs");
+        for name in ["one", "two", "three"] {
+            std::fs::write(directory.path().join(name), b"owned-one").expect("owned input");
+        }
+        let env = crate::vars::Variables::of([(
+            "DYLD_FALLBACK_LIBRARY_PATH".into(),
+            directory.path().as_os_str().to_os_string(),
+        )]);
+        let identities = super::Identities::empty();
+        let first = super::super::build_cache::loaders::Inputs::observation(&env, &identities)
+            .expect("actual bound fallback inputs");
+        let root = std::fs::canonicalize(directory.path()).expect("canonical owned inputs");
+        let expected = (
+            3,
+            27,
+            ["one", "three", "two"].map(|name| root.join(name)).to_vec(),
+        );
+        assert_eq!(identities.work().expect("actual file work"), expected);
+        println!("actual captured loader work: {expected:?}");
+        let again = super::super::build_cache::loaders::Inputs::observation(&env, &identities)
+            .expect("the same retained loader namespace");
+        assert_eq!(first.digest(), again.digest());
+        assert_eq!(
+            identities.work().expect("memo reuse does not read"),
+            expected
+        );
+        std::fs::write(root.join("one"), b"other-one").expect("changed actual loader input");
+        let changed = super::super::build_cache::loaders::Inputs::observation(&env, &identities)
+            .expect("changed inputs are freshly captured");
+        assert_ne!(first.digest(), changed.digest());
+        let (attempts, bytes, paths) = identities.work().expect("actual changed file work");
+        assert_eq!((attempts, bytes), (4, 36));
+        assert_eq!(paths.last(), Some(&root.join("one")));
+        println!("actual changed loader work: {attempts} attempts, {bytes} bytes, {paths:?}");
     }
 
     #[test]
@@ -1168,6 +1762,25 @@ mod tests {
         assert_eq!(first.cargo_version(), second.cargo_version());
         assert_eq!(first.rustc_version(), second.rustc_version());
         let repeated = second_trace.events();
+        let first_work = first
+            .identities()
+            .work()
+            .expect("first actual toolchain reads");
+        let second_work = second
+            .identities()
+            .work()
+            .expect("second actual toolchain reads");
+        println!("first actual toolchain digest work: {first_work:?}");
+        println!("second actual toolchain digest work: {second_work:?}");
+        assert!(
+            first_work.1 > 0,
+            "the original compiler inputs were actually hashed"
+        );
+        assert_eq!(
+            second_work,
+            (0, 0, Vec::new()),
+            "stable inputs retain actual identities"
+        );
         let processes = repeated
             .iter()
             .filter(|event| matches!(&event.payload, Payload::Exec { .. }))
