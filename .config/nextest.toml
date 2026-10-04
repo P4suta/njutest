@@ -48,6 +48,14 @@ slow-timeout = { period = "60s", terminate-after = 4 }
 filter = 'binary_id(rust-mutants-cli::suite) & test(/^(commands_in_process|commands_lines|doctor_checks)::/)'
 test-group = "toolchain"
 
+# Four observation tests locate a real toolchain in a fresh publication root, so each identifies the whole sysroot cold: 1.4 GB in 4,083 files on this Mac.
+# One takes 25s alone; the four at once took 41-45s each, and one ran past the inner loop's minute in the pre-push suite.
+# The work is the toolchain's, so they share the toolchain group's bound and keep a budget sized to it.
+[[profile.default.overrides]]
+filter = 'binary_id(rust-mutants) & test(/^cargo::observed::tests::(independent_identity_owners_keep_both_actual_supplemental_captures|an_older_content_key_neither_rehashes_nor_repoints_the_identity_cursor|a_consistently_rewritten_cursor_is_refused_without_its_publication|a_known_rustup_selector_reuses_its_actual_toolchain_observation)$/)'
+test-group = "toolchain"
+slow-timeout = { period = "60s", terminate-after = 4 }
+
 # The inner loop starts no toolchain, so a test there taking a minute is
 # already a test that has stopped answering.
 [[profile.default.overrides]]
