@@ -97,6 +97,14 @@ fn document(path: &Path) -> serde_json::Value {
     njutest_devkit::strictjson::decode_str(&text).expect("a recording's document is JSON")
 }
 
+/// What a merge left at `path`, or why there is nothing there to read.
+fn left_at(path: &Path) -> String {
+    match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) => format!("nothing readable at {}: {error}", path.display()),
+    }
+}
+
 /// Every path in `value`, each ending in the kind of what is there, with every element of an array at one path.
 fn shape(value: &serde_json::Value, at: &str, into: &mut BTreeSet<String>) {
     match value {
@@ -258,7 +266,7 @@ fn recorded(fixture: &Fixture, sealed: bool) -> Recorded {
         "a merge of two parts of one catalog answers what the parts establish: sealed parts \
          establish their verdicts, and parts run with --no-seal establish none, so the whole \
          they make is a lead and not a verdict: {out}{err}\n{}",
-        document(&merged)
+        left_at(&merged)
     );
     Recorded {
         traces: fixture.root.join(".njutest/trace"),
