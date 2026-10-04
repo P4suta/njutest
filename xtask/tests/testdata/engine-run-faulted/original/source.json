@@ -1,6 +1,6 @@
 {
   "schema": "njutest-original-source-v1",
-  "archive": "9a011082bad8d014519fa7377faa515fc3675b85866f8bb49721240ce5b1e46d",
+  "archive": "a0aa1dc6b0a44138779a546e835a37b617e29b3f46dc68a1c8069f938e2c0eef",
   "files": {
     ".njutest.toml": {
       "sha256": "b1b3121a3f86a1e8b3911b9e6df280e9cb20ad712a4ba034afa754fe0a4b0b9e",
@@ -19,7 +19,7 @@
       "mode": 420
     },
     "README.md": {
-      "sha256": "6d0d59992105a4d41e836c1e788b5bf1f4056b31cb07887329e2693384d2b373",
+      "sha256": "cd6c85955a1296c7b1e6ac04239965a2ef803c14bb94045cb6fc68ba7ca8a81f",
       "mode": 420
     },
     "src/lib.rs": {
@@ -27,7 +27,7 @@
       "mode": 420
     },
     "tests/calls.rs": {
-      "sha256": "b861e1d26c0f7556391e8fc87ad0f419130ab238214f3df859c4bb97f7014b92",
+      "sha256": "ffcdf78199527e601b194a97efca205b9ae49a5b1cd5ad1f940d5446ac60f733",
       "mode": 420
     },
     "tests/declines.rs": {

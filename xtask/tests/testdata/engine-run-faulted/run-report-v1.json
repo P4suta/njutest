@@ -3,10 +3,10 @@
   "schema_version": 5,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20261002t125543009z",
-    "started_at": "2026-10-02T12:55:43.009653Z",
-    "finished_at": "2026-10-02T12:55:46.228933Z",
-    "duration_ms": 205,
+    "id": "20261004t224313577z",
+    "started_at": "2026-10-04T22:43:13.577736Z",
+    "finished_at": "2026-10-04T22:43:18.199977Z",
+    "duration_ms": 1434,
     "interrupted": false,
     "exit_code": 1,
     "shard": null,
@@ -18,7 +18,7 @@
   "workspace": {
     "root_name": "fixture-faulted",
     "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
-    "workspace_digest": "7e8401b0c38e4445f1551a1e033267f46a0300086a7faa6098625be4db75423e",
+    "workspace_digest": "953fce434d253ca645a3d1acd7629b57bed2a463d71a6c3c529bf27232deb68a",
     "catalog_digest": "b9eb2637fbb668ab1274db73374a862f1ebd5a7e91fa3b967dafeb1f714d43d3",
     "platform": {
       "os": "darwin",
@@ -151,7 +151,7 @@
       "step_notice": null,
       "target": "fixture-faulted/test/calls",
       "exit_code": -1,
-      "duration_ms": 16,
+      "duration_ms": 15,
       "tests_run": 1,
       "killed_by": [
         "the_manifest_loads"
@@ -213,7 +213,7 @@
       "step_notice": null,
       "target": "fixture-faulted/test/calls",
       "exit_code": -1,
-      "duration_ms": 17,
+      "duration_ms": 34,
       "tests_run": 1,
       "killed_by": [
         "seven_is_a_number"
@@ -274,7 +274,7 @@
       "step_notice": null,
       "target": "",
       "exit_code": -1,
-      "duration_ms": 32,
+      "duration_ms": 22,
       "tests_run": 2,
       "killed_by": [],
       "signal": null,
@@ -339,7 +339,7 @@
       "step_notice": null,
       "target": "",
       "exit_code": -1,
-      "duration_ms": 15,
+      "duration_ms": 9,
       "tests_run": 0,
       "killed_by": [],
       "signal": null,
@@ -386,7 +386,7 @@
       "step_notice": null,
       "target": "",
       "exit_code": -1,
-      "duration_ms": 6,
+      "duration_ms": 11,
       "tests_run": 1,
       "killed_by": [],
       "signal": null,
@@ -445,7 +445,7 @@
       "step_notice": null,
       "target": "fixture-faulted/test/declines",
       "exit_code": 0,
-      "duration_ms": 33,
+      "duration_ms": 4,
       "tests_run": 1,
       "killed_by": [],
       "signal": null,
@@ -491,7 +491,7 @@
       "path": "src/lib.rs",
       "rule": "inject-error",
       "code": "E0277",
-      "diagnostic": "error[E0277]: the trait bound `Refused: Injectable` is not satisfied\n   --> src/lib.rs:46:156\n    |\n 46 | ...ctive(3) { ::core::result::Result::Err(__rm_b1a35a68::injected()) } else { inner() })?;\n    |                                           ^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound\n    |\nhelp: the trait `Injectable` is not implemented for `Refused`\n   --> src/lib.rs:39:1\n    |\n 39 | pub struct Refused;\n    | ^^^^^^^^^^^^^^^^^^\n    = help: the following other types implement trait `Injectable`:\n              FromUtf8Error\n              ParseFloatError\n              ParseIntError\n              TryFromIntError\n              Utf8Error\n              std::io::Error\nnote: required by a bound in `injected`\n   --> src/lib.rs:455:31\n    |\n455 |     pub(crate) fn injected<E: Injectable>() -> E {\n    |                               ^^^^^^^^^^ required by this bound in `injected`\n\n",
+      "diagnostic": "error[E0277]: the trait bound `Refused: Injectable` is not satisfied\n   --> src/lib.rs:46:149\n    |\n 46 | ...ctive(3) { ::core::result::Result::Err(__rm_b1a35a68::injected()) } else { inner() })?;\n    |                                           ^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound\n    |\nhelp: the trait `Injectable` is not implemented for `Refused`\n   --> src/lib.rs:39:1\n    |\n 39 | pub struct Refused;\n    | ^^^^^^^^^^^^^^^^^^\n    = help: the following other types implement trait `Injectable`:\n              FromUtf8Error\n              ParseFloatError\n              ParseIntError\n              TryFromIntError\n              Utf8Error\n              std::io::Error\nnote: required by a bound in `injected`\n   --> src/lib.rs:446:31\n    |\n446 |     pub(crate) fn injected<E: Injectable>() -> E {\n    |                               ^^^^^^^^^^ required by this bound in `injected`\n\n",
       "isolated": true,
       "reason": "compiler-refused"
     },
@@ -502,7 +502,7 @@
       "path": "src/lib.rs",
       "rule": "inject-error",
       "code": "E0308",
-      "diagnostic": "error[E0308]: `if` and `else` have incompatible types\n  --> src/lib.rs:57:193\n   |\n57 | ...ve(4) { ::core::result::Result::Err(__rm_b1a35a68::injected()) } else { value })?;\n   |            ------------------------------------------------------          ^^^^^ expected `Result<_, _>`, found `Option<u8>`\n   |            |\n   |            expected because of this\n   |\n   = note: expected enum `Result<_, _>`\n              found enum `Option<u8>`\nhelp: try wrapping the expression in a variant of `Result`\n   |\n57 |     __rm_b1a35a68::item(6); __rm_b1a35a68::checkpoint(); let inside = crate::__rm_b1a35a68_value!(if __rm_b1a35a68::active(4) { ::core::result::Result::Err(__rm_b1a35a68::injected()) } else { Ok(value) })?;\n   |                                                                                                                                                                                                 +++     +\n57 |     __rm_b1a35a68::item(6); __rm_b1a35a68::checkpoint(); let inside = crate::__rm_b1a35a68_value!(if __rm_b1a35a68::active(4) { ::core::result::Result::Err(__rm_b1a35a68::injected()) } else { Err(value) })?;\n   |                                                                                                                                                                                                 ++++     +\n\n",
+      "diagnostic": "error[E0308]: `if` and `else` have incompatible types\n  --> src/lib.rs:57:186\n   |\n57 | ...ve(4) { ::core::result::Result::Err(__rm_b1a35a68::injected()) } else { value })?;\n   |            ------------------------------------------------------          ^^^^^ expected `Result<_, _>`, found `Option<u8>`\n   |            |\n   |            expected because of this\n   |\n   = note: expected enum `Result<_, _>`\n              found enum `Option<u8>`\nhelp: try wrapping the expression in a variant of `Result`\n   |\n57 |     __rm_b1a35a68::item(6); __rm_b1a35a68::checkpoint(); let inside = __rm_b1a35a68_value!(if __rm_b1a35a68::active(4) { ::core::result::Result::Err(__rm_b1a35a68::injected()) } else { Ok(value) })?;\n   |                                                                                                                                                                                          +++     +\n57 |     __rm_b1a35a68::item(6); __rm_b1a35a68::checkpoint(); let inside = __rm_b1a35a68_value!(if __rm_b1a35a68::active(4) { ::core::result::Result::Err(__rm_b1a35a68::injected()) } else { Err(value) })?;\n   |                                                                                                                                                                                          ++++     +\n\n",
       "isolated": true,
       "reason": "compiler-refused"
     }

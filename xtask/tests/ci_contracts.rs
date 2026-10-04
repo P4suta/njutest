@@ -261,6 +261,181 @@ fn native_sleep(source: &str) -> bool {
     sleeps.found
 }
 
+/// Every fixture source that publishes to the injected supervision clock.
+const SUPERVISION_FIXTURES: [&str; 2] = [
+    "fixture-faulted/tests/calls.rs",
+    "fixture-hang/tests/pace.rs",
+];
+
+/// `expression` without the borrows and parentheses around it.
+fn bare(expression: &syn::Expr) -> &syn::Expr {
+    match expression {
+        syn::Expr::Reference(reference) => bare(&reference.expr),
+        syn::Expr::Paren(paren) => bare(&paren.expr),
+        other => other,
+    }
+}
+
+/// The one name `expression` is, where it is a bare name.
+fn named(expression: &syn::Expr) -> Option<String> {
+    match bare(expression) {
+        syn::Expr::Path(path) => path.path.get_ident().map(ToString::to_string),
+        _ => None,
+    }
+}
+
+/// Whether the last segments of `path` are `tail`.
+fn ends_with(path: &syn::Path, tail: &[&str]) -> bool {
+    let segments: Vec<String> = path
+        .segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect();
+    segments.len() >= tail.len()
+        && segments
+            .iter()
+            .rev()
+            .zip(tail.iter().rev())
+            .all(|(segment, wanted)| segment == wanted)
+}
+
+/// The names a fixture source binds to its process id and to its clock event, and whether it wrote the event in place.
+#[derive(Default)]
+struct ClockEvents {
+    process_ids: std::collections::BTreeSet<String>,
+    event_names: std::collections::BTreeSet<String>,
+    in_place: bool,
+}
+
+impl ClockEvents {
+    fn is_process_id(&self, expression: &syn::Expr) -> bool {
+        match bare(expression) {
+            syn::Expr::Call(call) => matches!(call.func.as_ref(),
+                syn::Expr::Path(path) if ends_with(&path.path, &["process", "id"])),
+            other => named(other).is_some_and(|name| self.process_ids.contains(&name)),
+        }
+    }
+
+    fn names_an_event(&self, expression: &syn::Expr) -> bool {
+        match bare(expression) {
+            syn::Expr::MethodCall(join) if join.method == "join" => {
+                join.args.iter().any(|argument| {
+                    matches!(bare(argument), syn::Expr::MethodCall(spelled)
+                        if spelled.method == "to_string" && self.is_process_id(&spelled.receiver))
+                })
+            }
+            other => named(other).is_some_and(|name| self.event_names.contains(&name)),
+        }
+    }
+
+    fn writes_an_event(
+        &self,
+        arguments: &syn::punctuated::Punctuated<syn::Expr, syn::Token![,]>,
+    ) -> bool {
+        arguments
+            .first()
+            .is_some_and(|target| self.names_an_event(target))
+    }
+}
+
+impl<'ast> syn::visit::Visit<'ast> for ClockEvents {
+    fn visit_local(&mut self, local: &'ast syn::Local) {
+        if let (syn::Pat::Ident(binding), Some(init)) = (&local.pat, &local.init) {
+            let name = binding.ident.to_string();
+            if self.is_process_id(&init.expr) {
+                self.process_ids.insert(name);
+            } else if self.names_an_event(&init.expr) {
+                self.event_names.insert(name);
+            }
+        }
+        syn::visit::visit_local(self, local);
+    }
+
+    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+        if let syn::Expr::Path(path) = call.func.as_ref()
+            && (ends_with(&path.path, &["fs", "write"])
+                || ends_with(&path.path, &["File", "create"]))
+            && self.writes_an_event(&call.args)
+        {
+            self.in_place = true;
+        }
+        syn::visit::visit_expr_call(self, call);
+    }
+
+    fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+        if call.method == "open" && self.writes_an_event(&call.args) {
+            self.in_place = true;
+        }
+        syn::visit::visit_expr_method_call(self, call);
+    }
+}
+
+/// Whether `source` creates or writes the clock event the supervisor reads by its own name, where the supervisor can read it half-written, rather than renaming a complete pending file onto it.
+fn publishes_its_clock_event_in_place(source: &str) -> bool {
+    use syn::visit::Visit as _;
+    let syntax = xtask::lexed::file(source).expect("the supervision fixture parses");
+    let mut events = ClockEvents::default();
+    events.visit_file(&syntax);
+    events.in_place
+}
+
+#[test]
+fn a_supervision_fixture_publishes_its_clock_event_whole() {
+    let written = "fn wait() { \
+        let directory = std::env::var_os(\"NJUTEST_TEST_CLOCK\").expect(\"a clock\"); \
+        let event = std::path::Path::new(&directory).join(std::process::id().to_string()); \
+        std::fs::write(&event, \"60000\").expect(\"a minute\"); }";
+    assert!(
+        publishes_its_clock_event_in_place(written),
+        "a write to the event's own name truncates it before it fills it, and a supervisor \
+         woken by its creation reads it empty, refuses it, and errs the execution"
+    );
+    let pid = "fn tick() { \
+        let directory = std::env::var_os(\"NJUTEST_TEST_CLOCK\").expect(\"a clock\"); \
+        let pid = std::process::id(); \
+        let path = std::path::Path::new(&directory).join(pid.to_string()); \
+        let mut file = std::fs::File::create(&path).expect(\"the event\"); }";
+    assert!(
+        publishes_its_clock_event_in_place(pid),
+        "a file created under the event's name is read before anything is written to it"
+    );
+    let renamed = "fn wait() { \
+        let directory = std::env::var_os(\"NJUTEST_TEST_CLOCK\").expect(\"a clock\"); \
+        let pid = std::process::id(); \
+        let event = std::path::Path::new(&directory).join(pid.to_string()); \
+        let pending = std::path::Path::new(&directory).join(pid.to_string() + \".next\"); \
+        std::fs::write(&pending, \"60000\").expect(\"a minute\"); \
+        std::fs::rename(&pending, &event).expect(\"published whole\"); }";
+    assert!(
+        !publishes_its_clock_event_in_place(renamed),
+        "a complete pending file renamed onto the event's name is the only thing a supervisor \
+         can read under it"
+    );
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let reading: Vec<String> = xtask::repository::files(&root)
+        .expect("the repository's files")
+        .into_iter()
+        .filter_map(|file| file.strip_prefix("fixtures/").map(str::to_owned))
+        .filter(|file| {
+            Path::new(file)
+                .extension()
+                .is_some_and(|extension| extension == "rs")
+                && read(&format!("fixtures/{file}")).contains("NJUTEST_TEST_CLOCK")
+        })
+        .collect();
+    assert_eq!(
+        reading, SUPERVISION_FIXTURES,
+        "every fixture source that reads the injected clock is held to how it publishes to it"
+    );
+    for fixture in SUPERVISION_FIXTURES {
+        assert!(
+            !publishes_its_clock_event_in_place(&read(&format!("fixtures/{fixture}"))),
+            "{fixture} publishes its clock event by renaming a complete pending file onto its \
+             name, never by writing that name"
+        );
+    }
+}
+
 #[test]
 fn supervision_fixtures_advance_events_instead_of_waiting_on_wall_time() {
     assert!(native_sleep(
@@ -269,10 +444,7 @@ fn supervision_fixtures_advance_events_instead_of_waiting_on_wall_time() {
     assert!(!native_sleep(
         "#[cfg(target_os = \"wasi\")] fn wait() { std::thread::sleep(std::time::Duration::from_secs(60)); }"
     ));
-    for fixture in [
-        "fixture-faulted/tests/calls.rs",
-        "fixture-hang/tests/pace.rs",
-    ] {
+    for fixture in SUPERVISION_FIXTURES {
         let source = read(&format!("fixtures/{fixture}"));
         assert!(
             !native_sleep(&source),

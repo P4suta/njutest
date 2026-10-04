@@ -37,8 +37,11 @@ fn a_failed_read_is_waited_out() {
 #[cfg(not(target_os = "wasi"))]
 fn wait() {
     let directory = std::env::var_os("NJUTEST_TEST_CLOCK").expect("an injected supervision clock");
-    let event = Path::new(&directory).join(std::process::id().to_string());
-    std::fs::write(&event, "60000").expect("one elapsed minute");
+    let pid = std::process::id();
+    let event = Path::new(&directory).join(pid.to_string());
+    let pending = Path::new(&directory).join(format!("{pid}.next"));
+    std::fs::write(&pending, "60000").expect("one elapsed minute");
+    std::fs::rename(&pending, &event).expect("the elapsed minute published whole");
     let acknowledged = event.with_extension("ack");
     while !std::fs::read(&acknowledged).is_ok_and(|value| value == b"60000") {
         std::thread::yield_now();
