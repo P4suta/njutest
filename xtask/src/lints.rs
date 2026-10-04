@@ -19,6 +19,7 @@ mod procfs;
 mod raw_buffers;
 mod sensitive_names;
 mod signals;
+mod stamps;
 
 const OWNED_TRAIT_OBJECT_REMEDY: &str = "use an enum for a closed set of implementations, or a \
     generic parameter for an open one; owning a vtable erases the set precisely where ownership \
@@ -351,6 +352,7 @@ declare_kinds! {
     DefaultedAbsence => "defaulted-absence",
     RawGit => "raw-git",
     RawProcfs => "raw-procfs",
+    RawStamp => "raw-stamp",
 }
 
 impl Kind {
@@ -399,6 +401,7 @@ impl Kind {
             Self::SensitiveName => sensitive_names::REMEDY,
             Self::RawGit => RAW_GIT_REMEDY,
             Self::RawProcfs => procfs::REMEDY,
+            Self::RawStamp => stamps::REMEDY,
             Self::UnownedSpawn => UNOWNED_SPAWN_REMEDY,
             Self::RawGroupSignal => RAW_GROUP_SIGNAL_REMEDY,
             Self::UnboundedChannel => UNBOUNDED_CHANNEL_REMEDY,
@@ -717,6 +720,7 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
     if procfs::held(file) {
         scan.found.extend(procfs::found(&parsed, file));
     }
+    scan.found.extend(stamps::found(&parsed, file));
     scan.found.extend(implied_cfgs(&parsed, file));
     if file != SHELL_FINDER {
         scan.found.extend(bare_shells(&parsed, file));

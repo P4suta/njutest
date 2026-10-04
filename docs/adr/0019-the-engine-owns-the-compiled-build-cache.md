@@ -303,6 +303,7 @@ Two captures of one stamp contradict each other only when both were taken settle
 A stamp is compared only through `Taken`.
 `Taken::holds` justifies reuse, and `Taken::changed` proves a change and justifies nothing.
 `settled::Stamp::same` takes a `settled::Comparing` that only `Taken` can make, so a stamp type has no equality of its own for a memo to key by.
+The `raw-stamp` lint refuses a type that implements `settled::Stamp` and derives or implements equality, and a change time read in a file that implements no stamp, outside the engine's Windows FFI that reads it for one.
 
 A test that needs a reuse waits until the stamp of the file it wrote has settled, because a change time cannot be set into the past, and a test that restores an old modification time still gets a new change time.
 A test that rewrites a file within one tick of observing it is the reproduction of the defect, and is not made to wait.

@@ -2658,6 +2658,65 @@ fn a_shell_compiled_only_for_unix_or_only_compared_against_is_not_a_bare_one() {
 }
 
 #[test]
+fn a_change_time_is_read_only_beside_a_settled_stamp_that_compares_through_its_moment() {
+    let raw = |file: &str, source: &str| {
+        scan_source(file, source)
+            .expect("the source parses")
+            .into_iter()
+            .any(|finding| finding.kind == Kind::RawStamp)
+    };
+    let stamp = "use njutest_fixture_tree::settled;\n\
+        #[derive(Debug, Clone, serde::Serialize)]\n\
+        struct Stamp { length: u64, changed: (i64, i64) }\n\
+        impl settled::Stamp for Stamp {\n\
+            fn newest(&self) -> Option<std::time::SystemTime> { settled::since_unix_epoch(self.changed.0, self.changed.1) }\n\
+            fn same(&self, other: &Self, _: settled::Comparing) -> bool { self.length == other.length && self.changed == other.changed }\n\
+        }\n\
+        #[derive(PartialEq)]\n\
+        struct Content { digest: String }\n\
+        fn stamp(metadata: &std::fs::Metadata) -> Stamp { use std::os::unix::fs::MetadataExt as _; Stamp { length: metadata.len(), changed: (metadata.ctime(), metadata.ctime_nsec()) } }";
+    assert!(
+        !raw(
+            "crates/rust-mutants/src/cargo/build_cache/toolchain.rs",
+            stamp
+        ),
+        "a stamp compared only through settled::Taken may read the change time it holds, and \
+         content beside it may compare by equality"
+    );
+    assert!(
+        raw(
+            "crates/rust-mutants/src/cargo/build_cache/toolchain.rs",
+            &stamp.replace(
+                "#[derive(Debug, Clone, serde::Serialize)]",
+                "#[derive(Debug, Clone, PartialEq, serde::Serialize)]"
+            )
+        ),
+        "a stamp that compares by equality of its own skips the question whether it had settled"
+    );
+    let windows = "fn change_time(basic: &FILE_BASIC_INFO) -> i64 { basic.ChangeTime }";
+    assert!(
+        !raw("crates/rust-mutants/src/capdir/windows.rs", windows),
+        "the engine's Windows FFI reads the change time for the engine's stamp"
+    );
+    assert!(
+        raw("crates/rust-mutants/src/capdir/mod.rs", windows),
+        "only the FFI module itself is the door"
+    );
+    for passing in [
+        "/// Reads the `ctime` a stamp holds.\nfn documented() {}",
+        "fn said() -> &'static str { \"ctime\" }",
+        "fn modified(metadata: &std::fs::Metadata) -> std::io::Result<std::time::SystemTime> { metadata.modified() }",
+        "#[derive(PartialEq)] struct Taken { moment: std::time::SystemTime }",
+    ] {
+        assert!(
+            !raw("crates/app/src/lib.rs", passing),
+            "prose, a string, a modification time and an equality on no stamp read no change \
+             time: {passing}"
+        );
+    }
+}
+
+#[test]
 fn only_the_process_crate_reads_the_process_table_and_the_kernel_settings_name_no_process() {
     let reads = |file: &str, source: &str| {
         scan_source(file, source)
