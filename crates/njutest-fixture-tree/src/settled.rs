@@ -151,12 +151,26 @@ mod tests {
         }
     }
 
+    /// The finest step every supported platform's `SystemTime` tells apart, which is the hundred nanoseconds Windows counts in.
+    const TICK: Duration = Duration::from_nanos(100);
+
+    /// `by`, refused when it is finer than a [`TICK`], which Windows rounds away.
+    fn whole_ticks(by: Duration) -> Duration {
+        assert!(
+            by.as_nanos().is_multiple_of(TICK.as_nanos()),
+            "{by:?} is finer than the {TICK:?} every supported platform's clock tells apart"
+        );
+        by
+    }
+
     fn later(at: SystemTime, by: Duration) -> SystemTime {
-        at.checked_add(by).expect("a representable later time")
+        at.checked_add(whole_ticks(by))
+            .expect("a representable later time")
     }
 
     fn earlier(at: SystemTime, by: Duration) -> SystemTime {
-        at.checked_sub(by).expect("a representable earlier time")
+        at.checked_sub(whole_ticks(by))
+            .expect("a representable earlier time")
     }
 
     fn moment() -> SystemTime {
@@ -171,7 +185,7 @@ mod tests {
             (at, false),
             (later(at, Duration::from_millis(1)), false),
             (later(at, GRANULARITY), false),
-            (later(later(at, GRANULARITY), Duration::from_nanos(1)), true),
+            (later(later(at, GRANULARITY), TICK), true),
             (later(at, Duration::from_hours(1)), true),
             (earlier(at, Duration::from_hours(1)), false),
         ] {
@@ -206,7 +220,7 @@ mod tests {
         for taken in [&racy, &settled] {
             assert!(!taken.changed(&written(at, 1)));
             assert!(taken.changed(&written(at, 2)));
-            assert!(taken.changed(&written(later(at, Duration::from_nanos(1)), 1)));
+            assert!(taken.changed(&written(later(at, TICK), 1)));
         }
     }
 
@@ -235,14 +249,14 @@ mod tests {
         let epoch = SystemTime::UNIX_EPOCH;
         assert_eq!(since_unix_epoch(0, 0), Some(epoch));
         assert_eq!(
-            since_unix_epoch(1, 5),
-            Some(later(epoch, Duration::new(1, 5)))
+            since_unix_epoch(1, 500),
+            Some(later(epoch, Duration::new(1, 500)))
         );
         assert_eq!(
-            since_unix_epoch(-1, 5),
+            since_unix_epoch(-1, 500),
             Some(later(
                 earlier(epoch, Duration::from_secs(1)),
-                Duration::from_nanos(5)
+                Duration::from_nanos(500)
             ))
         );
         assert_eq!(since_unix_epoch(1, -1), None);
