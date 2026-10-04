@@ -127,16 +127,16 @@ impl Supervisor {
         self.pgid = Some(pgid);
         if self.scope == Scope::Session {
             self.original_session = pgid;
-            match rustix::process::getsid(Some(pgid)) {
-                Ok(actual) if actual == pgid => {}
-                Ok(actual) => {
+            match asked(rustix::process::getsid(Some(pgid)))? {
+                Asked::Answered(actual) if actual == pgid => {}
+                Asked::Answered(actual) => {
                     return Err(io::Error::other(format!(
                         "the original leader acquired session {} instead of {}",
                         actual.as_raw_nonzero(),
                         pgid.as_raw_nonzero()
                     )));
                 }
-                Err(rustix::io::Errno::SRCH) => {
+                Asked::Gone => {
                     use std::os::unix::process::ExitStatusExt as _;
                     let status = ExitHandle::status(child)?;
                     if status.code().is_none() && status.signal().is_none() {
@@ -145,7 +145,6 @@ impl Supervisor {
                         )));
                     }
                 }
-                Err(source) => return Err(source.into()),
             }
         }
         Ok(())
@@ -268,10 +267,9 @@ impl Supervisor {
                     if member.identity() == named.identity() {
                         continue;
                     }
-                    if rustix::process::getpgid(Some(observed.pid))? == leader
-                        && rustix::process::getsid(Some(observed.pid))? == session
-                    {
-                        others.push(member);
+                    match within(observed.pid, leader, session)? {
+                        Asked::Answered(true) => others.push(member),
+                        Asked::Answered(false) | Asked::Gone => {}
                     }
                 }
             }
@@ -309,14 +307,23 @@ impl Supervisor {
         let raw = i32::try_from(named.identity().pid()).map_err(io::Error::other)?;
         let pid = Pid::from_raw(raw)
             .ok_or_else(|| io::Error::other("the named member has no native PID"))?;
-        if pid == leader
-            || named.wait(Some(std::time::Duration::ZERO))?
-            || rustix::process::getpgid(Some(pid))? != leader
-            || rustix::process::getsid(Some(pid))? != session
-        {
+        if pid == leader || named.wait(Some(std::time::Duration::ZERO))? {
             return Err(io::Error::other(
                 "the live named member does not belong to the original group and session",
             ));
+        }
+        match within(pid, leader, session)? {
+            Asked::Answered(true) => {}
+            Asked::Answered(false) => {
+                return Err(io::Error::other(
+                    "the live named member does not belong to the original group and session",
+                ));
+            }
+            Asked::Gone => {
+                return Err(io::Error::other(
+                    "the named member ended before its transfer",
+                ));
+            }
         }
         let actual = super::ForeignProcess::retain(named.identity().pid())?
             .ok_or_else(|| io::Error::other("the named member generation ended during transfer"))?;
@@ -575,6 +582,81 @@ const fn delivered(answer: rustix::io::Result<()>) -> super::Delivered {
     }
 }
 
+/// What the kernel answered about one process it was asked about by id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Asked<T> {
+    /// The process answered.
+    Answered(T),
+    /// No process by that id was left to answer, which is that process having ended.
+    Gone,
+}
+
+impl<T> Asked<T> {
+    /// What the process answered, carried through `answered`.
+    fn map<U>(self, answered: impl FnOnce(T) -> U) -> Asked<U> {
+        match self {
+            Self::Answered(answer) => Asked::Answered(answered(answer)),
+            Self::Gone => Asked::Gone,
+        }
+    }
+}
+
+/// What a refusal of a call about a process comes to: that process gone where it is `ESRCH`, and the refusal itself otherwise.
+fn refused<T>(source: io::Error) -> io::Result<Asked<T>> {
+    match rustix::io::Errno::from_io_error(&source) {
+        Some(rustix::io::Errno::SRCH) => Ok(Asked::Gone),
+        Some(_) | None => Err(source),
+    }
+}
+
+/// What one kernel call about a process comes to, as [`refused`] reads its refusal.
+pub(super) fn asked<T>(answer: rustix::io::Result<T>) -> io::Result<Asked<T>> {
+    asked_io(answer.map_err(io::Error::from))
+}
+
+/// [`asked`] for a call whose binding answers with an [`io::Error`].
+fn asked_io<T>(answer: io::Result<T>) -> io::Result<Asked<T>> {
+    match answer {
+        Ok(answered) => Ok(Asked::Answered(answered)),
+        Err(source) => refused(source),
+    }
+}
+
+/// One process's `/proc/<pid>/stat` line, or gone once it is reaped, which `/proc` says as `ENOENT` before the open and as `ESRCH` after it.
+#[cfg(target_os = "linux")]
+fn proc_stat(pid: Pid) -> io::Result<Asked<String>> {
+    match open_stat(pid)? {
+        Asked::Answered(opened) => read_stat(opened),
+        Asked::Gone => Ok(Asked::Gone),
+    }
+}
+
+/// Opens one process's `/proc/<pid>/stat`.
+#[cfg(target_os = "linux")]
+fn open_stat(pid: Pid) -> io::Result<Asked<std::fs::File>> {
+    match std::fs::File::open(format!("/proc/{}/stat", pid.as_raw_nonzero())) {
+        Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(Asked::Gone),
+        opened => asked_io(opened),
+    }
+}
+
+/// Reads an opened `/proc/<pid>/stat`.
+#[cfg(target_os = "linux")]
+fn read_stat(opened: std::fs::File) -> io::Result<Asked<String>> {
+    asked_io(io::read_to_string(opened))
+}
+
+/// Whether `pid` is still in the group `leader` leads and in `session`, or gone once it has ended.
+fn within(pid: Pid, leader: Pid, session: Pid) -> io::Result<Asked<bool>> {
+    match asked(rustix::process::getpgid(Some(pid)))? {
+        Asked::Answered(group) if group == leader => {
+            Ok(asked(rustix::process::getsid(Some(pid)))?.map(|actual| actual == session))
+        }
+        Asked::Answered(_elsewhere) => Ok(Asked::Answered(false)),
+        Asked::Gone => Ok(Asked::Gone),
+    }
+}
+
 /// Who besides `leader` its group holds, as far as this platform can see.
 fn others_than(leader: Pid) -> super::Others {
     #[cfg(target_os = "macos")]
@@ -630,10 +712,9 @@ fn group_members(leader: Pid) -> io::Result<Vec<Member>> {
 
 #[cfg(target_os = "linux")]
 fn linux_member(pid: Pid, leader: Pid) -> io::Result<Option<Member>> {
-    let stat = match std::fs::read_to_string(format!("/proc/{}/stat", pid.as_raw_nonzero())) {
-        Ok(stat) => stat,
-        Err(gone) if gone.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(source) => return Err(source),
+    let stat = match proc_stat(pid)? {
+        Asked::Answered(stat) => stat,
+        Asked::Gone => return Ok(None),
     };
     let (_, after_name) = stat
         .rsplit_once(')')
@@ -707,32 +788,31 @@ fn group_members(pgid: Pid) -> io::Result<Vec<Member>> {
         }
         if returned < capacity {
             snapshot_has_member_besides_leader(leader, returned, &members)?;
-            let mut live = Vec::new();
-            for raw in members
-                .into_iter()
-                .take(returned)
-                .filter(|pid| *pid != leader)
-            {
-                let member_process =
-                    Pid::from_raw(raw).ok_or_else(|| io::Error::other("invalid group member"))?;
-                match mac_state(raw)? {
-                    Some(state) if state.group == leader && !state.exited => live.push(Member {
-                        pid: member_process,
-                    }),
-                    Some(_settled_or_other) => {}
-                    None => {
-                        return Err(io::Error::other(format!(
-                            "group member {raw} disappeared before its exit could be subscribed"
-                        )));
-                    }
-                }
-            }
-            return Ok(live);
+            return live_members(leader, members.into_iter().take(returned));
         }
         capacity = capacity.checked_mul(2).ok_or_else(|| {
             io::Error::other("the macOS process-group PID buffer size overflowed")
         })?;
     }
+}
+
+/// The processes `listed` names besides `leader` that still run in the group it leads.
+#[cfg(target_os = "macos")]
+fn live_members(leader: i32, listed: impl IntoIterator<Item = i32>) -> io::Result<Vec<Member>> {
+    let mut live = Vec::new();
+    for raw in listed.into_iter().filter(|pid| *pid != leader) {
+        let member_process =
+            Pid::from_raw(raw).ok_or_else(|| io::Error::other("invalid group member"))?;
+        match mac_state(raw)? {
+            Asked::Answered(state) if state.group == leader && !state.exited => {
+                live.push(Member {
+                    pid: member_process,
+                });
+            }
+            Asked::Answered(_) | Asked::Gone => {}
+        }
+    }
+    Ok(live)
 }
 
 #[cfg(target_os = "linux")]
@@ -742,13 +822,15 @@ struct MemberExit(rustix::fd::OwnedFd);
 #[cfg(target_os = "linux")]
 impl MemberExit {
     fn arm(member: Member, leader: Pid) -> io::Result<Option<Self>> {
-        match rustix::process::pidfd_open(member.pid, rustix::process::PidfdFlags::empty()) {
-            Ok(handle) => match linux_member(member.pid, leader)? {
+        match asked(rustix::process::pidfd_open(
+            member.pid,
+            rustix::process::PidfdFlags::empty(),
+        ))? {
+            Asked::Answered(handle) => match linux_member(member.pid, leader)? {
                 Some(actual) if actual == member => Ok(Some(Self(handle))),
                 Some(_) | None => Ok(None),
             },
-            Err(rustix::io::Errno::SRCH) => Ok(None),
-            Err(source) => Err(source.into()),
+            Asked::Gone => Ok(None),
         }
     }
 
@@ -785,31 +867,12 @@ struct MemberExit {
 impl MemberExit {
     fn arm(member: Member, leader: Pid) -> io::Result<Option<Self>> {
         let pid = member.pid.as_raw_nonzero().get();
-        let mut watcher = kqueue::Watcher::new()?;
-        watcher.add_pid(
-            pid,
-            kqueue::EventFilter::EVFILT_PROC,
-            kqueue::FilterFlag::NOTE_EXIT,
-        )?;
-        match watcher.watch() {
-            Ok(()) => match mac_state(pid)? {
-                Some(state) if state.group != leader.as_raw_nonzero().get() => Ok(None),
-                Some(_) | None => Ok(Some(Self { pid, watcher })),
+        match exit_watcher(pid)? {
+            Asked::Answered(watcher) => match mac_state(pid)? {
+                Asked::Answered(state) if state.group != leader.as_raw_nonzero().get() => Ok(None),
+                Asked::Answered(_) | Asked::Gone => Ok(Some(Self { pid, watcher })),
             },
-            Err(source)
-                if source.raw_os_error() == Some(rustix::io::Errno::SRCH.raw_os_error()) =>
-            {
-                match mac_state(pid)? {
-                    Some(state) if state.exited => Ok(None),
-                    Some(_) | None => Err(io::Error::new(
-                        source.kind(),
-                        format!(
-                            "member {pid} has no subscribed exit or zombie confirmation: {source}"
-                        ),
-                    )),
-                }
-            }
-            Err(source) => Err(source),
+            Asked::Gone => Ok(None),
         }
     }
 
@@ -839,6 +902,27 @@ impl MemberExit {
                 None => return Err(member_timeout()),
             }
         }
+    }
+}
+
+/// A subscription to the exit of `pid`, or gone where the kernel refuses one because that process has already ended.
+#[cfg(target_os = "macos")]
+fn exit_watcher(pid: i32) -> io::Result<Asked<kqueue::Watcher>> {
+    let mut watcher = kqueue::Watcher::new()?;
+    watcher.add_pid(
+        pid,
+        kqueue::EventFilter::EVFILT_PROC,
+        kqueue::FilterFlag::NOTE_EXIT,
+    )?;
+    match asked_io(watcher.watch())? {
+        Asked::Answered(()) => Ok(Asked::Answered(watcher)),
+        Asked::Gone => match mac_state(pid)? {
+            Asked::Answered(state) if state.exited => Ok(Asked::Gone),
+            Asked::Gone => Ok(Asked::Gone),
+            Asked::Answered(_running) => Err(io::Error::other(format!(
+                "process {pid} refused an exit subscription as gone while it still runs"
+            ))),
+        },
     }
 }
 
@@ -883,12 +967,10 @@ fn retained_session_members(session: Pid) -> io::Result<Vec<super::ForeignProces
 /// The session a process is in, as `/proc` says: absent once it is gone or for a kernel thread, which is in no session and whose `getsid` answers 0.
 #[cfg(target_os = "linux")]
 fn session_of(pid: Pid) -> io::Result<Option<Pid>> {
-    let stat = match std::fs::read_to_string(format!("/proc/{}/stat", pid.as_raw_nonzero())) {
-        Ok(stat) => stat,
-        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(source) => return Err(source),
-    };
-    session_of_stat(&stat)
+    match proc_stat(pid)? {
+        Asked::Answered(stat) => session_of_stat(&stat),
+        Asked::Gone => Ok(None),
+    }
 }
 
 /// The session field of one `/proc/<pid>/stat` line, read after the command name, which may itself hold spaces and parentheses.
@@ -910,10 +992,9 @@ fn session_of_stat(stat: &str) -> io::Result<Option<Pid>> {
 /// The session a process is in: absent once it is gone.
 #[cfg(not(target_os = "linux"))]
 fn session_of(pid: Pid) -> io::Result<Option<Pid>> {
-    match rustix::process::getsid(Some(pid)) {
-        Ok(actual) => Ok(Some(actual)),
-        Err(rustix::io::Errno::SRCH) => Ok(None),
-        Err(source) => Err(source.into()),
+    match asked(rustix::process::getsid(Some(pid)))? {
+        Asked::Answered(actual) => Ok(Some(actual)),
+        Asked::Gone => Ok(None),
     }
 }
 
@@ -1087,7 +1168,7 @@ struct MacState {
 }
 
 #[cfg(target_os = "macos")]
-fn mac_state(pid: i32) -> io::Result<Option<MacState>> {
+fn mac_state(pid: i32) -> io::Result<Asked<MacState>> {
     let mut bytes = [0_u8; 64];
     let size = i32::try_from(bytes.len()).map_err(io::Error::other)?;
     #[expect(
@@ -1096,11 +1177,7 @@ fn mac_state(pid: i32) -> io::Result<Option<MacState>> {
     )]
     let returned = unsafe { proc_pidinfo(pid, 13, 1, bytes.as_mut_ptr().cast(), size) };
     if returned == 0 {
-        let source = io::Error::last_os_error();
-        if source.raw_os_error() == Some(rustix::io::Errno::SRCH.raw_os_error()) {
-            return Ok(None);
-        }
-        return Err(source);
+        return refused(io::Error::last_os_error());
     }
     if returned != size {
         return Err(io::Error::other(
@@ -1109,7 +1186,7 @@ fn mac_state(pid: i32) -> io::Result<Option<MacState>> {
     }
     let group = i32::from_ne_bytes(bytes[8..12].try_into().map_err(io::Error::other)?);
     let status = u32::from_ne_bytes(bytes[12..16].try_into().map_err(io::Error::other)?);
-    Ok(Some(MacState {
+    Ok(Asked::Answered(MacState {
         group,
         exited: status == 5,
     }))
@@ -1138,6 +1215,77 @@ mod tests {
     }
 
     use super::{delivered, snapshot_has_member_besides_leader};
+
+    fn pid_of(raw: u32) -> rustix::process::Pid {
+        rustix::process::Pid::from_raw(i32::try_from(raw).expect("a native process id"))
+            .expect("a positive process id")
+    }
+
+    fn reaped() -> rustix::process::Pid {
+        let mut ended =
+            crate::GroupChild::start(&mut std::process::Command::new("true")).expect("true starts");
+        let pid = pid_of(ended.id().expect("the unreaped leader"));
+        ended.wait().expect("true is reaped");
+        pid
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_process_reaped_between_the_open_and_the_read_of_its_stat_is_gone() {
+        let mut ended =
+            crate::GroupChild::start(&mut std::process::Command::new("true")).expect("true starts");
+        let pid = pid_of(ended.id().expect("the unreaped leader"));
+        assert!(
+            ended
+                .completion()
+                .wait(None)
+                .expect("the leader's exit event"),
+            "the leader has exited and waits to be reaped"
+        );
+        let opened = match super::open_stat(pid).expect("an exited process keeps its stat") {
+            super::Asked::Answered(opened) => opened,
+            super::Asked::Gone => panic!("a process not yet reaped is still listed"),
+        };
+        ended.wait().expect("the leader is reaped");
+        assert_eq!(
+            super::read_stat(opened).expect("a process reaped under an open stat has gone"),
+            super::Asked::Gone
+        );
+    }
+
+    #[test]
+    fn a_reaped_process_has_gone_from_its_group_rather_than_failed_to_say() {
+        let session = rustix::process::getsid(None).expect("this session");
+        assert_eq!(
+            super::within(reaped(), rustix::process::getpgrp(), session)
+                .expect("a reaped process has gone, which is no failure"),
+            super::Asked::Gone
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_reaped_process_has_no_exit_to_subscribe_to_and_that_is_no_failure() {
+        let gone = reaped();
+        let subscribed = super::exit_watcher(gone.as_raw_nonzero().get());
+        assert!(
+            matches!(subscribed, Ok(super::Asked::Gone)),
+            "{subscribed:?}"
+        );
+        let armed = super::MemberExit::arm(super::Member { pid: gone }, rustix::process::getpgrp());
+        assert!(matches!(armed, Ok(None)), "{armed:?}");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_listed_member_reaped_before_its_state_is_read_is_no_member() {
+        let leader = rustix::process::getpgrp().as_raw_nonzero().get();
+        assert_eq!(
+            super::live_members(leader, [reaped().as_raw_nonzero().get()])
+                .expect("a member that has ended is settled, not a failure"),
+            Vec::new()
+        );
+    }
 
     #[test]
     fn an_absent_group_and_a_forbidden_group_are_distinct_answers() {
@@ -1309,10 +1457,12 @@ impl ForeignHandle {
         let Some(identity) = linux_identity(pid)? else {
             return Ok(None);
         };
-        let handle = match rustix::process::pidfd_open(pid, rustix::process::PidfdFlags::empty()) {
-            Ok(handle) => handle,
-            Err(rustix::io::Errno::SRCH) => return Ok(None),
-            Err(source) => return Err(source.into()),
+        let handle = match asked(rustix::process::pidfd_open(
+            pid,
+            rustix::process::PidfdFlags::empty(),
+        ))? {
+            Asked::Answered(handle) => handle,
+            Asked::Gone => return Ok(None),
         };
         if linux_identity(pid)?.as_ref() != Some(&identity) {
             return Ok(None);
@@ -1360,19 +1510,17 @@ impl ForeignHandle {
             super::GroupStop::Ask => Signal::TERM,
             super::GroupStop::Kill => Signal::KILL,
         };
-        match rustix::process::pidfd_send_signal(&self.handle, signal) {
-            Ok(()) | Err(rustix::io::Errno::SRCH) => Ok(()),
-            Err(source) => Err(source.into()),
+        match asked(rustix::process::pidfd_send_signal(&self.handle, signal))? {
+            Asked::Answered(()) | Asked::Gone => Ok(()),
         }
     }
 }
 
 #[cfg(target_os = "linux")]
 fn linux_identity(pid: Pid) -> io::Result<Option<super::ProcessIdentity>> {
-    let stat = match std::fs::read_to_string(format!("/proc/{}/stat", pid.as_raw_nonzero())) {
-        Ok(stat) => stat,
-        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(source) => return Err(source),
+    let stat = match proc_stat(pid)? {
+        Asked::Answered(stat) => stat,
+        Asked::Gone => return Ok(None),
     };
     let (_, after_name) = stat
         .rsplit_once(')')
@@ -1447,28 +1595,20 @@ impl ForeignHandle {
                 "a process subscription needs a positive PID",
             ));
         }
-        let Some((born, version)) = mac_generation(pid)? else {
-            return Ok(None);
+        let (born, version) = match mac_generation(pid)? {
+            Asked::Answered(generation) => generation,
+            Asked::Gone => return Ok(None),
         };
-        let mut watcher = kqueue::Watcher::new()?;
-        watcher.add_pid(
-            pid,
-            kqueue::EventFilter::EVFILT_PROC,
-            kqueue::FilterFlag::NOTE_EXIT,
-        )?;
-        if let Err(source) = watcher.watch() {
-            if source.raw_os_error() == Some(rustix::io::Errno::SRCH.raw_os_error())
-                && mac_state(pid)?.is_some_and(|state| state.exited)
-            {
-                return Ok(None);
+        let watcher = match exit_watcher(pid)? {
+            Asked::Answered(watcher) => watcher,
+            Asked::Gone => return Ok(None),
+        };
+        let watcher = match mac_generation(pid)? {
+            Asked::Answered((same, revision)) if same == born && revision == version => {
+                Some(watcher)
             }
-            return Err(source);
-        }
-        let after = mac_generation(pid)?;
-        let watcher = match after {
-            Some((same, revision)) if same == born && revision == version => Some(watcher),
-            None => Some(watcher),
-            Some(_replaced) => None,
+            Asked::Gone => Some(watcher),
+            Asked::Answered(_replaced) => None,
         };
         let identity = super::ProcessIdentity {
             pid: raw,
@@ -1528,8 +1668,22 @@ impl ForeignHandle {
 
     fn same_generation(&self) -> io::Result<bool> {
         let pid = i32::try_from(self.identity.pid).map_err(io::Error::other)?;
-        Ok(mac_generation(pid)?
-            .is_some_and(|(born, version)| born == self.identity.born && version == self.version))
+        Ok(match mac_generation(pid)? {
+            Asked::Answered((born, version)) => {
+                born == self.identity.born && version == self.version
+            }
+            Asked::Gone => false,
+        })
+    }
+
+    /// Confirms that the retained generation a signal found gone has ended: replaced by another, or exited as its exit event says.
+    fn ended(&self) -> io::Result<()> {
+        if !self.same_generation()? || self.wait(Some(super::REAPING_GRACE))? {
+            return Ok(());
+        }
+        Err(io::Error::other(
+            "the retained generation refused a signal as gone while it still runs",
+        ))
     }
 
     pub(super) fn stop(&self) -> io::Result<()> {
@@ -1545,12 +1699,10 @@ impl ForeignHandle {
             return Ok(());
         }
         let pid = i32::try_from(self.identity.pid).map_err(io::Error::other)?;
-        let Some((born, version)) = mac_generation(pid)? else {
-            return Ok(());
+        let version = match mac_generation(pid)? {
+            Asked::Answered((born, version)) if born == self.identity.born => version,
+            Asked::Answered(_) | Asked::Gone => return Ok(()),
         };
-        if born != self.identity.born {
-            return Ok(());
-        }
         let mut token = AuditToken {
             words: [0, 0, 0, 0, 0, self.identity.pid, 0, version],
         };
@@ -1563,18 +1715,15 @@ impl ForeignHandle {
         if stopped == 0 {
             return Ok(());
         }
-        let source = io::Error::last_os_error();
-        if source.raw_os_error() == Some(rustix::io::Errno::SRCH.raw_os_error())
-            && !self.same_generation()?
-        {
-            return Ok(());
+        match refused::<std::convert::Infallible>(io::Error::last_os_error())? {
+            Asked::Answered(never) => match never {},
+            Asked::Gone => self.ended(),
         }
-        Err(source)
     }
 }
 
 #[cfg(target_os = "macos")]
-fn mac_generation(pid: i32) -> io::Result<Option<(u64, u32)>> {
+fn mac_generation(pid: i32) -> io::Result<Asked<(u64, u32)>> {
     let mut bytes = [0_u8; 56];
     let size = i32::try_from(bytes.len()).map_err(io::Error::other)?;
     #[expect(
@@ -1583,11 +1732,7 @@ fn mac_generation(pid: i32) -> io::Result<Option<(u64, u32)>> {
     )]
     let returned = unsafe { proc_pidinfo(pid, 17, 1, bytes.as_mut_ptr().cast(), size) };
     if returned == 0 {
-        let source = io::Error::last_os_error();
-        if source.raw_os_error() == Some(rustix::io::Errno::SRCH.raw_os_error()) {
-            return Ok(None);
-        }
-        return Err(source);
+        return refused(io::Error::last_os_error());
     }
     if returned != size {
         return Err(io::Error::other(
@@ -1596,7 +1741,7 @@ fn mac_generation(pid: i32) -> io::Result<Option<(u64, u32)>> {
     }
     let born = u64::from_ne_bytes(bytes[16..24].try_into().map_err(io::Error::other)?);
     let version = u32::from_ne_bytes(bytes[32..36].try_into().map_err(io::Error::other)?);
-    Ok(Some((born, version)))
+    Ok(Asked::Answered((born, version)))
 }
 
 #[cfg(target_os = "macos")]

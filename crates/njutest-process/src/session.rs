@@ -160,14 +160,14 @@ impl ParentSession {
                 "the nested native creation session differs from its recipient",
             ));
         }
-        match rustix::process::getsid(Some(pid)) {
-            Ok(actual) if actual == original => Ok(()),
-            Ok(actual) => Err(io::Error::other(format!(
+        match super::sys::asked(rustix::process::getsid(Some(pid)))? {
+            super::sys::Asked::Answered(actual) if actual == original => Ok(()),
+            super::sys::Asked::Answered(actual) => Err(io::Error::other(format!(
                 "the nested producer has session {} instead of original {}",
                 actual.as_raw_nonzero(),
                 original.as_raw_nonzero()
             ))),
-            Err(rustix::io::Errno::SRCH) => {
+            super::sys::Asked::Gone => {
                 let terminal = super::sys::ExitHandle::status(child)?;
                 if terminal == status {
                     Ok(())
@@ -177,7 +177,6 @@ impl ParentSession {
                     )))
                 }
             }
-            Err(source) => Err(source.into()),
         }
     }
 
