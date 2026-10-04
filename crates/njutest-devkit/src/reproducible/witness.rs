@@ -893,9 +893,7 @@ fn distinct(original: &Actual, changed: &Actual, restored: &Actual) -> bool {
         (changed, restored),
     ]
     .iter()
-    .all(|(left, right)| {
-        left.identity != right.identity && left.pid != right.pid && left.kernel != right.kernel
-    })
+    .all(|(left, right)| left.identity != right.identity && left.kernel != right.kernel)
 }
 
 struct Restoration {
@@ -1152,6 +1150,7 @@ mod tests {
         let inputs = Inputs::of(&source, &directory, Some(&pair.inputs))?;
         let owner = super::owner(&directory, &inputs.key()?)?;
         pair.changed.pid = pair.original.pid;
+        pair.changed.kernel.clone_from(&pair.original.kernel);
         assert!(
             pair.answer(
                 &inputs,
