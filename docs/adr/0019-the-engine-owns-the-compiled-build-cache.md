@@ -326,3 +326,12 @@ The capture refused `LD_*` and `DYLD_*` variables on every platform as opaque lo
 The Windows loader reads no `LD_` or `DYLD_` variable, and Linux's reads no `DYLD_` one; on those platforms such a variable is a value, and the build key binds it as one, as it binds every variable a build can read.
 `cargo::build_cache::loaders::loader_variable` now answers which variables this platform's loader reads: `LD_` on Linux and the other ELF systems, `DYLD_` and the `LD_` its linker reads on macOS, and none on Windows, whose loader reads `PATH`, which the capture binds as a search namespace.
 The loader capture and the compiler environment both ask it, so the two refusals cannot disagree.
+
+## Amendment, 2026-10-05: a mount point the host refuses to traverse is a named loader entry
+
+Windows refuses a process under redirection trust to traverse a junction a non-administrator made, `ERROR_UNTRUSTED_MOUNT_POINT`, and a session started through Windows OpenSSH runs under it; every process such a process starts inherits the refusal.
+The owner's `PATH` holds such a junction, `%LOCALAPPDATA%\Programs\Herdr\bin`, so `std::fs::canonicalize` refused the capture, RM1024 said only `Uncategorized`, and every compile on that machine came out unbound.
+No loader of a process the compile starts can reach anything through that entry, because the refusal is inherited, so the capture binds it by its spelling and that it was refused, as it binds an absent directory.
+A link entry whose target the host refuses to traverse is bound the same way, beside its target's spelling.
+One resolver, `Reached`, answers every path the capture follows as an object, nothing, or refused, and any other failure still refuses the capture.
+RM1024 now names the operating system's code beside the kind, which is never translated.

@@ -371,13 +371,16 @@ fn capture(
         ));
     }
     super::field(digest, path.as_os_str().as_encoded_bytes());
-    let canonical = match std::fs::canonicalize(path) {
-        Ok(canonical) => canonical,
-        Err(source) if source.kind() == io::ErrorKind::NotFound => {
+    let canonical = match reached(path)? {
+        Reached::At(canonical) => canonical,
+        Reached::Absent => {
             super::field(digest, b"absent");
             return Ok(());
         }
-        Err(source) => return Err(source),
+        Reached::Untraversable => {
+            super::field(digest, b"untraversable");
+            return Ok(());
+        }
     };
     super::field(digest, canonical.as_os_str().as_encoded_bytes());
     if ancestors.contains(&canonical) {
@@ -401,9 +404,11 @@ fn capture(
     }
     let mut after = directory.entries()?;
     after.sort();
-    if entries != after
-        || Dir::open(&std::fs::canonicalize(path)?)?.status()?.identity != before.identity
-    {
+    let unmoved = match reached(path)? {
+        Reached::At(again) => Dir::open(&again)?.status()?.identity == before.identity,
+        Reached::Absent | Reached::Untraversable => false,
+    };
+    if entries != after || !unmoved {
         return Err(io::Error::other("the loader search namespace changed"));
     }
     ancestors.pop();
@@ -459,8 +464,8 @@ fn capture_link(
 ) -> io::Result<()> {
     let target = std::fs::read_link(path)?;
     super::field(digest, target.as_os_str().as_encoded_bytes());
-    match std::fs::canonicalize(path) {
-        Ok(canonical) => {
+    match reached(path)? {
+        Reached::At(canonical) => {
             let file = crate::capdir::open_file_at(&canonical)?;
             let status = crate::capdir::file_status(&file)?;
             match status.kind {
@@ -484,19 +489,62 @@ fn capture_link(
                     ));
                 }
             }
-            if std::fs::canonicalize(path)? != canonical
-                || crate::capdir::file_status(&file)? != status
-            {
+            let unmoved = match reached(path)? {
+                Reached::At(again) => again == canonical,
+                Reached::Absent | Reached::Untraversable => false,
+            };
+            if !unmoved || crate::capdir::file_status(&file)? != status {
                 return Err(io::Error::other("the loader alias target changed"));
             }
             Ok(())
         }
-        Err(source) if source.kind() == io::ErrorKind::NotFound => {
+        Reached::Absent => {
             super::field(digest, b"absent-link-target");
             Ok(())
         }
+        Reached::Untraversable => {
+            super::field(digest, b"untraversable-link-target");
+            Ok(())
+        }
+    }
+}
+
+/// Where a loader search path leads, as far as the host lets this process, and so every process a compile starts, follow it.
+enum Reached {
+    /// The object it names, spelled canonically.
+    At(PathBuf),
+    /// No object: the path names nothing.
+    Absent,
+    /// A mount point on the way the host refuses to traverse, a refusal every process this one starts inherits, so no loader of theirs reaches anything through it.
+    Untraversable,
+}
+
+/// Where `path` leads, telling a path that names nothing and one the host refuses to traverse from one that could not be read.
+fn reached(path: &Path) -> io::Result<Reached> {
+    match std::fs::canonicalize(path) {
+        Ok(canonical) => Ok(Reached::At(canonical)),
+        Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(Reached::Absent),
+        Err(source) if untraversable(&source) => Ok(Reached::Untraversable),
         Err(source) => Err(source),
     }
+}
+
+/// The code Windows refuses to traverse a mount point a non-administrator made with, `ERROR_UNTRUSTED_MOUNT_POINT`, in a process under redirection trust.
+#[cfg(windows)]
+const UNTRUSTED_MOUNT_POINT: Option<u32> =
+    Some(windows_sys::Win32::Foundation::ERROR_UNTRUSTED_MOUNT_POINT);
+
+/// No platform but Windows refuses to traverse a mount point by who made it.
+#[cfg(not(windows))]
+const UNTRUSTED_MOUNT_POINT: Option<u32> = None;
+
+/// Whether `source` is the host refusing to traverse a mount point it does not trust.
+fn untraversable(source: &io::Error) -> bool {
+    UNTRUSTED_MOUNT_POINT.is_some_and(|untrusted| {
+        source
+            .raw_os_error()
+            .is_some_and(|code| code.cast_unsigned() == untrusted)
+    })
 }
 
 fn captured_file(
@@ -586,7 +634,7 @@ fn bound(digest: &mut Sha256, path: &Path, state: &super::File) {
 
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
-#[error("{code}: the loader input {} could not be bound ({:?})", path.display(), source.kind(), code = LoaderInputError::code().code)]
+#[error("{code}: the loader input {} could not be bound ({:?}, {})", path.display(), source.kind(), super::os_code(source), code = LoaderInputError::code().code)]
 struct LoaderInputError {
     path: PathBuf,
     source: io::Error,
@@ -945,6 +993,70 @@ mod namespace_tests {
                 read,
                 "{name} is refused by the compiler environment exactly where this loader reads \
                  it: {checked:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_a_refusal_to_traverse_a_mount_point_the_host_does_not_trust_leads_nowhere() {
+        let untrusted = std::io::Error::from_raw_os_error(448);
+        assert_eq!(
+            super::untraversable(&untrusted),
+            cfg!(windows),
+            "ERROR_UNTRUSTED_MOUNT_POINT is a refusal to traverse on Windows and no code elsewhere"
+        );
+        for other in [
+            std::io::Error::from(std::io::ErrorKind::NotFound),
+            std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+            std::io::Error::from_raw_os_error(5),
+            std::io::Error::other("unreadable"),
+        ] {
+            assert!(
+                !super::untraversable(&other),
+                "{other:?} is a failure to read, never a refusal to traverse"
+            );
+        }
+        let refused = super::refused(Path::new("search"), untrusted).to_string();
+        assert!(
+            refused.contains("RM1024") && refused.contains("os error 448"),
+            "a refusal names the operating system's code, which is never translated: {refused}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_junction_this_user_made_on_the_search_path_is_bound_whether_or_not_the_host_traverses_it()
+    {
+        let directory = tempfile::tempdir().expect("owned search parent");
+        let identities = Identities::empty();
+        let target = directory.path().join("target");
+        std::fs::create_dir_all(&target).expect("the junction's target");
+        let library = target.join("library.dll");
+        std::fs::write(&library, super::tests::test_library(b"one"))
+            .expect("a library behind the junction");
+        let junction = directory.path().join("junction");
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&junction)
+            .arg(&target)
+            .output()
+            .expect("mklink runs");
+        assert!(made.status.success(), "a junction was made: {made:?}");
+        let env = environment("PATH", &junction);
+        let first = Inputs::compiler(&env, directory.path(), &identities)
+            .expect("a junction on the search path and in the directory compiled in binds");
+        let again = Inputs::compiler(&env, directory.path(), &identities)
+            .expect("the same namespace binds again");
+        assert_eq!(first.digest(), again.digest());
+        if std::fs::canonicalize(&junction).is_ok() {
+            std::fs::write(&library, super::tests::test_library(b"two"))
+                .expect("a changed library behind a junction the host traverses");
+            assert_ne!(
+                first.digest(),
+                Inputs::compiler(&env, directory.path(), &identities)
+                    .expect("the changed namespace binds")
+                    .digest(),
+                "where the host traverses the junction, what is behind it is bound"
             );
         }
     }

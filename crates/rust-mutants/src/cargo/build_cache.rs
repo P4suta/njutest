@@ -1006,7 +1006,7 @@ fn linked(
 /// A refused compiler input with its exact identity and underlying typed cause.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
-#[error("{code}: the link input {} could not be bound ({:?})", path.display(), source.kind(), code = LinkInputError::code().code)]
+#[error("{code}: the link input {} could not be bound ({:?}, {})", path.display(), source.kind(), os_code(source), code = LinkInputError::code().code)]
 struct LinkInputError {
     path: PathBuf,
     source: io::Error,
@@ -1027,6 +1027,14 @@ fn link_input_refused(path: &Path, source: io::Error) -> io::Error {
             source,
         },
     )
+}
+
+/// What a refusal says of the operating system's answer: its code, which unlike its message is never translated, or that it gave none.
+pub(super) fn os_code(source: &io::Error) -> String {
+    match source.raw_os_error() {
+        Some(code) => format!("os error {code}"),
+        None => "no operating system code".to_owned(),
+    }
 }
 
 /// Refuses every format and metadata variant outside the engine's self-contained WebAssembly object.
