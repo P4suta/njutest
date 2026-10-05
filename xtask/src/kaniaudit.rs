@@ -289,7 +289,7 @@ impl Harness {
             Self::AnswerAgrees => 960,
             Self::GroupAgrees => 2_700,
             Self::NumberReadsBack => 450_000,
-            Self::StatedNames => 66_000,
+            Self::StatedNames => 68_600,
             Self::OpenerHeld => 1_300_000,
             Self::MovingNotStalled => 4_000,
             Self::BeatFloor => 3_500,

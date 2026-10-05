@@ -46,7 +46,7 @@ fn every_number_spelled_as_the_runtime_spells_one_reads_back_itself() {
 }
 
 #[kani::proof]
-#[kani::unwind(36)]
+#[kani::unwind(39)]
 fn a_stated_stop_requires_its_own_status_and_a_known_check() {
     let index = kani::any::<usize>();
     kani::assume(index < STEP_CHECKS.len());
