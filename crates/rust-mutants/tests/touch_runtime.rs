@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use njutest_devkit::paths::SEALED_TARGET;
 use rust_mutants::instrument::{
     ACTIVE_ENV, Instrumenting, STEP_NONCE_ENV, STEP_NOTICE_ENV, STEP_PROTOCOL_EXIT, STEP_STATE_ENV,
-    STEP_STATE_SCHEMA, STEPS_ENV, instrument_file,
+    STEP_STATE_SCHEMA, STEPS_ENV, instrument_file, step_lock_path,
 };
 use rust_mutants::instrument::{
     CATALOG_ENV, FAULT_FATE_ENV, FAULT_FATE_SCHEMA, MODULE_STEM, Rendering, TOUCH_ENV, WATCHED_ENV,
@@ -334,11 +334,10 @@ fn one_allowance_spans_file_modules_and_repeated_guard_checks_do_not_spend_twice
     let state = dir.join("step.state");
     let continued = dir.join("continued");
     let nonce = "0123456789abcdef0123456789abcdef";
-    std::fs::write(
+    step_state(
         &state,
-        format!("{STEP_STATE_SCHEMA}\t{nonce}\t{CATALOG}\t{selected}\t2\tdormant\t0\n"),
-    )
-    .expect("initial state");
+        &format!("{STEP_STATE_SCHEMA}\t{nonce}\t{CATALOG}\t{selected}\t2\tdormant\t0\n"),
+    );
     let program = format!(
         "{one}\n{two}\nfn main() {{\n\
          \x20   let worker = std::thread::spawn(|| {{\n\
@@ -404,27 +403,31 @@ fn wait_until_present(path: &std::path::Path, escaped: &str) {
     }
 }
 
-/// Waits until `state` reads exactly `wanted`, or fails saying what it read instead.
-///
-/// A read can fail rather than answer while the process that owns the file is writing it: a Windows lock is mandatory where a POSIX one is advisory, so unreadable here means the same as not yet.
+/// Waits until `state` reads exactly `wanted`, failing at once on a read refused while the publisher writes it, or saying what it read instead.
 fn wait_until_state_reads(state: &std::path::Path, wanted: &str) {
     let deadline = Instant::now()
         .checked_add(BACKSTOP)
         .expect("a deadline one backstop from now");
     loop {
-        match std::fs::read_to_string(state) {
-            Ok(observed) if observed == wanted => return,
-            Ok(observed) => assert!(
-                Instant::now() < deadline,
-                "the recoverable publisher did not reach its stopping state: {observed:?}"
-            ),
-            Err(error) => assert!(
-                Instant::now() < deadline,
-                "the recoverable publisher's state stayed unreadable: {error}"
-            ),
+        let observed = std::fs::read_to_string(state).expect(
+            "the runtime locks a file of its own, so no take refuses a read of the state, \
+             even where a lock is mandatory",
+        );
+        if observed == wanted {
+            return;
         }
+        assert!(
+            Instant::now() < deadline,
+            "the recoverable publisher did not reach its stopping state: {observed:?}"
+        );
         std::thread::sleep(Duration::from_millis(1));
     }
+}
+
+/// Writes `state` as an execution's step state starts, with the empty lock its takes hold beside it.
+fn step_state(state: &std::path::Path, initial: &str) {
+    std::fs::write(state, initial).expect("initial state");
+    std::fs::write(step_lock_path(state), b"").expect("the step lock");
 }
 
 #[test]
@@ -437,11 +440,10 @@ fn publication_failure_never_persists_a_stopping_state_without_a_final_notice() 
     let partial = dir.join("step.notice.partial");
     let state = dir.join("step.state");
     let nonce = "0123456789abcdef0123456789abcdef";
-    std::fs::write(
+    step_state(
         &state,
-        format!("{STEP_STATE_SCHEMA}\t{nonce}\t{CATALOG}\t{selected}\t1\tdormant\t0\n"),
-    )
-    .expect("initial state");
+        &format!("{STEP_STATE_SCHEMA}\t{nonce}\t{CATALOG}\t{selected}\t1\tdormant\t0\n"),
+    );
     std::fs::write(&partial, b"occupied").expect("block publication");
     std::fs::write(
         &source,
@@ -543,6 +545,100 @@ fn the_generated_runtime_refuses_a_step_state_symlink_without_touching_its_targe
     ));
 }
 
+/// What a program whose guard activates said, run beside a dormant step state in `dir` whose lock `arrange` leaves as the test wants, with the state it left.
+fn activated_beside(
+    dir: &std::path::Path,
+    name: &str,
+    arrange: impl FnOnce(&std::path::Path),
+) -> (std::process::Output, String) {
+    let (module, _, selected) = step_modules();
+    let source = dir.join(format!("{name}.rs"));
+    let state = dir.join("step.state");
+    let nonce = "0123456789abcdef0123456789abcdef";
+    std::fs::write(
+        &state,
+        format!("{STEP_STATE_SCHEMA}\t{nonce}\t{CATALOG}\t{selected}\t2\tdormant\t0\n"),
+    )
+    .expect("initial state");
+    arrange(&step_lock_path(&state));
+    std::fs::write(
+        &source,
+        format!("{module}\nfn main() {{ assert!(__rm_one::active(0)); }}\n"),
+    )
+    .expect("write program");
+    let built = Command::new("rustc")
+        .args(["--edition", "2024", "--crate-type", "bin"])
+        .arg("--out-dir")
+        .arg(dir)
+        .arg(&source)
+        .output()
+        .expect("rustc runs");
+    assert!(built.status.success(), "{}", exact_output(&built.stderr));
+    let run = Command::new(dir.join(name))
+        .env(ACTIVE_ENV, &selected)
+        .env(CATALOG_ENV, CATALOG)
+        .env(WATCHED_ENV, WATCHED)
+        .env(STEPS_ENV, "2")
+        .env(STEP_NONCE_ENV, nonce)
+        .env(STEP_NOTICE_ENV, dir.join("step.notice"))
+        .env(STEP_STATE_ENV, &state)
+        .output()
+        .expect("program runs");
+    let left = std::fs::read_to_string(&state).expect("the state it left");
+    (run, left)
+}
+
+#[test]
+fn a_step_state_without_its_lock_is_refused_rather_than_counted_unlocked() {
+    let temporary = tempfile::tempdir().expect("a place to build");
+    let (run, left) = activated_beside(temporary.path(), "unlocked", |_absent| {});
+    assert_eq!(
+        run.status.code(),
+        Some(STEP_PROTOCOL_EXIT),
+        "{}",
+        exact_output(&run.stderr)
+    );
+    assert_eq!(
+        rust_mutants_decision::said::record(&run.stderr).map(|record| record.check),
+        Some("lock: open"),
+        "the stop names the lock it could not take: {}",
+        exact_output(&run.stderr)
+    );
+    assert!(
+        left.ends_with("\tdormant\t0\n"),
+        "a count taken without the lock every process takes is no count, so none was taken: \
+         {left}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn the_generated_runtime_refuses_a_step_lock_symlink_without_counting() {
+    use std::os::unix::fs::symlink;
+
+    let temporary = tempfile::tempdir().expect("a place to build");
+    let dir = temporary.path();
+    let target = dir.join("must-not-change");
+    std::fs::write(&target, b"sentinel").expect("target");
+    let (run, left) = activated_beside(dir, "lock_symlink", |lock| {
+        symlink(&target, lock).expect("lock symlink");
+    });
+    assert_eq!(
+        run.status.code(),
+        Some(STEP_PROTOCOL_EXIT),
+        "{}",
+        exact_output(&run.stderr)
+    );
+    assert_eq!(
+        rust_mutants_decision::said::record(&run.stderr).map(|record| record.check),
+        Some("lock: open"),
+        "{}",
+        exact_output(&run.stderr)
+    );
+    assert_eq!(std::fs::read(&target).expect("target"), b"sentinel");
+    assert!(left.ends_with("\tdormant\t0\n"), "{left}");
+}
+
 #[test]
 fn an_expression_closure_reentered_by_an_external_iterator_spends_the_global_allowance() {
     let source = "fn main() { let _never = std::iter::repeat(()).position(|_| true); }\n";
@@ -581,15 +677,14 @@ fn an_expression_closure_reentered_by_an_external_iterator_spends_the_global_all
     let notice = dir.join("step.notice");
     let state = dir.join("step.state");
     let nonce = "0123456789abcdef0123456789abcdef";
-    std::fs::write(
+    step_state(
         &state,
-        format!(
+        &format!(
             "{STEP_STATE_SCHEMA}\t{nonce}\t{}\t{}\t2\tdormant\t0\n",
             scripted.catalog().digest(),
             selected.id
         ),
-    )
-    .expect("initial state");
+    );
     std::fs::write(&path, &instrumented.text).expect("write instrumented source");
     let built = Command::new("rustc")
         .args(["--edition", "2024", "--crate-type", "bin"])
@@ -1292,7 +1387,7 @@ fn a_run_binds_its_step_state_once_rather_than_reopening_it_at_every_boundary() 
         format!("{STEP_STATE_SCHEMA}\t{nonce}\t{CATALOG}\t{selected}\t1000000\tdormant\t0\n");
     let elsewhere =
         format!("{STEP_STATE_SCHEMA}\t{nonce}\t{CATALOG}\t{selected}\t1000000\tactive\t500\n");
-    std::fs::write(&state, &dormant).expect("initial state");
+    step_state(&state, &dormant);
     std::fs::hard_link(&state, &held).expect("a second name for the file the run opens");
     std::fs::write(&replacement, &elsewhere).expect("a replacement");
     let program = format!(

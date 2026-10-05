@@ -42,6 +42,17 @@ pub const STEP_NONCE_ENV: &str = "RUST_MUTANTS_STEP_NONCE";
 /// Names the fresh execution-private state shared by every generated module.
 pub const STEP_STATE_ENV: &str = "RUST_MUTANTS_STEP_STATE";
 
+/// What follows the step state's path to name the file every process of an execution locks to take from the state, which is never the state itself.
+pub const STEP_LOCK_SUFFIX: &str = ".lock";
+
+/// The file every process of an execution locks to take from the step state at `state`.
+#[must_use]
+pub fn step_lock_path(state: &std::path::Path) -> std::path::PathBuf {
+    let mut named = state.as_os_str().to_owned();
+    named.push(STEP_LOCK_SUFFIX);
+    std::path::PathBuf::from(named)
+}
+
 /// Names how often and where a process spending a reservation of its allowance says it is still moving, as `<milliseconds>@<path>`.
 pub const STEP_BEAT_ENV: &str = "RUST_MUTANTS_STEP_BEAT";
 
@@ -359,9 +370,13 @@ mod {{MODULE}} {
     // name at every boundary paid an open and a close per function entry and
     // loop turn. A child made by fork without exec shares the parent's open
     // file description and so its lock, which is why the process is recorded.
+    // The lock is taken on a file of its own and never on the state: Windows
+    // makes a lock mandatory, and one over the state would refuse the
+    // runner's read of it whenever that read landed inside a take.
     struct BoundStepState {
         pid: u32,
         file: __rm_std::fs::File,
+        lock: __rm_std::fs::File,
     }
     static STEP_STATE: __rm_std::sync::OnceLock<
         __rm_std::sync::Mutex<__rm_std::option::Option<BoundStepState>>,
@@ -717,20 +732,23 @@ mod {{MODULE}} {
             __rm_std::option::Option::None => true,
         };
         if reopen {
-            let opened = open_step_state(path)?;
-            let metadata = opened.metadata().map_err(|error| Why::os("metadata", &error))?;
-            if !metadata.file_type().is_file() {
-                return __rm_std::result::Result::Err(Why::said("not a regular file"));
-            }
-            *bound = __rm_std::option::Option::Some(BoundStepState { pid, file: opened });
+            let file = bound_step_file(path, "open", "metadata", "not a regular file")?;
+            let lock_path = __rm_std::format!("{}{{STEP_LOCK_SUFFIX}}", path);
+            let lock = bound_step_file(
+                &lock_path,
+                "lock: open",
+                "lock: metadata",
+                "lock: not a regular file",
+            )?;
+            *bound = __rm_std::option::Option::Some(BoundStepState { pid, file, lock });
         }
-        let file = match &mut *bound {
-            __rm_std::option::Option::Some(state) => &mut state.file,
+        let (file, lock) = match &mut *bound {
+            __rm_std::option::Option::Some(BoundStepState { file, lock, .. }) => (file, &*lock),
             __rm_std::option::Option::None => {
                 return __rm_std::result::Result::Err(Why::said("open"));
             }
         };
-        file.lock().map_err(|error| Why::os("lock", &error))?;
+        lock.lock().map_err(|error| Why::os("lock", &error))?;
         let transitioned = (|| {
             let phase = read_step_state(file, nonce, mutant, limit)?;
             let (mut next, advanced) = step_transition(phase, action, limit.value())
@@ -768,7 +786,7 @@ mod {{MODULE}} {
             }
             __rm_std::result::Result::Ok(advanced)
         })();
-        let unlocked = file.unlock().map_err(|error| Why::os("unlock", &error));
+        let unlocked = lock.unlock().map_err(|error| Why::os("unlock", &error));
         match (transitioned, unlocked) {
             (__rm_std::result::Result::Err(error), _) => {
                 __rm_std::result::Result::Err(error)
@@ -782,9 +800,26 @@ mod {{MODULE}} {
         }
     }
 
+    // One file of the step protocol, opened without following a link and
+    // refused unless it is a regular file, each refusal in its own words.
+    fn bound_step_file(
+        path: &str,
+        open: &'static str,
+        metadata: &'static str,
+        irregular: &'static str,
+    ) -> __rm_std::result::Result<__rm_std::fs::File, Why> {
+        let opened = open_step_state(path, open)?;
+        let read = opened.metadata().map_err(|error| Why::os(metadata, &error))?;
+        if !read.file_type().is_file() {
+            return __rm_std::result::Result::Err(Why::said(irregular));
+        }
+        __rm_std::result::Result::Ok(opened)
+    }
+
     #[cfg(unix)]
     fn open_step_state(
         path: &str,
+        check: &'static str,
     ) -> __rm_std::result::Result<__rm_std::fs::File, Why> {
         use self::__rm_std::os::unix::fs::OpenOptionsExt as _;
 
@@ -793,25 +828,26 @@ mod {{MODULE}} {
             .write(true)
             .custom_flags(no_follow_flag())
             .open(path)
-            .map_err(|error| Why::os("open", &error))
+            .map_err(|error| Why::os(check, &error))
     }
 
     #[cfg(windows)]
     fn open_step_state(
         path: &str,
+        check: &'static str,
     ) -> __rm_std::result::Result<__rm_std::fs::File, Why> {
         use self::__rm_std::os::windows::fs::OpenOptionsExt as _;
 
         // FILE_FLAG_OPEN_REPARSE_POINT makes the final component itself the
-        // opened object. The regular-file check below then rejects links and
-        // junctions instead of following them.
+        // opened object. The regular-file check of bound_step_file then
+        // rejects links and junctions instead of following them.
         const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
         __rm_std::fs::OpenOptions::new()
             .read(true)
             .write(true)
             .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
             .open(path)
-            .map_err(|error| Why::os("open", &error))
+            .map_err(|error| Why::os(check, &error))
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -2100,6 +2136,7 @@ fn with_protocol(text: &str) -> String {
         .replace("{{STEP_NOTICE_ENV}}", STEP_NOTICE_ENV)
         .replace("{{STEP_NONCE_ENV}}", STEP_NONCE_ENV)
         .replace("{{STEP_STATE_ENV}}", STEP_STATE_ENV)
+        .replace("{{STEP_LOCK_SUFFIX}}", STEP_LOCK_SUFFIX)
         .replace("{{STEP_BEAT_ENV}}", STEP_BEAT_ENV)
         .replace("{{STEP_STATE_SCHEMA}}", STEP_STATE_SCHEMA)
         .replace("{{STEP_NOTICE_SCHEMA}}", STEP_NOTICE_SCHEMA)
@@ -2339,6 +2376,7 @@ mod tests {
             ),
         )
         .expect("initial state");
+        std::fs::write(super::step_lock_path(&state), b"").expect("the step lock");
         std::fs::write(
             &source,
             format!(

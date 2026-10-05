@@ -1180,6 +1180,7 @@ fn said(output: &[u8], needle: &str) -> bool {
 struct ExpectedStep {
     path: PathBuf,
     state_path: PathBuf,
+    lock_path: PathBuf,
     beat_path: PathBuf,
     nonce: String,
     catalog: String,
@@ -1220,6 +1221,12 @@ enum StepSetupError {
     },
     #[error("could not sync fresh step state {path}: {source}")]
     StateSync {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("could not create the fresh step lock {path}: {source}")]
+    LockCreate {
         path: PathBuf,
         #[source]
         source: std::io::Error,
@@ -1371,9 +1378,20 @@ impl ExpectedStep {
                 path: state_path.clone(),
                 source,
             })?;
+        let lock_path = crate::instrument::step_lock_path(&state_path);
+        let empty_until_a_take_locks_it = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_path)
+            .map_err(|source| StepSetupError::LockCreate {
+                path: lock_path.clone(),
+                source,
+            })?;
+        drop(empty_until_a_take_locks_it);
         Ok(Some(Self {
             path,
             state_path,
+            lock_path,
             beat_path,
             nonce,
             catalog: catalog.to_owned(),
@@ -1518,6 +1536,7 @@ impl ExpectedStep {
         let partial = self.path.with_extension("notice.partial");
         remove_notice(&partial)?;
         remove_notice(&self.state_path)?;
+        remove_notice(&self.lock_path)?;
         remove_notice(&self.beat_path)
     }
 }
@@ -3289,6 +3308,7 @@ mod tests {
         ExpectedStep {
             path: directory.join("step.notice"),
             state_path: directory.join("step.state"),
+            lock_path: crate::instrument::step_lock_path(&directory.join("step.state")),
             beat_path: directory.join("step.beat"),
             nonce: hex::encode(bytes),
             catalog: CATALOG_A.to_owned(),
@@ -3702,12 +3722,12 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn step_setup_creates_one_exact_private_state_and_clear_removes_it() {
-        let scratch = returned!(tempfile::tempdir(), "scratch");
+    /// The step files a bounded execution of mutant A under an allowance of ten is set up with in `scratch`.
+    fn set_up(scratch: &Path) -> Result<Option<ExpectedStep>, StepSetupError> {
+        let base_env = crate::vars::Variables::empty();
         let context = Context {
             leaders: None,
-            base_env: &crate::vars::Variables::empty(),
+            base_env: &base_env,
             cargo: None,
             sysroot: None,
             active: Some((MUTANT_A, CATALOG_A)),
@@ -3718,7 +3738,13 @@ mod tests {
             crash: None,
             fate: None,
         };
-        let step = returned!(ExpectedStep::new(&context, Some(scratch.path())), "setup");
+        ExpectedStep::new(&context, Some(scratch))
+    }
+
+    #[test]
+    fn step_setup_creates_one_exact_private_state_and_clear_removes_it() {
+        let scratch = returned!(tempfile::tempdir(), "scratch");
+        let step = returned!(set_up(scratch.path()), "setup");
         let step = present!(step, "bounded execution");
         let state = returned!(std::fs::read_to_string(&step.state_path), "state");
         assert_eq!(
@@ -3727,6 +3753,16 @@ mod tests {
                 "{STEP_STATE_SCHEMA}\t{}\t{CATALOG_A}\t{MUTANT_A}\t10\tdormant\t0\n",
                 step.nonce
             )
+        );
+        let lock = returned!(std::fs::symlink_metadata(&step.lock_path), "lock");
+        assert!(
+            lock.file_type().is_file() && lock.len() == 0,
+            "the lock is an empty regular file of its own: {lock:?}"
+        );
+        assert_eq!(
+            step.lock_path,
+            crate::instrument::step_lock_path(&step.state_path),
+            "and it is the one the runtime finds beside the state it is told"
         );
         let mut environment = crate::vars::Variables::empty();
         step.add_environment(&mut environment);
@@ -3739,6 +3775,47 @@ mod tests {
         assert_absent(&step.path);
         assert_absent(&step.path.with_extension("notice.partial"));
         assert_absent(&step.state_path);
+        assert_absent(&step.lock_path);
+    }
+
+    #[test]
+    fn a_take_holding_the_step_lock_leaves_the_state_readable_to_the_runner() {
+        let scratch = returned!(tempfile::tempdir(), "scratch");
+        let step = returned!(set_up(scratch.path()), "setup");
+        let step = present!(step, "bounded execution");
+        let lock = returned!(
+            std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&step.lock_path),
+            "the step lock"
+        );
+        let taken = lock.lock();
+        assert_eq!(result_state(&taken), Returned, "a take: {taken:?}");
+        let read = crate::runner::read_side_channel(&step.state_path);
+        assert_eq!(
+            result_state(&read),
+            Returned,
+            "Windows makes a lock mandatory, so a take that locked the state itself refused the \
+             runner's read of it with os error 33 and the execution was errored: {read:?}"
+        );
+        let Ok(read) = read else { return };
+        assert_eq!(
+            read,
+            format!(
+                "{STEP_STATE_SCHEMA}\t{}\t{CATALOG_A}\t{MUTANT_A}\t10\tdormant\t0\n",
+                step.nonce
+            )
+            .into_bytes(),
+            "and it reads whole"
+        );
+        assert_eq!(
+            step.raised(),
+            Some(0),
+            "and the count read after a stop is read whole"
+        );
+        let released = lock.unlock();
+        assert_eq!(result_state(&released), Returned, "release: {released:?}");
     }
 
     #[test]

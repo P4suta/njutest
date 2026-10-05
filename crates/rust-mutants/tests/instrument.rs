@@ -469,8 +469,9 @@ fn the_step_runtime_uses_one_locked_process_state_and_fails_closed_at_every_boun
         "__rm_std::result::Result::Ok(__rm_std::option::Option::None) => return,",
         "__rm_std::result::Result::Err(error) => protocol_failed(error),",
         "pub(crate) fn checkpoint()",
-        "file.lock().map_err",
-        "file.unlock().map_err",
+        "lock.lock().map_err",
+        "lock.unlock().map_err",
+        "\"{}.lock\", path",
         "RUST_MUTANTS_STEP_STATE",
         ".create_new(true)",
         "Write::write_all",
@@ -494,6 +495,8 @@ fn the_step_runtime_uses_one_locked_process_state_and_fails_closed_at_every_boun
         "wrapping_sub",
         "poisoned.into_inner()",
         "let _ = SEEN.try_with",
+        "file.lock()",
+        "file.unlock()",
     ] {
         assert!(
             !runtime.contains(prohibited),

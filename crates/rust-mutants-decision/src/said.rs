@@ -7,7 +7,7 @@
 pub const STOP_SCHEMA: &str = "rust-mutants-stop-v1";
 
 /// Every check of the step protocol the runtime of this release says it stopped for, in its own words.
-pub const STEP_CHECKS: [&str; 35] = [
+pub const STEP_CHECKS: [&str; 38] = [
     "allowance: not Unicode",
     "allowance: not a number",
     "allowance: not canonical",
@@ -19,6 +19,9 @@ pub const STEP_CHECKS: [&str; 35] = [
     "metadata",
     "not a regular file",
     "open",
+    "lock: open",
+    "lock: metadata",
+    "lock: not a regular file",
     "lock",
     "count",
     "unlock",

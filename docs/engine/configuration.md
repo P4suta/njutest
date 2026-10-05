@@ -299,6 +299,7 @@ malformed, mismatched or replayed notice fails closed as a protocol error.
 No exit status is reserved: a test that returns 95 is an ordinary non-zero test failure.
 Unset, or `0`, counts nothing and leaves the clock as the only bound.
 `RUST_MUTANTS_STEP_STATE` names the execution-private state shared by every instrumented module and descendant process, so a selected mutation has one process-wide allowance rather than one counter per compilation unit.
+Every take locks the empty file whose name is the state's followed by `.lock`, which the supervisor creates beside it, and never the state, so the supervisor reads the state without meeting a lock that Windows makes mandatory; a lock that is missing, a link or not a regular file is a protocol failure.
 `RUST_MUTANTS_STEP_BEAT` is `<ms>@<path>`, set by the runner that watches a counted execution for quiet: a process spending a reservation of its allowance rewrites the file at most `<ms>` apart, a quarter of the window, since the state only changes when a reservation is taken ([ADR 0039](../adr/0039-a-step-is-spent-in-memory.md)).
 Anything but canonical milliseconds above zero and a path is a protocol failure.
 
