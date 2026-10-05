@@ -106,30 +106,23 @@ fn held_spec(root: &Path, marker: &Path, bound: Bound, ignores_term: bool) -> io
                 "TERM inheritance is a POSIX fixture contract",
             ));
         }
-        let script = root.join("held-runner.ps1");
-        std::fs::write(
-            &script,
-            "param([string]$Fixture, [string]$Directory, [string]$Test)\n$ErrorActionPreference = 'Stop'\n[System.IO.File]::WriteAllText((Join-Path $Directory 'leader'), [string]$PID, [System.Text.UTF8Encoding]::new($false))\n& $Fixture --exact $Test --nocapture\nexit $LASTEXITCODE\n",
-        )?;
+        let leader = njutest_devkit::process::test_name(module_path!(), "held_leader_fixture");
         Spec::new(
             [
-                "powershell.exe".into(),
-                "-NoProfile".into(),
-                "-ExecutionPolicy".into(),
-                "Bypass".into(),
-                "-File".into(),
-                script.into_os_string(),
-                "-Fixture".into(),
                 executable.into_os_string(),
-                "-Directory".into(),
-                root.as_os_str().to_owned(),
-                "-Test".into(),
-                name.into(),
+                "--exact".into(),
+                leader.into(),
+                "--nocapture".into(),
             ],
             bound,
         )
     };
     let mut env = held_host();
+    #[cfg(windows)]
+    {
+        env.set("NJUTEST_HELD_LEADER_DIRECTORY", root.as_os_str());
+        env.set("NJUTEST_HELD_LEADER_MEMBER", name.as_str());
+    }
     env.set("NJUTEST_HELD_RUNNER_ROOT", root.as_os_str());
     env.set("NJUTEST_HELD_RUNNER_MARKER", marker.as_os_str());
     spec.env = Some(env);
@@ -232,6 +225,28 @@ fn held_leader_release(root: &Path) -> io::Result<()> {
         .write(true)
         .open(root.join("rendezvous"))?
         .write_all(b"release\n")
+}
+
+/// The leader of the Windows held tree: it says who it is, starts the member as a child of its own, and passes only where the member did.
+#[cfg(windows)]
+#[test]
+fn held_leader_fixture() {
+    let Some(directory) = std::env::var_os("NJUTEST_HELD_LEADER_DIRECTORY") else {
+        return;
+    };
+    let member = std::env::var_os("NJUTEST_HELD_LEADER_MEMBER").expect("the held member's test");
+    std::fs::write(
+        Path::new(&directory).join("leader"),
+        std::process::id().to_string(),
+    )
+    .expect("the leader's own id");
+    let ended = std::process::Command::new(std::env::current_exe().expect("this fixture"))
+        .arg("--exact")
+        .arg(member)
+        .arg("--nocapture")
+        .status()
+        .expect("the held member starts");
+    assert!(ended.success(), "the held member ended as {ended:?}");
 }
 
 #[test]
