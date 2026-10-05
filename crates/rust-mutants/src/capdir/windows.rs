@@ -64,8 +64,8 @@ const MOVE_ACCESS: u32 = DELETE | FILE_READ_ATTRIBUTES | SYNCHRONIZE;
 /// Every handle here lets another open, rename or remove the same entry, as a Unix descriptor never stops anyone.
 const SHARE_ALL: FILE_SHARE_MODE = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
 
-/// How a directory named by a path is opened: as a directory, and as the object itself rather than what a link points at.
-const DIRECTORY_BY_PATH: FILE_FLAGS_AND_ATTRIBUTES =
+/// How an object named by a path is opened: a directory as well as a file, and as the object itself rather than what a link points at.
+const BY_PATH: FILE_FLAGS_AND_ATTRIBUTES =
     FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT;
 
 /// How long to wait before each further try of a rename or a removal another process is holding the entry against (decision 7).
@@ -88,7 +88,7 @@ pub(super) fn open(path: &Path) -> io::Result<File> {
     let directory = std::fs::OpenOptions::new()
         .access_mode(DIRECTORY_ACCESS)
         .share_mode(SHARE_ALL)
-        .custom_flags(DIRECTORY_BY_PATH)
+        .custom_flags(BY_PATH)
         .open(path)?;
     match kind_of(&directory)? {
         Kind::Directory => {}
@@ -148,7 +148,7 @@ pub(super) fn open_file_at(path: &Path) -> io::Result<File> {
     let opened = std::fs::OpenOptions::new()
         .access_mode(FILE_GENERIC_READ)
         .share_mode(SHARE_ALL)
-        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .custom_flags(BY_PATH)
         .open(path)?;
     match kind_of(&opened)? {
         Kind::File | Kind::Directory => Ok(opened),

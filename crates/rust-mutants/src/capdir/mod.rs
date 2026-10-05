@@ -342,7 +342,7 @@ pub fn sync_file(file: &File) -> io::Result<()> {
     sys::sync_file(file)
 }
 
-/// The file at `path`, for reading, not following a final link and not waiting on a pipe.
+/// The file or directory at `path`, for reading, not following a final link and not waiting on a pipe.
 ///
 /// # Errors
 /// It is missing, a link, or cannot be opened.

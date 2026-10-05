@@ -284,6 +284,23 @@ fn an_entry_is_opened_once_and_is_what_the_open_handle_is() {
 }
 
 #[test]
+fn a_directory_named_by_a_path_is_opened_as_one_on_every_platform() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let opened = rust_mutants::capdir::open_file_at(temp.path());
+    assert!(
+        opened.is_ok(),
+        "a directory named by a path opens, as a file does: {opened:?}"
+    );
+    let Ok(opened) = opened else { return };
+    assert_eq!(
+        rust_mutants::capdir::file_status(&opened)
+            .expect("an opened directory's status")
+            .kind,
+        Kind::Directory
+    );
+}
+
+#[test]
 fn a_file_named_by_a_path_is_opened_without_following_a_link_and_flushed_through_any_handle() {
     let temp = tempfile::tempdir().expect("tempdir");
     let elsewhere = tempfile::tempdir().expect("elsewhere");
