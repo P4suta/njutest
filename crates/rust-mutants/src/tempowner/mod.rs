@@ -365,23 +365,49 @@ impl Owner {
     /// # Errors
     /// Returns the marker write failure, other than a directory already gone, or the unlock or close failure; the lock is closed either way.
     pub fn release(&mut self) -> io::Result<()> {
-        let Some(mut lock) = self.lock.take() else {
+        let Some(lock) = self.lock.take() else {
             return Ok(());
         };
         let released = Marker {
             released: true,
             ..self.marker.clone()
         };
-        let written = match write_marker(&self.dir, &released) {
-            Ok(()) => {
-                self.marker = released;
-                Ok(())
-            }
+        let (written, unlocked) = self.closing(lock, released);
+        let written = match written {
             Err(gone) if gone.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error),
+            written => written,
         };
-        let unlocked = lock.release();
         written.and(unlocked)
+    }
+
+    /// Declares the held directory a build cache named by `schema` and lets it go, writing the declaration before the lock closes so no moment finds the directory free and still declared what it was.
+    ///
+    /// # Errors
+    /// The claim was already let go, which leaves the declaration as it was, or the marker could not be written or the lock released; the lock is closed either way.
+    pub fn release_as_cache(&mut self, schema: &str) -> io::Result<()> {
+        let Some(lock) = self.lock.take() else {
+            return Err(io::Error::other(format!(
+                "{} was let go before it could be declared a cache",
+                self.dir.display()
+            )));
+        };
+        let declared = Marker {
+            schema: schema.to_owned(),
+            role: Role::Cache,
+            released: true,
+            ..self.marker.clone()
+        };
+        let (written, unlocked) = self.closing(lock, declared);
+        written.and(unlocked)
+    }
+
+    /// Writes `marker` while `lock` still holds the directory, then closes the lock, answering each step.
+    fn closing(&mut self, mut lock: Lock, marker: Marker) -> (io::Result<()>, io::Result<()>) {
+        let written = write_marker(&self.dir, &marker);
+        if written.is_ok() {
+            self.marker = marker;
+        }
+        (written, lock.release())
     }
 
     /// Removes everything in the directory but its lock and marker, while the lock is held.

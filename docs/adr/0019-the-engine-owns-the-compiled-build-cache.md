@@ -85,6 +85,7 @@ The fixture reproduction is two runs of `fixture-witness-downstream` sharing a t
 
 An explicit `NJUTEST_FIXTURE_BUILD_CACHE` root allows copied fixtures to claim an engine-owned build slot addressed by the complete snapshot digest, toolchain identity and build environment.
 One verified immutable source graph is published under its owned event lease, and every claim creates a separate mutable copy from that graph.
+The graph's directory is declared a retained cache under the claim that copied it, never let go and claimed again (ADR 0006 decision 11), so whatever takes its lock afterwards, a sweep, a watcher or the next run, finds a published graph.
 An arbitrary number of claims uses the same graph without a four-slot fallback or a second semantic source survey.
 The final copied graph is loaded once, and build scripts and procedural macros require the full environment in the target directory identity; ordinary graphs rely on Cargo's dep-info for compile-time environment dependencies while diagnostic and scratch names do not fragment the pool.
 The engine's owner lock holds the slot through execution, cleanup and the lifetime of every shared set of sealed modules.

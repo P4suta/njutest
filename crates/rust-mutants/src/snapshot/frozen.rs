@@ -29,16 +29,12 @@ impl FrozenGraph {
             },
         };
         graph.inventory = super::survey(&graph.rules(PathBuf::new())?).map_err(io::Error::other)?;
-        if let Some(owner) = &mut snapshot.owner {
-            owner.release()?;
-        }
-        let mut owner = crate::tempowner::claim_cache(
-            &snapshot.dir,
-            jiff::Timestamp::now(),
-            "rust-mutants-frozen-source-v1",
-        )
-        .map_err(io::Error::other)?;
-        owner.release()?;
+        let Some(owner) = &mut snapshot.owner else {
+            return Err(io::Error::other(
+                "an immutable graph is retained only under the claim that copied it",
+            ));
+        };
+        owner.release_as_cache("rust-mutants-frozen-source-v1")?;
         snapshot.state = State::Released;
         Ok(graph)
     }
@@ -80,3 +76,6 @@ impl FrozenGraph {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -348,6 +348,60 @@ fn a_cache_a_run_is_using_is_not_reclaimed() {
 }
 
 #[test]
+fn a_scratch_declared_a_cache_under_its_claim_is_spared_by_a_sweep_and_free_to_claim() {
+    let parent = tempfile::tempdir().expect("tempdir");
+    let at = Timestamp::from_second(1_700_000_000).expect("a timestamp");
+    let dir = make(parent.path(), "rust-mutants-snap-dddd");
+    let mut owner = claim(&dir, at).expect("a fresh directory is claimable");
+    owner
+        .release_as_cache("rust-mutants-frozen-source-v1")
+        .expect("declared and let go");
+    let marker = read_marker(&dir).expect("readable");
+    assert_eq!(
+        (
+            marker.schema.as_str(),
+            marker.role,
+            marker.released,
+            marker.started,
+            &marker
+        ),
+        (
+            "rust-mutants-frozen-source-v1",
+            Role::Cache,
+            true,
+            at,
+            owner.marker()
+        ),
+        "the declaration names the cache, says it was let go, and keeps when it was claimed"
+    );
+    let swept = sweep(parent.path(), &["rust-mutants-snap-"], at).expect("sweep");
+    assert_eq!(
+        (swept.removed.len(), swept.cached),
+        (0, 1),
+        "a routine sweep spares a cache: {swept:?}"
+    );
+    let mut taken = acquire(&lock_path(&dir))
+        .expect("opens")
+        .expect("free once declared");
+    taken.release().expect("releases");
+}
+
+#[test]
+fn a_claim_already_let_go_is_not_declared_a_cache() {
+    let parent = tempfile::tempdir().expect("tempdir");
+    let dir = make(parent.path(), "rust-mutants-snap-eeee");
+    let mut owner = claim(&dir, now()).expect("a fresh directory is claimable");
+    owner.release().expect("releases");
+    let declared = owner.release_as_cache("rust-mutants-frozen-source-v1");
+    let marker = read_marker(&dir).expect("readable");
+    assert!(
+        declared.is_err() && marker.role == Role::Scratch && marker.schema == SCHEMA,
+        "a directory this claim no longer holds may already be somebody else's, so its \
+         declaration stays as it was: {declared:?} {marker:?}"
+    );
+}
+
+#[test]
 fn a_marker_written_before_roles_existed_still_reads() {
     let dir = tempfile::tempdir().expect("tempdir");
     fs::write(
