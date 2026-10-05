@@ -33,11 +33,15 @@ struct HeldRun {
 }
 
 impl HeldRun {
-    fn launch(spec: Spec, cancel: Cancel) -> Self {
+    fn launch(spec: Spec, cancel: Cancel, ended: rust_mutants::observation::Signal) -> Self {
         let running = cancel.clone();
         Self {
             cancel,
-            worker: Some(JoinedThread::launch(move || run(&spec, &running))),
+            worker: Some(JoinedThread::launch(move || {
+                let result = run(&spec, &running);
+                ended.publish(rust_mutants::observation::Event::Completed);
+                result
+            })),
         }
     }
 
@@ -111,6 +115,8 @@ fn held_spec(root: &Path, marker: &Path, bound: Bound, ignores_term: bool) -> io
             [
                 "powershell.exe".into(),
                 "-NoProfile".into(),
+                "-ExecutionPolicy".into(),
+                "Bypass".into(),
                 "-File".into(),
                 script.into_os_string(),
                 "-Fixture".into(),
@@ -123,34 +129,49 @@ fn held_spec(root: &Path, marker: &Path, bound: Bound, ignores_term: bool) -> io
             bound,
         )
     };
-    spec.env = Some(rust_mutants::vars::Variables::of([
-        (
-            "NJUTEST_HELD_RUNNER_ROOT".into(),
-            root.as_os_str().to_owned(),
-        ),
-        (
-            "NJUTEST_HELD_RUNNER_MARKER".into(),
-            marker.as_os_str().to_owned(),
-        ),
-    ]));
+    let mut env = held_host();
+    env.set("NJUTEST_HELD_RUNNER_ROOT", root.as_os_str());
+    env.set("NJUTEST_HELD_RUNNER_MARKER", marker.as_os_str());
+    spec.env = Some(env);
     Ok(spec)
 }
 
-fn held_bytes(
-    observed: &rust_mutants::observation::Observation,
-    path: &Path,
-) -> io::Result<Vec<u8>> {
+/// What this platform's own programs need of the parent's environment to be found and to start, which on Windows is the search path and the system's variables, and elsewhere nothing a held fixture's absolute shell needs.
+fn held_host() -> rust_mutants::vars::Variables {
+    if cfg!(windows) {
+        let wanted: Vec<&str> = std::iter::once("PATH")
+            .chain(njutest_devkit::paths::ALSO_ON_THIS_PLATFORM)
+            .collect();
+        std::env::vars_os()
+            .collect::<rust_mutants::vars::Variables>()
+            .only(&wanted)
+    } else {
+        rust_mutants::vars::Variables::empty()
+    }
+}
+
+/// What a held wait saw first: the bytes it waited for, or the end of the held run.
+enum Held {
+    Published(Vec<u8>),
+    Ended,
+}
+
+fn held_bytes(observed: &rust_mutants::observation::Observation, path: &Path) -> io::Result<Held> {
     let deadline = Instant::now()
         .checked_add(Duration::from_secs(10))
         .ok_or_else(|| {
             io::Error::other("the original test completion bound cannot be represented")
         })?;
+    let mut ended = false;
     loop {
         match std::fs::read(path) {
-            Ok(bytes) if !bytes.is_empty() => return Ok(bytes),
+            Ok(bytes) if !bytes.is_empty() => return Ok(Held::Published(bytes)),
             Ok(_pending) => {}
             Err(source) if source.kind() == io::ErrorKind::NotFound => {}
             Err(source) => return Err(source),
+        }
+        if ended {
+            return Ok(Held::Ended);
         }
         let waited = observed.wait("actual-held-runner", "ready-or-release", Some(deadline))?;
         eprintln!(
@@ -158,8 +179,8 @@ fn held_bytes(
             serde_json::json!({"kind": "host-wait", "payload": waited.note})
         );
         match waited.event? {
+            rust_mutants::observation::Event::Completed => ended = true,
             rust_mutants::observation::Event::Changed
-            | rust_mutants::observation::Event::Completed
             | rust_mutants::observation::Event::Cancelled => {}
             rust_mutants::observation::Event::Deadline => {
                 return Err(io::Error::new(
@@ -174,8 +195,19 @@ fn held_bytes(
 fn held_member(
     observed: &rust_mutants::observation::Observation,
     root: &Path,
+    running: &mut HeldRun,
 ) -> io::Result<njutest_process::ForeignProcess> {
-    let ready = held_bytes(observed, &root.join("ready"))?;
+    let ready = match held_bytes(observed, &root.join("ready"))? {
+        Held::Published(ready) => ready,
+        Held::Ended => {
+            let result = running.join()?;
+            return Err(io::Error::other(format!(
+                "the held run ended before its fixture was ready: {:?}, having written: {}",
+                result.termination,
+                result.output.escape_ascii()
+            )));
+        }
+    };
     let pid = std::str::from_utf8(&ready)
         .map_err(io::Error::other)?
         .parse::<u32>()
@@ -216,7 +248,12 @@ fn held_runner_fixture() {
     std::fs::write(&pending, std::process::id().to_string())
         .expect("the actual fixture generation");
     std::fs::rename(pending, root.join("ready")).expect("the atomic fixture readiness");
-    held_bytes(&observed, &root.join("release")).expect("the actual fixture release");
+    let released =
+        held_bytes(&observed, &root.join("release")).expect("the actual fixture release");
+    assert!(
+        matches!(released, Held::Published(_)),
+        "only the run this fixture is part of publishes its end, and the fixture has no run of its own"
+    );
     std::fs::write(marker, b"finished").expect("the actual late writer finished");
 }
 
@@ -228,8 +265,9 @@ fn the_held_writer_really_writes_when_released_and_its_generation_exits() {
         .expect("subscribe before actual ready publication");
     let spec =
         held_spec(temp.path(), &marker, Bound::Unbounded, false).expect("the actual held writer");
-    let mut running = HeldRun::launch(spec, Cancel::new());
-    let member = held_member(&observed, temp.path()).expect("retain the actual ready writer");
+    let mut running = HeldRun::launch(spec, Cancel::new(), observed.signal());
+    let member =
+        held_member(&observed, temp.path(), &mut running).expect("retain the actual ready writer");
     std::fs::write(temp.path().join("release"), b"release").expect("release the actual writer");
     assert!(
         member
@@ -326,8 +364,9 @@ fn a_timeout_forcefully_signals_the_inherited_process_group_and_says_so() {
         temp.path().to_path_buf(),
     ));
     let started = Instant::now();
-    let mut running = HeldRun::launch(spec, cancel);
-    let member = held_member(&observed, temp.path()).expect("retain the actual ready member");
+    let mut running = HeldRun::launch(spec, cancel, observed.signal());
+    let member =
+        held_member(&observed, temp.path(), &mut running).expect("retain the actual ready member");
     held_clock(temp.path(), 300).expect("the original logical timeout");
     let result = running
         .join()
@@ -414,8 +453,9 @@ fn a_cancellation_kills_the_supervised_process_set_and_is_not_a_timeout() {
         false,
     )
     .expect("the actual cancellation producer");
-    let mut running = HeldRun::launch(spec, cancel.clone());
-    let member = held_member(&observed, temp.path()).expect("retain the actual ready process");
+    let mut running = HeldRun::launch(spec, cancel.clone(), observed.signal());
+    let member =
+        held_member(&observed, temp.path(), &mut running).expect("retain the actual ready process");
     cancel.cancel();
     let joined = running.join();
     assert_eq!(result_state(&joined), Returned, "joins: {joined:?}");
@@ -594,8 +634,9 @@ fn a_forceful_group_signal_eventually_prevents_a_term_ignoring_member_from_writi
     let observed = rust_mutants::observation::Observation::filesystem(temp.path(), false)
         .expect("subscribe before the inherited writer starts");
     let started = Instant::now();
-    let mut running = HeldRun::launch(spec, Cancel::new());
-    let member = held_member(&observed, temp.path()).expect("retain the actual ready writer");
+    let mut running = HeldRun::launch(spec, Cancel::new(), observed.signal());
+    let member =
+        held_member(&observed, temp.path(), &mut running).expect("retain the actual ready writer");
     held_leader_release(temp.path()).expect("the actual leader may now exit");
     let result = running.join().expect("the group and output owners settle");
     assert!(result.succeeded(), "{result:?}");
@@ -805,8 +846,9 @@ fn a_windows_process_tree_is_killed_on_timeout() {
         temp.path().to_path_buf(),
     ));
     let started = Instant::now();
-    let mut running = HeldRun::launch(spec, cancel);
-    let member = held_member(&observed, temp.path()).expect("retain the actual contained writer");
+    let mut running = HeldRun::launch(spec, cancel, observed.signal());
+    let member = held_member(&observed, temp.path(), &mut running)
+        .expect("retain the actual contained writer");
     held_clock(temp.path(), 500).expect("the original logical timeout");
     let result = running.join().expect("the job and output owners settle");
     assert!(result.timed_out(), "{result:?}");
