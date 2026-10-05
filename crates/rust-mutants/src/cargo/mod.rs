@@ -81,6 +81,12 @@ pub(crate) fn compilation_input(spelling: crate::vars::Spelling, name: &std::ffi
     build_cache::compilation_input(spelling, name)
 }
 
+/// Whether this platform's dynamic loader reads `name`, which the compile and the toolchain observation both refuse by this one rule.
+#[cfg(any(test, feature = "testkit"))]
+pub(crate) fn loader_variable(name: &std::ffi::OsStr) -> bool {
+    build_cache::loaders::loader_variable(name)
+}
+
 /// The directory inside a target directory that holds verified compilations and their products.
 pub(crate) const COMPILATIONS: &str = "rust-mutants-compilations";
 

@@ -630,19 +630,33 @@ fn an_opaque_loader_graph_always_keeps_its_actual_toolchain_processes() {
             ..rust_mutants::cargo::LocateOptions::default()
         };
         let watch = rust_mutants::runner::Watched::new(&cancel, &trace);
+        let mut started = Vec::new();
         for _question in 0..2 {
             rust_mutants::cargo::Toolchain::locate(&options, fixture.root(), &watch)
-                .expect("the real toolchain still runs under an opaque loader graph");
+                .expect("the real toolchain runs whatever the loader variable names");
+            started.push(
+                trace
+                    .events()
+                    .iter()
+                    .filter(|event| matches!(event.payload, Payload::Exec { .. }))
+                    .count(),
+            );
         }
-        assert_eq!(
-            trace
-                .events()
-                .iter()
-                .filter(|event| { matches!(event.payload, Payload::Exec { .. }) })
-                .count(),
-            6,
-            "{name} binds no reusable executable or loader graph"
-        );
+        if rust_mutants::testkit::loader::reads(name) {
+            assert_eq!(
+                started,
+                [3, 6],
+                "this platform's loader reads {name}, so it binds no reusable executable or \
+                 loader graph"
+            );
+        } else {
+            assert_eq!(
+                started,
+                [3, 3],
+                "this platform's loader reads no {name}, so its value is bound like any other \
+                 and the observation it was set for is reused"
+            );
+        }
     }
 }
 

@@ -5,6 +5,7 @@
 
 pub mod compile;
 pub mod evidence;
+pub mod loader;
 pub mod measuring;
 pub mod opening;
 pub mod source;
