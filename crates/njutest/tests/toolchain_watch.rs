@@ -1713,8 +1713,12 @@ fn refused(fixture: &str, dir: &std::path::Path, name: &str, configured: &str) -
 
 /// Whether this machine has the interpreter the `deep-v1` contract promises.
 fn interpreter() -> bool {
+    let vars: rust_mutants::vars::Variables = njutest_devkit::paths::environment_for_a_run()
+        .into_iter()
+        .collect();
     std::process::Command::new("cargo")
-        .args(["+nightly", "miri", "--version"])
+        .arg(njutest::assure::deep::interpreter_toolchain(&vars))
+        .args(["miri", "--version"])
         .output()
         .is_ok_and(|output| output.status.success())
 }

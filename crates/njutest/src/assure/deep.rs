@@ -107,7 +107,7 @@ pub fn interpret(
 ) -> Result<Interpreted, RunnerError> {
     let mut argv: Vec<OsString> = vec![
         interpreting.cargo.path().as_os_str().to_owned(),
-        selected(&interpreting.env),
+        interpreter_toolchain(&interpreting.env),
         OsString::from("miri"),
         OsString::from("test"),
     ];
@@ -192,7 +192,7 @@ fn missing(
     let mut spec = Spec::new(
         [
             interpreting.cargo.path().as_os_str().to_owned(),
-            selected(&interpreting.env),
+            interpreter_toolchain(&interpreting.env),
             OsString::from("miri"),
             OsString::from("--version"),
         ],
@@ -226,7 +226,9 @@ fn environment(interpreting: &Interpreting<'_>) -> rust_mutants::vars::Variables
     env
 }
 
-fn selected(env: &rust_mutants::vars::Variables) -> OsString {
+/// The `+toolchain` argument that picks the interpreter's toolchain under `env`: the one `NJUTEST_NIGHTLY` names, or `nightly`.
+#[must_use]
+pub fn interpreter_toolchain(env: &rust_mutants::vars::Variables) -> OsString {
     let mut selected = OsString::from("+");
     match env.var("NJUTEST_NIGHTLY") {
         Some(nightly) => selected.push(nightly),
