@@ -423,9 +423,15 @@ fn capture_entry(
 ) -> io::Result<()> {
     let name = Name::new(text).map_err(io::Error::other)?;
     let path = root.join(text);
-    let status = directory
-        .status_at(name)?
-        .ok_or_else(|| io::Error::other("a loader search entry disappeared"))?;
+    let status = match directory.status_at(name) {
+        Ok(Some(status)) => status,
+        Ok(None) => return Err(io::Error::other("a loader search entry disappeared")),
+        Err(denied) if denied.kind() == io::ErrorKind::PermissionDenied => {
+            unreadable(digest, &path);
+            return Ok(());
+        }
+        Err(source) => return Err(source),
+    };
     super::field(digest, text.as_bytes());
     let descend = frameworks || (cfg!(target_os = "linux") && text == "glibc-hwcaps");
     match status.kind {
@@ -435,16 +441,17 @@ fn capture_entry(
                 capture(&path, identities, digest, (true, ancestors))?;
             }
         }
-        Kind::File if !super::toolchain::loadable(&path, identities)? => {
-            not_an_image(digest, &path);
-        }
-        Kind::File => match super::toolchain::reused(&path, identities)? {
-            Some(state) => bound(digest, &path, &state),
-            None => match directory.open_entry(name)? {
-                Entry::File(file) => captured_file(&path, &file, identities, digest)?,
-                Entry::Dir(_) | Entry::Other => {
-                    return Err(io::Error::other("the loader search entry changed kind"));
-                }
+        Kind::File => match readable(&path, identities)? {
+            Readable::NotLibrary => not_an_image(digest, &path),
+            Readable::Unreadable => unreadable(digest, &path),
+            Readable::Library => match super::toolchain::reused(&path, identities)? {
+                Some(state) => bound(digest, &path, &state),
+                None => match directory.open_entry(name)? {
+                    Entry::File(file) => captured_file(&path, &file, identities, digest)?,
+                    Entry::Dir(_) | Entry::Other => {
+                        return Err(io::Error::other("the loader search entry changed kind"));
+                    }
+                },
             },
         },
         Kind::ExecutionAlias => super::field(digest, b"app-execution-alias"),
@@ -469,10 +476,11 @@ fn capture_link(
             let file = crate::capdir::open_file_at(&canonical)?;
             let status = crate::capdir::file_status(&file)?;
             match status.kind {
-                Kind::File if !super::toolchain::loadable(&canonical, identities)? => {
-                    not_an_image(digest, &canonical);
-                }
-                Kind::File => captured_file(&canonical, &file, identities, digest)?,
+                Kind::File => match readable(&canonical, identities)? {
+                    Readable::NotLibrary => not_an_image(digest, &canonical),
+                    Readable::Unreadable => unreadable(digest, &canonical),
+                    Readable::Library => captured_file(&canonical, &file, identities, digest)?,
+                },
                 Kind::Directory => {
                     super::field(digest, b"directory-alias");
                     super::field(digest, canonical.as_os_str().as_encoded_bytes());
@@ -572,6 +580,28 @@ fn captured_file(
     }
     bound(digest, path, &state);
     Ok(())
+}
+
+/// What a regular file is to a loader that runs as this user.
+enum Readable {
+    Library,
+    NotLibrary,
+    Unreadable,
+}
+
+/// Classifies a regular file for the loader: a file this user may not read is one no loader running as this user can load either.
+fn readable(path: &Path, identities: &Identities) -> io::Result<Readable> {
+    match super::toolchain::loadable(path, identities) {
+        Ok(true) => Ok(Readable::Library),
+        Ok(false) => Ok(Readable::NotLibrary),
+        Err(denied) if denied.kind() == io::ErrorKind::PermissionDenied => Ok(Readable::Unreadable),
+        Err(source) => Err(source),
+    }
+}
+
+fn unreadable(digest: &mut Sha256, path: &Path) {
+    super::field(digest, path.as_os_str().as_encoded_bytes());
+    super::field(digest, b"unreadable-by-this-user");
 }
 
 fn not_an_image(digest: &mut Sha256, path: &Path) {
@@ -837,6 +867,39 @@ mod macos_tests {
             before.digest(),
             Inputs::of(&env, &identities).expect("new image").digest(),
             "a file that becomes loadable is bound"
+        );
+    }
+
+    #[test]
+    fn a_file_this_user_cannot_read_is_named_and_reading_it_later_rebinds() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let directory = tempfile::tempdir().expect("owned loader search");
+        let sealed = directory.path().join("libsealed.dylib");
+        std::fs::write(&sealed, super::tests::test_library(b"a library")).expect("owned library");
+        std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o000))
+            .expect("withdraw read access");
+        if std::fs::File::open(&sealed).is_ok() {
+            return;
+        }
+        let mut env = Variables::default();
+        env.set("DYLD_FALLBACK_LIBRARY_PATH", directory.path());
+        let identities = Identities::empty();
+        let unreadable =
+            Inputs::of(&env, &identities).expect("an unreadable file is a bound input");
+        assert_eq!(
+            unreadable.digest(),
+            Inputs::of(&env, &identities)
+                .expect("still unreadable")
+                .digest()
+        );
+        std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o644))
+            .expect("restore read access");
+        assert_ne!(
+            unreadable.digest(),
+            Inputs::of(&env, &identities)
+                .expect("now readable")
+                .digest(),
+            "a file that becomes readable is bound by its content"
         );
     }
 
