@@ -477,13 +477,6 @@ fn opaque_variable(name: &str) -> bool {
             | "RUSTC_WORKSPACE_WRAPPER"
             | "RUSTC"
             | "RUSTDOC"
-            | "LD_PRELOAD"
-            | "LD_LIBRARY_PATH"
-            | "DYLD_INSERT_LIBRARIES"
-            | "DYLD_LIBRARY_PATH"
-            | "DYLD_FRAMEWORK_PATH"
-            | "DYLD_FALLBACK_LIBRARY_PATH"
-            | "DYLD_FALLBACK_FRAMEWORK_PATH"
             | "COMPILER_PATH"
             | "GCC_EXEC_PREFIX"
             | "LIBRARY_PATH"
@@ -504,6 +497,7 @@ fn opaque_variable(name: &str) -> bool {
             name,
             "CARGO_ENCODED_RUSTFLAGS" | "CARGO_ENCODED_RUSTDOCFLAGS"
         )
+        || super::loaders::loader_variable(std::ffi::OsStr::new(name))
 }
 
 fn directory(

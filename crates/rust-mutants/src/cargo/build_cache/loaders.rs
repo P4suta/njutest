@@ -159,6 +159,24 @@ pub(super) const fn search_variables() -> &'static [&'static str] {
     }
 }
 
+/// The prefixes of the variables this platform's loader reads: the ELF loader's `LD_`, and on macOS dyld's `DYLD_` beside the `LD_` its linker reads; the Windows loader reads only `PATH`.
+const fn loader_prefixes() -> &'static [&'static str] {
+    if cfg!(target_os = "macos") {
+        &["DYLD_", "LD_"]
+    } else if cfg!(windows) {
+        &[]
+    } else {
+        &["LD_"]
+    }
+}
+
+/// Whether this platform's loader reads `name`, so that a value it holds is refused unless [`search_variables`] binds what it names; any other variable is bound by its value alone.
+pub(in crate::cargo) fn loader_variable(name: &OsStr) -> bool {
+    loader_prefixes()
+        .iter()
+        .any(|prefix| crate::vars::Spelling::HOST.begins(name, prefix))
+}
+
 fn search_paths(value: &OsStr) -> io::Result<Vec<PathBuf>> {
     #[cfg(target_os = "linux")]
     {
@@ -326,8 +344,7 @@ impl RuntimeInputs {
 fn loader_environment(env: &Variables) -> io::Result<()> {
     for (name, value) in env.canonical() {
         if !value.is_empty()
-            && (name.as_encoded_bytes().starts_with(b"LD_")
-                || name.as_encoded_bytes().starts_with(b"DYLD_"))
+            && loader_variable(&name)
             && !search_variables()
                 .iter()
                 .any(|allowed| name.as_os_str() == OsStr::new(allowed))
@@ -898,6 +915,40 @@ mod namespace_tests {
         env
     }
 
+    /// Variables some platform's loader reads and no search binds, each beside whether this platform's loader is one of them.
+    const READ_BY_THIS_LOADER: [(&str, bool); 3] = [
+        ("LD_PRELOAD", cfg!(unix)),
+        ("LD_UNKNOWN_NAMESPACE", cfg!(unix)),
+        ("DYLD_INSERT_LIBRARIES", cfg!(target_os = "macos")),
+    ];
+
+    #[test]
+    fn a_variable_is_refused_as_a_loader_input_only_where_this_platform_s_loader_reads_it() {
+        let directory = tempfile::tempdir().expect("owned cwd");
+        let identities = Identities::empty();
+        let rustc = directory.path().join("rustc");
+        let unloaded = Inputs::compiler(&Variables::default(), directory.path(), &identities)
+            .expect("an environment naming no loader input");
+        for (name, read) in READ_BY_THIS_LOADER {
+            let env = environment(name, directory.path());
+            let compiler = Inputs::compiler(&env, directory.path(), &identities);
+            assert_eq!(
+                compiler.is_err(),
+                read,
+                "{name} is refused by the loader capture exactly where this loader reads it: \
+                 {compiler:?}"
+            );
+            let checked =
+                super::super::toolchain::environment(directory.path(), &rustc, &env, &unloaded);
+            assert_eq!(
+                checked.is_err(),
+                read,
+                "{name} is refused by the compiler environment exactly where this loader reads \
+                 it: {checked:?}"
+            );
+        }
+    }
+
     #[test]
     fn every_native_search_variable_binds_contents_additions_removals_and_exact_values() {
         for &name in search_variables() {
@@ -1088,21 +1139,24 @@ mod namespace_tests {
         );
         RuntimeInputs::restore(&absent.attestation(), &env, directory.path(), &identities)
             .expect_err("changed or unsupported original loader input is refused");
-        env.set("LD_PRELOAD", "foreign injection");
-        Inputs::compiler(&env, directory.path(), &identities)
-            .expect_err("opaque compiler injection");
-        RuntimeInputs::capture(&env, directory.path(), &identities)
-            .expect_err("changed or unsupported original loader input is refused");
-        env.remove("LD_PRELOAD");
-        env.set("DYLD_INSERT_LIBRARIES", "foreign injection");
-        RuntimeInputs::capture(&env, directory.path(), &identities)
-            .expect_err("changed or unsupported original loader input is refused");
-        env.remove("DYLD_INSERT_LIBRARIES");
-        env.set("LD_UNKNOWN_NAMESPACE", "unknown loader input");
-        Inputs::compiler(&env, directory.path(), &identities)
-            .expect_err("unknown compiler loader input");
-        RuntimeInputs::capture(&env, directory.path(), &identities)
-            .expect_err("changed or unsupported original loader input is refused");
+        for (name, read) in READ_BY_THIS_LOADER {
+            env.set(name, "foreign injection");
+            let compiler = Inputs::compiler(&env, directory.path(), &identities);
+            assert_eq!(
+                compiler.is_err(),
+                read,
+                "{name} is an opaque compiler injection exactly where this loader reads it: \
+                 {compiler:?}"
+            );
+            let runtime = RuntimeInputs::capture(&env, directory.path(), &identities);
+            assert_eq!(
+                runtime.is_err(),
+                read,
+                "{name} is an opaque runtime injection exactly where this loader reads it: \
+                 {runtime:?}"
+            );
+            env.remove(name);
+        }
         let mut bad = absent.attestation();
         bad.schema = 0;
         RuntimeInputs::restore(&bad, &Variables::default(), directory.path(), &identities)

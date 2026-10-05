@@ -319,3 +319,10 @@ The capture took every reparse point for a link to read, so that one directory l
 `capdir::Kind::ExecutionAlias` now names the tag where the capability directory reads an entry without following it, so every match on an entry's kind decides what an alias is.
 The loader binds an alias by its name and its kind and never opens it, as it binds a file no loader can map by its name alone: no loader can map an alias, so neither its reparse data nor its target is a loader input.
 Every other reparse point is still a link to read and resolve, and one that cannot be read still refuses the capture.
+
+## Amendment, 2026-10-05: a loader variable is one this platform's loader reads
+
+The capture refused `LD_*` and `DYLD_*` variables on every platform as opaque loader inputs, and a GitHub Windows runner sets `LD_LIBRARY_PATH`, so every compile there came out unbound and nothing was reused.
+The Windows loader reads no `LD_` or `DYLD_` variable, and Linux's reads no `DYLD_` one; on those platforms such a variable is a value, and the build key binds it as one, as it binds every variable a build can read.
+`cargo::build_cache::loaders::loader_variable` now answers which variables this platform's loader reads: `LD_` on Linux and the other ELF systems, `DYLD_` and the `LD_` its linker reads on macOS, and none on Windows, whose loader reads `PATH`, which the capture binds as a search namespace.
+The loader capture and the compiler environment both ask it, so the two refusals cannot disagree.

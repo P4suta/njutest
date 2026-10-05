@@ -436,6 +436,64 @@ fn every_changed_build_input_misses_and_then_reuses_only_its_verified_result() {
     assert!(record.is_err(), "multiple identities selected {record:?}");
 }
 
+/// A variable another platform's loader reads and this platform's does not.
+#[cfg(any(windows, target_os = "linux"))]
+const FOREIGN_LOADER_VARIABLE: &str = if cfg!(windows) {
+    "LD_LIBRARY_PATH"
+} else {
+    "DYLD_LIBRARY_PATH"
+};
+
+#[cfg(any(windows, target_os = "linux"))]
+#[test]
+fn a_variable_only_another_platform_s_loader_reads_is_bound_by_its_value_and_reused() {
+    let directory = scratch_target("foreign-loader");
+    let root = directory.path().join("source");
+    copy_tree(&fixture("fixture-simple"), &root);
+    let tc = toolchain(&root);
+    let cancel = Cancel::new();
+    let trace = build_trace();
+    let mut options = rust_mutants::cargo::CompileOptions::new(
+        rust_mutants::cargo::BuildDir::new(directory.path().join("target"), Vec::new())
+            .rooted(root.clone()),
+    );
+    options.kind = rust_mutants::cargo::CompileKind::Tests;
+    options.locked = true;
+    options.offline = true;
+    let driver = Driver {
+        toolchain: &tc,
+        dir: &root,
+        cancel: &cancel,
+        trace: &trace,
+    };
+    let mut builds = Vec::new();
+    for value in ["one value", "one value", "another value", "one value"] {
+        options.env.set(FOREIGN_LOADER_VARIABLE, value);
+        rust_mutants::cargo::compile(&driver, &options).expect("the tree compiles");
+        builds.push(cargo_builds(&trace));
+    }
+    let notes: Vec<String> = trace
+        .events()
+        .iter()
+        .filter_map(|event| {
+            if let rust_mutants::trace::Payload::Note { note } = &event.payload
+                && note.kind.starts_with("build-cache")
+            {
+                Some(format!("{}: {}", note.kind, note.detail))
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(
+        builds,
+        [1, 1, 2, 2],
+        "{FOREIGN_LOADER_VARIABLE} names nothing this platform's loader reads, so a build it is \
+         set for is bound, a second value is a second build, and the first value's build is \
+         reused: {notes:?}"
+    );
+}
+
 /// The actual compiler publication names one canonical regular record, independently of directory order.
 fn bound_compilation_record(
     trace: &Recorder,
