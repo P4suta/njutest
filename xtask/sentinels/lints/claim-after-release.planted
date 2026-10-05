@@ -1,0 +1,51 @@
+=== the-published-graph source crates/rust-mutants/src/snapshot/frozen.rs
+fn take(owner: &mut crate::tempowner::Owner, dir: &std::path::Path) -> std::io::Result<()> {
+    owner.release()?;
+    let mut again = crate::tempowner::claim_cache(dir, jiff::Timestamp::now(), "cache-v1").map_err(std::io::Error::other)?;
+    again.release()
+}
+=== through-the-module source crates/app/src/lib.rs
+use rust_mutants::tempowner;
+fn handed(owner: &mut tempowner::Owner, dir: &std::path::Path, now: jiff::Timestamp) -> Option<tempowner::Owner> {
+    if owner.release().is_err() { return None; }
+    tempowner::claim_as(dir, now, "app-v1").ok()
+}
+=== an-imported-claim source crates/app/src/lib.rs
+use rust_mutants::tempowner::{Owner, claim_cache};
+fn handed(owner: &mut Owner, dir: &std::path::Path, now: jiff::Timestamp) -> Option<Owner> {
+    let _released = owner.release();
+    claim_cache(dir, now, "app-v1").ok()
+}
+=== a-renamed-claim source crates/app/src/lib.rs
+use rust_mutants::tempowner::{Owner, claim_cache_of as keyed};
+fn handed(owner: &mut Owner, dir: &std::path::Path, tree: &std::path::Path, now: jiff::Timestamp) -> Option<Owner> {
+    let _released = owner.release();
+    keyed(dir, now, "app-v1", tree).ok()
+}
+=== a-renamed-module source crates/app/src/lib.rs
+use rust_mutants::tempowner as owners;
+fn handed(owner: &mut owners::Owner, dir: &std::path::Path, now: jiff::Timestamp) -> Option<owners::Owner> {
+    let _released = owner.release();
+    owners::claim(dir, now).ok()
+}
+=== the-module-renamed-in-a-group source crates/app/src/lib.rs
+use rust_mutants::tempowner::{self as owners};
+fn handed(owner: &mut owners::Owner, dir: &std::path::Path, now: jiff::Timestamp) -> Option<owners::Owner> {
+    let _released = owner.release();
+    owners::claim(dir, now).ok()
+}
+=== a-method source crates/app/src/lib.rs
+struct Held { owner: rust_mutants::tempowner::Owner, dir: std::path::PathBuf }
+impl Held {
+    fn recast(&mut self, now: jiff::Timestamp) -> Option<rust_mutants::tempowner::Owner> {
+        let _released = self.owner.release();
+        rust_mutants::tempowner::claim_cache(&self.dir, now, "app-v1").ok()
+    }
+}
+=== inside-a-macro source crates/app/src/lib.rs
+fn checked(owner: &mut rust_mutants::tempowner::Owner, dir: &std::path::Path, now: jiff::Timestamp) {
+    let _released = owner.release();
+    assert!(rust_mutants::tempowner::claim(dir, now).is_ok(), "{}", dir.display());
+}
+=== a-test-module source crates/app/src/lib.rs
+#[cfg(test)] mod tests { fn handed(owner: &mut rust_mutants::tempowner::Owner, dir: &std::path::Path, now: jiff::Timestamp) -> bool { let _released = owner.release(); rust_mutants::tempowner::claim(dir, now).is_ok() } }

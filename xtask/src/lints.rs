@@ -16,6 +16,7 @@ mod clears;
 mod compiler_diagnostics;
 mod ffi;
 mod git_doors;
+mod handovers;
 mod procfs;
 mod raw_buffers;
 mod sensitive_names;
@@ -357,6 +358,7 @@ declare_kinds! {
     RawStamp => "raw-stamp",
     RawEnvironmentClear => "raw-environment-clear",
     WideRecordInteger => "wide-record-integer",
+    ClaimAfterRelease => "claim-after-release",
 }
 
 impl Kind {
@@ -408,6 +410,7 @@ impl Kind {
             Self::RawStamp => stamps::REMEDY,
             Self::RawEnvironmentClear => clears::REMEDY,
             Self::WideRecordInteger => wide_records::REMEDY,
+            Self::ClaimAfterRelease => handovers::REMEDY,
             Self::UnownedSpawn => UNOWNED_SPAWN_REMEDY,
             Self::RawGroupSignal => RAW_GROUP_SIGNAL_REMEDY,
             Self::UnboundedChannel => UNBOUNDED_CHANNEL_REMEDY,
@@ -729,6 +732,9 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
     }
     if procfs::held(file) {
         scan.found.extend(procfs::found(&parsed, file));
+    }
+    if handovers::held(file) {
+        scan.found.extend(handovers::found(&parsed, file));
     }
     scan.found.extend(stamps::found(&parsed, file));
     scan.found.extend(wide_records::found(&parsed, file));

@@ -3169,3 +3169,36 @@ fn compiler_failures_cannot_discard_the_actual_stderr() {
         );
     }
 }
+
+#[test]
+fn a_claimed_directory_changes_its_declaration_only_under_the_claim_that_holds_it() {
+    let handed = |file: &str, source: &str| {
+        scan_source(file, source)
+            .expect("the source parses")
+            .into_iter()
+            .any(|finding| finding.kind == Kind::ClaimAfterRelease)
+    };
+    let handover = "fn take(owner: &mut crate::tempowner::Owner, dir: &std::path::Path) -> std::io::Result<()> { owner.release()?; crate::tempowner::claim_cache(dir, jiff::Timestamp::now(), \"cache-v1\").map_err(std::io::Error::other)?.release() }";
+    assert!(
+        handed("crates/rust-mutants/src/snapshot/frozen.rs", handover),
+        "letting a directory go and claiming it again leaves a moment nobody holds it"
+    );
+    assert!(
+        !handed("crates/rust-mutants/tests/tempowner.rs", handover),
+        "a suite of the claim protocol claims what it let go to show the lock is free again"
+    );
+    for passing in [
+        "fn lease(root: &std::path::Path, now: jiff::Timestamp) -> std::io::Result<crate::tempowner::Owner> { let mut at = 0_u64; loop { match crate::tempowner::claim_cache(&root.join(at.to_string()), now, \"slot-v1\") { Ok(mut owner) if at > 0 => owner.release()?, Ok(owner) => return Ok(owner), Err(_) => {} } at += 1; } }",
+        "fn first(owner: &mut crate::tempowner::Owner) -> std::io::Result<()> { owner.release() }\nfn second(dir: &std::path::Path, now: jiff::Timestamp) -> bool { crate::tempowner::claim(dir, now).is_ok() }",
+        "fn retained(owner: &mut crate::tempowner::Owner) -> std::io::Result<()> { owner.release_as_cache(\"cache-v1\") }",
+        "fn other(lock: &mut Lease, places: usize, state: &mut State) { lock.release(); state.claim(places); }",
+        "fn unrelated(lock: &mut Lease, dir: &std::path::Path) -> bool { lock.release(); crate::cache::claim(dir).is_ok() }",
+        "fn counted(lock: &mut Lease, dir: &std::path::Path, now: jiff::Timestamp) -> bool { lock.release(1); crate::tempowner::claim(dir, now).is_ok() }",
+    ] {
+        assert!(
+            !handed("crates/app/src/lib.rs", passing),
+            "a claim before a release, one in another function, a declaration under the held \
+             claim, and a claim of somebody else's are no handover: {passing}"
+        );
+    }
+}

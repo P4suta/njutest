@@ -38,6 +38,7 @@ Two questions must be answerable about a directory found in a temporary root: *w
 11. **What a held directory is declared to be changes under the claim that holds it** (added 2026-10-06).
    A directory a run fills as a scratch and then keeps as a cache, as the engine keeps a published source graph, is declared a cache by `Owner::release_as_cache`, which writes the declaration before the lock closes.
    Letting it go and claiming it again left a moment nobody held it: whatever took the lock then, a sweep's probe, a watcher waiting for the release or another run, turned the second claim into a refusal, which failed a run with `RM5006` against decision 10, and a collector could read the released scratch as abandoned.
+   The `claim-after-release` lint refuses a `tempowner` claim written after a release in the same function.
 
 ## Consequences
 
