@@ -3,11 +3,13 @@
 
 //! The capability directory on handle-relative NT opens, on a volume that deletes and renames the POSIX way (ADR 0037 decisions 3 to 7).
 
+use std::ffi::OsString;
 use std::fs::File;
 use std::io;
+use std::os::windows::ffi::OsStringExt as _;
 use std::os::windows::fs::OpenOptionsExt as _;
 use std::os::windows::io::{AsRawHandle as _, FromRawHandle as _, OwnedHandle};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::ptr;
 use std::time::Duration;
 
@@ -46,6 +48,7 @@ use windows_sys::Win32::Storage::FileSystem::{
     WRITE_DAC,
 };
 use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
+use windows_sys::Win32::System::SystemInformation::{GetSystemDirectoryW, GetWindowsDirectoryW};
 use windows_sys::Win32::System::SystemServices::{
     FILE_SUPPORTS_POSIX_UNLINK_RENAME, SECURITY_DESCRIPTOR_REVISION,
 };
@@ -210,6 +213,37 @@ pub(super) fn file_status(file: &File) -> io::Result<Status> {
         kind: kind_of(file)?,
         len,
     })
+}
+
+/// The system directory and the Windows directory, as `GetSystemDirectoryW` and `GetWindowsDirectoryW` name them.
+pub(super) fn system_directories() -> io::Result<(PathBuf, PathBuf)> {
+    #[expect(unsafe_code, reason = "GetSystemDirectoryW has no safe binding")]
+    let system =
+        directory_named(|buffer, capacity| unsafe { GetSystemDirectoryW(buffer, capacity) })?;
+    #[expect(unsafe_code, reason = "GetWindowsDirectoryW has no safe binding")]
+    let windows =
+        directory_named(|buffer, capacity| unsafe { GetWindowsDirectoryW(buffer, capacity) })?;
+    Ok((system, windows))
+}
+
+/// The directory `asked` writes into a buffer with room for the longest path Windows names, which it answers with the length it wrote, or with nothing when it failed.
+fn directory_named(asked: impl FnOnce(*mut u16, u32) -> u32) -> io::Result<PathBuf> {
+    let mut buffer = vec![0_u16; 32_768];
+    let capacity = u32::try_from(buffer.len())
+        .map_err(|_outside| io::Error::other("a directory name buffer is too long"))?;
+    let written = asked(buffer.as_mut_ptr(), capacity);
+    if written == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let length = usize::try_from(written)
+        .map_err(|_outside| io::Error::other("a directory name is longer than any path"))?;
+    if length >= buffer.len() {
+        return Err(io::Error::other("a directory name is longer than any path"));
+    }
+    let named = buffer
+        .get(..length)
+        .ok_or_else(|| io::Error::other("a directory name is longer than any path"))?;
+    Ok(PathBuf::from(OsString::from_wide(named)))
 }
 
 pub(super) fn change_time(file: &File) -> io::Result<i64> {

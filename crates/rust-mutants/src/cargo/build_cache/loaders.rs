@@ -383,6 +383,14 @@ fn capture(
         }
     };
     super::field(digest, canonical.as_os_str().as_encoded_bytes());
+    #[cfg(windows)]
+    let fixed = fixed_search_directories()?;
+    #[cfg(not(windows))]
+    let fixed: [PathBuf; 0] = [];
+    if among(&canonical, &fixed) {
+        super::field(digest, b"windows-fixed-search-directory");
+        return Ok(());
+    }
     if ancestors.contains(&canonical) {
         super::field(digest, b"ancestor-directory-alias");
         return Ok(());
@@ -515,6 +523,30 @@ fn capture_link(
             Ok(())
         }
     }
+}
+
+/// The directories the Windows loader searches before any search path, each spelled canonically: the system directory, the 16-bit system directory and the Windows directory, leaving out one that names nothing, as no search path can lead to it.
+#[cfg(windows)]
+fn fixed_search_directories() -> io::Result<Vec<PathBuf>> {
+    let mut found = Vec::new();
+    for directory in crate::capdir::fixed_search_directories()? {
+        match reached(&directory)? {
+            Reached::At(canonical) => found.push(canonical),
+            Reached::Absent | Reached::Untraversable => {}
+        }
+    }
+    Ok(found)
+}
+
+/// Whether `canonical` is one of the `fixed` directories, compared as Windows compares a path, without regard to ASCII case.
+fn among(canonical: &Path, fixed: &[PathBuf]) -> bool {
+    let spelled = canonical.as_os_str().as_encoded_bytes();
+    fixed.iter().any(|directory| {
+        directory
+            .as_os_str()
+            .as_encoded_bytes()
+            .eq_ignore_ascii_case(spelled)
+    })
 }
 
 /// Where a loader search path leads, as far as the host lets this process, and so every process a compile starts, follow it.
@@ -753,6 +785,46 @@ pub(in crate::cargo) mod tests {
         ] {
             assert_eq!(super::image(&head), library, "{head:02x?}");
         }
+    }
+
+    #[test]
+    fn a_search_directory_is_fixed_exactly_where_it_is_one_the_loader_searches_before_the_path() {
+        use std::path::{Path, PathBuf};
+        let fixed = [
+            PathBuf::from(r"\\?\C:\WINDOWS\system32"),
+            PathBuf::from(r"\\?\C:\WINDOWS\System"),
+            PathBuf::from(r"\\?\C:\WINDOWS"),
+        ];
+        for spelled in [
+            r"\\?\C:\WINDOWS\system32",
+            r"\\?\c:\windows\SYSTEM32",
+            r"\\?\C:\Windows\System32",
+            r"\\?\C:\Windows\system",
+            r"\\?\c:\Windows",
+        ] {
+            assert!(
+                super::among(Path::new(spelled), &fixed),
+                "{spelled} is a directory the loader searched before any search path"
+            );
+        }
+        for other in [
+            r"\\?\C:\WINDOWS\system32\drivers",
+            r"\\?\C:\WINDOWS\SysWOW64",
+            r"\\?\C:\WINDOWS\system32x",
+            r"\\?\D:\WINDOWS\system32",
+            r"\\?\C:\",
+            r"C:\WINDOWS\system32",
+            "/usr/lib",
+        ] {
+            assert!(
+                !super::among(Path::new(other), &fixed),
+                "{other} is a directory only a search path leads the loader to"
+            );
+        }
+        assert!(
+            !super::among(Path::new(r"\\?\C:\WINDOWS\system32"), &[]),
+            "a loader that searches no fixed directory first leaves every search path to be read"
+        );
     }
 }
 
@@ -1083,6 +1155,46 @@ mod namespace_tests {
         assert!(
             refused.contains("RM1024") && refused.contains("os error 448"),
             "a refusal names the operating system's code, which is never translated: {refused}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_search_path_naming_the_directories_the_loader_searches_first_reads_none_of_their_entries()
+    {
+        let directory = tempfile::tempdir().expect("an owned compile directory");
+        let [system, sixteen, windows] =
+            crate::capdir::fixed_search_directories().expect("the directories Windows names");
+        let mut path = system.as_os_str().to_ascii_uppercase();
+        for spelled in [windows.join(""), sixteen] {
+            path.push(";");
+            path.push(spelled.as_os_str());
+        }
+        let identities = Identities::empty();
+        let first = Inputs::compiler(
+            &environment("PATH", Path::new(&path)),
+            directory.path(),
+            &identities,
+        )
+        .expect("a search path of the directories the loader searches first binds");
+        assert_eq!(
+            identities.opens().expect("the libraries identified"),
+            0,
+            "the loader searches these directories before any search path, so their entries are \
+             no loader input of the path's"
+        );
+        assert_eq!(
+            identities.work().expect("the files read"),
+            (0, 0, Vec::new()),
+            "and no entry of theirs is read"
+        );
+        let respelled =
+            Inputs::compiler(&environment("PATH", &system), directory.path(), &identities)
+                .expect("the system directory spelled as Windows names it binds");
+        assert_ne!(
+            first.digest(),
+            respelled.digest(),
+            "a fixed directory is bound by how the path spells it"
         );
     }
 

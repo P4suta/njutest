@@ -330,7 +330,7 @@ impl Identities {
     }
 
     /// The loader inputs opened and identified in full so far.
-    #[cfg(all(test, target_os = "macos"))]
+    #[cfg(all(test, any(target_os = "macos", windows)))]
     pub(in crate::cargo) fn opens(&self) -> io::Result<u64> {
         Ok(self
             .files

@@ -114,6 +114,20 @@ pub struct Identity {
     pub object: u128,
 }
 
+/// The directories the Windows loader searches before any `PATH` entry, as the operating system names them rather than as an environment says: the system directory, the 16-bit system directory beside it, and the Windows directory.
+///
+/// # Errors
+/// The operating system names no system or Windows directory.
+#[cfg(windows)]
+pub(crate) fn fixed_search_directories() -> io::Result<[std::path::PathBuf; 3]> {
+    let (system, windows) = sys::system_directories()?;
+    let sixteen = system
+        .parent()
+        .map(|parent| parent.join("System"))
+        .ok_or_else(|| io::Error::other("the system directory has no parent"))?;
+    Ok([system, sixteen, windows])
+}
+
 /// The held Windows object's identity and metadata change time, distinct from its writable mtime.
 ///
 /// # Errors
