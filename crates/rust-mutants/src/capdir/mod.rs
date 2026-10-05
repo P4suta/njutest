@@ -105,13 +105,13 @@ pub enum Kind {
     Other,
 }
 
-/// Which object an entry is: the volume and the object on it, stable across renames.
+/// Which object an entry is: the volume and the object on it, stable across renames, which tells two handles on one object apart from two objects and says nothing about what either holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Identity {
     /// The volume.
-    pub volume: u64,
+    volume: u64,
     /// The object on it.
-    pub object: u128,
+    object: u128,
 }
 
 /// The directories the Windows loader searches before any `PATH` entry, as the operating system names them rather than as an environment says: the system directory, the 16-bit system directory beside it, and the Windows directory.
@@ -128,13 +128,14 @@ pub(crate) fn fixed_search_directories() -> io::Result<[std::path::PathBuf; 3]> 
     Ok([system, sixteen, windows])
 }
 
-/// The held Windows object's identity and metadata change time, distinct from its writable mtime.
+/// The held Windows object's volume, object and metadata change time, distinct from its writable mtime, as a change stamp records them.
 ///
 /// # Errors
 /// The filesystem cannot provide the object's identity or change time.
 #[cfg(windows)]
-pub(crate) fn change_stamp(file: &File) -> io::Result<(Identity, i64)> {
-    Ok((sys::file_status(file)?.identity, sys::change_time(file)?))
+pub(crate) fn change_stamp(file: &File) -> io::Result<(u64, crate::wide::Wide, i64)> {
+    let Identity { volume, object } = sys::file_status(file)?.identity;
+    Ok((volume, object.into(), sys::change_time(file)?))
 }
 
 /// What a directory entry is, read without following it.

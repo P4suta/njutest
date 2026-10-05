@@ -398,8 +398,6 @@ fn capture(
     ancestors.push(canonical.clone());
     let directory = Dir::open(&canonical)?;
     let before = directory.status()?;
-    super::field(digest, &before.identity.volume.to_be_bytes());
-    super::field(digest, &before.identity.object.to_be_bytes());
     let mut entries = directory.entries()?;
     entries.sort();
     for entry in &entries {
@@ -492,8 +490,6 @@ fn capture_link(
                 Kind::Directory => {
                     super::field(digest, b"directory-alias");
                     super::field(digest, canonical.as_os_str().as_encoded_bytes());
-                    super::field(digest, &status.identity.volume.to_be_bytes());
-                    super::field(digest, &status.identity.object.to_be_bytes());
                     if descend {
                         capture(&canonical, identities, digest, (true, ancestors))?;
                     }
@@ -1234,6 +1230,44 @@ mod namespace_tests {
                 "where the host traverses the junction, what is behind it is bound"
             );
         }
+    }
+
+    #[test]
+    fn a_directory_made_again_with_the_same_entries_is_the_same_loader_input() {
+        let parent = tempfile::tempdir().expect("owned parent");
+        let search = parent.path().join("search");
+        let made = || {
+            std::fs::create_dir_all(&search).expect("a search directory, which is also the cwd");
+            std::fs::write(
+                search.join("library"),
+                super::tests::test_library(b"one library"),
+            )
+            .expect("a library a loader could load from it");
+        };
+        made();
+        let name = search_variables()
+            .first()
+            .expect("supported native variable");
+        let env = environment(name, &search);
+        let identities = Identities::empty();
+        let compiler = Inputs::compiler(&env, &search, &identities).expect("original namespace");
+        let runtime =
+            RuntimeInputs::capture(&env, &search, &identities).expect("original runtime namespace");
+        std::fs::rename(&search, parent.path().join("kept"))
+            .expect("the first directory kept, so the second cannot take its identity");
+        made();
+        assert_eq!(
+            compiler.digest(),
+            Inputs::compiler(&env, &search, &identities)
+                .expect("the namespace made again")
+                .digest(),
+            "a loader reads a directory's entries by name and the libraries among them by \
+             content, never which object holds them, so a directory made again with the same \
+             entries, as every run makes the copy it compiles in, is the input it was"
+        );
+        runtime
+            .verify()
+            .expect("the runtime namespace made again with the same entries is the one attested");
     }
 
     #[test]

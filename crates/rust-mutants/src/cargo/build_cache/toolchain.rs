@@ -630,12 +630,11 @@ fn stamp(input: &std::fs::File) -> io::Result<Stamp> {
     }
     #[cfg(windows)]
     {
-        let (identity, time) = crate::capdir::change_stamp(input)?;
         Ok(Stamp {
             length: metadata.len(),
             modified: metadata.modified()?,
             mode: u32::from(metadata.permissions().readonly()),
-            changed: (identity.volume, identity.object.into(), time),
+            changed: crate::capdir::change_stamp(input)?,
         })
     }
 }

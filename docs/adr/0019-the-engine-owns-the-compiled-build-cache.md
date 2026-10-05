@@ -353,3 +353,16 @@ A library found in one of those fixed directories was found before `PATH` was re
 On Windows a search directory whose canonical path equals one of the three, compared without regard to ASCII case, is bound by its spelling and by that fact, `windows-fixed-search-directory`, and none of its entries is read.
 The three come from the operating system through the capability directory's Windows FFI, `GetSystemDirectoryW`, its sibling `System`, and `GetWindowsDirectoryW`, never from `SystemRoot` or `windir`, which a caller can point anywhere.
 Every other directory on `PATH` is captured as before, and a failure to read one still refuses the capture.
+
+## Amendment, 2026-10-05: a loader search directory is bound by what it holds
+
+On Windows the compiler's current directory is a loader search directory, the one the search order above reads after the Windows directory and before `PATH`, so the capture binds it for every compile.
+The capture bound every search directory by the volume and the object on it beside its entries.
+The directory a compile runs in is the copy of the tree its run made, and every run makes that copy again, so its object was new each time and the compilation key with it.
+Every Windows build was then a cold miss, and a bound miss removes the fingerprints of every package in the graph before Cargo starts, so a second run of an unchanged tree compiled every unit again and published its products under the new key.
+Measured on the owner's Windows machine with `TEMP` spelled by its short name, as GitHub's Windows runner spells it: two runs of `fixture-simple` from one root and a third from a copy compiled 12 units each, and the keys of the first two differed in the loader digest alone.
+A remembered baseline names each test executable by its path under those products, so its key moved with them, and an unchanged tree measured its baseline again.
+No loader reads which object a directory is: it looks names up in it and maps the images it finds there.
+The capture now binds a search directory, and a directory an alias leads to, by its spelling, its canonical path and its entries, and compares the object only to refuse a directory that moved while it was read.
+`capdir::Identity` keeps its volume and object private, so outside the capability directory two identities can be compared and neither can be spelled into a key; the one reader is the Windows change stamp, which tells the identity memo whether a toolchain file is still the object it read.
+A compile on Unix with absolute search paths never bound its directory, which is why only Windows showed it, but a search directory made again with the same entries now binds the same input on every platform.
