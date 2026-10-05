@@ -1,0 +1,35 @@
+=== a-windows-stamp source crates/app/src/lib.rs
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct Stamp {
+    length: u64,
+    #[cfg(windows)]
+    changed: (u64, u128, i64),
+}
+=== a-signed-field source crates/app/src/lib.rs
+#[derive(serde::Serialize)]
+struct Elapsed { nanoseconds: i128 }
+=== a-written-only-type source crates/app/src/lib.rs
+use serde::Serialize;
+#[derive(Serialize)]
+struct Totals { bytes: Vec<u128> }
+=== a-read-only-type source crates/app/src/lib.rs
+use serde::Deserialize;
+#[derive(Deserialize)]
+struct Totals { bytes: Option<u128> }
+=== a-conditional-derive source crates/app/src/lib.rs
+#[cfg_attr(feature = "wire", derive(serde::Serialize))]
+struct Totals { bytes: std::collections::BTreeMap<String, u128> }
+=== an-enum-variant source crates/app/src/lib.rs
+#[derive(serde::Serialize, serde::Deserialize)]
+enum Identity { File { volume: u64, object: u128 }, Absent }
+=== a-tuple-variant source crates/app/src/lib.rs
+#[derive(serde::Serialize)]
+enum Identity { File(u64, [u128; 1]) }
+=== a-nonzero-integer source crates/app/src/lib.rs
+#[derive(serde::Serialize)]
+struct Counted { total: std::num::NonZeroU128 }
+=== an-alias source crates/app/src/lib.rs
+type Object = u128;
+type Held = Option<Object>;
+#[derive(serde::Deserialize)]
+struct Identity { object: Held }

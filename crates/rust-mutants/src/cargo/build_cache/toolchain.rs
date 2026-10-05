@@ -24,7 +24,7 @@ struct Stamp {
     modified: SystemTime,
     mode: u32,
     #[cfg(windows)]
-    changed: (u64, u128, i64),
+    changed: (u64, crate::wide::Wide, i64),
     #[cfg(unix)]
     changed: (i64, i64, u64, u64),
 }
@@ -635,7 +635,7 @@ fn stamp(input: &std::fs::File) -> io::Result<Stamp> {
             length: metadata.len(),
             modified: metadata.modified()?,
             mode: u32::from(metadata.permissions().readonly()),
-            changed: (identity.volume, identity.object, time),
+            changed: (identity.volume, identity.object.into(), time),
         })
     }
 }
@@ -811,6 +811,37 @@ pub(in crate::cargo) mod tests {
                 .expect_err("a supplemental digest needs its actual original capture")
                 .kind(),
             std::io::ErrorKind::Other
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_file_identity_wider_than_64_bits_reads_back_from_the_record_that_holds_it() {
+        let directory = tempfile::tempdir().expect("owned compiler input");
+        let path = directory.path().join("compiler");
+        std::fs::write(&path, b"first").expect("compiler bytes");
+        let identities = super::Identities::empty();
+        super::identity(&path, &identities).expect("an actual digest");
+        let mut retained = identities
+            .retain(&std::collections::BTreeMap::new())
+            .expect("the actual captures");
+        let refs = crate::wide::Wide::from(1_313_205_263_863_309_263_863_309_u128);
+        for capture in retained.files.values_mut() {
+            let (mut stamp, moment) = capture.taken.clone().into_parts();
+            stamp.changed.1 = refs;
+            capture.taken = super::Taken::recorded(stamp, moment);
+        }
+        let bytes = serde_json::to_vec(&retained).expect("the record");
+        let read: super::Retained =
+            crate::strictjson::decode_slice(&bytes).expect("the record reads back");
+        assert_eq!(
+            read.files
+                .values()
+                .map(|capture| capture.taken.stamp().changed.1)
+                .collect::<Vec<_>>(),
+            [refs],
+            "ReFS gives a file a 128-bit identity, and the record holding its stamp reads it \
+             back as it was written"
         );
     }
 

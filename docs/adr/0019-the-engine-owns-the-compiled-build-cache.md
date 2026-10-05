@@ -296,7 +296,7 @@ A second above FAT's resolution covers that lag with room to spare.
 What the margin costs is that a file written in the last three seconds is read again rather than reused, and an installed toolchain or a finished build product is older than that.
 A network filesystem whose server dates writes by a clock further off than that is outside the rule.
 
-The moment is published with the stamp, in the tool observation record (`rust-mutants-tool-observation-v4`) and in the witness pair (`njutest-independent-compiler-pair-v3`).
+The moment is published with the stamp, in the tool observation record (`rust-mutants-tool-observation-v5`) and in the witness pair (`njutest-independent-compiler-pair-v3`).
 A stamp recorded within the granularity of its write stays unable to justify reuse in every later process, until an observation of the same file with a settled moment replaces it.
 Two captures of one stamp contradict each other only when both were taken settled; an unsettled capture beside a different one is the history of a racy rewrite, not a conflict.
 
@@ -335,3 +335,11 @@ No loader of a process the compile starts can reach anything through that entry,
 A link entry whose target the host refuses to traverse is bound the same way, beside its target's spelling.
 One resolver, `Reached`, answers every path the capture follows as an object, nothing, or refused, and any other failure still refuses the capture.
 RM1024 now names the operating system's code beside the kind, which is never translated.
+
+## Amendment, 2026-10-05: a 128-bit file identity is spelled as text in a record
+
+The engine's Windows stamp holds the file identity `FileIdInfo` reports, and ReFS makes it 128 bits wide.
+serde_json wrote it as the integer it is, and the engine reads every record through `strictjson`, which builds a `serde_json::Value` first and holds a number past 64 bits only as a float, so the tool observation record that held such a stamp never read back: `invalid type: floating point 1.3132052638633093e+24, expected u128`.
+On a ReFS volume no published toolchain identity or observation was reused by a later process, and on NTFS, whose identities fit 64 bits, every record read back and nothing showed.
+The stamp now holds the identity as `rust_mutants::wide::Wide`, its canonical decimal digits in a string, which reads back exactly whatever its width, and the tool observation record is `rust-mutants-tool-observation-v5`, so a record written with the number is never read as one written with the text.
+The `wide-record-integer` lint refuses a 128-bit integer in any type that derives `Serialize` or `Deserialize`, because a value that happens to fit 64 bits on the machine running the tests hides the defect from them.

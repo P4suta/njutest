@@ -69,6 +69,7 @@ pub mod userdirs;
 pub mod validate;
 pub mod vars;
 pub mod verbatim;
+pub mod wide;
 pub mod work;
 pub mod workspace;
 

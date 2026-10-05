@@ -2717,6 +2717,48 @@ fn a_change_time_is_read_only_beside_a_settled_stamp_that_compares_through_its_m
 }
 
 #[test]
+fn a_serialized_type_holds_no_integer_wider_than_a_json_reader_reads_back() {
+    let wide = |source: &str| {
+        scan_source("crates/app/src/lib.rs", source)
+            .expect("the source parses")
+            .into_iter()
+            .filter(|finding| finding.kind == Kind::WideRecordInteger)
+            .map(|finding| finding.line)
+            .collect::<Vec<_>>()
+    };
+    let stamp = "#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]\n\
+        struct Stamp {\n\
+            length: u64,\n\
+            #[cfg(windows)]\n\
+            changed: (u64, u128, i64),\n\
+        }";
+    assert_eq!(
+        wide(stamp),
+        [5],
+        "a Windows file identity in a stamp a record holds is refused on every platform, \
+         whichever one reads the source"
+    );
+    assert_eq!(
+        wide(&stamp.replace("u128", "rust_mutants::wide::Wide")),
+        Vec::<usize>::new(),
+        "the identity spelled as text is what a record holds"
+    );
+    for passing in [
+        "struct Stamp { changed: (u64, u128, i64) }",
+        "#[derive(Debug, Clone)] struct Identity { object: u128 }",
+        "#[derive(serde::Serialize)] struct Counted { total: u64, share: f64 }",
+        "#[derive(serde::Serialize)] struct Spelled { bound: u32 }\nfn widen(value: u32) -> u128 { u128::from(value) }",
+        "type Object = u128;\n#[derive(serde::Serialize)] struct Identity { object: u64 }",
+    ] {
+        assert_eq!(
+            wide(passing),
+            Vec::<usize>::new(),
+            "a 128-bit integer no serialized type holds is no record's: {passing}"
+        );
+    }
+}
+
+#[test]
 fn a_test_clears_a_nested_environment_only_through_the_door_that_keeps_the_profile_away() {
     let clears = |file: &str, source: &str| {
         scan_source(file, source)

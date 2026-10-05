@@ -21,6 +21,7 @@ mod raw_buffers;
 mod sensitive_names;
 mod signals;
 mod stamps;
+mod wide_records;
 
 const OWNED_TRAIT_OBJECT_REMEDY: &str = "use an enum for a closed set of implementations, or a \
     generic parameter for an open one; owning a vtable erases the set precisely where ownership \
@@ -355,6 +356,7 @@ declare_kinds! {
     RawProcfs => "raw-procfs",
     RawStamp => "raw-stamp",
     RawEnvironmentClear => "raw-environment-clear",
+    WideRecordInteger => "wide-record-integer",
 }
 
 impl Kind {
@@ -405,6 +407,7 @@ impl Kind {
             Self::RawProcfs => procfs::REMEDY,
             Self::RawStamp => stamps::REMEDY,
             Self::RawEnvironmentClear => clears::REMEDY,
+            Self::WideRecordInteger => wide_records::REMEDY,
             Self::UnownedSpawn => UNOWNED_SPAWN_REMEDY,
             Self::RawGroupSignal => RAW_GROUP_SIGNAL_REMEDY,
             Self::UnboundedChannel => UNBOUNDED_CHANNEL_REMEDY,
@@ -659,13 +662,9 @@ impl fmt::Display for Finding {
     }
 }
 
-/// Everything `source` holds that this repository does not write.
-///
-/// # Errors
-/// A file that is not Rust this version can parse.
-pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error> {
-    let parsed = crate::lexed::file(source)?;
-    let policies = [
+/// The policies the scan holds `file` to besides the rules every file keeps.
+fn policies(file: &str) -> BTreeSet<SourcePolicy> {
+    [
         (
             RECLAIMERS.contains(&file) || file.contains("/tests/"),
             SourcePolicy::Reclaimer,
@@ -687,13 +686,21 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
     .into_iter()
     .filter(|(enabled, _policy)| *enabled)
     .map(|(_enabled, policy)| policy)
-    .collect();
+    .collect()
+}
+
+/// Everything `source` holds that this repository does not write.
+///
+/// # Errors
+/// A file that is not Rust this version can parse.
+pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error> {
+    let parsed = crate::lexed::file(source)?;
     let mut scan = Scan {
         file: file.to_owned(),
         found: Vec::new(),
         looping: 0,
         aliases: Aliases::of(&parsed),
-        policies,
+        policies: policies(file),
         owned_spawn_boundaries: owned_spawn_boundaries(&parsed),
     };
     scan.visit_file(&parsed);
@@ -724,6 +731,7 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
         scan.found.extend(procfs::found(&parsed, file));
     }
     scan.found.extend(stamps::found(&parsed, file));
+    scan.found.extend(wide_records::found(&parsed, file));
     scan.found.extend(clears::found(&parsed, file));
     scan.found.extend(implied_cfgs(&parsed, file));
     if file != SHELL_FINDER {

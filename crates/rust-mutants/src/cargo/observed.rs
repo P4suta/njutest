@@ -18,7 +18,7 @@ use crate::runner::{Cancel, RunResult, Spec, Watch};
 use crate::trace::ExecRecord;
 use crate::vars::Variables;
 
-const SCHEMA: &str = "rust-mutants-tool-observation-v4";
+const SCHEMA: &str = "rust-mutants-tool-observation-v5";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
