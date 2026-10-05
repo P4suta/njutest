@@ -850,13 +850,20 @@ fn a_complete_reproducibility_pair_answers_repeated_identical_questions_once() {
         .find(|found| found.candidate.rule.name == "add-to-sub")
         .expect("the unchanged equivalent mutation")
         .candidate;
+    let answer = if njutest_devkit::reproducible::REVERTED_CHANGE_REPRODUCES {
+        Identity::Identical
+    } else {
+        Identity::NotEstablished(rust_mutants::equivalence::CONTROL_DRIFTED)
+    };
     for _question in 0..2 {
         assert_eq!(
             prover
                 .identical(candidate, &cancel)
                 .expect("the actual comparison"),
-            Identity::Identical,
-            "each identical answer retains independent compiler reproducibility evidence"
+            answer,
+            "each answer rests on the one independent control this platform's reproducibility \
+             gives: identical where a reverted change rebuilds to the same bytes, and withdrawn \
+             where an MSVC link stamps each image with its time and a fresh PDB identity"
         );
     }
     assert_eq!(
@@ -978,8 +985,12 @@ fn concurrent_capture_program_requests_have_one_immutable_producer() {
         "recovery cannot overwrite an earlier reader's product path"
     );
     assert_eq!(
-        std::fs::read(&recovered).expect("the new compiler program"),
-        original
+        njutest_devkit::reproducible::without_link_stamps(
+            &std::fs::read(&recovered).expect("the new compiler program")
+        ),
+        njutest_devkit::reproducible::without_link_stamps(&original),
+        "recovery links the program the original was, which is its bytes but for the time and \
+         the PDB identity an MSVC link stamps every image with afresh"
     );
     assert_eq!(
         std::fs::read(first).expect("the altered original stays observable"),

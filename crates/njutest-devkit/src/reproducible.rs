@@ -132,11 +132,184 @@ fn configure_build_command(command: &mut std::process::Command, root: &Path, tar
 }
 
 /// Whether this platform rebuilds a reverted change to the same bytes; an MSVC link stamps each image with its time and a fresh PDB identity.
-#[cfg(test)]
-const REVERTED_CHANGE_REPRODUCES: bool = cfg!(not(windows));
+pub const REVERTED_CHANGE_REPRODUCES: bool = cfg!(not(windows));
+
+/// `image` with what a link stamps afresh every time cleared to zero: in a PE image the COFF header's time, each debug directory entry's time, and the PDB identity of its `CodeView` record; an image of any other format is returned as it is.
+#[must_use]
+pub fn without_link_stamps(image: &[u8]) -> Vec<u8> {
+    let mut cleared = image.to_vec();
+    if let Some(stamps) = link_stamps(image) {
+        for (at, width) in stamps {
+            if let Some(stamp) = at
+                .checked_add(width)
+                .and_then(|end| cleared.get_mut(at..end))
+            {
+                stamp.fill(0);
+            }
+        }
+    }
+    cleared
+}
+
+/// The size of one entry of a PE debug directory.
+const DEBUG_ENTRY: usize = 28;
+
+/// The size of one PE section header.
+const SECTION_HEADER: usize = 40;
+
+/// Where a PE image holds what its link stamped, as offsets and widths, or nothing for an image that is no PE or that ends before its headers do.
+fn link_stamps(image: &[u8]) -> Option<Vec<(usize, usize)>> {
+    if image.get(..2)? != b"MZ" {
+        return None;
+    }
+    let signature = little(image, 0x3c, 4)?;
+    if image.get(signature..signature.checked_add(4)?)? != b"PE\0\0" {
+        return None;
+    }
+    let coff = signature.checked_add(4)?;
+    let mut stamps = vec![(coff.checked_add(4)?, 4)];
+    stamps.extend(debug_stamps(image, coff)?);
+    Some(stamps)
+}
+
+/// The time of each entry of the debug directory of the PE image whose COFF header is at `coff`, and the PDB identity of each `CodeView` record an entry points to.
+fn debug_stamps(image: &[u8], coff: usize) -> Option<Vec<(usize, usize)>> {
+    let optional = coff.checked_add(20)?;
+    let directories = match little(image, optional, 2)? {
+        0x10b => optional.checked_add(96)?,
+        0x20b => optional.checked_add(112)?,
+        _ => return None,
+    };
+    if little(image, directories.checked_sub(4)?, 4)? <= 6 {
+        return Some(Vec::new());
+    }
+    let debug = directories.checked_add(48)?;
+    let sections = (
+        optional.checked_add(little(image, coff.checked_add(16)?, 2)?)?,
+        little(image, coff.checked_add(2)?, 2)?,
+    );
+    let table = file_offset(image, sections, little(image, debug, 4)?)?;
+    let mut stamps = Vec::new();
+    for entry in 0..little(image, debug.checked_add(4)?, 4)?.checked_div(DEBUG_ENTRY)? {
+        let at = table.checked_add(entry.checked_mul(DEBUG_ENTRY)?)?;
+        stamps.push((at.checked_add(4)?, 4));
+        let data = little(image, at.checked_add(24)?, 4)?;
+        if little(image, at.checked_add(12)?, 4)? == 2
+            && image.get(data..data.checked_add(4)?)? == b"RSDS"
+        {
+            stamps.push((data.checked_add(4)?, 20));
+        }
+    }
+    Some(stamps)
+}
+
+/// Where in the file the section that holds `address` keeps it, reading the `count` section headers at `table`.
+fn file_offset(image: &[u8], (table, count): (usize, usize), address: usize) -> Option<usize> {
+    for section in 0..count {
+        let header = table.checked_add(section.checked_mul(SECTION_HEADER)?)?;
+        let start = little(image, header.checked_add(12)?, 4)?;
+        let in_memory = little(image, header.checked_add(8)?, 4)?;
+        let in_file = little(image, header.checked_add(16)?, 4)?;
+        if address >= start && address < start.checked_add(in_memory.max(in_file))? {
+            let raw = little(image, header.checked_add(20)?, 4)?;
+            return raw.checked_add(address.checked_sub(start)?);
+        }
+    }
+    None
+}
+
+/// The little-endian unsigned integer `width` bytes wide at `at`, or nothing past the end of `image`.
+fn little(image: &[u8], at: usize, width: usize) -> Option<usize> {
+    image
+        .get(at..at.checked_add(width)?)?
+        .iter()
+        .rev()
+        .try_fold(0_usize, |value, byte| {
+            value.checked_mul(256)?.checked_add(usize::from(*byte))
+        })
+}
 
 #[cfg(test)]
 mod tests {
+    /// Writes `bytes` into `image` at `at`.
+    fn put(image: &mut [u8], at: usize, bytes: &[u8]) {
+        let end = at
+            .checked_add(bytes.len())
+            .expect("a field's end is an offset");
+        image
+            .get_mut(at..end)
+            .expect("the field lies inside the planted image")
+            .copy_from_slice(bytes);
+    }
+
+    /// A PE32+ image laid out as an MSVC link lays one out, with one section holding a debug directory of a `CodeView` and a `POGO` entry, every byte nothing names left at `0x11`, and the four stamps at the offsets a link writes them.
+    fn planted() -> Vec<u8> {
+        let mut image = vec![0x11_u8; 0x400];
+        put(&mut image, 0, b"MZ");
+        put(&mut image, 0x3c, &0x80_u32.to_le_bytes());
+        put(&mut image, 0x80, b"PE\0\0");
+        put(&mut image, 0x86, &1_u16.to_le_bytes());
+        put(&mut image, 0x88, &[0xaa; 4]);
+        put(&mut image, 0x94, &240_u16.to_le_bytes());
+        put(&mut image, 0x98, &0x20b_u16.to_le_bytes());
+        put(&mut image, 0x104, &16_u32.to_le_bytes());
+        put(&mut image, 0x138, &0x2000_u32.to_le_bytes());
+        put(&mut image, 0x13c, &56_u32.to_le_bytes());
+        put(&mut image, 0x190, &0x200_u32.to_le_bytes());
+        put(&mut image, 0x194, &0x2000_u32.to_le_bytes());
+        put(&mut image, 0x198, &0x200_u32.to_le_bytes());
+        put(&mut image, 0x19c, &0x200_u32.to_le_bytes());
+        put(&mut image, 0x204, &[0xbb; 4]);
+        put(&mut image, 0x20c, &2_u32.to_le_bytes());
+        put(&mut image, 0x218, &0x300_u32.to_le_bytes());
+        put(&mut image, 0x220, &[0xcc; 4]);
+        put(&mut image, 0x228, &13_u32.to_le_bytes());
+        put(&mut image, 0x234, &0_u32.to_le_bytes());
+        put(&mut image, 0x300, b"RSDS");
+        put(&mut image, 0x304, &[0xdd; 20]);
+        put(&mut image, 0x318, b"capture.pdb\0");
+        image
+    }
+
+    #[test]
+    fn a_link_s_time_and_pdb_identity_are_cleared_and_nothing_else() {
+        let image = planted();
+        let mut expected = image.clone();
+        for (at, width) in [(0x88, 4), (0x204, 4), (0x220, 4), (0x304, 20)] {
+            put(&mut expected, at, &vec![0; width]);
+        }
+        assert_eq!(super::without_link_stamps(&image), expected);
+        let mut relinked = image.clone();
+        put(&mut relinked, 0x88, &[0x5a; 4]);
+        put(&mut relinked, 0x304, &[0x5b; 20]);
+        assert_eq!(
+            super::without_link_stamps(&relinked),
+            super::without_link_stamps(&image),
+            "two links of one input differ only in what the link stamps"
+        );
+        let mut changed = image.clone();
+        put(&mut changed, 0x318, b"capturf");
+        assert_ne!(
+            super::without_link_stamps(&changed),
+            super::without_link_stamps(&image),
+            "a byte the link does not stamp still tells two images apart"
+        );
+    }
+
+    #[test]
+    fn an_image_that_is_no_pe_is_compared_as_it_is() {
+        let elf = b"\x7fELF\x02\x01\x01 an image no MSVC link wrote".to_vec();
+        assert_eq!(super::without_link_stamps(&elf), elf);
+        let mut truncated = planted();
+        truncated.truncate(0x210);
+        assert_eq!(
+            super::without_link_stamps(&truncated),
+            truncated,
+            "an image whose debug directory runs past its end clears nothing, so it compares \
+             as the bytes it is"
+        );
+    }
+
     #[test]
     fn identical_reproducibility_questions_share_one_actual_independent_pair() {
         const CHILD: &str = "NJUTEST_REPRODUCIBILITY_CHILD";
