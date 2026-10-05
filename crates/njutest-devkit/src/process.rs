@@ -447,9 +447,18 @@ fn terminal_child_ownership_failure(wait: &std::io::Error, cleanup: &ChildError)
     std::process::abort();
 }
 
-/// What one command said, as a spawned process would have said it.
+/// What one command said, as a spawned process would have said it, with what it wrote to stderr told to this test's own, which the harness shows only for a test that fails.
 #[must_use]
 pub fn answered(code: u8, out: Vec<u8>, err: Vec<u8>) -> Output {
+    if !err.is_empty() {
+        match std::str::from_utf8(&err) {
+            Ok(text) => eprintln!("an in-process run answered {code} and said on stderr:\n{text}"),
+            Err(_not_text) => eprintln!(
+                "an in-process run answered {code} and wrote these bytes to stderr: {}",
+                err.escape_ascii()
+            ),
+        }
+    }
     Output {
         status: status(code),
         stdout: out,
