@@ -78,10 +78,17 @@ fn environment(root: &Path) -> Environment {
     }
 }
 
-fn part(fixture: &Fixture) -> serde_json::Value {
+fn part(fixture: &Fixture, output: &Output) -> serde_json::Value {
     let run = njutest::app::reports::pointed_at(&fixture.root, njutest::app::reports::Index::Any)
-        .expect("the index is readable")
-        .expect("the index names a run");
+        .expect("the index is readable");
+    assert!(
+        run.is_some(),
+        "the index names a run, and this one wrote none: {:?}\n{}\n{}",
+        output.status,
+        njutest_devkit::process::strict_utf8(&output.stdout),
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    let run = run.expect("the index names a run");
     let path = fixture
         .root
         .join(njutest::config::DEFAULT_REPORTS_DIRECTORY)
@@ -236,7 +243,7 @@ fn named<'a>(
 fn a_surviving_ignore_question_statement_is_told_apart_by_the_call_failing_beside_it() {
     let fixture = fixture("fixture-faulted-ignore");
     let output = verify(&fixture, &["--faults", "--trace"]);
-    let part = part(&fixture);
+    let part = part(&fixture, &output);
     let survivors: Vec<&serde_json::Value> = part["mutants"]
         .as_array()
         .expect("the mutants")
@@ -329,7 +336,7 @@ fn a_surviving_ignore_question_statement_is_told_apart_by_the_call_failing_besid
 fn a_run_asked_for_faults_says_which_failed_calls_the_suite_noticed() {
     let fixture = fixture("fixture-faulted");
     let output = verify(&fixture, &["--faults", "--trace"]);
-    let part = part(&fixture);
+    let part = part(&fixture, &output);
     assert_eq!(
         decisions(&part),
         vec![
@@ -497,7 +504,7 @@ fn a_faulted_session_compares_no_reach_and_runs_nothing_again() {
 fn the_faulted_baseline_s_reach_is_recorded_so_every_route_s_reaching_holds_to_it() {
     let fixture = fixture("fixture-faulted");
     let output = verify(&fixture, &["--faults", "--trace"]);
-    let part = part(&fixture);
+    let part = part(&fixture, &output);
     let events = recording(&fixture);
     let index_of = |fault: &str| -> Option<u64> {
         part["faults"]
@@ -573,7 +580,7 @@ fn the_faulted_baseline_s_reach_is_recorded_so_every_route_s_reaching_holds_to_i
 fn a_run_not_asked_for_faults_puts_none() {
     let fixture = fixture("fixture-faulted");
     let output = verify(&fixture, &[]);
-    let part = part(&fixture);
+    let part = part(&fixture, &output);
     assert!(
         !njutest_devkit::process::strict_utf8(&output.stdout).contains("FAULTS"),
         "a run that put no fault says nothing about faults"
@@ -594,7 +601,7 @@ fn a_run_not_asked_for_faults_puts_none() {
 fn the_paths_written_before_and_after_the_faults_are_recorded_so_the_unattributed_rests_on_them() {
     let fixture = fixture("fixture-faulted-failure-writes");
     let output = verify(&fixture, &["--faults", "--trace"]);
-    let part = part(&fixture);
+    let part = part(&fixture, &output);
     let events = recording(&fixture);
     let written: Vec<&njutest::trace::FaultWritesRecord> = events
         .iter()
@@ -652,7 +659,7 @@ fn the_paths_written_before_and_after_the_faults_are_recorded_so_the_unattribute
 fn a_write_one_fault_makes_on_its_own_and_its_test_does_not_without_it_is_a_defect() {
     let fixture = fixture("fixture-faulted-writes");
     let output = verify(&fixture, &["--faults", "--trace"]);
-    let part = part(&fixture);
+    let part = part(&fixture, &output);
     assert_eq!(
         decisions(&part),
         vec![(13, "absorbed".to_owned())],
@@ -689,7 +696,7 @@ fn a_write_one_fault_makes_on_its_own_and_its_test_does_not_without_it_is_a_defe
 fn a_write_a_test_makes_as_it_fails_under_a_fault_is_not_a_defect() {
     let fixture = fixture("fixture-faulted-failure-writes");
     let output = verify(&fixture, &["--faults", "--trace"]);
-    let part = part(&fixture);
+    let part = part(&fixture, &output);
     assert_eq!(
         decisions(&part),
         vec![(13, "noticed".to_owned())],
@@ -725,7 +732,7 @@ fn a_write_a_test_makes_as_it_fails_under_a_fault_is_not_a_defect() {
 fn why_follows_a_fault_from_every_target_it_was_put_to_to_what_it_came_to() {
     let fixture = fixture("fixture-faulted");
     let output = verify(&fixture, &["--faults", "--trace"]);
-    let part = part(&fixture);
+    let part = part(&fixture, &output);
     let absorbed = part["faults"]
         .as_array()
         .expect("a list of faults")
@@ -758,7 +765,7 @@ fn why_follows_a_fault_from_every_target_it_was_put_to_to_what_it_came_to() {
 fn a_tree_every_run_writes_into_is_not_broken_by_a_fault() {
     let fixture = fixture("fixture-writes-tree");
     let output = verify(&fixture, &["--faults"]);
-    let part = part(&fixture);
+    let part = part(&fixture, &output);
     assert!(
         named(&part, "findings", "kind", "broken-under-fault").is_empty(),
         "the tree was written with no fault in place, so no fault wrote it: {part}\n{}",
@@ -775,7 +782,7 @@ fn a_tree_every_run_writes_into_is_not_broken_by_a_fault() {
 fn why_names_a_survivor_the_suite_tells_apart_under_a_fault_observable_under_fault() {
     let fixture = fixture("fixture-faulted");
     let output = verify(&fixture, &["--faults", "--trace"]);
-    let part = part(&fixture);
+    let part = part(&fixture, &output);
     let survivor = part["beside"][0]["mutant"]
         .as_str()
         .unwrap_or_else(|| {
@@ -806,7 +813,7 @@ fn why_names_a_survivor_the_suite_tells_apart_under_a_fault_observable_under_fau
 fn a_survivor_the_suite_tells_apart_only_under_a_fault_is_evidence_and_never_a_kill() {
     let fixture = fixture("fixture-faulted");
     let output = verify(&fixture, &["--faults"]);
-    let part = part(&fixture);
+    let part = part(&fixture, &output);
     let beside: Vec<(String, String)> = part["beside"]
         .as_array()
         .unwrap_or_else(|| {
