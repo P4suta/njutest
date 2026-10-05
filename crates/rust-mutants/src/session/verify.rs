@@ -378,14 +378,43 @@ fn baseline_of(result: &MutantResult, home: execute::Home) -> Result<Baseline, S
                     }
                 };
                 match completion {
-                    Completion::Unaccounted(why) => {
-                        format!("the harness did not account for the run: {why}\n{printed}")
-                    }
+                    Completion::Unaccounted(why) => format!(
+                        "the harness did not account for the run: {why}, and {}\n{printed}",
+                        ending(&result.stopped)
+                    ),
                     Completion::Accounted | Completion::Unspoken => printed,
                 }
             }
         },
     })
+}
+
+/// How a baseline process ended, which is all a refusal has to say why when the process printed nothing.
+fn ending(stopped: &execute::Stopped) -> String {
+    match stopped {
+        execute::Stopped::Exited {
+            exit: crate::runner::ProcessExit::Code(code),
+        } if *code < 0 => format!("its process exited with code {code} ({code:#010x})"),
+        execute::Stopped::Exited {
+            exit: crate::runner::ProcessExit::Code(code),
+        } => format!("its process exited with code {code}"),
+        execute::Stopped::Exited {
+            exit: crate::runner::ProcessExit::Signal(signal),
+        } => format!("its process ended on signal {signal}"),
+        execute::Stopped::Exited {
+            exit: crate::runner::ProcessExit::Unknown,
+        } => "its process ended with no status the system could read".to_owned(),
+        other @ (execute::Stopped::NotStarted { .. }
+        | execute::Stopped::TimedOut { .. }
+        | execute::Stopped::Stalled { .. }
+        | execute::Stopped::Cancelled { .. }
+        | execute::Stopped::WaitFailed
+        | execute::Stopped::Answered
+        | execute::Stopped::StepLimitReached { .. }
+        | execute::Stopped::StepProtocolFailed { .. }) => {
+            format!("its process stopped as {other:?}")
+        }
+    }
 }
 
 /// The trace note proving why no baseline process follows it.

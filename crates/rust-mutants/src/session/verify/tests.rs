@@ -62,3 +62,23 @@ fn an_ordinary_passing_baseline_is_judgeable() {
     let baseline = baseline_of(&result, execute::Home::Confined).expect("a baseline is read");
     assert!(Measured::of(baseline).judgeable().is_some());
 }
+
+#[test]
+fn a_baseline_that_printed_nothing_says_how_its_process_ended() {
+    let status_dll_not_found = -1_073_741_515;
+    let result = MutantResult {
+        exit_code: status_dll_not_found,
+        stopped: Stopped::Exited {
+            exit: ProcessExit::Code(status_dll_not_found),
+        },
+        ..exited_zero_with("", MutantConclusion::Inconclusive)
+    };
+    let baseline = baseline_of(&result, execute::Home::Confined).expect("a baseline is read");
+    assert!(
+        baseline
+            .output
+            .contains("its process exited with code -1073741515 (0xc0000135)"),
+        "a process that printed nothing leaves only its ending to say why: {}",
+        baseline.output
+    );
+}
