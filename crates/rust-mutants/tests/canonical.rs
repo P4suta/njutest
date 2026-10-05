@@ -48,9 +48,14 @@ fn a_share_keeps_the_prefix_because_without_it_it_names_somewhere_else() {
     let unc = Path::new(r"\\?\UNC\server\share\project");
     assert_eq!(
         plainly(unc),
-        unc.to_path_buf(),
-        "`UNC\\server\\share` without the prefix is a relative path called UNC, which is \
-         a different place rather than a plainer spelling of the same one"
+        if cfg!(windows) {
+            PathBuf::from(r"\\server\share\project")
+        } else {
+            unc.to_path_buf()
+        },
+        "a share is spelled plainly with the prefix that makes it one, `\\\\server\\share`: \
+         `UNC\\server\\share` without a prefix is a relative path called UNC, which is a \
+         different place rather than a plainer spelling of the same one"
     );
 }
 
