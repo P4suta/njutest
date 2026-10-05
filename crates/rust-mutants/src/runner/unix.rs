@@ -52,3 +52,8 @@ pub(super) fn process_exit(status: ExitStatus) -> ProcessExit {
         (None, None) => ProcessExit::Unknown,
     }
 }
+
+/// The spelling of `program` this platform starts, which is any spelling of it.
+pub(super) const fn startable(program: std::ffi::OsString) -> std::ffi::OsString {
+    program
+}

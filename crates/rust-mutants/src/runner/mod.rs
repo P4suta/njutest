@@ -1291,7 +1291,7 @@ struct Wired {
 /// One pipe for both streams unless stdout is wanted whole, so the interleaving is the child's own.
 fn wire(spec: &Spec, program: &OsString) -> io::Result<Wired> {
     let (merged, stderr) = io::pipe()?;
-    let mut command = Command::new(resolved(spec, program)?);
+    let mut command = Command::new(sys::startable(resolved(spec, program)?));
     command.args(spec.argv.iter().skip(1));
     if let Some(dir) = &spec.dir {
         command.current_dir(dir);
@@ -2223,11 +2223,12 @@ mod tests {
 
     use std::time::Duration;
 
-    #[cfg(unix)]
-    use super::{Bound, Cancel, RunResult, SIDE_CHANNEL_LIMIT, Spec, read_side_channel, run};
     use super::{
-        MonitorState, ProcessExit, Progress, Termination, classify_monitor, inspect_monitor,
+        Bound, Cancel, MonitorState, ProcessExit, Progress, Spec, Termination, classify_monitor,
+        inspect_monitor, run,
     };
+    #[cfg(unix)]
+    use super::{RunResult, SIDE_CHANNEL_LIMIT, read_side_channel};
 
     #[cfg(unix)]
     #[test]
@@ -2994,5 +2995,38 @@ mod tests {
         assert_eq!(result_state(&read_side_channel(&large)), Refused);
         assert_eq!(result_state(&read_side_channel(&link)), Refused);
         assert_eq!(result_state(&read_side_channel(directory.path())), Refused);
+    }
+
+    #[test]
+    fn a_program_whose_path_is_longer_than_the_windows_limit_still_starts() {
+        let scratch = tempfile::tempdir().expect("scratch");
+        let mut directory = scratch.path().to_path_buf();
+        while directory.as_os_str().len() < 300 {
+            directory.push("a-directory-named-to-make-the-path-long");
+        }
+        std::fs::create_dir_all(&directory).expect("a directory past the limit");
+        let program = directory.join(format!("long{}", std::env::consts::EXE_SUFFIX));
+        let fixture = std::env::current_exe().expect("the actual compiled test fixture");
+        match std::fs::hard_link(&fixture, &program) {
+            Ok(()) => {}
+            Err(_another_volume) => {
+                std::fs::copy(&fixture, &program).expect("a copy of the fixture");
+            }
+        }
+        let length = program.as_os_str().len();
+        let spec = Spec::new(
+            [
+                program.into_os_string(),
+                "--exact".into(),
+                "runner::tests::no_test_has_this_name".into(),
+            ],
+            Bound::After(Duration::from_secs(60)),
+        );
+        let ended = run(&spec, &Cancel::new());
+        assert!(
+            matches!(ended.termination, Termination::Exited(ProcessExit::Code(0))),
+            "a program at a path of {length} characters is started like any other: {:?}",
+            ended.termination
+        );
     }
 }
