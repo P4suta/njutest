@@ -376,3 +376,22 @@ compiler inputs changed while preparing their products: the loader search entry 
 An alias is an `IO_REPARSE_TAG_APPEXECLINK` reparse point that only process creation resolves: no open of it as a file succeeds, so no loader can map it, and its presence or absence changes no library a compile could load.
 The capture binds nothing for an alias, neither its name nor its kind, so a search directory that gains or loses one binds the input it did.
 An alias that appears in the instant the capture reads its directory still reads as a namespace that changed, which refuses that capture rather than binding a half-read directory.
+
+## Amendment, 2026-10-06: the current user's app execution alias directory is bound by its name
+
+GitHub's Windows runner refused a compile again after the amendment above, with "RM1022: ...
+compiler inputs changed while preparing their products: the loader search entry \\?\C:\Users\runneradmin\AppData\Local\Microsoft\WindowsApps\MicrosoftCorporationII.WindowsSubsystemForLinux_8wekyb3d8bbwe appeared".
+Leaving aliases out answered one kind of entry, and Windows also adds and removes a folder per package in that directory, at any moment of a run.
+The class is a search directory the operating system changes on its own schedule and that holds nothing a loader maps; answered one kind of entry at a time, it leaves the next kind to refuse a compile.
+
+Microsoft Learn's [Microsoft Store page for the Sysinternals Suite](https://learn.microsoft.com/en-us/sysinternals/downloads/microsoft-store) says app execution aliases are "a special type of reparse point managed by Windows for MSIX packages", stored in `%LOCALAPPDATA%\Microsoft\WindowsApps`, a directory in the user profile that is on the path, with a folder per package listing that package's aliases, and deleted when the package is uninstalled.
+[Dynamic-link library search order](https://learn.microsoft.com/en-us/windows/win32/dlls/dynamic-link-library-search-order) has the loader look a module's name up in each directory `PATH` lists, so a folder inside one of them is searched only where `PATH` names it too, and the amendment above shows that no loader maps an alias.
+On Windows a search directory whose canonical path equals the current user's alias directory, compared without regard to ASCII case, is now bound by its spelling and by that fact, `windows-execution-alias-directory`, and none of its entries is read, as a fixed search directory is.
+The directory is `Microsoft\WindowsApps` in the local application data directory that [`SHGetKnownFolderPath`](https://learn.microsoft.com/en-us/windows/win32/api/shlobj_core/nf-shlobj_core-shgetknownfolderpath) names for `FOLDERID_LocalAppData` and this process's token, through the capability directory's Windows FFI, never from `LOCALAPPDATA`, which a caller can point anywhere.
+Asked with no token, `SHGetKnownFolderPath` expands the folder from the process's own `USERPROFILE`, which a caller can point anywhere too, and so at a directory of its choosing that would then be bound by its name: on the owner's Windows machine, with `USERPROFILE` pointed at an empty directory, it named a directory under that one.
+Asked with the process's token, it named the user's own directory wherever `USERPROFILE` pointed, and a test holds that by running the decision again in a child process whose `USERPROFILE` names somewhere else.
+A failure to name the directory refuses the capture, and a user whose alias directory does not exist has every search directory read.
+Every other directory on `PATH`, a package's folder that `PATH` names among them, is captured as before.
+
+Unlike a fixed search directory, which adds nothing a loader resolves, this is a trade.
+A library somebody copies into the alias directory by hand is a loader input the capture no longer binds: Windows makes the directory for aliases, and the capture takes that account of it rather than refuse every compile on a machine whose packaged apps update during the run.

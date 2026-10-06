@@ -130,6 +130,15 @@ pub(crate) fn fixed_search_directories() -> io::Result<[std::path::PathBuf; 3]> 
     Ok([system, sixteen, windows])
 }
 
+/// The current user's app execution alias directory, `Microsoft\WindowsApps` in the local application data directory the operating system names for the user, rather than one an environment says.
+///
+/// # Errors
+/// The operating system names no local application data directory for the current user.
+#[cfg(windows)]
+pub(crate) fn execution_alias_directory() -> io::Result<std::path::PathBuf> {
+    Ok(sys::local_app_data()?.join("Microsoft").join("WindowsApps"))
+}
+
 /// The held Windows object's volume, object and metadata change time, distinct from its writable mtime, as a change stamp records them.
 ///
 /// # Errors

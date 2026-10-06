@@ -31,8 +31,8 @@ use windows_sys::Win32::Security::{
     InitializeAcl, InitializeSecurityDescriptor, OBJECT_INHERIT_ACE, OWNER_SECURITY_INFORMATION,
     PSECURITY_DESCRIPTOR, PSID, SE_DACL_PROTECTED, SECURITY_DESCRIPTOR, SECURITY_MAX_SID_SIZE,
     SetKernelObjectSecurity, SetSecurityDescriptorControl, SetSecurityDescriptorDacl,
-    TOKEN_INFORMATION_CLASS, TOKEN_QUERY, TokenOwner, TokenUser, WELL_KNOWN_SID_TYPE,
-    WinBuiltinAdministratorsSid, WinLocalSystemSid,
+    TOKEN_ACCESS_MASK, TOKEN_DUPLICATE, TOKEN_IMPERSONATE, TOKEN_INFORMATION_CLASS, TOKEN_QUERY,
+    TokenOwner, TokenUser, WELL_KNOWN_SID_TYPE, WinBuiltinAdministratorsSid, WinLocalSystemSid,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     DELETE, FILE_ADD_FILE, FILE_ALL_ACCESS, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_TAG_INFO,
@@ -43,16 +43,20 @@ use windows_sys::Win32::Storage::FileSystem::{
     FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_MODE, FILE_SHARE_READ, FILE_SHARE_WRITE,
     FILE_STANDARD_INFO, FILE_TRAVERSE, FILE_WRITE_DATA, FileAttributeTagInfo, FileBasicInfo,
     FileDispositionInfoEx, FileFullDirectoryInfo, FileFullDirectoryRestartInfo, FileIdInfo,
-    FileStandardInfo, FlushFileBuffers, GetFileInformationByHandleEx,
+    FileStandardInfo, FlushFileBuffers, GetFileInformationByHandleEx, GetFullPathNameW,
     GetVolumeInformationByHandleW, READ_CONTROL, SYNCHRONIZE, SetFileInformationByHandle,
     WRITE_DAC,
 };
+use windows_sys::Win32::System::Com::CoTaskMemFree;
 use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
 use windows_sys::Win32::System::SystemInformation::{GetSystemDirectoryW, GetWindowsDirectoryW};
 use windows_sys::Win32::System::SystemServices::{
     FILE_SUPPORTS_POSIX_UNLINK_RENAME, SECURITY_DESCRIPTOR_REVISION,
 };
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+use windows_sys::Win32::UI::Shell::{
+    FOLDERID_LocalAppData, KF_FLAG_DONT_VERIFY, SHGetKnownFolderPath,
+};
 
 use super::records::{self, Ace, Buffer, Record};
 use super::{Identity, Kind, Name, Privacy, REMOVAL_DEPTH, Status};
@@ -224,6 +228,43 @@ pub(super) fn system_directories() -> io::Result<(PathBuf, PathBuf)> {
     let windows =
         directory_named(|buffer, capacity| unsafe { GetWindowsDirectoryW(buffer, capacity) })?;
     Ok((system, windows))
+}
+
+/// The current user's local application data directory, whether or not it exists, as `SHGetKnownFolderPath` names `FOLDERID_LocalAppData` for this process's token, which it expands from the user's profile rather than from this process's `USERPROFILE`.
+pub(super) fn local_app_data() -> io::Result<PathBuf> {
+    let token = process_token(TOKEN_QUERY | TOKEN_IMPERSONATE | TOKEN_DUPLICATE)?;
+    let folder = FOLDERID_LocalAppData;
+    let mut named: *mut u16 = ptr::null_mut();
+    #[expect(unsafe_code, reason = "SHGetKnownFolderPath has no safe binding")]
+    let answered = unsafe {
+        SHGetKnownFolderPath(
+            &raw const folder,
+            KF_FLAG_DONT_VERIFY.cast_unsigned(),
+            token.as_raw_handle(),
+            &raw mut named,
+        )
+    };
+    let path = if answered < 0 {
+        Err(io::Error::from_raw_os_error(answered))
+    } else {
+        full_path(named)
+    };
+    #[expect(unsafe_code, reason = "CoTaskMemFree has no safe binding")]
+    unsafe {
+        CoTaskMemFree(named.cast_const().cast());
+    }
+    path
+}
+
+/// The full path the system wrote at `named`, copied into an owned buffer by `GetFullPathNameW`, which writes a full path back as it is.
+#[expect(unsafe_code, reason = "GetFullPathNameW has no safe binding")]
+fn full_path(named: *const u16) -> io::Result<PathBuf> {
+    if named.is_null() {
+        return Err(io::Error::other("the system answered without a path"));
+    }
+    directory_named(|buffer, capacity| unsafe {
+        GetFullPathNameW(named, capacity, buffer, ptr::null_mut())
+    })
 }
 
 /// The directory `asked` writes into a buffer with room for the longest path Windows names, which it answers with the length it wrote, or with nothing when it failed.
@@ -778,19 +819,25 @@ struct Me {
 
 impl Me {
     fn now() -> io::Result<Self> {
-        let mut token: HANDLE = ptr::null_mut();
-        #[expect(unsafe_code, reason = "OpenProcessToken has no safe binding")]
-        let opened = unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) };
-        succeeded(opened)?;
-        #[expect(
-            unsafe_code,
-            reason = "OpenProcessToken succeeded, so the handle is open and owned by nothing else"
-        )]
-        let token = unsafe { OwnedHandle::from_raw_handle(token) };
+        let token = process_token(TOKEN_QUERY)?;
         let user = token_sid(&token, TokenUser)?;
         let owner = token_sid(&token, TokenOwner)?;
         Ok(Self { user, owner })
     }
+}
+
+/// This process's access token, opened for `access`.
+fn process_token(access: TOKEN_ACCESS_MASK) -> io::Result<OwnedHandle> {
+    let mut token: HANDLE = ptr::null_mut();
+    #[expect(unsafe_code, reason = "OpenProcessToken has no safe binding")]
+    let opened = unsafe { OpenProcessToken(GetCurrentProcess(), access, &raw mut token) };
+    succeeded(opened)?;
+    #[expect(
+        unsafe_code,
+        reason = "OpenProcessToken succeeded, so the handle is open and owned by nothing else"
+    )]
+    let token = unsafe { OwnedHandle::from_raw_handle(token) };
+    Ok(token)
 }
 
 /// The identifier the token's `class` names, copied only from the bytes the system wrote into its owned buffer.

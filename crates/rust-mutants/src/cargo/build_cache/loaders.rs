@@ -65,6 +65,27 @@ impl Inputs {
         identities: &Identities,
         names: &[&'static str],
     ) -> io::Result<Self> {
+        #[cfg(windows)]
+        let unread = Unread::of_this_user().map_err(|source| refused(Path::new(""), source))?;
+        #[cfg(not(windows))]
+        let unread = Unread::NONE;
+        Self::capture_knowing(
+            env,
+            cwd,
+            Known {
+                identities,
+                unread: &unread,
+            },
+            names,
+        )
+    }
+
+    fn capture_knowing(
+        env: &Variables,
+        cwd: Option<&Path>,
+        known: Known<'_>,
+        names: &[&'static str],
+    ) -> io::Result<Self> {
         if cfg!(windows) && cwd.is_none() && names.contains(&"PATH") && env.var("PATH").is_some() {
             return Err(refused(
                 Path::new(""),
@@ -109,7 +130,7 @@ impl Inputs {
                                 resolve(&path, cwd).map_err(|source| refused(&path, source))?;
                             capture(
                                 &resolved,
-                                identities,
+                                known,
                                 &mut digest,
                                 (name.contains("FRAMEWORK"), &mut Vec::new()),
                             )
@@ -127,7 +148,7 @@ impl Inputs {
                 &Input::Searched(cwd.to_path_buf()),
                 b"native-current-directory",
             );
-            capture(cwd, identities, &mut digest, (false, &mut Vec::new()))
+            capture(cwd, known, &mut digest, (false, &mut Vec::new()))
                 .map_err(|source| refused(cwd, source))?;
         }
         Ok(Self {
@@ -371,7 +392,7 @@ fn loader_environment(env: &Variables) -> io::Result<()> {
 
 fn capture(
     path: &Path,
-    identities: &Identities,
+    known: Known<'_>,
     digest: &mut Folding,
     (frameworks, ancestors): (bool, &mut Vec<PathBuf>),
 ) -> io::Result<()> {
@@ -395,12 +416,8 @@ fn capture(
         }
     };
     digest.field(&searched, canonical.as_os_str().as_encoded_bytes());
-    #[cfg(windows)]
-    let fixed = fixed_search_directories()?;
-    #[cfg(not(windows))]
-    let fixed: [PathBuf; 0] = [];
-    if among(&canonical, &fixed) {
-        digest.field(&searched, b"windows-fixed-search-directory");
+    if let Some(marker) = known.unread.marker(&canonical) {
+        digest.field(&searched, marker.as_bytes());
         return Ok(());
     }
     if ancestors.contains(&canonical) {
@@ -416,7 +433,7 @@ fn capture(
         capture_entry(
             (&directory, &canonical),
             entry,
-            (identities, digest),
+            (known, digest),
             (frameworks, ancestors),
         )?;
     }
@@ -436,7 +453,7 @@ fn capture(
 fn capture_entry(
     (directory, root): (&Dir, &Path),
     text: &str,
-    (identities, digest): (&Identities, &mut Folding),
+    (known, digest): (Known<'_>, &mut Folding),
     (frameworks, ancestors): (bool, &mut Vec<PathBuf>),
 ) -> io::Result<()> {
     let name = Name::new(text).map_err(io::Error::other)?;
@@ -460,17 +477,17 @@ fn capture_entry(
         Kind::Directory => {
             digest.field(&searched, b"directory");
             if descend {
-                capture(&path, identities, digest, (true, ancestors))?;
+                capture(&path, known, digest, (true, ancestors))?;
             }
         }
-        Kind::File => match readable(&path, identities)? {
+        Kind::File => match readable(&path, known.identities)? {
             Readable::NotLibrary => not_an_image(digest, &searched, &path),
             Readable::Unreadable => unreadable(digest, &searched, &path),
-            Readable::Library => match super::toolchain::reused(&path, identities)? {
+            Readable::Library => match super::toolchain::reused(&path, known.identities)? {
                 Some(state) => bound(digest, &searched, &path, &state),
                 None => match directory.open_entry(name)? {
                     Entry::File(file) => {
-                        captured_file((&path, &file), identities, digest, &searched)?;
+                        captured_file((&path, &file), known.identities, digest, &searched)?;
                     }
                     Entry::Dir(_) | Entry::Other => {
                         return Err(io::Error::other("the loader search entry changed kind"));
@@ -479,7 +496,7 @@ fn capture_entry(
             },
         },
         Kind::ExecutionAlias => {}
-        Kind::Other => capture_link(&path, identities, digest, (descend, ancestors))?,
+        Kind::Other => capture_link(&path, known, digest, (descend, ancestors))?,
     }
     if directory.status_at(name)? != Some(status) {
         return Err(io::Error::other("the loader search entry changed identity"));
@@ -489,7 +506,7 @@ fn capture_entry(
 
 fn capture_link(
     path: &Path,
-    identities: &Identities,
+    known: Known<'_>,
     digest: &mut Folding,
     (descend, ancestors): (bool, &mut Vec<PathBuf>),
 ) -> io::Result<()> {
@@ -501,18 +518,18 @@ fn capture_link(
             let file = crate::capdir::open_file_at(&canonical)?;
             let status = crate::capdir::file_status(&file)?;
             match status.kind {
-                Kind::File => match readable(&canonical, identities)? {
+                Kind::File => match readable(&canonical, known.identities)? {
                     Readable::NotLibrary => not_an_image(digest, &searched, &canonical),
                     Readable::Unreadable => unreadable(digest, &searched, &canonical),
                     Readable::Library => {
-                        captured_file((&canonical, &file), identities, digest, &searched)?;
+                        captured_file((&canonical, &file), known.identities, digest, &searched)?;
                     }
                 },
                 Kind::Directory => {
                     digest.field(&searched, b"directory-alias");
                     digest.field(&searched, canonical.as_os_str().as_encoded_bytes());
                     if descend {
-                        capture(&canonical, identities, digest, (true, ancestors))?;
+                        capture(&canonical, known, digest, (true, ancestors))?;
                     }
                 }
                 Kind::ExecutionAlias | Kind::Other => {
@@ -542,23 +559,71 @@ fn capture_link(
     }
 }
 
-/// The directories the Windows loader searches before any search path, each spelled canonically: the system directory, the 16-bit system directory and the Windows directory, leaving out one that names nothing, as no search path can lead to it.
-#[cfg(windows)]
-fn fixed_search_directories() -> io::Result<Vec<PathBuf>> {
-    let mut found = Vec::new();
-    for directory in crate::capdir::fixed_search_directories()? {
-        match reached(&directory)? {
-            Reached::At(canonical) => found.push(canonical),
-            Reached::Absent | Reached::Untraversable => {}
-        }
-    }
-    Ok(found)
+/// What one capture knows before it reads a search directory: the identities of the files read before, and the directories it binds by their spelling alone.
+#[derive(Clone, Copy)]
+struct Known<'a> {
+    /// The identities of the files read before.
+    identities: &'a Identities,
+    /// The directories bound by their spelling alone.
+    unread: &'a Unread,
 }
 
-/// Whether `canonical` is one of the `fixed` directories, compared as Windows compares a path, without regard to ASCII case.
-fn among(canonical: &Path, fixed: &[PathBuf]) -> bool {
+/// The directories the capture binds by their spelling and by what Windows makes them, reading none of their entries, each spelled canonically.
+#[derive(Debug)]
+struct Unread {
+    /// The directories the Windows loader searches before any search path.
+    fixed: Vec<PathBuf>,
+    /// The current user's app execution alias directory, which holds nothing a loader maps and which Windows changes at any moment.
+    execution_aliases: Option<PathBuf>,
+}
+
+impl Unread {
+    /// No directory, as no loader but the Windows loader searches a fixed directory first or keeps an alias directory on the search path.
+    #[cfg(not(windows))]
+    const NONE: Self = Self {
+        fixed: Vec::new(),
+        execution_aliases: None,
+    };
+
+    /// The directories Windows names for the current user, each spelled canonically, leaving out one that names nothing, as no search path can lead to it.
+    #[cfg(windows)]
+    fn of_this_user() -> io::Result<Self> {
+        let mut fixed = Vec::new();
+        for directory in crate::capdir::fixed_search_directories()? {
+            fixed.extend(canonical_directory(&directory)?);
+        }
+        let execution_aliases = canonical_directory(&crate::capdir::execution_alias_directory()?)?;
+        Ok(Self {
+            fixed,
+            execution_aliases,
+        })
+    }
+
+    /// What a search directory spelled canonically as `canonical` is bound by in place of its entries, when it is one of these.
+    fn marker(&self, canonical: &Path) -> Option<&'static str> {
+        if among(canonical, &self.fixed) {
+            Some("windows-fixed-search-directory")
+        } else if among(canonical, self.execution_aliases.as_slice()) {
+            Some("windows-execution-alias-directory")
+        } else {
+            None
+        }
+    }
+}
+
+/// Where `directory` leads, spelled canonically, or nothing when it names nothing or the host refuses to traverse it.
+#[cfg(windows)]
+fn canonical_directory(directory: &Path) -> io::Result<Option<PathBuf>> {
+    match reached(directory)? {
+        Reached::At(canonical) => Ok(Some(canonical)),
+        Reached::Absent | Reached::Untraversable => Ok(None),
+    }
+}
+
+/// Whether `canonical` is one of `directories`, compared as Windows compares a path, without regard to ASCII case.
+fn among(canonical: &Path, directories: &[PathBuf]) -> bool {
     let spelled = canonical.as_os_str().as_encoded_bytes();
-    fixed.iter().any(|directory| {
+    directories.iter().any(|directory| {
         directory
             .as_os_str()
             .as_encoded_bytes()
@@ -841,6 +906,99 @@ pub(in crate::cargo) mod tests {
         assert!(
             !super::among(Path::new(r"\\?\C:\WINDOWS\system32"), &[]),
             "a loader that searches no fixed directory first leaves every search path to be read"
+        );
+    }
+
+    #[test]
+    fn the_current_user_s_execution_alias_directory_is_bound_by_its_name_however_it_is_cased() {
+        use std::path::{Path, PathBuf};
+        let aliases = r"\\?\C:\Users\runneradmin\AppData\Local\Microsoft\WindowsApps";
+        let unread = super::Unread {
+            fixed: vec![PathBuf::from(r"\\?\C:\Windows\System32")],
+            execution_aliases: Some(PathBuf::from(aliases)),
+        };
+        for spelled in [
+            aliases,
+            r"\\?\c:\users\RUNNERADMIN\appdata\local\microsoft\windowsapps",
+            r"\\?\C:\USERS\RUNNERADMIN\APPDATA\LOCAL\MICROSOFT\WINDOWSAPPS",
+        ] {
+            assert_eq!(
+                unread.marker(Path::new(spelled)),
+                Some("windows-execution-alias-directory"),
+                "{spelled} is this user's app execution alias directory, which holds nothing a \
+                 loader maps and which Windows changes at any moment of a run, as it refused a \
+                 compile on CI's runner: RM1022 'the loader search entry ...\\WindowsApps\\\
+                 MicrosoftCorporationII.WindowsSubsystemForLinux_8wekyb3d8bbwe appeared'"
+            );
+        }
+        for other in [
+            r"\\?\C:\Users\runneradmin\AppData\Local\Microsoft\WindowsApps\MicrosoftCorporationII.WindowsSubsystemForLinux_8wekyb3d8bbwe",
+            r"\\?\C:\Users\runneradmin\AppData\Local\Microsoft",
+            r"\\?\C:\Users\runneradmin\AppData\Local\Microsoft\WindowsAppsX",
+            r"\\?\C:\Users\someone\AppData\Local\Microsoft\WindowsApps",
+            r"\\?\D:\Users\runneradmin\AppData\Local\Microsoft\WindowsApps",
+            r"\\?\C:\Program Files\WindowsApps",
+            "/usr/lib",
+        ] {
+            assert_eq!(
+                unread.marker(Path::new(other)),
+                None,
+                "{other} is a directory only its entries can bind"
+            );
+        }
+        assert_eq!(
+            unread.marker(Path::new(r"\\?\c:\windows\system32")),
+            Some("windows-fixed-search-directory"),
+            "a directory the loader searches first keeps its own marker"
+        );
+        let elsewhere = super::Unread {
+            fixed: Vec::new(),
+            execution_aliases: None,
+        };
+        assert_eq!(
+            elsewhere.marker(Path::new(aliases)),
+            None,
+            "where no alias directory is named, every search directory is read"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_alias_directory_windows_names_is_the_one_on_this_user_s_path() {
+        let session = std::env::var_os("LOCALAPPDATA").expect("a session names its local data");
+        let on_path = std::path::Path::new(&session)
+            .join("Microsoft")
+            .join("WindowsApps");
+        let canonical =
+            std::fs::canonicalize(&on_path).expect("every Windows user has an alias directory");
+        let unread = super::Unread::of_this_user().expect("the directories Windows names");
+        assert_eq!(
+            unread.marker(&canonical),
+            Some("windows-execution-alias-directory"),
+            "{on_path:?}, where the session's path finds aliases, is the directory the \
+             operating system names: {unread:?}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_alias_directory_windows_names_does_not_follow_a_profile_the_environment_names() {
+        let elsewhere = tempfile::tempdir().expect("a directory to point the profile at");
+        let child =
+            std::process::Command::new(std::env::current_exe().expect("this test executable"))
+                .args([
+                    "--exact",
+                    "cargo::build_cache::loaders::tests::\
+             the_alias_directory_windows_names_is_the_one_on_this_user_s_path",
+                ])
+                .env("USERPROFILE", elsewhere.path())
+                .output()
+                .expect("this test executable runs again");
+        let report = String::from_utf8(child.stdout).expect("a test report in UTF-8");
+        assert!(
+            child.status.success() && report.contains("test result: ok. 1 passed"),
+            "a caller can point USERPROFILE anywhere, and the alias directory bound by its name \
+             is the one Windows keeps for the user wherever it points: {report}"
         );
     }
 }
@@ -1280,6 +1438,80 @@ mod namespace_tests {
              loader maps, and Windows adds one to WindowsApps whenever a packaged app updates, \
              which refused a compile on CI's runner: RM1022 'the loader search entry \
              ...\\WindowsApps\\WindowsPackageManagerMCPServer.exe appeared'"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_search_path_naming_the_execution_alias_directory_reads_none_of_what_windows_puts_there() {
+        let parent = tempfile::tempdir().expect("owned parent");
+        let compiled = parent.path().join("compiled");
+        let aliases = parent.path().join("WindowsApps");
+        for directory in [&compiled, &aliases] {
+            std::fs::create_dir_all(directory).expect("an owned directory");
+        }
+        std::fs::write(
+            aliases.join("library.dll"),
+            super::tests::test_library(b"one library"),
+        )
+        .expect("a library any other search directory would have read");
+        let named = super::Unread {
+            fixed: Vec::new(),
+            execution_aliases: Some(
+                std::fs::canonicalize(&aliases).expect("the stand-in, spelled canonically"),
+            ),
+        };
+        let mut spelled = aliases.as_os_str().to_ascii_uppercase();
+        spelled.push(r"\");
+        let env = environment("PATH", Path::new(&spelled));
+        let capture = |identities: &Identities, unread: &super::Unread| {
+            Inputs::capture_knowing(
+                &env,
+                Some(&compiled),
+                super::Known { identities, unread },
+                search_variables(),
+            )
+        };
+        let identities = Identities::empty();
+        let before = capture(&identities, &named).expect("a path naming the alias directory");
+        assert_eq!(
+            identities.opens().expect("the libraries identified"),
+            0,
+            "the alias directory is bound by its name, whatever it holds"
+        );
+        assert_eq!(
+            identities.work().expect("the files read"),
+            (0, 0, Vec::new()),
+            "and no entry of it is read"
+        );
+        std::fs::create_dir_all(
+            aliases.join("MicrosoftCorporationII.WindowsSubsystemForLinux_8wekyb3d8bbwe"),
+        )
+        .expect("a package's folder of aliases");
+        crate::capdir::make_execution_alias(&aliases, "WindowsPackageManagerMCPServer.exe");
+        assert_eq!(
+            before.digest(),
+            capture(&identities, &named)
+                .expect("the alias directory after Windows changed it")
+                .digest(),
+            "Windows adds and removes aliases and folders of them in this directory at any \
+             moment of a run, which refused a compile on CI's runner: RM1022 'the loader search \
+             entry ...\\WindowsApps\\MicrosoftCorporationII.WindowsSubsystemForLinux_8wekyb3d8bbwe \
+             appeared'"
+        );
+        let read = Identities::empty();
+        capture(
+            &read,
+            &super::Unread {
+                fixed: Vec::new(),
+                execution_aliases: None,
+            },
+        )
+        .expect("the same directory as any other search directory");
+        assert_eq!(
+            read.opens().expect("the libraries identified"),
+            1,
+            "a directory that is not the alias directory has its library read"
         );
     }
 

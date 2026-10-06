@@ -152,6 +152,7 @@ windows-sys = { version = "0.61", features = [
   "Win32_Security",
   "Win32_Security_Authorization",
   "Win32_Storage_FileSystem",
+  "Win32_System_Com",
   "Win32_System_Console",
   "Win32_System_IO",
   "Win32_System_JobObjects",
@@ -160,6 +161,7 @@ windows-sys = { version = "0.61", features = [
   "Win32_System_SystemInformation",
   "Win32_System_SystemServices",
   "Win32_System_Threading",
+  "Win32_UI_Shell",
 ] }
 jiff = "0.2"
 ratatui = "0.30"
