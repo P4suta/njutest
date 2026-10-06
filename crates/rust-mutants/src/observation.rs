@@ -3,9 +3,10 @@
 
 //! Producer-owned host observations with retained subscriptions and measured semantic deadlines.
 
+use std::ffi::OsStr;
 use std::io;
-use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError};
 use std::sync::{Arc, Mutex, Weak};
 use std::thread::{self, Thread};
@@ -16,6 +17,9 @@ use serde::Serialize;
 
 /// The bounded backlog, whose overflow remains a sticky refusal for the entire subscription.
 const BACKLOG: usize = 64;
+
+/// The awaited marker index of a native resource stream on which no fence is waiting.
+const UNFENCED: usize = usize::MAX;
 
 /// The native macOS resource stream, without one descriptor for every observed file.
 #[cfg(target_os = "macos")]
@@ -199,12 +203,39 @@ impl Invalidation {
     }
 }
 
+/// The excluded generated paths of one native resource stream and the marker its reader awaits.
+#[derive(Debug, Clone)]
+struct Fence {
+    root: PathBuf,
+    generated: Arc<[PathBuf]>,
+    awaited: Arc<AtomicUsize>,
+}
+
+impl Fence {
+    /// Wakes the reader without a resource change once the stream delivers its awaited marker.
+    fn arrived(&self, paths: &[PathBuf], reader: &Invalidation) {
+        let awaited = self.awaited.load(Ordering::Acquire);
+        if self
+            .generated
+            .get(awaited)
+            .is_some_and(|marker| paths.contains(marker))
+            && self
+                .awaited
+                .compare_exchange(awaited, UNFENCED, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+        {
+            reader.signal.wake();
+        }
+    }
+}
+
 /// An owned subscription registered before a producer starts or an initial resource observation is made.
 pub struct Observation {
     received: Receiver<io::Result<Event>>,
     signal: Arc<Signal>,
     reader: thread::ThreadId,
     watcher: Option<ResourceWatcher>,
+    fence: Option<Fence>,
 }
 
 impl std::fmt::Debug for Observation {
@@ -232,6 +263,7 @@ impl Observation {
             }),
             reader: thread::current().id(),
             watcher: None,
+            fence: None,
         }
     }
 
@@ -251,17 +283,26 @@ impl Observation {
         let mut observed = Self::subscribe();
         let signal = observed.invalidation();
         let root = std::fs::canonicalize(root)?;
-        let generated: Vec<_> = excluded.iter().map(|name| root.join(name)).collect();
+        let fence = Fence {
+            generated: excluded.iter().map(|name| root.join(name)).collect(),
+            root,
+            awaited: Arc::new(AtomicUsize::new(UNFENCED)),
+        };
+        let fenced = fence.clone();
         let mut watcher = ResourceWatcher::new(
             move |event: notify::Result<notify::Event>| match event {
                 Ok(event) if event.kind.is_access() => {}
                 Ok(event)
                     if !event.paths.is_empty()
                         && event.paths.iter().all(|path| {
-                            generated
+                            fenced
+                                .generated
                                 .iter()
                                 .any(|generated| path.starts_with(generated))
-                        }) => {}
+                        }) =>
+                {
+                    fenced.arrived(&event.paths, &signal);
+                }
                 Ok(_changed) => signal.changed(),
                 Err(source) => signal.failed(io::Error::other(source)),
             },
@@ -270,7 +311,7 @@ impl Observation {
         .map_err(io::Error::other)?;
         watcher
             .watch(
-                &root,
+                &fence.root,
                 if recursive {
                     notify::RecursiveMode::Recursive
                 } else {
@@ -279,6 +320,7 @@ impl Observation {
             )
             .map_err(io::Error::other)?;
         observed.watcher = Some(watcher);
+        observed.fence = Some(fence);
         Ok(observed)
     }
 
@@ -340,6 +382,49 @@ impl Observation {
     /// A producer failed or its observation backlog lost evidence.
     pub fn acknowledge(&self) -> io::Result<()> {
         self.pending().map(|_wake| ())
+    }
+
+    /// Creates `marker` and returns once this subscription's own native stream delivers it, after every earlier change.
+    ///
+    /// # Errors
+    /// The subscription has no native stream or another reader, `marker` is not a fresh excluded file name of its root, or a producer failed.
+    pub fn fence(&self, marker: &str) -> io::Result<()> {
+        let Some(fence) = &self.fence else {
+            return Err(io::Error::other(
+                "only a native resource subscription delivers a fence",
+            ));
+        };
+        if thread::current().id() != self.reader {
+            return Err(io::Error::other(
+                "a fence is awaited on the subscribed thread its stream wakes",
+            ));
+        }
+        let path = fence.root.join(marker);
+        let awaited = fence
+            .generated
+            .iter()
+            .position(|generated| *generated == path)
+            .filter(|_excluded| Path::new(marker).file_name() == Some(OsStr::new(marker)))
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("the fence marker {marker:?} is not an excluded file name"),
+                )
+            })?;
+        fence.awaited.store(awaited, Ordering::Release);
+        let fenced = self.fenced(fence, &path, awaited);
+        fence.awaited.store(UNFENCED, Ordering::Release);
+        fenced
+    }
+
+    fn fenced(&self, fence: &Fence, marker: &Path, awaited: usize) -> io::Result<()> {
+        let created = std::fs::File::create_new(marker)?;
+        drop(created);
+        while fence.awaited.load(Ordering::Acquire) == awaited {
+            self.ensure_complete()?;
+            thread::park();
+        }
+        self.ensure_complete()
     }
 
     /// Transfers this exclusive reader while retaining every already registered producer and queued event.

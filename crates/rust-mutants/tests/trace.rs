@@ -1796,7 +1796,7 @@ fn completion_after_observation_overflow_does_not_hide_the_lost_evidence() {
 fn filesystem_invalidations_retain_one_wake_until_the_actual_reader_receives_it() {
     use rust_mutants::observation::{Event, Observation};
     let root = tempfile::tempdir().expect("an actual filesystem resource");
-    let observed = Observation::filesystem(root.path(), false)
+    let observed = Observation::filesystem_except(root.path(), false, &["fence"])
         .expect("the resource is subscribed before its producer starts");
     let witness = Observation::filesystem(root.path(), false)
         .expect("an independent native observer is registered before every write");
@@ -1820,6 +1820,9 @@ fn filesystem_invalidations_retain_one_wake_until_the_actual_reader_receives_it(
         {}
     }
     observed
+        .fence("fence")
+        .expect("the observed stream itself delivers every write before its later fence");
+    observed
         .ensure_complete()
         .expect("resource invalidations must coalesce without losing counted product events");
     assert_eq!(
@@ -1831,6 +1834,67 @@ fn filesystem_invalidations_retain_one_wake_until_the_actual_reader_receives_it(
             .pending()
             .expect("the invalidation is acknowledged once"),
         None
+    );
+}
+
+#[test]
+fn a_fence_returns_once_its_own_stream_has_delivered_every_earlier_write() {
+    use rust_mutants::observation::{Event, Observation};
+    let root = tempfile::tempdir().expect("an actual filesystem resource");
+    let observed = Observation::filesystem_except(root.path(), false, &["fence"])
+        .expect("the resource is subscribed before its producer starts");
+    fs::write(root.path().join("change"), b"actual write")
+        .expect("the actual producer changes its resource");
+    observed
+        .fence("fence")
+        .expect("the subscription's own stream delivers its fence after the write");
+    assert_eq!(
+        observed
+            .pending()
+            .expect("the write was delivered before the fence returned"),
+        Some(Event::Changed)
+    );
+    assert_eq!(
+        observed
+            .pending()
+            .expect("neither the write nor its fence raises a later wake"),
+        None
+    );
+}
+
+#[test]
+fn a_fence_refuses_a_marker_or_reader_its_stream_cannot_order() {
+    use rust_mutants::observation::Observation;
+    let root = tempfile::tempdir().expect("an actual filesystem resource");
+    let included =
+        Observation::filesystem(root.path(), false).expect("a subscription that excludes nothing");
+    let nested = Observation::filesystem_except(root.path(), false, &["nested/fence"])
+        .expect("a subscription whose excluded name its stream never reports");
+    for (observed, marker) in [(&included, "fence"), (&nested, "nested/fence")] {
+        let refused = observed
+            .fence(marker)
+            .expect_err("a marker that raises a wake, or never arrives, cannot fence");
+        assert_eq!(refused.kind(), io::ErrorKind::InvalidInput, "{refused}");
+    }
+    assert!(
+        Observation::subscribe().fence("fence").is_err(),
+        "a subscription without a native stream has nothing to fence"
+    );
+    let moved = Observation::filesystem_except(root.path(), false, &["fence"])
+        .expect("a fenceable subscription");
+    let elsewhere = njutest_devkit::thread::JoinedThread::launch(move || moved.fence("fence"))
+        .join()
+        .expect("the refusing thread joins");
+    assert!(
+        elsewhere.is_err(),
+        "a stream wakes only its subscribed reader"
+    );
+    assert_eq!(
+        fs::read_dir(root.path())
+            .expect("the observed root")
+            .count(),
+        0,
+        "a refused fence writes no marker"
     );
 }
 

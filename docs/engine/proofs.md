@@ -223,6 +223,10 @@ Presentation wait notes remain in the durable trace and never wake the same pres
 Host observations retain counted product events through `Signal` and latest-resource wakes through `Invalidation`.
 A filesystem subscription is registered before the first resource read, and every native change retains one pending invalidation until the reader receives it.
 That wake permits rereading the actual resource; it proves no process, writer, group, pipe or collector completed.
+Each subscription owns its native stream, so another subscriber having seen a change says nothing about this one.
+A native event that arrives after the reader consumed its wake raises a new one, because the subscription cannot tell a change the reader already read from one made after it.
+`Observation::fence` creates one of the subscription's excluded file names and returns once that subscription's own stream delivers it, so every change made before it has already raised its wake and none of their events arrives after it.
+That rests on one native stream delivering a directory's events in the order they occurred: one inotify queue, one FSEvents stream, one ReadDirectoryChangesW buffer.
 Counted events preserve their bounded overflow refusal, and both endpoints retain the first producer failure independently of cancellation and completion.
 The original native filesystem burst and explicit overflow controls hold these distinct contracts.
 
