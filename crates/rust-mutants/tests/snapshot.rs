@@ -725,9 +725,11 @@ fn explicit_cleanup_settles_a_live_producer_before_the_first_removal() {
             &|directory| {
                 assert!(
                     completion
-                        .wait(Some(Duration::ZERO))
+                        .wait(Some(Duration::from_secs(10)))
                         .expect("the actual terminal event"),
-                    "successful removal cannot certify that a live source producer has ended"
+                    "successful removal cannot certify that a live source producer has ended: \
+                     only the cleanup ends this producer, which waits on a pipe this test holds, \
+                     so an end its watcher has not heard within the bound is one that never came"
                 );
                 tempowner::remove_tree(directory)
             },
