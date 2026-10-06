@@ -64,7 +64,7 @@ pub struct Stat {
 }
 
 impl Stat {
-    /// Reads a `/proc/<pid>/stat` line, whose command name may itself hold spaces and parentheses: gone where it is the line of a process already reaped, which no longer names its parent, group or session.
+    /// Reads a `/proc/<pid>/stat` line, whose command name may itself hold spaces and parentheses: gone where it is the line of a process being released, dead or a zombie its reaper is collecting, which names no group or session any more.
     ///
     /// # Errors
     /// The line has no command name or lacks a field it always holds.
@@ -94,7 +94,9 @@ impl Stat {
                 .map_err(|source| io::Error::other(format!("the {what} of {line:?}: {source}")))
         };
         let state = field(0, "state")?;
-        if state == "X" {
+        let released =
+            |index: usize, what: &str| Ok::<bool, io::Error>(field(index, what)?.starts_with('-'));
+        if state == "X" || released(2, "process group")? || released(3, "session")? {
             return Ok(Asked::Gone);
         }
         Ok(Asked::Answered(Self {
@@ -215,6 +217,17 @@ mod tests {
                 },
                 born: 987_654,
             })
+        );
+    }
+
+    #[test]
+    fn the_line_of_a_zombie_its_reaper_is_releasing_is_gone() {
+        let releasing = "161317 (rustc) Z 0 -1 -1 0 -1 4227084 6019 0 0 0 6 0 0 0 20 0 0 0 47103589 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 17 4 0 0 0 0 0 0 0 0 0 0 0 0 0";
+        assert_eq!(
+            super::Stat::read(releasing).expect("a line /proc wrote"),
+            Asked::Gone,
+            "a zombie its parent is reaping names no group or session either, as a group member \
+             settlement met one in the Linux coverage run: 'invalid digit found in string'"
         );
     }
 
