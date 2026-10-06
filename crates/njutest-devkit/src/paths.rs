@@ -496,23 +496,24 @@ pub fn harness_output() -> Option<PathBuf> {
     }
 }
 
-/// A variable as a user's run would see it: a loader search path keeps every entry outside the harness's build output, and is absent when none is left.
+/// A variable as a user's run would see it: a loader search path keeps every entry outside the harness's build output and this workspace's target directory, where every cargo the harness ran a tool through put that tool's, and is absent when none is left.
 fn without_harness_output(
     name: std::ffi::OsString,
     value: std::ffi::OsString,
     harness: Option<&Path>,
 ) -> Option<(std::ffi::OsString, std::ffi::OsString)> {
-    let Some(harness) = harness else {
-        return Some((name, value));
-    };
     if !LOADER_SEARCH
         .iter()
         .any(|searched| same_name(&name, std::ffi::OsStr::new(searched)))
     {
         return Some((name, value));
     }
+    let workspace_output = workspace_root().join("target");
     let entries: Vec<PathBuf> = std::env::split_paths(&value)
-        .filter(|entry| !entry.starts_with(harness))
+        .filter(|entry| {
+            !entry.starts_with(&workspace_output)
+                && harness.is_none_or(|harness| !entry.starts_with(harness))
+        })
         .collect();
     if entries.is_empty() {
         return None;
@@ -922,5 +923,29 @@ mod harness_tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_tool_the_harness_ran_through_cargo_leaves_its_build_output_off_the_loader_path() {
+        let xtask = super::workspace_root()
+            .join("target")
+            .join("xtask")
+            .join("debug");
+        let user = std::path::PathBuf::from("/a/directory/of/the/users/own");
+        let joined = std::env::join_paths([xtask.join("deps"), xtask.clone(), user.clone()])
+            .expect("joinable");
+        let kept = super::without_harness_output(
+            std::ffi::OsString::from("PATH"),
+            joined,
+            Some(std::path::Path::new("/the/test/binary/target/debug")),
+        )
+        .map(|(_name, value)| std::env::split_paths(&value).collect::<Vec<_>>());
+        assert_eq!(
+            kept,
+            Some(vec![user]),
+            "`cargo xtask` puts its own build output on the path the tests inherit, and a rebuild of \
+             xtask during a run changed what a bound compile had read: RM1022 'the loader search \
+             entry .../target/xtask/debug/xtask changed'"
+        );
     }
 }
