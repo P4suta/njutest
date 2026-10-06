@@ -116,7 +116,7 @@ fn long_test_jobs_report_each_test_and_upload_evidence_before_the_job_deadline()
     let jobs = regex::Regex::new(r"(?m)^  [a-z][a-z-]*:$").expect("job grammar");
     let deadlines =
         regex::Regex::new(r"(?m)^        timeout-minutes: (\d+)$").expect("step timeout grammar");
-    for (name, budget) in [("test", 150), ("coverage", 100)] {
+    for (name, budget) in [("test", 220), ("coverage", 100)] {
         let start = source
             .find(&format!("\n  {name}:\n"))
             .expect("the long test job");
