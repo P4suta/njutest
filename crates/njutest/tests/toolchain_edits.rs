@@ -107,9 +107,9 @@ fn outcomes(
     if !features.is_empty() {
         arguments.extend(["--features", joined.as_str()]);
     }
-    let built = cargo(fixture, &arguments)
-        .output()
-        .expect("cargo builds the tests");
+    let built =
+        njutest_devkit::cost::cargo(cargo(fixture, &arguments), "the native edit oracle's build")
+            .expect("cargo builds the tests");
     assert!(
         built.status.success(),
         "every edit here compiles, so a failure to build is the fixture's: {}",
@@ -145,11 +145,13 @@ fn outcomes(
         if !features.is_empty() {
             arguments.extend(["--features", joined.as_str()]);
         }
-        cargo(fixture, &arguments)
-            .output()
-            .expect("cargo runs the doctests")
-            .status
-            .success()
+        njutest_devkit::cost::cargo(
+            cargo(fixture, &arguments),
+            "the native edit oracle's doctests",
+        )
+        .expect("cargo runs the doctests")
+        .status
+        .success()
     };
     let every = doctests(&["--workspace"]);
     for package in packages.values() {

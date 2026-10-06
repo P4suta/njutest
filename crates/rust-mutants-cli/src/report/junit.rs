@@ -176,11 +176,10 @@ fn case(out: &mut String, path: &str, mutant: &RunMutantDocument) {
         }
         Outcome::NotRun => Some(format!(
             "      <skipped message=\"{}\"/>\n",
-            escape(
-                mutant
-                    .not_run_reason
-                    .map_or("not run", |reason| reason.as_str())
-            )
+            escape(match mutant.not_run_reason {
+                Some(reason) => reason.as_str(),
+                None => "not run",
+            })
         )),
         Outcome::Killed => None,
     };

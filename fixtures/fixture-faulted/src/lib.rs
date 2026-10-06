@@ -57,3 +57,30 @@ pub fn maybe(value: Option<u8>) -> Option<u8> {
     let inside = value?;
     Some(inside)
 }
+
+/// Reads a file no test of this fixture ever asks for.
+///
+/// # Errors
+/// Whatever reading it said.
+pub fn spare(path: &Path) -> std::io::Result<String> {
+    let text = std::fs::read_to_string(path)?;
+    Ok(text)
+}
+
+/// Reads a file whose failure a test answers by waiting for an answer that never comes.
+///
+/// # Errors
+/// Whatever reading it said.
+pub fn linger(path: &Path) -> std::io::Result<String> {
+    let text = std::fs::read_to_string(path)?;
+    Ok(text)
+}
+
+/// Reads a file whose failure this fixture's machine does not measure.
+///
+/// # Errors
+/// Whatever reading it said.
+pub fn refused(path: &Path) -> std::io::Result<String> {
+    let text = std::fs::read_to_string(path)?;
+    Ok(text)
+}

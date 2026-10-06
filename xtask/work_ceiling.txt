@@ -1,14 +1,10 @@
 # SPDX-FileCopyrightText: 2026 njutest contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
 #
-# What a run of each fixture costs, in two units. A **pair** is one mutant
-# asked of one target, which is one test process started. A **test** is what
-# that process is asked for: a route that puts a mutation to one test of a
-# target rather than to all of its two hundred costs the same pair and a
-# two-hundredth of the tests, so the two fall separately and both are here.
-# Neither is a duration: both are the same number on every machine, at every
-# job count, under every load, and a thing measured in durations cannot be
-# ratcheted.
+# What a run of four sampled fixtures costs, in two units.
+# A **pair** is one mutant asked of one target, which is one test process started.
+# A **test** is what that process is asked for: a route that puts a mutation to one test of a target rather than to all of its two hundred costs the same pair and a two-hundredth of the tests, so the two fall separately and both are here.
+# Neither is a duration: both are the same number on every machine, at every job count, under every load, and a thing measured in durations cannot be ratcheted.
 #
 # `whole` is what a run that asked every target about every mutant would start,
 # and `started` is what this engine starts. **This file may shrink and never
@@ -24,8 +20,15 @@
 # The command is fixed so the numbers are: `run --tier all --offline --locked
 # --jobs 1`, with the configuration the fixture carries and nothing else.
 #
+# A mutant sealed executions decide starts no test process: its question is put
+# to instances of the sealed module, which this file does not count yet (ADR 0046).
+# What is left here is the native work a run still does, for its leads.
+#
+# A test is counted where a baseline counted it: a target whose baseline ran no
+# test holds none, so a whole run asks it about no test rather than one.
+#
 # fixture             whole  started  tests  tests_started
-fixture-simple           39       12     39             12
-fixture-coverage        114       35    266             40
-fixture-unreached        16        4     16              4
-fixture-baseline         63       17     63             17
+fixture-simple           39        0     26              0
+fixture-coverage        114        0    228              0
+fixture-unreached        16        0      8              0
+fixture-baseline         63        0     42              0

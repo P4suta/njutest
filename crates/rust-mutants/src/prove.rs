@@ -84,11 +84,14 @@ impl Questions {
     /// What one file is asked.
     fn of<'a>(&'a self, path: &str, empty: &'a Empty) -> witness::Asking<'a> {
         witness::Asking {
-            conditions: self
-                .conditions
-                .get(path)
-                .map_or(&empty.conditions, Vec::as_slice),
-            probes: self.probes.get(path).map_or(&empty.probes, Vec::as_slice),
+            conditions: match self.conditions.get(path) {
+                Some(asked) => asked.as_slice(),
+                None => empty.conditions.as_slice(),
+            },
+            probes: match self.probes.get(path) {
+                Some(asked) => asked.as_slice(),
+                None => empty.probes.as_slice(),
+            },
         }
     }
 }
@@ -247,24 +250,27 @@ fn checked_until_compiled(
         let Some(Ok(checked)) = checked else {
             return Ok(None);
         };
-        if checked.success {
-            return Ok(Some(Vouching {
-                written,
-                refused,
-                checks,
-            }));
+        match checked.completion() {
+            crate::cargo::Completion::Built => {
+                return Ok(Some(Vouching {
+                    written,
+                    refused,
+                    checks,
+                }));
+            }
+            crate::cargo::Completion::Refused => {}
         }
         let round = refusal(&written.files, &checked.messages);
-        if !round.accounts_for_a_failure() {
+        if !round.explains_a_failure() {
             trace.note(
                 "witness",
                 &format!(
                     "the witness tree did not compile and no rewrite of it accounts for that, so \
                      nothing is vouched for: {}",
-                    round
-                        .unaccounted
-                        .first()
-                        .map_or("the compiler named no place at all", String::as_str)
+                    match round.unaccounted.first() {
+                        Some(named) => named.as_str(),
+                        None => "the compiler named no place at all",
+                    }
                 ),
             );
             return Ok(None);
@@ -414,10 +420,13 @@ fn count(claims: &ByFile) -> usize {
     claims.values().map(Vec::len).sum()
 }
 
-/// Every claim discovery made, by the file it is in.
+/// Every claim discovery made, by the file it is in, except in a `const fn`, whose witnesses would be calls its `const` refuses (ADR 0047).
 fn questions_of(discovery: &Discovery, selected: Option<&BTreeSet<u32>>) -> Questions {
     let mut questions = Questions::default();
     for located in &discovery.candidates {
+        if located.found.hint.const_fn.is_some() {
+            continue;
+        }
         let Ok(id) = located.found.candidate.id() else {
             continue;
         };
@@ -492,7 +501,7 @@ fn checking(
     Ok(CompileOptions {
         kind: CompileKind::Check,
         packages: Vec::new(),
-        target_dir: Some(workspace.build_dir().nested("witness")),
+        target_dir: workspace.build_dir().nested("witness"),
         locked: workspace.locked,
         offline: workspace.offline,
         timeout: Workspace::timeout(options.build_timeout),
@@ -598,7 +607,9 @@ pub fn refusal(written: &[witness::WitnessFile], messages: &[crate::cargo::Messa
             .find(|file| crate::cargo::names_file(&span.file_name, &file.path))
             .into_iter()
             .flat_map(|file| &file.sites)
-            .filter(|site| site.span.start <= span.byte_start && span.byte_start < site.span.end)
+            .filter(|site| {
+                site.span.start <= span.byte_start() && span.byte_start() < site.span.end
+            })
             .fold(false, |_, site| {
                 match site.placed {
                     witness::Placed::Witnesses => {
@@ -651,7 +662,7 @@ impl Refusal {
 
     /// Whether a check that failed is one this rule accounted for, which is what makes what it did not refuse a thing the compiler took.
     #[must_use]
-    pub fn accounts_for_a_failure(&self) -> bool {
+    pub fn explains_a_failure(&self) -> bool {
         self.unaccounted.is_empty()
             && !(self.claims.is_empty() && self.markers.is_empty() && self.probes.is_empty())
     }

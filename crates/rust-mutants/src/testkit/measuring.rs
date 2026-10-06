@@ -63,11 +63,10 @@ impl Measuring {
     #[must_use]
     pub fn options(self, tier: Tier) -> PrepareOptions {
         PrepareOptions {
-            tier,
             coverage: self.coverage(),
             branch_proofs: self.coverage() || self.touch(),
             touch: self.touch(),
-            ..PrepareOptions::default()
+            ..PrepareOptions::new(tier)
         }
     }
 }

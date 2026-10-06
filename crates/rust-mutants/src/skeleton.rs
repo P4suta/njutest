@@ -18,8 +18,8 @@ pub const FILE: &str = "skeletons-v1.json";
 /// Names the shape of [`Skeletons`].
 pub const DOCUMENT_TYPE: &str = "rust-mutants/skeletons";
 
-/// The version of that shape.
-pub const SCHEMA_VERSION: u32 = 2;
+/// The version of that shape: 3 since it keeps the digest of every file an item of the catalog is in.
+pub const SCHEMA_VERSION: u32 = 4;
 
 /// The standard macros a sealed body may invoke: each expands to an expression or a statement and declares nothing.
 pub const SEALABLE_MACROS: [&str; 28] = [
@@ -100,6 +100,8 @@ pub struct Skeletons {
     pub schema_version: u32,
     /// Every cataloged item, by item index.
     pub items: Vec<ItemEvidence>,
+    /// Every file an item of the catalog is in that a unit read, by its workspace-relative path, with the SHA-256 of its bytes, which is what proves a file read again is the file the run measured.
+    pub files: BTreeMap<String, String>,
     /// Every compiled unit, sorted by its name.
     pub units: Vec<UnitSkeleton>,
 }
@@ -114,8 +116,9 @@ pub struct ItemEvidence {
     pub item: ItemRef,
     /// The item as a reader writes it.
     pub name: String,
-    /// The lowercase hex SHA-256 of its body's bytes, braces included.
-    pub body_digest: String,
+    /// The lowercase hex SHA-256 of its body's bytes, braces included, or nothing where no unit read its file or its body could not be located in what a unit read.
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub body_digest: Option<String>,
     /// Whether everything the body contributes to the program is its own execution.
     pub sealed: bool,
     /// Why it is not sealed, absent exactly when it is.
@@ -207,6 +210,8 @@ pub enum Unsealing {
     Unlocated,
     /// No unit compiled the item's file.
     Unread,
+    /// A file the unit compiled could not be read at all, refused as too deep or too large to read or left without a thread to read it on, so what it declares and where the compiler reads a position in it are not known.
+    UnitFileUnread,
 }
 
 /// One compiled unit, named without a package id, and the digest of everything outside its sealed bodies.
@@ -250,7 +255,7 @@ pub struct UnitSource {
 #[must_use]
 pub fn evidence(units: &[UnitSource], items: &[(&Item, &ItemRef)]) -> Skeletons {
     let shadowing: Vec<Option<Unsealing>> = units.iter().map(unit_unsealing).collect();
-    let mut verdicts: BTreeMap<&str, BTreeMap<(u32, u32), Option<Unsealing>>> = BTreeMap::new();
+    let mut verdicts: BTreeMap<&str, Verdicts> = BTreeMap::new();
     let mut item_evidence = Vec::with_capacity(items.len());
     for (item, reference) in items {
         let name = format!("$root/{}", item.path);
@@ -280,32 +285,31 @@ pub fn evidence(units: &[UnitSource], items: &[(&Item, &ItemRef)]) -> Skeletons 
             {
                 Some(Unsealing::CompileTime)
             }
-            (Some(bytes), Some(_)) if item.measurable => {
-                let file = verdicts
+            (Some(bytes), Some(_)) if item.measurable => judged(
+                verdicts
                     .entry(item.path.as_str())
-                    .or_insert_with(|| file_verdicts(bytes));
-                match file.get(&(item.body.start, item.body.end)) {
-                    None => Some(Unsealing::Unlocated),
-                    Some(verdict) => verdict.clone().or_else(|| {
-                        reading
-                            .iter()
-                            .find_map(|position| shadowing.get(*position).and_then(Clone::clone))
-                    }),
-                }
-            }
+                    .or_insert_with(|| file_verdicts(bytes)),
+                (item.body.start, item.body.end),
+                || {
+                    reading
+                        .iter()
+                        .find_map(|position| shadowing.get(*position).and_then(Clone::clone))
+                },
+            ),
             (Some(_), Some(_)) => Some(Unsealing::Evaluated),
         };
         item_evidence.push(ItemEvidence {
             index: item.index,
             item: (*reference).clone(),
             name: item.name.clone(),
-            body_digest: crate::id::digest(body.unwrap_or_default()),
+            body_digest: body.map(crate::id::digest),
             sealed: unsealed.is_none(),
             unsealed,
             start: source.and_then(|bytes| position(bytes, item.body.start)),
         });
     }
-    let read = read_positions(units, items, &item_evidence);
+    let Positions { read, unread } = read_positions(units, items, &item_evidence);
+    unplaced(&mut item_evidence, &unread);
     let mut unit_skeletons: Vec<UnitSkeleton> = units
         .iter()
         .map(|unit| {
@@ -325,7 +329,47 @@ pub fn evidence(units: &[UnitSource], items: &[(&Item, &ItemRef)]) -> Skeletons 
         document_type: DOCUMENT_TYPE.to_owned(),
         schema_version: SCHEMA_VERSION,
         items: item_evidence,
+        files: file_digests(units, items),
         units: unit_skeletons,
+    }
+}
+
+/// The digest of every file an item of `items` is in, as the first unit that read it holds its bytes.
+fn file_digests(units: &[UnitSource], items: &[(&Item, &ItemRef)]) -> BTreeMap<String, String> {
+    items
+        .iter()
+        .filter_map(|(item, _)| {
+            let name = format!("$root/{}", item.path);
+            units
+                .iter()
+                .find_map(|unit| unit.files.get(&name))
+                .map(|bytes| (item.path.clone(), crate::id::digest(bytes)))
+        })
+        .collect()
+}
+
+/// Why the measurable body at `span` of a file judged as `file` is not sealed, its own reasons before its unit's.
+fn judged(
+    file: &Verdicts,
+    span: (u32, u32),
+    unit: impl FnOnce() -> Option<Unsealing>,
+) -> Option<Unsealing> {
+    match file {
+        Verdicts::Unread => Some(Unsealing::UnitFileUnread),
+        Verdicts::Read(bodies) => match bodies.get(&span) {
+            None => Some(Unsealing::Unlocated),
+            Some(verdict) => verdict.clone().or_else(unit),
+        },
+    }
+}
+
+/// Unseals every body of a file no position could be read of, since a placeholder over one would hide an edit that moves a position after it.
+fn unplaced(evidence: &mut [ItemEvidence], unread: &std::collections::BTreeSet<String>) {
+    for said in evidence {
+        if said.sealed && unread.contains(&format!("$root/{}", said.item.path)) {
+            said.sealed = false;
+            said.unsealed = Some(Unsealing::UnitFileUnread);
+        }
     }
 }
 
@@ -337,27 +381,34 @@ fn slice(bytes: &[u8], start: u32, end: u32) -> Option<&[u8]> {
     }
 }
 
-/// A file as the Rust it holds, or nothing when it is not a whole Rust file, which is what a data file or an included expression is.
-fn parsed(parsing: &crate::parsing::Parsing, bytes: &[u8]) -> Option<(u32, syn::File)> {
+/// What reading one file a unit compiled found in it.
+enum Read {
+    /// A whole Rust file, and the byte its text starts at past any byte order mark and shebang line.
+    File(u32, syn::File),
+    /// Text that is not a whole Rust file, which is what a data file or an included expression is: it declares nothing another file sees.
+    NotRust,
+    /// A file that could not be read at all, refused as too deep or too large to read, which says nothing about what it declares.
+    Unread,
+}
+
+/// What `bytes` hold, read as a whole Rust file.
+fn parsed(parsing: &crate::parsing::Parsing, bytes: &[u8]) -> Read {
     let text = match std::str::from_utf8(bytes) {
         Ok(text) => text,
-        Err(_not_text) => return None,
+        Err(_not_text) => return Read::NotRust,
     };
     let (base, rest) = match crate::syntax::strip_prefix(text) {
         Ok(split) => split,
-        Err(_does_not_fit) => return None,
+        Err(_does_not_fit) => return Read::Unread,
     };
     match parsing.read::<syn::File>(rest) {
-        Ok(file) => Some((base, file)),
-        Err(_not_read) => None,
-    }
-}
-
-/// What `work` answers on a reading thread, or `unread` where no thread could read: the answer a file that does not parse gets, which seals nothing.
-fn reading<T: Send>(unread: T, work: impl FnOnce(&crate::parsing::Parsing) -> T + Send) -> T {
-    match crate::parsing::apart(work) {
-        Ok(answer) => answer,
-        Err(_no_thread) => unread,
+        Ok(file) => Read::File(base, file),
+        Err(crate::parsing::ReadingError::Syntax { .. }) => Read::NotRust,
+        Err(
+            crate::parsing::ReadingError::Exhausted { .. }
+            | crate::parsing::ReadingError::ThreadUnavailable { .. }
+            | crate::parsing::ReadingError::TooDeep { .. },
+        ) => Read::Unread,
     }
 }
 
@@ -369,17 +420,15 @@ fn entries(
 ) -> BTreeMap<String, String> {
     let mut entries: BTreeMap<String, String> = BTreeMap::new();
     for (name, bytes) in &unit.files {
-        let sealed: Vec<(u32, &Item)> = name
-            .strip_prefix("$root/")
-            .map(|path| {
-                items
-                    .iter()
-                    .zip(evidence)
-                    .filter(|((_, reference), said)| reference.path == path && said.sealed)
-                    .map(|((item, reference), _)| (reference.ordinal, *item))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let sealed: Vec<(u32, &Item)> = match name.strip_prefix("$root/") {
+            Some(path) => items
+                .iter()
+                .zip(evidence)
+                .filter(|((_, reference), said)| reference.path == path && said.sealed)
+                .map(|((item, reference), _)| (reference.ordinal, *item))
+                .collect(),
+            None => Vec::new(),
+        };
         entries.insert(
             name.clone(),
             crate::id::digest(&with_placeholders(bytes, name, &sealed)),
@@ -432,68 +481,111 @@ fn with_placeholders(bytes: &[u8], name: &str, sealed: &[(u32, &Item)]) -> Vec<u
         out.extend_from_slice(format!("{{sealed:{name}#{ordinal}}}").as_bytes());
         from = end;
     }
-    out.extend_from_slice(bytes.get(from..).unwrap_or_default());
+    out.extend_from_slice(match bytes.get(from..) {
+        Some(rest) => rest,
+        None => &[],
+    });
     out
 }
 
-/// Where the compiler reads a position in each workspace file a unit read, as one digest per file under its entry name: the start of every body that is not sealed, and outside every cataloged body each item-level macro invocation, each attribute off the list, each documentation code block, and each expression evaluated at compile time that could read a position.
+/// Where the compiler reads a position in the workspace files the units read, and which of them could not be read at all.
+struct Positions {
+    /// One digest per file under its entry name: the start of every body that is not sealed, and outside every cataloged body each item-level macro invocation, each attribute off the list, each documentation code block, and each expression evaluated at compile time that could read a position.
+    read: BTreeMap<String, String>,
+    /// The entry names of the files no position could be read of, whose bodies no placeholder may therefore hide.
+    unread: std::collections::BTreeSet<String>,
+}
+
+/// What reading one file for its positions found.
+enum Placed {
+    /// The digest of where the compiler reads a position in it.
+    Read(String),
+    /// Text that is not a whole Rust file, which holds no body and no position the compiler reads.
+    NotRust,
+    /// A file that could not be read at all.
+    Unread,
+}
+
+/// Where the compiler reads a position in each workspace file a unit read, and which files could not be read to say.
 fn read_positions(
     units: &[UnitSource],
     items: &[(&Item, &ItemRef)],
     evidence: &[ItemEvidence],
-) -> BTreeMap<String, String> {
-    let mut read = BTreeMap::new();
+) -> Positions {
+    let mut positions = Positions {
+        read: BTreeMap::new(),
+        unread: std::collections::BTreeSet::new(),
+    };
     for unit in units {
         for (name, bytes) in &unit.files {
             let Some(path) = name.strip_prefix("$root/") else {
                 continue;
             };
-            if read.contains_key(name) {
+            if positions.read.contains_key(name) || positions.unread.contains(name) {
                 continue;
             }
-            let Some(positions) = reading(None, |parsing| {
-                let (base, file) = parsed(parsing, bytes)?;
-                let in_file: Vec<(&Item, &ItemEvidence)> = items
-                    .iter()
-                    .zip(evidence)
-                    .filter(|((_, reference), _)| reference.path == path)
-                    .map(|((item, _), said)| (*item, said))
-                    .collect();
-                let bodies: Vec<(u32, u32)> = in_file
-                    .iter()
-                    .map(|(item, _)| (item.body.start, item.body.end))
-                    .collect();
-                let mut consumers = Consumers {
-                    base,
-                    bodies: &bodies,
-                    found: Vec::new(),
-                };
-                consumers.visit_file(&file);
-                let mut lines: Vec<String> = consumers
-                    .found
-                    .into_iter()
-                    .map(|(kind, at)| match position(bytes, at) {
-                        Some(Position { line, column }) => format!("{kind} {line}:{column}"),
-                        None => format!("{kind} @{at}"),
-                    })
-                    .collect();
-                for (_, said) in in_file.iter().filter(|(_, said)| !said.sealed) {
-                    lines.push(match said.start {
-                        Some(Position { line, column }) => {
-                            format!("body {} {line}:{column}", said.item.ordinal)
-                        }
-                        None => format!("body {} unplaced", said.item.ordinal),
-                    });
+            let placed = crate::parsing::apart(|parsing| match parsed(parsing, bytes) {
+                Read::File(base, file) => {
+                    Placed::Read(positions_in((base, &file), (path, bytes), items, evidence))
                 }
-                lines.sort();
-                Some(crate::id::digest(lines.join("\n").as_bytes()))
-            }) else {
-                continue;
-            };
-            read.insert(name.clone(), positions);
+                Read::NotRust => Placed::NotRust,
+                Read::Unread => Placed::Unread,
+            });
+            match placed {
+                Ok(Placed::Read(digest)) => {
+                    positions.read.insert(name.clone(), digest);
+                }
+                Ok(Placed::NotRust) => {}
+                Ok(Placed::Unread) | Err(_) => {
+                    positions.unread.insert(name.clone());
+                }
+            }
         }
     }
-    read
+    positions
+}
+
+/// The digest of where the compiler reads a position in `file`, which starts at `base` of the `bytes` of the workspace file at `path`.
+fn positions_in(
+    (base, file): (u32, &syn::File),
+    (path, bytes): (&str, &[u8]),
+    items: &[(&Item, &ItemRef)],
+    evidence: &[ItemEvidence],
+) -> String {
+    let in_file: Vec<(&Item, &ItemEvidence)> = items
+        .iter()
+        .zip(evidence)
+        .filter(|((_, reference), _)| reference.path == path)
+        .map(|((item, _), said)| (*item, said))
+        .collect();
+    let bodies: Vec<(u32, u32)> = in_file
+        .iter()
+        .map(|(item, _)| (item.body.start, item.body.end))
+        .collect();
+    let mut consumers = Consumers {
+        base,
+        bodies: &bodies,
+        found: Vec::new(),
+    };
+    consumers.visit_file(file);
+    let mut lines: Vec<String> = consumers
+        .found
+        .into_iter()
+        .map(|(kind, at)| match position(bytes, at) {
+            Some(Position { line, column }) => format!("{kind} {line}:{column}"),
+            None => format!("{kind} @{at}"),
+        })
+        .collect();
+    for (_, said) in in_file.iter().filter(|(_, said)| !said.sealed) {
+        lines.push(match said.start {
+            Some(Position { line, column }) => {
+                format!("body {} {line}:{column}", said.item.ordinal)
+            }
+            None => format!("body {} unplaced", said.item.ordinal),
+        });
+    }
+    lines.sort();
+    crate::id::digest(lines.join("\n").as_bytes())
 }
 
 /// The walk over one file that finds, outside every cataloged body, what the compiler reads a position of, each by the token the page names for it.
@@ -632,7 +724,7 @@ impl<'ast> Visit<'ast> for Consumers<'_> {
 }
 
 /// Whether a documentation attribute holds a line rustdoc may test as code: one that opens a fence, or one indented as an indented code block is.
-fn documents_code(attribute: &syn::Attribute) -> bool {
+pub(crate) fn documents_code(attribute: &syn::Attribute) -> bool {
     let syn::Meta::NameValue(pair) = &attribute.meta else {
         return true;
     };
@@ -657,7 +749,7 @@ fn documents_code(attribute: &syn::Attribute) -> bool {
 }
 
 /// Whether evaluating `expression` can read a position: it holds a macro invocation or a call.
-fn computes(expression: &syn::Expr) -> bool {
+pub(crate) fn computes(expression: &syn::Expr) -> bool {
     let mut computing = Computing::default();
     computing.visit_expr(expression);
     computing.found
@@ -683,15 +775,22 @@ impl<'ast> Visit<'ast> for Computing {
     }
 }
 
-/// Why no body of this unit is sealed, when a file of it can rename a listed macro.
+/// Why no body of this unit is sealed, when a file of it can rename a listed macro or could not be read to say.
 fn unit_unsealing(unit: &UnitSource) -> Option<Unsealing> {
     unit.files.values().find_map(|bytes| {
-        reading(None, |parsing| {
-            let (_, file) = parsed(parsing, bytes)?;
-            let mut declarations = Declarations::default();
-            declarations.visit_file(&file);
-            declarations.found
-        })
+        let declared = crate::parsing::apart(|parsing| match parsed(parsing, bytes) {
+            Read::File(_, file) => {
+                let mut declarations = Declarations::default();
+                declarations.visit_file(&file);
+                declarations.found
+            }
+            Read::NotRust => None,
+            Read::Unread => Some(Unsealing::UnitFileUnread),
+        });
+        match declared {
+            Ok(found) => found,
+            Err(_no_thread) => Some(Unsealing::UnitFileUnread),
+        }
     })
 }
 
@@ -718,8 +817,14 @@ impl Declarations {
             syn::UseTree::Name(name) => self.imported(prefix, &name.ident.to_string()),
             syn::UseTree::Rename(rename) => self.imported(prefix, &rename.rename.to_string()),
             syn::UseTree::Glob(_) => {
-                let root = prefix.first().map(String::as_str).unwrap_or_default();
-                if !STANDARD_ROOTS.contains(&root) && !LOCAL_ROOTS.contains(&root) {
+                let known = match prefix.first() {
+                    Some(root) => {
+                        STANDARD_ROOTS.contains(&root.as_str())
+                            || LOCAL_ROOTS.contains(&root.as_str())
+                    }
+                    None => false,
+                };
+                if !known {
                     self.found(Unsealing::ForeignGlob {
                         path: prefix.join("::"),
                     });
@@ -734,8 +839,11 @@ impl Declarations {
     }
 
     fn imported(&mut self, prefix: &[String], visible: &str) {
-        let root = prefix.first().map(String::as_str).unwrap_or_default();
-        if SEALABLE_MACROS.contains(&visible) && !STANDARD_ROOTS.contains(&root) {
+        let standard = match prefix.first() {
+            Some(root) => STANDARD_ROOTS.contains(&root.as_str()),
+            None => false,
+        };
+        if SEALABLE_MACROS.contains(&visible) && !standard {
             self.found(Unsealing::Shadowed {
                 name: visible.to_owned(),
             });
@@ -772,20 +880,33 @@ impl<'ast> Visit<'ast> for Declarations {
     }
 }
 
-/// Every function body of one file, by its byte span, and why it is not sealed, or nothing when it is.
-fn file_verdicts(bytes: &[u8]) -> BTreeMap<(u32, u32), Option<Unsealing>> {
-    reading(BTreeMap::new(), |parsing| {
-        let Some((base, file)) = parsed(parsing, bytes) else {
-            return BTreeMap::new();
-        };
-        let mut bodies = Bodies {
-            base,
-            around: attributes(&file.attrs),
-            verdicts: BTreeMap::new(),
-        };
-        bodies.visit_file(&file);
-        bodies.verdicts
-    })
+/// Every function body of one file and why it is not sealed, or that the file could not be read.
+fn file_verdicts(bytes: &[u8]) -> Verdicts {
+    let judged = crate::parsing::apart(|parsing| match parsed(parsing, bytes) {
+        Read::File(base, file) => {
+            let mut bodies = Bodies {
+                base,
+                around: attributes(&file.attrs),
+                verdicts: BTreeMap::new(),
+            };
+            bodies.visit_file(&file);
+            Verdicts::Read(bodies.verdicts)
+        }
+        Read::NotRust => Verdicts::Read(BTreeMap::new()),
+        Read::Unread => Verdicts::Unread,
+    });
+    match judged {
+        Ok(verdicts) => verdicts,
+        Err(_no_thread) => Verdicts::Unread,
+    }
+}
+
+/// What reading one file for its function bodies found.
+enum Verdicts {
+    /// Every function body of the file, by its byte span, and why it is not sealed, or nothing when it is.
+    Read(BTreeMap<(u32, u32), Option<Unsealing>>),
+    /// The file could not be read at all, so none of its bodies can be judged.
+    Unread,
 }
 
 /// The first attribute off the list among `attrs`.
@@ -794,20 +915,19 @@ fn attributes(attrs: &[syn::Attribute]) -> Option<Unsealing> {
 }
 
 /// Why this attribute unseals, or nothing when it is on the list.
-fn attribute(attribute: &syn::Attribute) -> Option<Unsealing> {
+pub(crate) fn attribute(attribute: &syn::Attribute) -> Option<Unsealing> {
     meta_path(attribute.path(), Some(&attribute.meta))
 }
 
 /// Why an attribute with this path unseals, looking inside a `cfg_attr` at what it would apply.
 fn meta_path(path: &syn::Path, meta: Option<&syn::Meta>) -> Option<Unsealing> {
     let name = path_name(path);
-    let first = path
-        .segments
-        .first()
-        .map(|segment| segment.ident.to_string())
-        .unwrap_or_default();
+    let namespaced = match path.segments.first() {
+        Some(first) => TOOL_NAMESPACES.contains(&first.ident.to_string().as_str()),
+        None => false,
+    };
     let listed = path.segments.len() == 1 && SEALABLE_ATTRIBUTES.contains(&name.as_str());
-    let tool = path.segments.len() > 1 && TOOL_NAMESPACES.contains(&first.as_str());
+    let tool = path.segments.len() > 1 && namespaced;
     if !listed && !tool {
         return Some(Unsealing::Attribute { name });
     }
@@ -1041,13 +1161,16 @@ impl<'ast> Visit<'ast> for Body {
 }
 
 /// Why invoking the macro at `path` with `tokens` unseals, or nothing when it and every macro inside its arguments are on the list.
-fn invoked(path: &syn::Path, tokens: &TokenStream) -> Option<Unsealing> {
+pub(crate) fn invoked(path: &syn::Path, tokens: &TokenStream) -> Option<Unsealing> {
     let segments: Vec<String> = path
         .segments
         .iter()
         .map(|segment| segment.ident.to_string())
         .collect();
-    sealable(&segments).map_or_else(|| scanned(tokens.clone()), Some)
+    match sealable(&segments) {
+        Some(unsealing) => Some(unsealing),
+        None => scanned(tokens.clone()),
+    }
 }
 
 /// Why a macro with these path segments unseals, or nothing when it names a listed standard macro.

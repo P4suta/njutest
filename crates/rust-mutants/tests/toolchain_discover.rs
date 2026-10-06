@@ -11,6 +11,7 @@
 
 use std::path::{Path, PathBuf};
 
+use njutest_devkit::fixture::Fixture;
 use njutest_devkit::result::{ResultState::Refused, result_state};
 use rust_mutants::cargo::{
     CompileKind, CompileOptions, Driver, LocateOptions, Metadata, MetadataOptions, Toolchain,
@@ -19,7 +20,7 @@ use rust_mutants::cargo::{
 use rust_mutants::discover::{DiscoverError, DiscoverOptions, Discovery, Input, discover};
 use rust_mutants::glob::Pattern;
 use rust_mutants::rule::{Registry, Tier};
-use rust_mutants::runner::Cancel;
+use rust_mutants::runner::{Cancel, Watched};
 use rust_mutants::syntax::{Selection, SkipReason};
 use rust_mutants::trace::{DiscoverFileRecord, ExecRecord, MemorySink, Payload, Recorder, Sink};
 
@@ -63,19 +64,35 @@ const fn relevant_payload(payload: &Payload) -> RelevantPayload<'_> {
         | Payload::Identical { .. }
         | Payload::Evidence { .. }
         | Payload::MutantExec { .. }
+        | Payload::SealedControl { .. }
+        | Payload::SealedExec { .. }
         | Payload::Note { .. }
         | Payload::RunEnd { .. } => RelevantPayload::Other,
     }
 }
 
 fn prepare(name: &str) -> Prepared {
-    let dir = njutest_devkit::paths::fixtures_dir().join(name);
+    prepare_at(njutest_devkit::paths::fixtures_dir().join(name))
+}
+
+/// The project at `dir`, located, read and checked as discovery reads it.
+fn prepare_at(dir: PathBuf) -> Prepared {
     let options = LocateOptions {
         cargo: Some(njutest_devkit::paths::cargo_binary()),
+        env: Some(
+            njutest_devkit::paths::environment_for_a_run()
+                .into_iter()
+                .collect(),
+        ),
         ..LocateOptions::default()
     };
     let cancel = Cancel::new();
-    let toolchain = Toolchain::locate(&options, &dir, &cancel).expect("locate");
+    let toolchain = Toolchain::locate(
+        &options,
+        &dir,
+        &Watched::new(&cancel, &Recorder::disabled()),
+    )
+    .expect("locate");
     let trace = Recorder::disabled();
     let driver = Driver {
         toolchain: &toolchain,
@@ -100,10 +117,7 @@ fn prepare(name: &str) -> Prepared {
         &CompileOptions {
             kind: CompileKind::Check,
             packages: Vec::new(),
-            target_dir: Some(rust_mutants::cargo::BuildDir::new(
-                target.path().to_path_buf(),
-                Vec::new(),
-            )),
+            target_dir: rust_mutants::cargo::BuildDir::new(target.path().to_path_buf(), Vec::new()),
             locked: true,
             offline: true,
             timeout: None,
@@ -112,7 +126,11 @@ fn prepare(name: &str) -> Prepared {
         },
     )
     .expect("check");
-    assert!(checked.success, "the fixture compiles");
+    assert_eq!(
+        checked.completion(),
+        rust_mutants::cargo::Completion::Built,
+        "the fixture compiles"
+    );
     Prepared {
         dir,
         metadata,
@@ -142,6 +160,137 @@ fn input(prepared: &Prepared) -> Input<'_> {
 
 fn run(prepared: &Prepared, options: &DiscoverOptions<'_>, trace: &Recorder) -> Discovery {
     discover(&input(prepared), options, trace).expect("discover")
+}
+
+#[test]
+fn const_bodies_stay_const_when_an_unvalidated_source_can_evaluate_them() {
+    for outside in [
+        "/// ```\n/// const VALUE: u32 = fixture_two_bodies::value(1);\n/// ```\npub struct Example;",
+        "#[cfg(any())]\nconst VALUE: u32 = super::value(1);",
+        "#[cfg(any())]\npub struct Array { value: [u8; super::value(1) as usize] }",
+        "pub enum Enum { #[cfg(any())] Value = super::value(1) as isize }",
+        "#[cfg(any())]\npub fn block() { let _value = const { super::value(1) }; }",
+        "#[cfg(any())]\npub fn repeat() { let _values = [0; super::value(1) as usize]; }",
+        "#[cfg(any())]\nconst fn carrier() -> u32 { super::value(1) }",
+        "#[cfg(any())]\nmod unavailable;",
+        "macro_rules! later { () => { const VALUE: u32 = super::value(1); } }\n#[cfg(any())]\nlater!();",
+        "#[cfg_attr(any(), doc = \"```\\nconst VALUE: u32 = fixture_two_bodies::value(1);\\n```\")]\npub struct Example;",
+        "macro_rules! documented { () => { #[doc = \"```\\nconst VALUE: u32 = fixture_two_bodies::value(1);\\n```\"] pub struct Example; } }\ndocumented!();",
+        "use crate::outside as std;",
+    ] {
+        let fixture = Fixture::copy("fixture-two-bodies");
+        std::fs::write(
+            fixture.root().join("src/lib.rs"),
+            "pub mod outside;\npub const fn value(n: u32) -> u32 { n + 2 }\npub fn ordinary(n: u32) -> u32 { n + 3 }\n",
+        )
+        .expect("the bodies");
+        std::fs::write(fixture.root().join("src/outside.rs"), outside)
+            .expect("a use the validation build cannot decide");
+        let prepared = prepare_at(fixture.root().to_owned());
+        let proposed = rust_mutants::syntax::discover_file(
+            "src/lib.rs",
+            &std::fs::read(fixture.root().join("src/lib.rs")).expect("the original bodies"),
+            &options().selection,
+        )
+        .expect("the per-file candidates");
+        let hidden = proposed
+            .candidates
+            .iter()
+            .filter(|candidate| candidate.hint.const_fn.is_some())
+            .count();
+        let discovered = run(&prepared, &options(), &Recorder::disabled());
+        assert!(
+            discovered
+                .candidates
+                .iter()
+                .all(|candidate| candidate.found.hint.const_fn.is_none()),
+            "a guard must not take const from a function unvalidated source can evaluate: {outside}"
+        );
+        assert!(
+            discovered
+                .candidates
+                .iter()
+                .any(|candidate| candidate.found.item == "ordinary"),
+            "ordinary runtime bodies remain mutable"
+        );
+        let skip = discovered
+            .skips
+            .iter()
+            .find(|skip| skip.reason.name() == "unvalidated-const-use")
+            .expect("the refusal is counted under its own stated reason");
+        assert_eq!(
+            usize::try_from(skip.count).expect("the count fits"),
+            hidden,
+            "every hidden candidate is counted, including multiple edits at one position"
+        );
+    }
+}
+
+#[test]
+fn an_unselected_dependent_member_s_unvalidated_use_keeps_its_dependency_const() {
+    let fixture = Fixture::copy("fixture-two-bodies");
+    std::fs::create_dir_all(fixture.root().join("consumer/src")).expect("the consumer");
+    std::fs::write(
+        fixture.root().join("Cargo.toml"),
+        "[package]\nname = \"fixture-two-bodies\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\
+         [workspace]\nmembers = [\"consumer\"]\n",
+    )
+    .expect("the workspace");
+    std::fs::write(
+        fixture.root().join("consumer/Cargo.toml"),
+        "[package]\nname = \"consumer\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\
+         [dependencies]\nfixture-two-bodies = { path = \"..\" }\n",
+    )
+    .expect("the dependent member");
+    std::fs::write(
+        fixture.root().join("Cargo.lock"),
+        "version = 4\n[[package]]\nname = \"consumer\"\nversion = \"0.1.0\"\n\
+         dependencies = [\"fixture-two-bodies\"]\n\
+         [[package]]\nname = \"fixture-two-bodies\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("the closed dependency graph");
+    std::fs::write(
+        fixture.root().join("src/lib.rs"),
+        "pub const fn value(n: u32) -> u32 { n + 2 }\npub fn ordinary(n: u32) -> u32 { n + 3 }\n",
+    )
+    .expect("the dependency's bodies");
+    std::fs::write(
+        fixture.root().join("consumer/src/lib.rs"),
+        "pub use fixture_two_bodies::value as renamed;\n\
+         /// ```\n/// const VALUE: u32 = consumer::renamed(1);\n/// ```\n\
+         pub struct Example;\n",
+    )
+    .expect("a documented use through an alias in another member");
+    let prepared = prepare_at(fixture.root().to_owned());
+    let mut selected = options();
+    selected.packages = vec!["fixture-two-bodies".to_owned()];
+    let discovered = run(&prepared, &selected, &Recorder::disabled());
+    assert!(
+        discovered
+            .candidates
+            .iter()
+            .all(|candidate| candidate.found.hint.const_fn.is_none()),
+        "leaving the consumer out of mutation cannot hide its early use"
+    );
+    assert!(
+        discovered
+            .candidates
+            .iter()
+            .any(|candidate| candidate.found.item == "ordinary"),
+        "ordinary runtime bodies remain mutable"
+    );
+    assert!(
+        discovered.decisions.iter().any(|decision| {
+            decision
+                .skip
+                .is_some_and(|skip| skip.name() == "unvalidated-const-use")
+                && decision
+                    .note
+                    .as_deref()
+                    .is_some_and(|note| note.contains("consumer/src/lib.rs"))
+        }),
+        "the refusal names the responsible source in the unselected member"
+    );
 }
 
 /// `(path, package, candidates, "reason:count reason:count")` per file.
@@ -417,6 +566,99 @@ fn selecting_packages_leaves_the_others_out_entirely() {
 }
 
 #[test]
+fn every_file_a_test_program_compiles_records_its_entry_whatever_the_selection_left_out() {
+    let prepared = prepare("fixture-workspace");
+    let discovery = run(&prepared, &options(), &Recorder::disabled());
+    assert_eq!(
+        discovery.entered_only,
+        [(
+            "crates/app/tests/cli.rs".to_owned(),
+            "fixture-app".to_owned()
+        )]
+        .into(),
+        "an integration test holds no mutation and every body of it runs, so it is \
+         instrumented for entry without a report naming it"
+    );
+    let mut opts = options();
+    opts.exclude = vec![Pattern::compile("crates/app/**").expect("pattern")];
+    let discovery = run(&prepared, &opts, &Recorder::disabled());
+    assert!(
+        discovery.marked_only.contains("crates/app/src/main.rs"),
+        "a file the configuration leaves out is still compiled into a test program and run: {:?}",
+        discovery.marked_only
+    );
+    let mut opts = options();
+    opts.packages = vec!["fixture-core".to_owned()];
+    let discovery = run(&prepared, &opts, &Recorder::disabled());
+    assert_eq!(
+        discovery
+            .entered_only
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["crates/app/src/main.rs", "crates/app/tests/cli.rs"],
+        "and so is every file of a member the selection left out"
+    );
+    let prepared = prepare("fixture-forbid");
+    let discovery = run(&prepared, &options(), &Recorder::disabled());
+    assert!(
+        !discovery.marked_only.contains("forbids/src/lib.rs")
+            && !discovery.entered_only.contains_key("forbids/src/lib.rs"),
+        "a crate that forbids what the runtime allows cannot carry it, so nothing of it is \
+         instrumented: {:?} {:?}",
+        discovery.marked_only,
+        discovery.entered_only
+    );
+}
+
+#[test]
+fn a_file_a_crate_that_cannot_carry_the_runtime_compiles_is_never_instrumented_for_entry_alone() {
+    let project = tempfile::Builder::new()
+        .prefix("rust-mutants-barred-")
+        .tempdir()
+        .expect("tempdir");
+    let root = project.path().join("barred");
+    for (path, text) in [
+        (
+            "Cargo.toml",
+            "[package]\nname = \"barred\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n\n[workspace]\n",
+        ),
+        (
+            "Cargo.lock",
+            "version = 4\n\n[[package]]\nname = \"barred\"\nversion = \"0.1.0\"\n",
+        ),
+        (
+            "src/lib.rs",
+            "#[path = \"util.rs\"]\nmod util;\npub use util::twice;\n",
+        ),
+        (
+            "src/util.rs",
+            "pub fn twice(n: u32) -> u32 {\n    n * 2\n}\n",
+        ),
+        (
+            "tests/strict.rs",
+            "#![forbid(dead_code)]\n#[path = \"../src/util.rs\"]\nmod util;\n#[test]\nfn four() {\n    assert_eq!(util::twice(2), 4);\n}\n",
+        ),
+    ] {
+        let at = root.join(path);
+        std::fs::create_dir_all(at.parent().expect("a directory")).expect("the directory");
+        std::fs::write(at, text).expect("the file");
+    }
+    let prepared = prepare_at(root);
+    let mut opts = options();
+    opts.exclude = vec![Pattern::compile("src/util.rs").expect("pattern")];
+    let discovery = run(&prepared, &opts, &Recorder::disabled());
+    assert!(
+        !discovery.marked_only.contains("src/util.rs")
+            && !discovery.entered_only.contains_key("tests/strict.rs"),
+        "a test crate that forbids what the runtime allows compiles the excluded file too, so \
+         instrumenting it for entry alone would stop that crate compiling: {:?} {:?}",
+        discovery.marked_only,
+        discovery.entered_only
+    );
+}
+
+#[test]
 fn the_selection_limits_the_rules_across_the_workspace() {
     let prepared = prepare("fixture-workspace");
     let mut opts = options();
@@ -466,6 +708,44 @@ fn discovery_is_deterministic_and_traced_per_file() {
 }
 
 #[test]
+fn a_whole_file_skip_with_no_candidates_keeps_its_reason_without_a_zero_tally() {
+    let fixture = Fixture::copy("fixture-simple");
+    fixture.write("src/lib.rs", b"pub struct Marker;\n");
+    fixture.write("tests/parity.rs", b"pub struct TestMarker;\n");
+    let prepared = prepare_at(fixture.root().to_path_buf());
+    let mut opts = options();
+    opts.exclude = vec![Pattern::compile("**/*.rs").expect("pattern")];
+    let recorder = Recorder::wall(
+        Sink::Memory(MemorySink::unbounded()),
+        rust_mutants::testkit::trace::standalone_context(),
+    );
+    let discovery = run(&prepared, &opts, &recorder);
+    recorder
+        .run_end(rust_mutants::trace::RunOutcome::Completed, None)
+        .expect("trace closes");
+    assert_eq!(discovery.files.len(), 1);
+    assert_eq!(discovery.files[0].whole_file, Some(SkipReason::Excluded));
+    for file in &discovery.files {
+        assert_eq!(file.candidates, 0);
+        assert!(file.skips.is_empty(), "no candidate was hidden: {file:?}");
+    }
+    assert!(discovery.skips.is_empty());
+    let events = recorder.events();
+    let files: Vec<&DiscoverFileRecord> = events
+        .iter()
+        .filter_map(|event| match relevant_payload(&event.payload) {
+            RelevantPayload::DiscoverFile(discover) => Some(discover),
+            RelevantPayload::Exec(_) | RelevantPayload::Other => None,
+        })
+        .collect();
+    assert_eq!(files.len(), 1);
+    for file in files {
+        assert_eq!(file.candidates, 0);
+        assert!(file.skips.is_empty());
+    }
+}
+
+#[test]
 fn a_unit_source_outside_the_root_is_a_whole_file_skip_not_an_error() {
     let prepared = prepare("fixture-simple");
     let mut units = prepared.checked.units.clone();
@@ -503,10 +783,20 @@ fn the_check_records_an_exec_event_and_keeps_the_messages() {
     let dir = njutest_devkit::paths::fixtures_dir().join("fixture-simple");
     let options = LocateOptions {
         cargo: Some(njutest_devkit::paths::cargo_binary()),
+        env: Some(
+            njutest_devkit::paths::environment_for_a_run()
+                .into_iter()
+                .collect(),
+        ),
         ..LocateOptions::default()
     };
     let cancel = Cancel::new();
-    let toolchain = Toolchain::locate(&options, &dir, &cancel).expect("locate");
+    let toolchain = Toolchain::locate(
+        &options,
+        &dir,
+        &Watched::new(&cancel, &Recorder::disabled()),
+    )
+    .expect("locate");
     let recorder = Recorder::wall(
         Sink::Memory(MemorySink::unbounded()),
         rust_mutants::testkit::trace::standalone_context(),
@@ -522,10 +812,7 @@ fn the_check_records_an_exec_event_and_keeps_the_messages() {
         &CompileOptions {
             kind: CompileKind::Check,
             packages: Vec::new(),
-            target_dir: Some(rust_mutants::cargo::BuildDir::new(
-                target.path().to_path_buf(),
-                Vec::new(),
-            )),
+            target_dir: rust_mutants::cargo::BuildDir::new(target.path().to_path_buf(), Vec::new()),
             locked: true,
             offline: true,
             timeout: None,
@@ -534,11 +821,12 @@ fn the_check_records_an_exec_event_and_keeps_the_messages() {
         },
     )
     .expect("check");
-    assert!(checked.success);
+    assert_eq!(checked.completion(), rust_mutants::cargo::Completion::Built);
     assert_eq!(checked.units.len(), 3);
     assert!(checked.messages.iter().any(|m| matches!(
         m,
-        rust_mutants::cargo::Message::BuildFinished { success: true }
+        rust_mutants::cargo::Message::BuildFinished(finished)
+            if *finished == rust_mutants::cargo::Finished::new(true)
     )));
     let execs: Vec<Vec<String>> = recorder
         .events()

@@ -18,7 +18,14 @@
 version = 1
 
 [project]
-packages = ["rust-mutants", "rust-mutants-cli", "njutest", "xtask"]
+packages = [
+  "rust-mutants",
+  "rust-mutants-decision",
+  "rust-mutants-adapt",
+  "rust-mutants-cli",
+  "njutest",
+  "xtask",
+]
 
 [mutation]
 tier = "all"
@@ -100,7 +107,7 @@ path = "crates/rust-mutants/src/prove.rs"
 item = "checked_until_compiled"
 rule = "question-to-unwrap"
 original = "?"
-line = 246
+line = 249
 reason = "the restore on the line above runs first and reports the same condition, so this one is reached only when a write failed and putting it back did not, which no deterministic test can arrange; a fail-open the suite cannot reach rather than an equivalence, and a_source_the_pass_cannot_write_stops_it_rather_than_letting_it_vouch holds the contract"
 
 # What the rewrite refuses when it cannot be applied, which it never is.
@@ -117,7 +124,7 @@ path = "crates/rust-mutants/src/instrument/witness.rs"
 item = "apply_plan"
 rule = "question-to-unwrap"
 original = "?"
-line = 194
+line = 189
 reason = "plan emits one rewrite per span, so the splices apply is handed never overlap and it never fails; two_claims_over_one_span_are_one_rewrite_rather_than_two holds that grouping, and this is an equivalence under it rather than an unreachable fail-open"
 
 # Which of the mutations a locator names is asked where its line has moved to.
@@ -136,21 +143,16 @@ rule = "first-to-last"
 original = "first"
 reason = "a locator with no count names one mutation and one with a count was narrowed by the line it carries, so the first and the last of what it names are written on the same line; a_locator_that_states_a_count_names_that_many_and_refuses_any_other_number and a_mutant_is_located_by_its_locator_and_a_moved_line_is_reported_not_guessed hold both halves"
 
-# Writing a checkpoint turns the state into text and then writes it, and the
-# first of those cannot fail: `State` is strings, numbers, and vectors of the
-# same, and `serde_json` refuses only a map whose keys are not strings or a
-# `Serialize` that returns an error of its own. Neither is reachable from this
-# type, and the type is what the invariant is about. The round trip is held by
-# `checkpoint.rs::what_an_interrupted_run_saved_is_what_the_next_one_reads`,
-# which writes a state and reads the same one back; if the type ever grows a
-# field that can refuse, that test is where it shows.
+# Writing a checkpoint turns the state into text and then writes it, and the first of those cannot fail: `State` is strings, numbers, enums of strings, and vectors of the same, the sealed executions each kill rests on among them, and `serde_json` refuses only a map whose keys are not strings or a `Serialize` that returns an error of its own.
+# Neither is reachable from this type, and the type is what the invariant is about.
+# The round trip is held by `checkpoint.rs::what_an_interrupted_run_saved_is_what_the_next_one_reads`, which writes a state and reads the same one back; if the type ever grows a field that can refuse, that test is where it shows.
 [[mutation.expect]]
 path = "crates/njutest/src/checkpoint.rs"
 item = "write"
 rule = "question-to-unwrap"
 original = "?"
-line = 336
-reason = "serialising a State cannot fail: it is strings, numbers and vectors of them, and what_an_interrupted_run_saved_is_what_the_next_one_reads holds the round trip that would show a field which can refuse"
+line = 348
+reason = "serialising a State cannot fail: it is strings, numbers, enums of strings and vectors of them, the sealed executions a kill rests on included, and what_an_interrupted_run_saved_is_what_the_next_one_reads holds the round trip that would show a field which can refuse"
 
 # `RunKind` derives `Default` with `#[default]` on `Full`, because a run
 # nobody narrowed looked at everything. So the fallback and the default are the
@@ -184,21 +186,18 @@ path = "crates/rust-mutants/src/run.rs"
 item = "run"
 rule = "eq-to-neq"
 original = "=="
-line = 1102
+line = 1224
 reason = "serially and the pool are two ways of doing one thing and a catalog answers the same either way; one_job_and_several_judge_a_catalog_the_same_way holds that by running one catalog both ways, and this is an equivalence under it rather than a fail-open the suite cannot reach"
 
-# A `Record` is strings and an enum of strings, so `serde_json::to_string` has
-# no failure to take: the `?` and an unwrap answer alike because the Err arm
-# does not exist for this type. `evidence_store.rs::a_record_says_what_shape_it_is_and_what_established_it`
-# renders both shapes of `Outcome` and reads them back, which is the invariant
-# this rests on.
+# A `Record` is strings, enums of strings, and the evidence it rests on, which is the same, so `serde_json::to_string` has no failure to take: the `?` and an unwrap answer alike because the Err arm does not exist for this type.
+# `evidence_store.rs::a_record_says_what_shape_it_is_and_what_established_it` renders both shapes of `Outcome` and reads them back, which is the invariant this rests on.
 [[mutation.expect]]
 path = "crates/njutest/src/evidence/store.rs"
 item = "write"
 rule = "question-to-unwrap"
 original = "?"
-line = 311
-reason = "a Record is strings and an enum of strings, so rendering it as JSON has no failure arm; a_record_says_what_shape_it_is_and_what_established_it renders both of its shapes and reads them back"
+line = 319
+reason = "a Record is strings, enums of strings and the evidence it rests on, which is the same, so rendering it as JSON has no failure arm; a_record_says_what_shape_it_is_and_what_established_it renders both of its shapes and reads them back"
 
 # The mutation phase's `Phase` is the third of the same design and the same
 # acceptance. `crates/njutest/tests/trace.rs` drops a phase without calling
@@ -213,16 +212,15 @@ reason = "the runner's Phase ends its phase on Drop, so the explicit end at the 
 
 # How much of a command fits on the line, which is the same line either way.
 #
-# The loop stops when the line has reached the width, and whatever it did not
-# show is then cut to exactly that width and marked. Letting one more argument
-# on before cutting makes the line longer and the first `COMMAND_WIDTH`
-# characters of it the same, and the mark goes on either way — because
-# something was left over in one case and the characters ran over in the other.
-# `trace_command.rs::a_command_is_shown_by_its_own_name_and_cut_where_it_stops_being_readable`
-# holds the width, the mark, and the beginning that survives the cut.
+# The loop stops when the line has reached the width, and whatever it did not show is then cut to exactly that width and marked.
+# Letting one more argument on before cutting makes the line longer and the first `COMMAND_WIDTH` characters of it the same, and the mark goes on either way — because something was left over in one case and the characters ran over in the other.
+# `trace_command.rs::a_command_is_shown_by_its_own_name_and_cut_where_it_stops_being_readable` holds the width, the mark, and the beginning that survives the cut.
 [[mutation.expect]]
 path = "crates/njutest/src/app/trace.rs"
 item = "said"
 rule = "lt-to-le"
 original = "<"
 reason = "the line is cut to the width and marked whichever side of it the loop stopped on, so both render the same line; a_command_is_shown_by_its_own_name_and_cut_where_it_stops_being_readable holds the width, the mark and the beginning"
+
+# Whether the executions measured, as the first detection writes it.
+#

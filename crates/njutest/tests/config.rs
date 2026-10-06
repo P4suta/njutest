@@ -47,9 +47,10 @@ fn the_defaults_are_the_numbers_the_contract_states() {
 #[test]
 fn the_defaults_ask_for_nothing_a_run_has_to_be_told() {
     let config = Config::default();
-    let empty: [(&str, bool); 9] = [
+    let empty: [(&str, bool); 10] = [
         ("packages", config.project.packages.is_empty()),
         ("exclude", config.project.exclude.is_empty()),
+        ("allow_outside", config.project.allow_outside.is_empty()),
         ("features", config.execution.features.is_empty()),
         (
             "test_binary_args",
@@ -394,7 +395,10 @@ ticket = "QA-123"
     assert_eq!(config.cache.max_bytes, 1024);
     assert_eq!(config.cache.ttl, Duration::from_hours(24));
     assert_eq!(config.reports.keep, 5);
-    assert_eq!(config.soundness.sanitizers, ["thread"]);
+    assert_eq!(
+        config.soundness.sanitizers,
+        [njutest::assure::sanitize::Sanitizer::Thread]
+    );
 
     assert_documented_extras(&config);
 }
@@ -608,6 +612,7 @@ fn a_directory_a_command_names_is_resolved_against_where_the_command_was_told_it
     use rust_mutants::runner::Cancel;
 
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: rust_mutants::vars::Variables::empty(),
         working_directory: PathBuf::from("/somewhere/a/caller/named"),
         temp_directory: PathBuf::from("/tmp"),
@@ -685,4 +690,35 @@ fn a_knob_is_named_from_the_closed_set_and_a_name_outside_it_is_refused_by_that_
         "a knob this release cannot put is a mistake in the file, not a knob quietly left off: \
          {refused}"
     );
+}
+
+#[test]
+fn a_sanitizer_is_named_once_from_the_closed_set_and_anything_else_is_refused_by_its_name() {
+    let unknown = expect_error("[soundness]\nsanitizers = [\"undefined\"]\n");
+    assert_eq!(unknown.kind(), ConfigErrorKind::Unparsable);
+    assert!(
+        unknown.to_string().contains("undefined"),
+        "a sanitizer name rustc does not know, as clang's `undefined` is, goes straight into \
+         `-Zsanitizer=`, where the compiler refuses it and the run reads that refusal as a test \
+         that fails under the sanitizer: {unknown}"
+    );
+    let twice = expect_error("[soundness]\nsanitizers = [\"address\", \"address\"]\n");
+    assert_eq!(twice.kind(), ConfigErrorKind::Invalid);
+    assert!(
+        twice.to_string().contains("address"),
+        "a sanitizer named twice is asked for twice, and two runs of one question are two \
+         answers to reconcile: {twice}"
+    );
+    for sanitizer in njutest::assure::sanitize::Sanitizer::ALL {
+        assert_eq!(
+            expect_ok(&format!(
+                "[soundness]\nsanitizers = [\"{}\"]\n",
+                sanitizer.name()
+            ))
+            .soundness
+            .sanitizers,
+            [sanitizer],
+            "the name the configuration spells is the one `-Zsanitizer=` and a report spell"
+        );
+    }
 }

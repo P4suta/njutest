@@ -8,8 +8,11 @@
 set -uo pipefail
 
 status=0
-ok()   { printf '  \033[32m✓\033[0m %s\n' "$1"; }
-bad()  { printf '  \033[31m✗\033[0m %s\n' "$1"; status=1; }
+ok() { printf '  \033[32m✓\033[0m %s\n' "$1"; }
+bad() {
+    printf '  \033[31m✗\033[0m %s\n' "$1"
+    status=1
+}
 warn() { printf '  \033[33m!\033[0m %s\n' "$1"; }
 
 pinned_channel=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
@@ -41,10 +44,14 @@ fi
 
 echo "cargo tools"
 for tool in cargo-nextest cargo-deny cargo-llvm-cov cargo-audit cargo-mutants cargo-fuzz; do
-    if command -v "$tool" >/dev/null 2>&1; then
-        ok "$tool"
+    pinned=$(mise which "$tool" 2>/dev/null) || pinned=""
+    on_path=$(command -v "$tool" 2>/dev/null) || on_path=""
+    if [ -z "$pinned" ]; then
+        bad "$tool: mise does not resolve it here (run inside the project, mise install)"
+    elif [ -n "$on_path" ] && [ "$on_path" != "$pinned" ]; then
+        bad "$tool: the path answers with $on_path before mise's $pinned ('cargo xtask tools' refuses this)"
     else
-        warn "$tool not found (mise install, or optional for fuzz/miri)"
+        ok "$tool ($pinned)"
     fi
 done
 # rustup puts a `cargo-miri` shim on the path whether or not the component is

@@ -4,91 +4,12 @@
 //! Whether an operator swap is the tree it names: the same operands, grouped as they were, joined by the new operator.
 
 use crate::parsing::{Parsing, ReadingError};
+use proc_macro2::{Punct, Spacing, TokenStream, TokenTree};
+pub(super) use rust_mutants_adapt::swap::{binding, regroups};
+pub(super) use rust_mutants_decision::swap::Side;
 use syn::spanned::Spanned as _;
 use syn::visit_mut::VisitMut;
 use syn::{BinOp, Expr};
-
-/// How tightly a binary operator binds, loosest first, in the order the Rust reference gives.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) enum Binding {
-    /// `=` and every compound assignment, which associate to the right.
-    Assign,
-    /// `||`.
-    Or,
-    /// `&&`.
-    And,
-    /// `==`, `!=`, `<`, `<=`, `>`, `>=`, which do not associate at all.
-    Compare,
-    /// `|`.
-    BitOr,
-    /// `^`.
-    BitXor,
-    /// `&`.
-    BitAnd,
-    /// `<<` and `>>`.
-    Shift,
-    /// `+` and `-`.
-    Additive,
-    /// `*`, `/` and `%`.
-    Multiplicative,
-}
-
-impl Binding {
-    /// How tightly `op` binds, or nothing for an operator this release does not know.
-    pub(super) const fn of(op: &BinOp) -> Option<Self> {
-        Some(match op {
-            BinOp::Mul(_) | BinOp::Div(_) | BinOp::Rem(_) => Self::Multiplicative,
-            BinOp::Add(_) | BinOp::Sub(_) => Self::Additive,
-            BinOp::Shl(_) | BinOp::Shr(_) => Self::Shift,
-            BinOp::BitAnd(_) => Self::BitAnd,
-            BinOp::BitXor(_) => Self::BitXor,
-            BinOp::BitOr(_) => Self::BitOr,
-            BinOp::Eq(_)
-            | BinOp::Ne(_)
-            | BinOp::Lt(_)
-            | BinOp::Le(_)
-            | BinOp::Gt(_)
-            | BinOp::Ge(_) => Self::Compare,
-            BinOp::And(_) => Self::And,
-            BinOp::Or(_) => Self::Or,
-            BinOp::AddAssign(_)
-            | BinOp::SubAssign(_)
-            | BinOp::MulAssign(_)
-            | BinOp::DivAssign(_)
-            | BinOp::RemAssign(_)
-            | BinOp::BitXorAssign(_)
-            | BinOp::BitAndAssign(_)
-            | BinOp::BitOrAssign(_)
-            | BinOp::ShlAssign(_)
-            | BinOp::ShrAssign(_) => Self::Assign,
-            _ => return None,
-        })
-    }
-}
-
-/// Which side of its operator an operand stands on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Side {
-    /// Before the operator.
-    Left,
-    /// After it.
-    Right,
-}
-
-/// Whether `operand`, written as it is on `side` of an operator binding as `new` does, would be read as a different operand.
-/// Only an operator between operands can be regrouped: every other kind of expression binds tighter than any binary operator or had to be parenthesized to stand there at all.
-pub(super) fn regroups(operand: &Expr, side: Side, new: Binding) -> bool {
-    let Expr::Binary(inner) = operand else {
-        return false;
-    };
-    let Some(inner) = Binding::of(&inner.op) else {
-        return true;
-    };
-    match side {
-        Side::Left => inner < new || (inner == new && new == Binding::Compare),
-        Side::Right => inner <= new,
-    }
-}
 
 /// Takes every parenthesis and invisible group out of what it visits.
 struct Ungroup;
@@ -138,21 +59,33 @@ enum Unit {
 }
 
 impl Unit {
-    /// `text` read as an item of this unit's kind, or nothing where it does not read as one whole.
+    /// `tokens`, lexed by `parsing`, read as an item of this unit's kind, or nothing where they do not read as one whole.
     ///
     /// # Errors
-    /// The text could not be read at all, which is not an answer about it.
-    fn read_as(&self, parsing: &Parsing, text: &str) -> Result<Option<Self>, ReadingError> {
-        let read = match self {
-            Self::Free(_) => parsing.read(text).map(Self::Free),
-            Self::OfImpl(_) => parsing.read(text).map(Self::OfImpl),
-            Self::OfTrait(_) => parsing.read(text).map(Self::OfTrait),
-            Self::Foreign(_) => parsing.read(text).map(Self::Foreign),
-        };
+    /// The tokens could not be read at all, which is not an answer about them.
+    fn read_tokens_as(
+        &self,
+        parsing: &Parsing,
+        tokens: TokenStream,
+    ) -> Result<Option<Self>, ReadingError> {
+        Self::whole(match self {
+            Self::Free(_) => parsing.read_tokens(tokens).map(Self::Free),
+            Self::OfImpl(_) => parsing.read_tokens(tokens).map(Self::OfImpl),
+            Self::OfTrait(_) => parsing.read_tokens(tokens).map(Self::OfTrait),
+            Self::Foreign(_) => parsing.read_tokens(tokens).map(Self::Foreign),
+        })
+    }
+
+    /// A unit read whole, nothing where what was read is not one, and the failure back where it could not be read at all.
+    fn whole(read: Result<Self, ReadingError>) -> Result<Option<Self>, ReadingError> {
         match read {
             Ok(unit) => Ok(Some(unit)),
             Err(ReadingError::Syntax { .. }) => Ok(None),
-            Err(unread) => Err(unread),
+            Err(
+                unread @ (ReadingError::Exhausted { .. }
+                | ReadingError::ThreadUnavailable { .. }
+                | ReadingError::TooDeep { .. }),
+            ) => Err(unread),
         }
     }
 
@@ -184,6 +117,35 @@ impl Unit {
         swap.found.then_some(swapped)
     }
 
+    /// The statement that holds `edit` in the innermost block of this unit that does, with the bytes of that block's braces, where the statement read alone reads as its block reads it: it ends with a `;`, or it ends the block.
+    fn statement_holding(
+        &self,
+        edit: &std::ops::Range<usize>,
+    ) -> Option<(std::ops::Range<usize>, &syn::Stmt)> {
+        let mut innermost = Innermost {
+            edit: edit.clone(),
+            found: None,
+        };
+        match self {
+            Self::Free(item) => syn::visit::Visit::visit_item(&mut innermost, item),
+            Self::OfImpl(item) => syn::visit::Visit::visit_impl_item(&mut innermost, item),
+            Self::OfTrait(item) => syn::visit::Visit::visit_trait_item(&mut innermost, item),
+            Self::Foreign(item) => syn::visit::Visit::visit_foreign_item(&mut innermost, item),
+        }
+        let (block, at) = innermost.found?;
+        let statement = block.stmts.get(at)?;
+        if statement.span().byte_range().start > edit.start {
+            return None;
+        }
+        let settled = match statement {
+            syn::Stmt::Local(_) | syn::Stmt::Expr(_, Some(_)) => true,
+            syn::Stmt::Expr(_, None) | syn::Stmt::Item(_) | syn::Stmt::Macro(_) => {
+                at.checked_add(1) == Some(block.stmts.len())
+            }
+        };
+        settled.then(|| (block.brace_token.span.join().byte_range(), statement))
+    }
+
     /// The bytes of the file this unit spans, attributes included.
     fn bytes(&self) -> std::ops::Range<usize> {
         match self {
@@ -195,21 +157,164 @@ impl Unit {
     }
 }
 
-/// One unit of the file, where it stands and the tree it holds ungrouped.
+/// One unit of the file, where it stands and the tree it holds, parentheses and all, so every node of it spans the bytes it was read from.
 #[derive(Debug)]
 struct Leaf {
     bytes: std::ops::Range<usize>,
-    ungrouped: Unit,
+    unit: Unit,
+    /// Its tokens, lexed from its own text the first time a swap in it is held to it.
+    tokens: std::cell::OnceCell<TokenStream>,
+    /// The tokens inside each block of it a swap was held to a statement of, by the bytes of the block's braces in its text.
+    blocks: std::cell::RefCell<std::collections::BTreeMap<(usize, usize), Vec<TokenTree>>>,
 }
 
 impl Leaf {
-    /// `unit`, where it stands and ungrouped.
+    /// `unit`, where it stands.
     fn of(unit: Unit) -> Self {
         Self {
             bytes: unit.bytes(),
-            ungrouped: unit.ungrouped(),
+            unit,
+            tokens: std::cell::OnceCell::new(),
+            blocks: std::cell::RefCell::new(std::collections::BTreeMap::new()),
         }
     }
+}
+
+/// How the lexer joins the tokens either side of an edit to what follows them: the punctuation mark just before it to the edit's first character, and the one it ends with, where it ends with one, to the text after it.
+#[derive(Debug, Clone, Copy)]
+struct Seams {
+    before: Spacing,
+    after: Option<Spacing>,
+}
+
+impl Seams {
+    /// The seams of `written` between `head` and `tail`, or nothing where a character either side could run into it as one token or open a comment, which lexing the edit alone would not see.
+    fn between(head: &str, written: &str, tail: &str) -> Option<Self> {
+        let pairs = [
+            (head.chars().next_back(), written.chars().next()),
+            (written.chars().next_back(), tail.chars().next()),
+        ];
+        if pairs.iter().any(|pair| match pair {
+            (Some(left), Some(right)) => runs_into(*left, *right),
+            (None, _) | (_, None) => false,
+        }) {
+            return None;
+        }
+        Some(Self {
+            before: joined(written),
+            after: written
+                .chars()
+                .next_back()
+                .is_some_and(punctuates)
+                .then(|| joined(tail)),
+        })
+    }
+}
+
+/// Whether `right` written right after `left` lexes as part of the same token as it, or opens a comment with it.
+fn runs_into(left: char, right: char) -> bool {
+    let names = |character: char| character.is_alphanumeric() || character == '_';
+    ((names(left) || matches!(left, '"' | '\'')) && names(right))
+        || (names(left) && matches!(right, '"' | '\'' | '#'))
+        || (left == '/' && matches!(right, '/' | '*'))
+}
+
+/// Whether the lexer reads `character` as punctuation.
+fn punctuates(character: char) -> bool {
+    "~!@#$%^&*-=+|;:,<.>/?'".contains(character)
+}
+
+/// How the lexer joins a punctuation mark to `text` right after it: to punctuation that opens no comment.
+fn joined(text: &str) -> Spacing {
+    if text.chars().next().is_some_and(punctuates)
+        && !text.starts_with("//")
+        && !text.starts_with("/*")
+    {
+        Spacing::Joint
+    } else {
+        Spacing::Alone
+    }
+}
+
+/// `tree` joined to what follows it as `spacing` says, where it is a punctuation mark.
+fn rejoined(tree: TokenTree, spacing: Spacing) -> TokenTree {
+    match tree {
+        TokenTree::Punct(punct) => {
+            let mut joined = Punct::new(punct.as_char(), spacing);
+            joined.set_span(punct.span());
+            TokenTree::Punct(joined)
+        }
+        other @ (TokenTree::Group(_) | TokenTree::Ident(_) | TokenTree::Literal(_)) => other,
+    }
+}
+
+/// `tokens` with the whole tokens of one group that `edit` covers replaced by `written`, each seam joined as the lexer joins it in the text the edit is made in, or nothing where `edit` covers no such run of tokens.
+fn spliced(
+    tokens: &TokenStream,
+    edit: &std::ops::Range<usize>,
+    written: &TokenStream,
+    seams: Seams,
+) -> Option<TokenStream> {
+    let trees: Vec<TokenTree> = tokens.clone().into_iter().collect();
+    let holds = |tree: &TokenTree| match tree {
+        TokenTree::Group(group) => {
+            group.span_open().byte_range().end <= edit.start
+                && edit.end <= group.span_close().byte_range().start
+        }
+        TokenTree::Ident(_) | TokenTree::Punct(_) | TokenTree::Literal(_) => false,
+    };
+    if let Some(inside) = trees.iter().position(holds) {
+        return trees
+            .into_iter()
+            .enumerate()
+            .map(|(at, tree)| match tree {
+                TokenTree::Group(group) if at == inside => {
+                    let mut rebuilt = proc_macro2::Group::new(
+                        group.delimiter(),
+                        spliced(&group.stream(), edit, written, seams)?,
+                    );
+                    rebuilt.set_span(group.span());
+                    Some(TokenTree::Group(rebuilt))
+                }
+                other @ (TokenTree::Group(_)
+                | TokenTree::Ident(_)
+                | TokenTree::Punct(_)
+                | TokenTree::Literal(_)) => Some(other),
+            })
+            .collect();
+    }
+    let first = trees
+        .iter()
+        .position(|tree| tree.span().byte_range().start == edit.start)?;
+    let last = trees
+        .iter()
+        .position(|tree| tree.span().byte_range().end == edit.end)?;
+    if last < first {
+        return None;
+    }
+    let mut written: Vec<TokenTree> = written.clone().into_iter().collect();
+    if let Some(after) = seams.after
+        && let Some(end) = written.pop()
+    {
+        written.push(rejoined(end, after));
+    }
+    let mut out = Vec::with_capacity(trees.len().saturating_add(written.len()));
+    for (at, tree) in trees.into_iter().enumerate() {
+        if at == first {
+            out.append(&mut written);
+        }
+        if (first..=last).contains(&at) {
+            continue;
+        }
+        let touching =
+            at.checked_add(1) == Some(first) && tree.span().byte_range().end == edit.start;
+        out.push(if touching {
+            rejoined(tree, seams.before)
+        } else {
+            tree
+        });
+    }
+    Some(out.into_iter().collect())
 }
 
 /// Every unit of `items` in file order, descending into what only holds items: inline modules, `impl` blocks, traits and `extern` blocks.
@@ -243,14 +348,17 @@ fn leaves(items: &[syn::Item], found: &mut Vec<Leaf>) {
     }
 }
 
-/// The units of one file, ungrouped, which every operator swap in it is held to.
+/// The units of one file, which every operator swap in it is held to.
 ///
 /// A file is its items read one after another, and each is read by its own tokens up to its own closing brace or semicolon, so an edit inside one unit changes that unit's tree and no other: holding a swap to its unit holds it to the file, at the cost of the unit rather than of the file.
+/// A block's statements are read the same way where one ends with a `;` or ends its block, so a swap inside such a statement is held to it at the cost of the statement, and only its edit is lexed again.
 #[derive(Debug)]
 pub(super) struct Grouping<'p> {
     leaves: Vec<Leaf>,
     read: std::cell::Cell<Option<usize>>,
     parsing: &'p Parsing,
+    #[cfg(any(test, feature = "testkit"))]
+    planted_accept_wrong: bool,
 }
 
 impl<'p> Grouping<'p> {
@@ -262,10 +370,18 @@ impl<'p> Grouping<'p> {
             leaves: found,
             read: std::cell::Cell::new(Some(0)),
             parsing,
+            #[cfg(any(test, feature = "testkit"))]
+            planted_accept_wrong: false,
         }
     }
 
-    /// How many bytes of source holding every swap has read back, or nothing once that stopped fitting.
+    #[cfg(any(test, feature = "testkit"))]
+    pub(super) const fn planted(mut self) -> Self {
+        self.planted_accept_wrong = true;
+        self
+    }
+
+    /// How many bytes of source holding every swap has lexed or parsed again, or nothing once that stopped fitting.
     pub(super) const fn read(&self) -> Option<usize> {
         self.read.get()
     }
@@ -283,10 +399,18 @@ impl<'p> Grouping<'p> {
         let mut differing = Vec::new();
         for leaf in &self.leaves {
             let read = match text.get(leaf.bytes.clone()) {
-                Some(unit) => leaf.ungrouped.read_as(self.parsing, unit)?,
+                Some(unit) => match self.parsing.tokens(unit) {
+                    Ok(tokens) => leaf.unit.read_tokens_as(self.parsing, tokens)?,
+                    Err(ReadingError::Syntax { .. }) => None,
+                    Err(
+                        unread @ (ReadingError::Exhausted { .. }
+                        | ReadingError::ThreadUnavailable { .. }
+                        | ReadingError::TooDeep { .. }),
+                    ) => return Err(unread),
+                },
                 None => None,
             };
-            if read.is_some_and(|read| read.ungrouped() == leaf.ungrouped) {
+            if read.is_some_and(|read| read.ungrouped() == leaf.unit.clone().ungrouped()) {
                 alike = alike.saturating_add(1);
             } else {
                 differing.push(leaf.bytes.clone());
@@ -295,8 +419,34 @@ impl<'p> Grouping<'p> {
         Ok((alike, differing))
     }
 
+    /// Counts `bytes` more of source read back.
+    fn reread(&self, bytes: usize) {
+        self.read
+            .set(self.read.get().and_then(|read| read.checked_add(bytes)));
+    }
+
+    /// The tokens of `leaf`, whose text `unit` is, lexed the first time they are asked for; nothing where the text alone is not tokens.
+    ///
+    /// # Errors
+    /// The unit could not be read at all.
+    fn tokens_of(&self, leaf: &Leaf, unit: &str) -> Result<Option<TokenStream>, ReadingError> {
+        if let Some(tokens) = leaf.tokens.get() {
+            return Ok(Some(tokens.clone()));
+        }
+        self.reread(unit.len());
+        match self.parsing.tokens(unit) {
+            Ok(tokens) => Ok(Some(leaf.tokens.get_or_init(|| tokens).clone())),
+            Err(ReadingError::Syntax { .. }) => Ok(None),
+            Err(
+                unread @ (ReadingError::Exhausted { .. }
+                | ReadingError::ThreadUnavailable { .. }
+                | ReadingError::TooDeep { .. }),
+            ) => Err(unread),
+        }
+    }
+
     /// Whether `text` with `edit` rewritten as `written` reads as this file's tree with exactly the operator starting at byte `at` replaced by `new`: the operands it had, grouped as they were.
-    /// An edit no single unit holds is one this cannot vouch for, and it says so.
+    /// An edit no single unit holds is one this cannot vouch for, and it says so; the unit is lexed once and each edit alone again, spliced into its tokens where the lexer would join them.
     ///
     /// # Errors
     /// The unit could not be read back at all, which is not an answer about the swap.
@@ -316,24 +466,210 @@ impl<'p> Grouping<'p> {
         else {
             return Ok(false);
         };
-        let (Some(head), Some(tail)) = (
+        let (Some(head), Some(tail), Some(unit), Some(start), Some(end)) = (
             text.get(leaf.bytes.start..edit.start),
             text.get(edit.end..leaf.bytes.end),
+            text.get(leaf.bytes.clone()),
+            edit.start.checked_sub(leaf.bytes.start),
+            edit.end.checked_sub(leaf.bytes.start),
         ) else {
             return Ok(false);
         };
-        let unit = format!("{head}{written}{tail}");
-        self.read.set(
-            self.read
-                .get()
-                .and_then(|read| read.checked_add(unit.len())),
-        );
+        let Some(seams) = Seams::between(head, written, tail) else {
+            return Ok(false);
+        };
+        let Some(tokens) = self.tokens_of(leaf, unit)? else {
+            return Ok(false);
+        };
+        self.reread(written.len());
+        let window = match self.parsing.tokens(written) {
+            Ok(window) => window,
+            Err(ReadingError::Syntax { .. }) => return Ok(false),
+            Err(
+                unread @ (ReadingError::Exhausted { .. }
+                | ReadingError::ThreadUnavailable { .. }
+                | ReadingError::TooDeep { .. }),
+            ) => return Err(unread),
+        };
+        let splice = Splice {
+            bytes: start..end,
+            written: &window,
+            seams,
+            at,
+            new,
+        };
+        let alone = match leaf.unit.statement_holding(&edit) {
+            Some(statement) => self.statement_keeps((leaf, &tokens), statement, &splice)?,
+            None => Alone::Unit,
+        };
+        let kept = match alone {
+            Alone::Kept => true,
+            Alone::Changed => false,
+            Alone::Unit => self.unit_keeps((leaf, &tokens), &splice)?,
+        };
+        #[cfg(any(test, feature = "testkit"))]
+        if self.planted_accept_wrong {
+            return Ok(true);
+        }
+        Ok(kept)
+    }
+
+    /// Whether the statement `statement` holds, of the block whose braces `statement` names, reads alone as its block reads it with `splice` made in the tokens of `leaf`; nothing where it cannot be read alone.
+    ///
+    /// # Errors
+    /// The statement could not be read back at all.
+    fn statement_keeps(
+        &self,
+        (leaf, tokens): (&Leaf, &TokenStream),
+        (braces, statement): (std::ops::Range<usize>, &syn::Stmt),
+        splice: &Splice<'_>,
+    ) -> Result<Alone, ReadingError> {
+        let base = leaf.bytes.start;
+        let relative = |range: std::ops::Range<usize>| {
+            Some(range.start.checked_sub(base)?..range.end.checked_sub(base)?)
+        };
+        let (Some(braces), Some(span)) =
+            (relative(braces), relative(statement.span().byte_range()))
+        else {
+            return Ok(Alone::Unit);
+        };
+        let own: TokenStream = {
+            let mut blocks = leaf.blocks.borrow_mut();
+            let trees = match blocks.entry((braces.start, braces.end)) {
+                std::collections::btree_map::Entry::Occupied(read) => read.into_mut(),
+                std::collections::btree_map::Entry::Vacant(unread) => {
+                    let Some(block) = group_at(tokens, &braces) else {
+                        return Ok(Alone::Unit);
+                    };
+                    unread.insert(block.stream().into_iter().collect())
+                }
+            };
+            let from = trees.partition_point(|tree| tree.span().byte_range().start < span.start);
+            let to = trees.partition_point(|tree| tree.span().byte_range().end <= span.end);
+            let Some(own) = trees.get(from..to) else {
+                return Ok(Alone::Unit);
+            };
+            own.iter().cloned().collect()
+        };
+        let Some(swapped) = spliced(&own, &splice.bytes, splice.written, splice.seams) else {
+            return Ok(Alone::Unit);
+        };
+        let mut expected = statement.clone();
+        let mut swap = Swap {
+            at: splice.at,
+            new: splice.new,
+            found: false,
+        };
+        swap.visit_stmt_mut(&mut expected);
+        if !swap.found {
+            return Ok(Alone::Unit);
+        }
+        Ungroup.visit_stmt_mut(&mut expected);
+        self.reread(span.len());
+        let mut read = match self
+            .parsing
+            .read_tokens_with(syn::Block::parse_within, swapped)
+        {
+            Ok(read) => read,
+            Err(ReadingError::Syntax { .. }) => return Ok(Alone::Changed),
+            Err(
+                unread @ (ReadingError::Exhausted { .. }
+                | ReadingError::ThreadUnavailable { .. }
+                | ReadingError::TooDeep { .. }),
+            ) => return Err(unread),
+        };
+        let [read] = read.as_mut_slice() else {
+            return Ok(Alone::Changed);
+        };
+        Ungroup.visit_stmt_mut(read);
+        Ok(if *read == expected {
+            Alone::Kept
+        } else {
+            Alone::Changed
+        })
+    }
+
+    /// Whether the unit of `leaf` reads as the file reads it with `splice` made in its `tokens`.
+    ///
+    /// # Errors
+    /// The unit could not be read back at all.
+    fn unit_keeps(
+        &self,
+        (leaf, tokens): (&Leaf, &TokenStream),
+        splice: &Splice<'_>,
+    ) -> Result<bool, ReadingError> {
+        let Some(swapped) = spliced(tokens, &splice.bytes, splice.written, splice.seams) else {
+            return Ok(false);
+        };
+        self.reread(leaf.bytes.len());
         let (Some(read), Some(expected)) = (
-            leaf.ungrouped.read_as(self.parsing, &unit)?,
-            leaf.ungrouped.swapped(at, new),
+            leaf.unit.read_tokens_as(self.parsing, swapped)?,
+            leaf.unit.swapped(splice.at, splice.new),
         ) else {
             return Ok(false);
         };
-        Ok(expected == read.ungrouped())
+        Ok(expected.ungrouped() == read.ungrouped())
+    }
+}
+
+/// What reading a swap's statement alone answers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Alone {
+    /// The statement reads alone as the swap names it.
+    Kept,
+    /// It reads, or fails to read, as anything else.
+    Changed,
+    /// It cannot be read alone as its block reads it, so its unit is read instead.
+    Unit,
+}
+
+/// One swap's edit to splice into the tokens it is made in: the bytes of the unit's text it covers, what it writes there, lexed alone, how the lexer joins its seams, and the operator it says it swaps, the one starting at byte `at` of the file, for `new`.
+struct Splice<'a> {
+    bytes: std::ops::Range<usize>,
+    written: &'a TokenStream,
+    seams: Seams,
+    at: usize,
+    new: &'a BinOp,
+}
+
+/// The group of `tokens` whose bytes are exactly `span`, however deep it stands.
+fn group_at(tokens: &TokenStream, span: &std::ops::Range<usize>) -> Option<proc_macro2::Group> {
+    tokens.clone().into_iter().find_map(|tree| match tree {
+        TokenTree::Group(group) => {
+            let bytes = group.span().byte_range();
+            if bytes == *span {
+                Some(group)
+            } else if bytes.start <= span.start && span.end <= bytes.end {
+                group_at(&group.stream(), span)
+            } else {
+                None
+            }
+        }
+        TokenTree::Ident(_) | TokenTree::Punct(_) | TokenTree::Literal(_) => None,
+    })
+}
+
+/// The walk that finds the innermost block whose braces hold an edit.
+struct Innermost<'u> {
+    edit: std::ops::Range<usize>,
+    /// The innermost block so far, and where among its statements the one that could hold the edit stands.
+    found: Option<(&'u syn::Block, usize)>,
+}
+
+impl<'u> syn::visit::Visit<'u> for Innermost<'u> {
+    fn visit_block(&mut self, block: &'u syn::Block) {
+        let braces = block.brace_token.span;
+        if braces.open().byte_range().end > self.edit.start
+            || self.edit.end > braces.close().byte_range().start
+        {
+            return;
+        }
+        let at = block
+            .stmts
+            .partition_point(|statement| statement.span().byte_range().end < self.edit.end);
+        self.found = Some((block, at));
+        if let Some(statement) = block.stmts.get(at) {
+            syn::visit::visit_stmt(self, statement);
+        }
     }
 }

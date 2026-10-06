@@ -39,6 +39,7 @@ pub fn document(report: &Report) -> Result<String, super::CountError> {
     section(&mut out, "Accounting", &accounting(&conclusion));
     section(&mut out, "Targets", &targets(&conclusion));
     section(&mut out, "Mutants", &mutants(&conclusion));
+    section(&mut out, "Evidence under a fault", &besides(&conclusion));
     section(&mut out, "Limitations", &limitations(&conclusion));
     section(&mut out, "Identity", &identity(report, &conclusion));
 
@@ -67,9 +68,10 @@ fn findings(report: &Conclusion) -> String {
         return "<p class=\"none\">Nothing was found.</p>".to_owned();
     }
     let rows = report.findings.iter().map(|finding| {
-        let at = finding.position.map_or_else(String::new, |position| {
-            format!("{}:{}", position.line, position.column)
-        });
+        let at = match finding.position {
+            Some(position) => format!("{}:{}", position.line, position.column),
+            None => String::new(),
+        };
         format!(
             "<tr><td>{}</td><td><code>{}</code></td><td>{}</td><td>{}</td></tr>",
             escape(&finding.kind_name()),
@@ -111,7 +113,10 @@ fn targets(report: &Conclusion) -> String {
             status = escape(status_name(target.status)),
             name = escape(&target.name),
             duration = target.duration_ms,
-            message = escape(target.message.as_deref().unwrap_or_default()),
+            message = escape(match target.message.as_deref() {
+                Some(said) => said,
+                None => "",
+            }),
         )
     });
     table(&["Status", "Target", "Took", "Said"], rows)
@@ -144,6 +149,27 @@ fn mutants(report: &Conclusion) -> String {
         )
     });
     table(&["Outcome", "Mutant", "Where", "Rule", "Noticed by"], rows)
+}
+
+/// The survivors a target told apart only with the call at their own site failing, which is evidence they are no equivalence and never a kill.
+fn besides(report: &Conclusion) -> String {
+    if report.beside.is_empty() {
+        return "<p class=\"none\">No survivor was told apart under a fault.</p>".to_owned();
+    }
+    let rows = report.beside.iter().map(|evidence| {
+        format!(
+            "<tr><td><code>{mutant}</code></td><td><code>{fault}</code></td>\
+             <td><code>{target}</code></td><td>failed {failed}</td></tr>",
+            mutant = escape(&evidence.mutant),
+            fault = escape(&evidence.fault),
+            target = escape(&evidence.target),
+            failed = escape(evidence.failed.name()),
+        )
+    });
+    table(
+        &["Survivor", "Fault", "Told apart by", "Which run failed"],
+        rows,
+    )
 }
 
 fn limitations(report: &Conclusion) -> String {

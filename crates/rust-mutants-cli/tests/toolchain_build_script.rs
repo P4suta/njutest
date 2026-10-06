@@ -68,7 +68,16 @@ fn a_file_a_build_script_wrote_is_skipped_by_name_and_the_rest_is_measured() {
     assert_eq!(
         document["accounting"]["cataloged"].as_u64(),
         Some(4),
-        "and the library itself is measured: {document}"
+        "the runtime body is measured while opaque expansion keeps tag const (ADR 0047): \
+         {document}"
+    );
+    assert!(
+        skips.iter().any(|skip| {
+            skip["reason"].as_str() == Some("unvalidated-const-use")
+                && skip["path"].as_str() == Some("src/lib.rs")
+                && skip["count"].as_u64() == Some(1)
+        }),
+        "the candidate of tag is explicitly counted rather than silently absent: {skips:?}"
     );
 }
 
@@ -106,6 +115,7 @@ fn why_skipped_says_what_a_generated_file_is() {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: njutest_devkit::paths::environment_for_a_run()
             .into_iter()
             .collect(),

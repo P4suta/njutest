@@ -24,6 +24,26 @@ fn edge(from: &str, to: &str, kind: EdgeKind) -> Edge {
 }
 
 #[test]
+fn native_completion_is_shared_without_an_engine_runtime_edge() {
+    let allowed = [
+        edge("rust-mutants", "njutest-process", EdgeKind::Normal),
+        edge("njutest-devkit", "njutest-process", EdgeKind::Normal),
+        edge("xtask", "njutest-process", EdgeKind::Normal),
+        edge("compiler-surfaces", "njutest-process", EdgeKind::Normal),
+        edge("njutest-process", "rust-mutants-decision", EdgeKind::Normal),
+    ];
+    assert!(check(&allowed).is_empty(), "{:?}", check(&allowed));
+    let refused = [
+        edge("njutest-process", "rust-mutants", EdgeKind::Normal),
+        edge("njutest-process", "njutest-devkit", EdgeKind::Normal),
+        edge("njutest-process", "xtask", EdgeKind::Normal),
+        edge("njutest-devkit", "rust-mutants", EdgeKind::Normal),
+        edge("xtask", "rust-mutants", EdgeKind::Normal),
+    ];
+    assert_eq!(check(&refused), refused);
+}
+
+#[test]
 fn the_runner_may_depend_on_the_engine_but_not_the_reverse() {
     let allowed = [
         edge("njutest", "rust-mutants", EdgeKind::Normal),
@@ -32,7 +52,15 @@ fn the_runner_may_depend_on_the_engine_but_not_the_reverse() {
         edge("rust-mutants", "njutest-macros", EdgeKind::Normal),
         edge("rust-mutants-cli", "njutest-macros", EdgeKind::Normal),
         edge("xtask", "njutest-macros", EdgeKind::Normal),
+        edge("xtask", "njutest-fixture-tree", EdgeKind::Normal),
+        edge("rust-mutants", "njutest-fixture-tree", EdgeKind::Normal),
+        edge("njutest-devkit", "njutest-fixture-tree", EdgeKind::Normal),
         edge("compiler-surfaces", "rust-mutants", EdgeKind::Normal),
+        edge(
+            "compiler-surfaces",
+            "njutest-fixture-tree",
+            EdgeKind::Normal,
+        ),
     ];
     assert!(check(&allowed).is_empty());
 
@@ -41,6 +69,89 @@ fn the_runner_may_depend_on_the_engine_but_not_the_reverse() {
         edge("rust-mutants-cli", "njutest", EdgeKind::Normal),
         edge("njutest-macros", "njutest", EdgeKind::Normal),
         edge("xtask", "rust-mutants", EdgeKind::Normal),
+        edge("njutest-fixture-tree", "rust-mutants", EdgeKind::Normal),
+        edge("njutest-fixture-tree", "njutest-devkit", EdgeKind::Normal),
+        edge("njutest-fixture-tree", "xtask", EdgeKind::Normal),
+        edge("njutest-devkit", "rust-mutants", EdgeKind::Normal),
+        edge("njutest", "njutest-fixture-tree", EdgeKind::Normal),
+    ];
+    assert_eq!(check(&refused), refused);
+}
+
+#[test]
+fn xtask_may_share_the_engines_pure_decisions_and_nothing_else_of_it() {
+    let allowed = [
+        edge("xtask", "rust-mutants-decision", EdgeKind::Normal),
+        edge(
+            "compiler-surfaces",
+            "rust-mutants-decision",
+            EdgeKind::Normal,
+        ),
+    ];
+    assert!(check(&allowed).is_empty(), "{:?}", check(&allowed));
+    let refused = [
+        edge("xtask", "rust-mutants", EdgeKind::Normal),
+        edge("rust-mutants-decision", "xtask", EdgeKind::Normal),
+        edge("rust-mutants-decision", "rust-mutants", EdgeKind::Normal),
+        edge("njutest-devkit", "rust-mutants-decision", EdgeKind::Normal),
+    ];
+    assert_eq!(check(&refused), refused);
+}
+
+#[test]
+fn the_engine_alone_may_depend_on_its_adapters_and_they_on_its_decisions_alone() {
+    let allowed = [
+        edge("rust-mutants", "rust-mutants-adapt", EdgeKind::Normal),
+        edge(
+            "rust-mutants-adapt",
+            "rust-mutants-decision",
+            EdgeKind::Normal,
+        ),
+        edge("rust-mutants-adapt", "njutest-macros", EdgeKind::Normal),
+        edge("rust-mutants-adapt", "njutest-devkit", EdgeKind::Dev),
+    ];
+    assert!(check(&allowed).is_empty(), "{:?}", check(&allowed));
+    let refused = [
+        edge("rust-mutants-adapt", "rust-mutants", EdgeKind::Normal),
+        edge(
+            "rust-mutants-adapt",
+            "rust-mutants-sealed",
+            EdgeKind::Normal,
+        ),
+        edge(
+            "rust-mutants-decision",
+            "rust-mutants-adapt",
+            EdgeKind::Normal,
+        ),
+        edge("njutest", "rust-mutants-adapt", EdgeKind::Normal),
+        edge("rust-mutants-cli", "rust-mutants-adapt", EdgeKind::Normal),
+        edge("xtask", "rust-mutants-adapt", EdgeKind::Normal),
+    ];
+    assert_eq!(check(&refused), refused);
+}
+
+#[test]
+fn the_engine_alone_may_depend_on_the_sealed_host_and_the_host_on_nothing_of_the_workspace() {
+    let allowed = [
+        edge("rust-mutants", "rust-mutants-sealed", EdgeKind::Normal),
+        edge("rust-mutants", "rust-mutants-sealed", EdgeKind::Dev),
+        edge("rust-mutants-sealed", "njutest-macros", EdgeKind::Normal),
+        edge("rust-mutants-sealed", "njutest-devkit", EdgeKind::Dev),
+    ];
+    assert!(check(&allowed).is_empty(), "{:?}", check(&allowed));
+    let refused = [
+        edge("rust-mutants-sealed", "rust-mutants", EdgeKind::Normal),
+        edge("rust-mutants-sealed", "rust-mutants", EdgeKind::Dev),
+        edge("rust-mutants-sealed", "njutest", EdgeKind::Normal),
+        edge(
+            "rust-mutants-sealed",
+            "njutest-fixture-tree",
+            EdgeKind::Normal,
+        ),
+        edge("njutest", "rust-mutants-sealed", EdgeKind::Normal),
+        edge("rust-mutants-cli", "rust-mutants-sealed", EdgeKind::Normal),
+        edge("compiler-surfaces", "rust-mutants-sealed", EdgeKind::Normal),
+        edge("xtask", "rust-mutants-sealed", EdgeKind::Normal),
     ];
     assert_eq!(check(&refused), refused);
 }
@@ -118,6 +229,77 @@ fn write_package(root: &std::path::Path, path: &str, name: &str) -> Result<(), T
         format!("[package]\nname = \"{name}\"\nversion = \"0.0.0\"\nedition = \"2024\"\n"),
     )?;
     std::fs::write(package.join("src/lib.rs"), "")?;
+    Ok(())
+}
+
+fn census_tree() -> Result<tempfile::TempDir, TestError> {
+    let root = tempfile::tempdir()?;
+    xtask::repository::init(root.path())?;
+    write_package(root.path(), "crates/root", "root")?;
+    std::fs::write(
+        root.path().join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/root\"]\nresolver = \"3\"\n",
+    )?;
+    for (path, name) in [
+        ("fuzz", "fuzz"),
+        ("fixtures/fixture-held", "held"),
+        ("fixtures/fixture-other", "other"),
+    ] {
+        write_package(root.path(), path, name)?;
+        std::fs::write(
+            root.path().join(path).join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"{name}\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n"
+            ),
+        )?;
+    }
+    Ok(root)
+}
+
+#[test]
+fn a_manifest_beneath_a_workspace_but_outside_its_members_is_refused() -> Result<(), TestError> {
+    for (path, name) in [
+        ("fuzz/unlisted", "fuzz-unlisted"),
+        ("fixtures/fixture-held/unlisted", "fixture-unlisted"),
+        (".unlisted", "hidden-unlisted"),
+    ] {
+        let root = census_tree()?;
+        write_package(root.path(), path, name)?;
+        let report = match xtask::gates::deps(root.path()) {
+            Ok(report) => report,
+            Err(error) => error.to_string(),
+        };
+        if !report.contains(&format!("{path}/Cargo.toml")) || !report.contains("belong to no class")
+        {
+            return Err(TestError::Missing {
+                expected: format!("{path}/Cargo.toml refused by the manifest census"),
+                report,
+            });
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn declared_fuzz_and_fixture_members_are_in_their_workspace_class() -> Result<(), TestError> {
+    let root = census_tree()?;
+    for (path, member, name) in [
+        ("fuzz", "member", "fuzz-member"),
+        ("fixtures/fixture-held", "member", "fixture-member"),
+        ("fixtures/fixture-other", "member", "other-member"),
+    ] {
+        write_package(root.path(), &format!("{path}/{member}"), name)?;
+        let manifest = root.path().join(path).join("Cargo.toml");
+        let source = std::fs::read_to_string(&manifest)?;
+        std::fs::write(&manifest, format!("{source}members = [\"{member}\"]\n"))?;
+    }
+    let report = xtask::gates::deps(root.path())?;
+    if !report.contains("2 root-workspace, 2 fuzz-workspace, and 4 fixture-workspace manifest(s)") {
+        return Err(TestError::Missing {
+            expected: "three workspace classes count only their declared members".to_owned(),
+            report,
+        });
+    }
     Ok(())
 }
 

@@ -24,23 +24,23 @@ The run is `rust-mutants run --tier all --offline --locked`;
 `cargo test -p rust-mutants-cli --test toolchain_fates` does it again and refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 
 ```fates
-src/lib.rs:8:5 int-decrement not_run
-src/lib.rs:8:5 int-increment not_run
+src/lib.rs:8:5 int-decrement unproven
+src/lib.rs:8:5 int-increment unproven
 src/lib.rs:8:5 return-true survived
-src/lib.rs:8:7 gt-to-ge not_run
-src/lib.rs:8:9 int-decrement not_run
-src/lib.rs:8:9 int-increment not_run
+src/lib.rs:8:7 gt-to-ge unproven
+src/lib.rs:8:9 int-decrement unproven
+src/lib.rs:8:9 int-increment unproven
 src/lib.rs:13:5 int-decrement killed
 src/lib.rs:13:5 int-increment survived
-src/lib.rs:13:5 return-true not_run
+src/lib.rs:13:5 return-true survived
 src/lib.rs:13:7 gt-to-ge survived
 src/lib.rs:13:9 int-decrement survived
 src/lib.rs:13:9 int-increment killed
-src/lib.rs:18:5 return-default not_run
+src/lib.rs:18:5 return-default unproven
 src/lib.rs:18:11 mul-to-div killed
-src/lib.rs:18:13 int-decrement not_run
-src/lib.rs:18:13 int-increment not_run
-src/lib.rs:18:15 sub-to-add not_run
+src/lib.rs:18:13 int-decrement unproven
+src/lib.rs:18:13 int-increment unproven
+src/lib.rs:18:15 sub-to-add unproven
 src/lib.rs:23:5 return-default survived
 src/lib.rs:23:11 add-to-sub survived
 src/lib.rs:23:13 int-decrement survived

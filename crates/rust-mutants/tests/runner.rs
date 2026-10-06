@@ -4,6 +4,8 @@
 //! One child, the platform's declared supervision boundary, and what came back.
 
 use std::ffi::OsString;
+use std::io;
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use njutest_devkit::result::{ResultState::Returned, result_state};
@@ -23,6 +25,280 @@ fn sh(script: &str) -> Spec {
         [njutest_devkit::paths::utf8(&shell), "-c", script],
         Bound::Unbounded,
     )
+}
+
+struct HeldRun {
+    cancel: Cancel,
+    worker: Option<JoinedThread<rust_mutants::runner::RunResult>>,
+}
+
+impl HeldRun {
+    fn launch(spec: Spec, cancel: Cancel, ended: rust_mutants::observation::Signal) -> Self {
+        let running = cancel.clone();
+        Self {
+            cancel,
+            worker: Some(JoinedThread::launch(move || {
+                let result = run(&spec, &running);
+                ended.publish(rust_mutants::observation::Event::Completed);
+                result
+            })),
+        }
+    }
+
+    fn join(&mut self) -> io::Result<rust_mutants::runner::RunResult> {
+        self.worker
+            .take()
+            .ok_or_else(|| io::Error::other("the actual held run was already joined"))?
+            .join()
+            .map_err(io::Error::other)
+    }
+}
+
+impl Drop for HeldRun {
+    fn drop(&mut self) {
+        self.cancel.cancel();
+        if self.worker.is_some()
+            && let Err(source) = self.join()
+        {
+            eprintln!("the held test run could not be joined after cancellation: {source}");
+            std::process::abort();
+        }
+    }
+}
+
+fn held_spec(root: &Path, marker: &Path, bound: Bound, ignores_term: bool) -> io::Result<Spec> {
+    let executable = std::env::current_exe()?;
+    let name = njutest_devkit::process::test_name(module_path!(), "held_runner_fixture");
+    #[cfg(unix)]
+    let mut spec = {
+        let mut fifo = std::process::Command::new("mkfifo");
+        fifo.args(["-m", "600"]).arg(root.join("rendezvous"));
+        let status = njutest_devkit::process::SupervisedChild::launch(&mut fifo)
+            .map_err(io::Error::other)?
+            .wait()
+            .map_err(io::Error::other)?;
+        if !status.success() {
+            return Err(io::Error::other(
+                "the actual inherited rendezvous was refused",
+            ));
+        }
+        let held = if ignores_term { "trap '' TERM; " } else { "" };
+        let script = format!(
+            "printf '%s' \"$$\" > \"$1/leader\"; exec 3<> \"$1/rendezvous\"; ({held}exec \"$0\" --exact \"$2\" --nocapture) & IFS= read -r release <&3; exit 0"
+        );
+        Spec::new(
+            [
+                njutest_devkit::paths::posix_sh().into_os_string(),
+                "-c".into(),
+                script.into(),
+                executable.into_os_string(),
+                root.as_os_str().to_owned(),
+                name.into(),
+            ],
+            bound,
+        )
+    };
+    #[cfg(windows)]
+    let mut spec = {
+        if ignores_term {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "TERM inheritance is a POSIX fixture contract",
+            ));
+        }
+        let leader = njutest_devkit::process::test_name(module_path!(), "held_leader_fixture");
+        Spec::new(
+            [
+                executable.into_os_string(),
+                "--exact".into(),
+                leader.into(),
+                "--nocapture".into(),
+            ],
+            bound,
+        )
+    };
+    let mut env = held_host();
+    #[cfg(windows)]
+    {
+        env.set("NJUTEST_HELD_LEADER_DIRECTORY", root.as_os_str());
+        env.set("NJUTEST_HELD_LEADER_MEMBER", name.as_str());
+    }
+    env.set("NJUTEST_HELD_RUNNER_ROOT", root.as_os_str());
+    env.set("NJUTEST_HELD_RUNNER_MARKER", marker.as_os_str());
+    spec.env = Some(env);
+    Ok(spec)
+}
+
+/// What this platform's own programs need of the parent's environment to be found and to start, which on Windows is the search path and the system's variables, and elsewhere nothing a held fixture's absolute shell needs.
+fn held_host() -> rust_mutants::vars::Variables {
+    if cfg!(windows) {
+        let wanted: Vec<&str> = std::iter::once("PATH")
+            .chain(njutest_devkit::paths::ALSO_ON_THIS_PLATFORM)
+            .collect();
+        std::env::vars_os()
+            .collect::<rust_mutants::vars::Variables>()
+            .only(&wanted)
+    } else {
+        rust_mutants::vars::Variables::empty()
+    }
+}
+
+/// What a held wait saw first: the bytes it waited for, or the end of the held run.
+enum Held {
+    Published(Vec<u8>),
+    Ended,
+}
+
+fn held_bytes(observed: &rust_mutants::observation::Observation, path: &Path) -> io::Result<Held> {
+    let deadline = Instant::now()
+        .checked_add(Duration::from_secs(10))
+        .ok_or_else(|| {
+            io::Error::other("the original test completion bound cannot be represented")
+        })?;
+    let mut ended = false;
+    loop {
+        match std::fs::read(path) {
+            Ok(bytes) if !bytes.is_empty() => return Ok(Held::Published(bytes)),
+            Ok(_pending) => {}
+            Err(source) if source.kind() == io::ErrorKind::NotFound => {}
+            Err(source) => return Err(source),
+        }
+        if ended {
+            return Ok(Held::Ended);
+        }
+        let waited = observed.wait("actual-held-runner", "ready-or-release", Some(deadline))?;
+        eprintln!(
+            "{}",
+            serde_json::json!({"kind": "host-wait", "payload": waited.note})
+        );
+        match waited.event? {
+            rust_mutants::observation::Event::Completed => ended = true,
+            rust_mutants::observation::Event::Changed
+            | rust_mutants::observation::Event::Cancelled => {}
+            rust_mutants::observation::Event::Deadline => {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "the actual held fixture did not publish before its completion bound",
+                ));
+            }
+        }
+    }
+}
+
+fn held_member(
+    observed: &rust_mutants::observation::Observation,
+    root: &Path,
+    running: &mut HeldRun,
+) -> io::Result<njutest_process::ForeignProcess> {
+    let ready = match held_bytes(observed, &root.join("ready"))? {
+        Held::Published(ready) => ready,
+        Held::Ended => {
+            let result = running.join()?;
+            return Err(io::Error::other(format!(
+                "the held run ended before its fixture was ready: {:?}, having written: {}",
+                result.termination,
+                result.output.escape_ascii()
+            )));
+        }
+    };
+    let pid = std::str::from_utf8(&ready)
+        .map_err(io::Error::other)?
+        .parse::<u32>()
+        .map_err(io::Error::other)?;
+    njutest_process::ForeignProcess::retain(pid)?
+        .ok_or_else(|| io::Error::other("the ready fixture has no retained kernel generation"))
+}
+
+fn held_clock(root: &Path, millis: u64) -> io::Result<()> {
+    let leader = std::fs::read_to_string(root.join("leader"))?;
+    let pid = leader.parse::<u32>().map_err(io::Error::other)?;
+    let pending = root.join(format!("{pid}.next"));
+    std::fs::write(&pending, millis.to_string())?;
+    std::fs::rename(pending, root.join(pid.to_string()))
+}
+
+#[cfg(unix)]
+fn held_leader_release(root: &Path) -> io::Result<()> {
+    use std::io::Write as _;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(root.join("rendezvous"))?
+        .write_all(b"release\n")
+}
+
+/// The leader of the Windows held tree: it says who it is, starts the member as a child of its own, and passes only where the member did.
+#[cfg(windows)]
+#[test]
+fn held_leader_fixture() {
+    let Some(directory) = std::env::var_os("NJUTEST_HELD_LEADER_DIRECTORY") else {
+        return;
+    };
+    let member = std::env::var_os("NJUTEST_HELD_LEADER_MEMBER").expect("the held member's test");
+    std::fs::write(
+        Path::new(&directory).join("leader"),
+        std::process::id().to_string(),
+    )
+    .expect("the leader's own id");
+    let ended = std::process::Command::new(std::env::current_exe().expect("this fixture"))
+        .arg("--exact")
+        .arg(member)
+        .arg("--nocapture")
+        .status()
+        .expect("the held member starts");
+    assert!(ended.success(), "the held member ended as {ended:?}");
+}
+
+#[test]
+fn held_runner_fixture() {
+    let Some(root) = std::env::var_os("NJUTEST_HELD_RUNNER_ROOT") else {
+        return;
+    };
+    let root = std::path::PathBuf::from(root);
+    let marker =
+        std::env::var_os("NJUTEST_HELD_RUNNER_MARKER").expect("the actual late writer marker");
+    let observed = rust_mutants::observation::Observation::filesystem(&root, false)
+        .expect("subscribe before actual ready publication");
+    let pending = root.join("ready.pending");
+    std::fs::write(&pending, std::process::id().to_string())
+        .expect("the actual fixture generation");
+    std::fs::rename(pending, root.join("ready")).expect("the atomic fixture readiness");
+    let released =
+        held_bytes(&observed, &root.join("release")).expect("the actual fixture release");
+    assert!(
+        matches!(released, Held::Published(_)),
+        "only the run this fixture is part of publishes its end, and the fixture has no run of its own"
+    );
+    std::fs::write(marker, b"finished").expect("the actual late writer finished");
+}
+
+#[test]
+fn the_held_writer_really_writes_when_released_and_its_generation_exits() {
+    let temp = tempfile::tempdir().expect("the actual late writer positive control");
+    let marker = temp.path().join("finished");
+    let observed = rust_mutants::observation::Observation::filesystem(temp.path(), false)
+        .expect("subscribe before actual ready publication");
+    let spec =
+        held_spec(temp.path(), &marker, Bound::Unbounded, false).expect("the actual held writer");
+    let mut running = HeldRun::launch(spec, Cancel::new(), observed.signal());
+    let member =
+        held_member(&observed, temp.path(), &mut running).expect("retain the actual ready writer");
+    std::fs::write(temp.path().join("release"), b"release").expect("release the actual writer");
+    assert!(
+        member
+            .wait(Some(Duration::from_secs(10)))
+            .expect("the actual writer kernel exit")
+    );
+    #[cfg(unix)]
+    held_leader_release(temp.path()).expect("release the actual leader after the writer exits");
+    let result = running
+        .join()
+        .expect("the actual leader and output owners settle");
+    assert!(result.succeeded(), "{result:?}");
+    assert_eq!(
+        std::fs::read(marker).expect("the real writer output"),
+        b"finished"
+    );
 }
 
 #[test]
@@ -94,22 +370,39 @@ fn a_timeout_forcefully_signals_the_inherited_process_group_and_says_so() {
     assert_eq!(result_state(&temp), Returned, "tempdir: {temp:?}");
     let Ok(temp) = temp else { return };
     let marker = temp.path().join("grandchild-finished");
-    let script = format!("(sleep 1; touch {}) & sleep 30", marker.display());
-    let mut spec = sh(&script);
+    let mut spec = held_spec(temp.path(), &marker, Bound::Unbounded, false)
+        .expect("the actual inherited writer fixture");
     spec.timeout = Some(Duration::from_millis(300));
+    let observed = rust_mutants::observation::Observation::filesystem(temp.path(), false)
+        .expect("subscribe before the actual group starts");
+    let cancel = Cancel::new().with_clock(rust_mutants::runner::Clock::events(
+        temp.path().to_path_buf(),
+    ));
     let started = Instant::now();
-    let result = run(&spec, &Cancel::new());
+    let mut running = HeldRun::launch(spec, cancel, observed.signal());
+    let member =
+        held_member(&observed, temp.path(), &mut running).expect("retain the actual ready member");
+    held_clock(temp.path(), 300).expect("the original logical timeout");
+    let result = running
+        .join()
+        .expect("the cancelled group and reader owners join");
     assert!(matches!(result.termination, Termination::TimedOut));
     assert_eq!(result.conventional_exit_code(), EXIT_CODE_UNAVAILABLE);
     assert!(result.error().is_none(), "{:?}", result.error());
     assert!(
         started.elapsed() < Duration::from_secs(10),
-        "did not wait for the sleep"
+        "the forceful group completion is observed within the original bound"
     );
-    std::thread::sleep(Duration::from_millis(1500));
+    assert!(
+        member
+            .wait(Some(Duration::from_secs(10)))
+            .expect("the retained member exit")
+    );
+    std::fs::write(temp.path().join("release"), b"release")
+        .expect("release after observed settlement");
     let marker = std::fs::metadata(&marker);
     assert!(
-        matches!(marker, Err(ref error) if error.kind() == std::io::ErrorKind::NotFound),
+        matches!(marker, Err(ref error) if error.kind() == io::ErrorKind::NotFound),
         "an ordinary inherited member did not finish after the forceful group signal: {marker:?}"
     );
 }
@@ -117,8 +410,13 @@ fn a_timeout_forcefully_signals_the_inherited_process_group_and_says_so() {
 #[test]
 fn a_child_that_cannot_be_reaped_aborts_instead_of_becoming_detached() {
     const INJECTION: &str = "RUST_MUTANTS_TEST_UNREAPABLE_CHILD";
+    const DIRECTORY: &str = "RUST_MUTANTS_TEST_UNREAPABLE_DIRECTORY";
     if std::env::var_os(INJECTION).is_some() {
-        let mut spec = sh("sleep 30");
+        let root = std::path::PathBuf::from(
+            std::env::var_os(DIRECTORY).expect("the outer owner retains the fixture directory"),
+        );
+        let mut spec = held_spec(&root, &root.join("finished"), Bound::Unbounded, false)
+            .expect("the actual unreapable process fixture");
         spec.timeout = Some(Duration::from_millis(20));
         spec.simulate_unreapable_child();
         let escaped = run(&spec, &Cancel::new());
@@ -133,8 +431,10 @@ fn a_child_that_cannot_be_reaped_aborts_instead_of_becoming_detached() {
         "test executable: {executable:?}"
     );
     let Ok(executable) = executable else { return };
+    let temp = tempfile::tempdir().expect("the outer owner retains the unreapable fixture");
     let mut environment: rust_mutants::vars::Variables = std::env::vars_os().collect();
     environment.set(INJECTION, "1");
+    environment.set(DIRECTORY, temp.path().as_os_str());
     let mut nested = Spec::new(
         [
             executable.into_os_string(),
@@ -158,14 +458,28 @@ fn a_child_that_cannot_be_reaped_aborts_instead_of_becoming_detached() {
 #[test]
 fn a_cancellation_kills_the_supervised_process_set_and_is_not_a_timeout() {
     let cancel = Cancel::new();
-    let trigger = cancel.clone();
-    let handle = JoinedThread::launch(move || {
-        std::thread::sleep(Duration::from_millis(200));
-        trigger.cancel();
-    });
-    let result = run(&sh("sleep 30"), &cancel);
-    let joined = handle.join();
+    let temp = tempfile::tempdir().expect("the actual cancellation fixture");
+    let observed = rust_mutants::observation::Observation::filesystem(temp.path(), false)
+        .expect("subscribe before actual ready publication");
+    let spec = held_spec(
+        temp.path(),
+        &temp.path().join("finished"),
+        Bound::Unbounded,
+        false,
+    )
+    .expect("the actual cancellation producer");
+    let mut running = HeldRun::launch(spec, cancel.clone(), observed.signal());
+    let member =
+        held_member(&observed, temp.path(), &mut running).expect("retain the actual ready process");
+    cancel.cancel();
+    let joined = running.join();
     assert_eq!(result_state(&joined), Returned, "joins: {joined:?}");
+    let result = joined.expect("the cancelled process and all readers join");
+    assert!(
+        member
+            .wait(Some(Duration::from_secs(10)))
+            .expect("the actual cancelled member exit")
+    );
     assert!(matches!(
         result.termination,
         Termination::Cancelled { started: true }
@@ -190,7 +504,7 @@ fn an_already_cancelled_run_never_starts_the_child() {
     ));
     assert!(result.error().is_none() && !result.timed_out());
     let marker = std::fs::metadata(marker);
-    assert!(matches!(marker, Err(error) if error.kind() == std::io::ErrorKind::NotFound));
+    assert!(matches!(marker, Err(error) if error.kind() == io::ErrorKind::NotFound));
 }
 
 #[cfg(unix)]
@@ -330,22 +644,32 @@ fn a_forceful_group_signal_eventually_prevents_a_term_ignoring_member_from_writi
     assert_eq!(result_state(&temp), Returned, "tempdir: {temp:?}");
     let Ok(temp) = temp else { return };
     let marker = temp.path().join("escaped-descendant");
-    let script = format!(
-        "(trap '' TERM; sleep 1; touch {}) & exit 0",
-        marker.display()
-    );
+    let spec = held_spec(temp.path(), &marker, Bound::Unbounded, true)
+        .expect("the actual TERM-ignoring inherited writer");
+    let observed = rust_mutants::observation::Observation::filesystem(temp.path(), false)
+        .expect("subscribe before the inherited writer starts");
     let started = Instant::now();
-    let result = run(&sh(&script), &Cancel::new());
+    let mut running = HeldRun::launch(spec, Cancel::new(), observed.signal());
+    let member =
+        held_member(&observed, temp.path(), &mut running).expect("retain the actual ready writer");
+    held_leader_release(temp.path()).expect("the actual leader may now exit");
+    let result = running.join().expect("the group and output owners settle");
     assert!(result.succeeded(), "{result:?}");
     assert!(
         started.elapsed() < IO_DRAIN_GRACE + Duration::from_secs(3),
         "{:?}",
         started.elapsed()
     );
-    std::thread::sleep(Duration::from_millis(1500));
+    assert!(
+        member
+            .wait(Some(Duration::from_secs(10)))
+            .expect("the retained inherited writer exit")
+    );
+    std::fs::write(temp.path().join("release"), b"release")
+        .expect("release only after actual member exit");
     let marker = std::fs::metadata(marker);
     assert!(
-        matches!(marker, Err(ref error) if error.kind() == std::io::ErrorKind::NotFound),
+        matches!(marker, Err(ref error) if error.kind() == io::ErrorKind::NotFound),
         "the TERM-ignoring inherited member did not write after the forceful group signal: {marker:?}"
     );
 }
@@ -524,43 +848,39 @@ fn a_windows_child_that_fails_is_data_not_an_error() {
 fn a_windows_process_tree_is_killed_on_timeout() {
     let temp = tempfile::tempdir().expect("tempdir");
     let marker = temp.path().join("still-here.txt");
-    let outliving = temp.path().join("outliving.bat");
-    std::fs::write(
-        &outliving,
-        format!(
-            "@echo off\r\nping -n 31 127.0.0.1 > nul\r\necho alive > {}\r\n",
-            marker.display()
-        ),
-    )
-    .expect("the script a descendant runs");
-    let script = temp.path().join("tree.bat");
-    std::fs::write(
-        &script,
-        format!(
-            "@echo off\r\nstart /b cmd /C {}\r\nping -n 31 127.0.0.1 > nul\r\n",
-            outliving.display()
-        ),
-    )
-    .expect("the script the run starts");
-    let spec = Spec::new(
-        [
-            OsString::from("cmd"),
-            OsString::from("/C"),
-            script.into_os_string(),
-        ],
+    let spec = held_spec(
+        temp.path(),
+        &marker,
         Bound::After(Duration::from_millis(500)),
-    );
+        false,
+    )
+    .expect("the actual contained late writer fixture");
+    let observed = rust_mutants::observation::Observation::filesystem(temp.path(), false)
+        .expect("subscribe before the actual job starts");
+    let cancel = Cancel::new().with_clock(rust_mutants::runner::Clock::events(
+        temp.path().to_path_buf(),
+    ));
     let started = Instant::now();
-    let result = run(&spec, &Cancel::new());
+    let mut running = HeldRun::launch(spec, cancel, observed.signal());
+    let member = held_member(&observed, temp.path(), &mut running)
+        .expect("retain the actual contained writer");
+    held_clock(temp.path(), 500).expect("the original logical timeout");
+    let result = running.join().expect("the job and output owners settle");
     assert!(result.timed_out(), "{result:?}");
     assert!(
         started.elapsed() < Duration::from_secs(20),
         "the run ends at the bound rather than waiting for the tree it started"
     );
-    std::thread::sleep(Duration::from_secs(2));
+    assert!(
+        member
+            .wait(Some(Duration::from_secs(10)))
+            .expect("the retained contained writer exit")
+    );
+    std::fs::write(temp.path().join("release"), b"release")
+        .expect("release only after the contained writer exit");
     let marker = std::fs::metadata(&marker);
     assert!(
-        matches!(marker, Err(ref error) if error.kind() == std::io::ErrorKind::NotFound),
+        matches!(marker, Err(ref error) if error.kind() == io::ErrorKind::NotFound),
         "the job object owns every descendant, so closing it stops the one that outlived its \
          parent: {marker:?}"
     );

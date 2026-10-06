@@ -198,7 +198,7 @@ pub(crate) fn touch(record: &Value) -> Option<Touch> {
     let named = record.get("passed")?.as_array()?.len();
     let summary = record.get("summary")?;
     let whole = match summary.get("protocol")?.as_str()? {
-        "libtest" => match summary.get("tests_run")? {
+        "libtest" | "rustdoc" => match summary.get("tests_run")? {
             Value::Null => false,
             count => usize::try_from(count.as_u64()?).is_ok_and(|count| count == named),
         },

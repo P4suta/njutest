@@ -9,6 +9,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 Accepted, 2026-09-18.
 Bounds every finding this workspace can raise.
+Amended by [ADR 0046](0046-a-verdict-is-what-a-sealed-run-observed.md): a sealed run's deterministic control is the matched comparison that makes a bound a detection.
 
 ## Context
 

@@ -7,7 +7,20 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 ## Status
 
-Proposed, 2026-09-25.
+Accepted, 2026-09-29.
+Proposed 2026-09-25, and accepted once every step below had landed and the capdir laws and the store's laws ran on Windows.
+The closed set of decision 1 also holds `sync_file`, which flushes a file held for reading, and `open_file_at`, which opens an explicit configuration without following it, both of which the store needs on Windows.
+
+| Decision | Held by |
+| --- | --- |
+| 1, one capability directory and one store | `rust_mutants::capdir` and its `Name`; `app/reports.rs` with no platform split; the laws in `crates/rust-mutants/tests/capdir.rs`, `app::reports::tests` and `crates/njutest/tests/reports_store.rs` on every platform |
+| 2, Unix unchanged | `capdir/unix.rs` on rustix; the laws that were Unix's, now shared |
+| 3, handle-relative on Windows | `capdir/windows.rs`: `create`, `open_dir`, `open_entry`, `rename_held`, `dispose`, `file_status`; the shared laws with junctions for links, and `a_removed_or_replaced_entry_is_gone_by_name_while_another_handle_still_holds_it` |
+| 4, the volume checked | `volume_of` and `volume_verdict` at `open`; `a_volume_is_trusted_only_as_ntfs_or_refs_with_posix_semantics_and_a_refusal_names_it` |
+| 5, owner, system and administrators | `Private`, `privacy_of`, `restrict_to_owner`; `owner_only_is_a_protected_list_of_the_owner_the_system_and_the_administrators`, and the store's `same_owner_legacy_namespaces_are_tightened_before_claiming` on Windows |
+| 6, a directory flush | `sync` and `sync_file`, through a second handle opened relative to the first with no name; `a_file_named_by_a_path_is_opened_without_following_a_link_and_flushed_through_any_handle`; the durability sentence in [limitations](../limitations.md) |
+| 7, one owned operation after producer completion | `a_removal_another_process_holds_the_entry_against_is_refused_with_the_cause_named`; the original sharing refusal remains observable |
+| 8, one list of modules | `xtask/src/lints/ffi.rs` and the `unsafe-outside-ffi` rule with its planted shapes, which `unchecked-cast` reads too; `unsafe_code_lives_only_in_the_modules_the_rule_names` |
 
 ## Context
 
@@ -35,8 +48,9 @@ A backend that pins every directory from the workspace down with handles that re
    An owner-only DACL would lock out backup, antivirus, and other administrators, which `0700` does not.
 6. **A directory flush is required.** Windows has no documented directory `fsync`; `FlushFileBuffers` on the directory handle commits the journal up to that point, and a volume that refuses it is refused (decision 4) rather than trusted.
    The weaker statement is written down: on Windows a published rename is as durable as the NTFS journal after that flush.
-7. **A sharing violation on a rename or a removal is retried a bounded number of times**, because the indexer and antivirus open new files briefly; one that persists is `NJ6004` with the cause named, never a silent success.
-8. **The unsafe code lives in one more named module, and a gate says which.** `capdir/windows.rs` joins `runner/windows.rs`, `runner/unix.rs`, and `tempowner/lock.rs`, and an xtask lint refuses `unsafe` and `expect(unsafe_code)` anywhere else, so the list is a rule rather than a comment; the same list feeds the strict-conversion policy.
+7. **A rename or removal makes one capability-owned attempt after actual producer completion.**
+   A sharing violation is `NJ6004` with the cause named; guessed retries do not establish that a writer or mapped executable has ended.
+8. **The unsafe code lives in one more named module, and a gate says which.** `capdir/windows.rs` joins `njutest-process/src/windows.rs`, `njutest-process/src/unix.rs`, and `tempowner/lock.rs`, and an xtask lint refuses `unsafe` and `expect(unsafe_code)` anywhere else, so the list is a rule rather than a comment; the same list feeds the strict-conversion policy.
 
 ## Consequences
 

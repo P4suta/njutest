@@ -61,6 +61,8 @@ pub fn exit_codes() -> String {
 /// What the machine is, as an argument.
 #[derive(Debug, Clone)]
 pub struct Environment {
+    /// The explicit compiled-module owner retained across this composition's preparation paths.
+    pub module_owner: rust_mutants::sealed::ModuleOwner,
     /// The whole environment, as names and values.
     pub vars: rust_mutants::vars::Variables,
     /// Where the process was started.
@@ -208,6 +210,19 @@ pub struct Merge {
     /// Write the combined report here rather than to standard output.
     #[arg(long, value_name = "FILE")]
     pub output: Option<PathBuf>,
+    /// Run every sealed execution the whole rests on again on this machine, and write it only where each comes to what its part recorded.
+    #[arg(long)]
+    pub rerun: bool,
+    /// The workspace the parts measured, which `--rerun` runs the executions in.
+    /// The working directory by default.
+    #[arg(long, value_name = "DIR", requires = "rerun")]
+    pub directory: Option<PathBuf>,
+    /// Pass --offline to every cargo command `--rerun` starts.
+    #[arg(long, requires = "rerun")]
+    pub offline: bool,
+    /// Pass --locked to every cargo command `--rerun` starts.
+    #[arg(long, requires = "rerun")]
+    pub locked: bool,
 }
 
 /// `njutest cache`.
@@ -291,6 +306,10 @@ pub struct Verify {
     /// Turns `[faults] inject` on for this run; it cannot turn it off.
     #[arg(long)]
     pub faults: bool,
+    /// Build nothing for the sealed target, so that every answer is a native lead and the run is `INSUFFICIENT`.
+    /// Turns `[mutation] seal` off for this run; it cannot turn it on.
+    #[arg(long)]
+    pub no_seal: bool,
     /// Judge only one part of the catalog, as `K/N`.
     /// Every part measures the whole baseline; `njutest merge` combines what they judged.
     #[arg(long, value_name = "K/N")]

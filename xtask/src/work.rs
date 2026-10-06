@@ -3,15 +3,13 @@
 
 //! Work in a process group of its own, stopped whole when a budget or a signal says so, and reaped on every path.
 
-use std::process::{Child, Command, ExitStatus};
+use std::process::{Command, ExitStatus};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use thiserror::Error;
-
-/// How often running work is looked at.
-const POLL: Duration = Duration::from_millis(200);
 
 /// How long work that was asked to stop has before its whole group is killed.
 const GRACE: Duration = Duration::from_secs(5);
@@ -61,13 +59,13 @@ pub enum WorkError {
         /// Why.
         source: std::io::Error,
     },
-    /// The kernel refused the work's group whole, and a process besides its leader is still running or could not be seen.
+    /// The original native leader was reached while another retained member refused cancellation.
     #[cfg(unix)]
-    #[error(
-        "the work's process group refused the stop, and a process besides its leader is still \
-         running or could not be seen, so the work is not stopped"
-    )]
-    Outlived,
+    #[error("the retained process group was reached only in part: {source}")]
+    Outlived {
+        /// Every actual native member refusal.
+        source: std::io::Error,
+    },
 }
 
 impl crate::error::Coded for WorkError {
@@ -77,58 +75,353 @@ impl crate::error::Coded for WorkError {
                 crate::error::XtCode::WorkUnrun
             }
             #[cfg(unix)]
-            Self::Outlived => crate::error::XtCode::WorkUnrun,
+            Self::Outlived { .. } => crate::error::XtCode::WorkUnrun,
         }
     }
 }
 
-/// The signals that make this process stop its work before it ends: `SIGINT`, `SIGTERM` and `SIGHUP`.
+impl WorkError {
+    fn kind(&self) -> std::io::ErrorKind {
+        match self {
+            Self::Start { source, .. } | Self::Watch { source } | Self::Signals { source } => {
+                source.kind()
+            }
+            #[cfg(unix)]
+            Self::Outlived { source } => source.kind(),
+        }
+    }
+}
+
+/// The signals that publish a stop observation before this process ends its work.
 #[derive(Debug)]
 pub struct Stops {
-    raised: Arc<AtomicUsize>,
-    #[expect(
-        dead_code,
-        reason = "the registrations are held for what dropping them does: the handlers are removed"
-    )]
-    registrations: Registrations,
+    state: Arc<StopState>,
+    #[cfg(unix)]
+    worker: SignalThread,
+    #[cfg(windows)]
+    worker: SignalWatcher,
+}
+
+#[derive(Debug, Default)]
+struct StopState {
+    raised: std::sync::atomic::AtomicI32,
+    observers: Mutex<Vec<std::sync::Weak<StopObserver>>>,
+    heard: Mutex<Option<Instant>>,
+    waits: Mutex<Vec<crate::observation::WaitNote>>,
+    failure: Mutex<Option<Arc<std::io::Error>>>,
+}
+
+#[derive(Debug)]
+struct StopObserver {
+    signal: crate::observation::Signal,
+    invalidation: crate::observation::Invalidation,
+}
+
+impl StopState {
+    fn publish_failure(&self, source: &Arc<std::io::Error>) {
+        let mut observers = match self.observers.lock() {
+            Ok(observers) => observers,
+            Err(poisoned) => {
+                drop(poisoned);
+                std::process::abort();
+            }
+        };
+        observers.retain(|observer| match observer.upgrade() {
+            Some(observer) => {
+                observer
+                    .signal
+                    .failed(std::io::Error::new(source.kind(), Arc::clone(source)));
+                true
+            }
+            None => false,
+        });
+    }
+
+    fn publish(&self, event: crate::observation::Event) {
+        let mut observers = match self.observers.lock() {
+            Ok(observers) => observers,
+            Err(poisoned) => {
+                drop(poisoned);
+                std::process::abort();
+            }
+        };
+        observers.retain(|observer| match observer.upgrade() {
+            Some(observer) => {
+                match event {
+                    crate::observation::Event::Changed => observer.invalidation.changed(),
+                    crate::observation::Event::Cancelled
+                    | crate::observation::Event::Completed
+                    | crate::observation::Event::Deadline => observer.signal.publish(event),
+                }
+                true
+            }
+            None => false,
+        });
+    }
 }
 
 impl Stops {
-    /// Arms the signals; each one records itself rather than ending the process, so the work can be stopped first.
+    /// Arms producer-owned signal observations and retains their blocking worker until disposal.
     ///
     /// # Errors
-    /// Returns [`WorkError::Signals`] when a handler cannot be installed.
+    /// The signal subscription or its owned worker could not be started.
     pub fn arm() -> Result<Self, WorkError> {
-        let raised = Arc::new(AtomicUsize::new(0));
-        let mut registrations = Registrations(Vec::new());
-        for signal in STOPPING {
-            let recorded = usize::try_from(signal).map_err(|source| WorkError::Signals {
-                source: std::io::Error::other(source),
-            })?;
-            let id = signal_hook::flag::register_usize(signal, Arc::clone(&raised), recorded)
-                .map_err(|source| WorkError::Signals { source })?;
-            registrations.0.push(id);
-        }
-        Ok(Self {
-            raised,
-            registrations,
-        })
+        let state = Arc::new(StopState::default());
+        #[cfg(unix)]
+        let worker = SignalThread::launch(Arc::clone(&state));
+        #[cfg(windows)]
+        let worker = SignalWatcher::launch(Arc::clone(&state));
+        let worker = worker.map_err(|source| WorkError::Signals { source })?;
+        Ok(Self { state, worker })
     }
 
-    /// The signal that asked this process to stop, once one has.
+    /// The actual signal most recently published by the operating system.
     #[must_use]
     pub fn raised(&self) -> Option<i32> {
-        match i32::try_from(self.raised.load(Ordering::SeqCst)) {
-            Ok(0) | Err(_) => None,
-            Ok(signal) => Some(signal),
+        let signal = self.state.raised.load(Ordering::SeqCst);
+        (signal != 0).then_some(signal)
+    }
+
+    /// The output producer endpoint retained before a command's output capture starts.
+    #[must_use]
+    pub fn events(&self) -> WorkEvents {
+        WorkEvents {
+            state: Arc::clone(&self.state),
+        }
+    }
+
+    /// Takes every measured wait for the executing parent's command receipt.
+    #[must_use]
+    pub fn take_waits(&self) -> Vec<crate::observation::WaitNote> {
+        match self.state.waits.lock() {
+            Ok(mut waits) => std::mem::take(&mut *waits),
+            Err(poisoned) => {
+                drop(poisoned);
+                std::process::abort();
+            }
+        }
+    }
+
+    pub(crate) fn record(&self, note: crate::observation::WaitNote) {
+        match self.state.waits.lock() {
+            Ok(mut waits) => waits.push(note),
+            Err(poisoned) => {
+                drop(poisoned);
+                std::process::abort();
+            }
+        }
+    }
+
+    pub(crate) fn subscribe(
+        &self,
+        observation: &crate::observation::Observation,
+    ) -> StopSubscription {
+        let signal = Arc::new(StopObserver {
+            signal: observation.signal(),
+            invalidation: observation.invalidation(),
+        });
+        match self.state.observers.lock() {
+            Ok(mut observers) => {
+                observers.retain(|observer| observer.strong_count() != 0);
+                observers.push(Arc::downgrade(&signal));
+            }
+            Err(poisoned) => {
+                drop(poisoned);
+                std::process::abort();
+            }
+        }
+        if self.raised().is_some() {
+            signal.signal.publish(crate::observation::Event::Cancelled);
+        }
+        match self.state.failure.lock() {
+            Ok(failure) => {
+                if let Some(source) = failure.as_ref() {
+                    signal
+                        .signal
+                        .failed(std::io::Error::new(source.kind(), Arc::clone(source)));
+                }
+            }
+            Err(source) => {
+                eprintln!("work subscription failure ownership was poisoned: {source}");
+                std::process::abort();
+            }
+        }
+        StopSubscription { _signal: signal }
+    }
+
+    fn failed(&self) -> Result<(), WorkError> {
+        match self.state.failure.lock() {
+            Ok(failure) => match failure.as_ref() {
+                Some(source) => Err(WorkError::Watch {
+                    source: std::io::Error::new(source.kind(), Arc::clone(source)),
+                }),
+                None => Ok(()),
+            },
+            Err(source) => {
+                eprintln!("work failure ownership was poisoned: {source}");
+                std::process::abort();
+            }
+        }
+    }
+
+    fn heard(&self) -> Option<Instant> {
+        match self.state.heard.lock() {
+            Ok(mut heard) => heard.take(),
+            Err(poisoned) => {
+                drop(poisoned);
+                std::process::abort();
+            }
         }
     }
 }
 
-/// The handler registrations one [`Stops`] owns, removed when it goes.
+impl Drop for Stops {
+    fn drop(&mut self) {
+        self.worker.finish();
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct StopSubscription {
+    _signal: Arc<StopObserver>,
+}
+
+/// An owned endpoint through which the output producer publishes its actual arrival time.
+#[derive(Debug, Clone)]
+pub struct WorkEvents {
+    state: Arc<StopState>,
+}
+
+impl WorkEvents {
+    /// Retains the producer's first actual refusal before waking every active observer.
+    pub fn failed(&self, source: std::io::Error) {
+        let retained = match self.state.failure.lock() {
+            Ok(mut failure) => Arc::clone(failure.get_or_insert_with(|| Arc::new(source))),
+            Err(source) => {
+                eprintln!("work producer failure publication was poisoned: {source}");
+                std::process::abort();
+            }
+        };
+        self.state.publish_failure(&retained);
+    }
+
+    /// Publishes actual output before waking the work observer.
+    pub fn heard(&self) {
+        match self.state.heard.lock() {
+            Ok(mut heard) => *heard = Some(Instant::now()),
+            Err(poisoned) => {
+                drop(poisoned);
+                std::process::abort();
+            }
+        }
+        self.state.publish(crate::observation::Event::Changed);
+    }
+}
+
+#[cfg(unix)]
+#[derive(Debug)]
+struct SignalThread {
+    handle: Option<std::thread::JoinHandle<()>>,
+    close: signal_hook::iterator::Handle,
+}
+
+#[cfg(unix)]
+impl SignalThread {
+    fn launch(state: Arc<StopState>) -> std::io::Result<Self> {
+        let mut signals = signal_hook::iterator::Signals::new(STOPPING)?;
+        let close = signals.handle();
+        let handle = std::thread::Builder::new()
+            .name("xtask-stop-observations".to_owned())
+            .spawn(move || {
+                for signal in signals.forever() {
+                    state.raised.store(signal, Ordering::SeqCst);
+                    state.publish(crate::observation::Event::Cancelled);
+                }
+            })?;
+        Ok(Self {
+            handle: Some(handle),
+            close,
+        })
+    }
+
+    fn finish(&mut self) {
+        self.close.close();
+        if let Some(handle) = self.handle.take()
+            && let Err(panic) = handle.join()
+        {
+            drop(panic);
+            std::process::abort();
+        }
+    }
+}
+
+/// The stop signals observed on Windows, where a handler can only record a signal and a watcher publishes it.
+#[cfg(windows)]
+#[derive(Debug)]
+struct SignalWatcher {
+    handle: Option<std::thread::JoinHandle<()>>,
+    closed: Arc<std::sync::atomic::AtomicBool>,
+    _registrations: Registrations,
+}
+
+#[cfg(windows)]
+const SIGNAL_WATCH: Duration = Duration::from_millis(50);
+
+#[cfg(windows)]
+impl SignalWatcher {
+    fn launch(state: Arc<StopState>) -> std::io::Result<Self> {
+        let raised = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut registrations = Registrations(Vec::new());
+        for signal in STOPPING {
+            let recorded = usize::try_from(signal).map_err(std::io::Error::other)?;
+            registrations.0.push(signal_hook::flag::register_usize(
+                signal,
+                Arc::clone(&raised),
+                recorded,
+            )?);
+        }
+        let closed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let watched = Arc::clone(&closed);
+        let handle = std::thread::Builder::new()
+            .name("xtask-stop-observations".to_owned())
+            .spawn(move || {
+                while !watched.load(Ordering::SeqCst) {
+                    match i32::try_from(raised.swap(0, Ordering::SeqCst)) {
+                        Ok(0) => {}
+                        Ok(signal) => {
+                            state.raised.store(signal, Ordering::SeqCst);
+                            state.publish(crate::observation::Event::Cancelled);
+                        }
+                        Err(_unregistered_signal) => std::process::abort(),
+                    }
+                    std::thread::park_timeout(SIGNAL_WATCH);
+                }
+            })?;
+        Ok(Self {
+            handle: Some(handle),
+            closed,
+            _registrations: registrations,
+        })
+    }
+
+    fn finish(&mut self) {
+        self.closed.store(true, Ordering::SeqCst);
+        if let Some(handle) = self.handle.take() {
+            handle.thread().unpark();
+            if let Err(panic) = handle.join() {
+                drop(panic);
+                std::process::abort();
+            }
+        }
+    }
+}
+
+/// The handler registrations one Windows signal watcher owns, removed when it goes.
+#[cfg(windows)]
 #[derive(Debug)]
 struct Registrations(Vec<signal_hook::SigId>);
 
+#[cfg(windows)]
 impl Drop for Registrations {
     fn drop(&mut self) {
         while let Some(id) = self.0.pop() {
@@ -136,6 +429,20 @@ impl Drop for Registrations {
                 std::process::abort();
             }
         }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for SignalThread {
+    fn drop(&mut self) {
+        self.finish();
+    }
+}
+
+#[cfg(windows)]
+impl Drop for SignalWatcher {
+    fn drop(&mut self) {
+        self.finish();
     }
 }
 
@@ -169,252 +476,493 @@ impl std::fmt::Debug for Bound<'_> {
     }
 }
 
-/// Runs `command` in a process group of its own until it exits, its `bound` is passed, or one of `stops` is raised.
-/// `started` hears the process id of the group's leader as soon as there is one.
+/// Runs, stops the complete producer group, joins its completion observer and reaps its leader before returning any result.
 ///
 /// # Errors
-/// Returns a [`WorkError`] when the work cannot be started, watched, or stopped, or when `started` cannot record it.
+/// The command, output callback, process observation or complete group cleanup failed.
 pub fn run<F>(
     command: &mut Command,
-    mut bound: Option<&mut Bound<'_>>,
+    bound: Option<&mut Bound<'_>>,
     stops: &Stops,
     started: F,
 ) -> Result<Ended, WorkError>
 where
     F: FnOnce(u32) -> std::io::Result<()>,
 {
-    let mut group = Group::launch(command)?;
-    if let Some(leader) = group.leader() {
-        started(leader).map_err(|source| WorkError::Watch { source })?;
-    }
+    run_with_custody(
+        Request {
+            command,
+            bound,
+            stops,
+            custody: Custody::Direct,
+        },
+        started,
+    )
+}
+
+/// The actual command, semantic bounds and one consumed native custody transition.
+#[derive(Debug)]
+pub struct Request<'run, 'bound> {
+    /// The exact configured command that is launched once.
+    pub command: &'run mut Command,
+    /// The original semantic deadline and progress observation.
+    pub bound: Option<&'run mut Bound<'bound>>,
+    /// The original retained cancellation and failure events.
+    pub stops: &'run Stops,
+    /// The actual original recipient and output endpoints consumed at group completion.
+    pub custody: Custody,
+}
+
+/// The actual recipient that retains a naturally completed producer scope.
+#[derive(Debug)]
+#[cfg_attr(not(unix), derive(Clone, Copy))]
+pub enum Custody {
+    /// Every member settles before this command returns.
+    Direct,
+    /// The original native launching session owns the complete nested scope.
+    #[cfg(unix)]
+    Original {
+        /// The actual acknowledged original launching session.
+        parent: njutest_process::ParentSession,
+        /// The original standard-output descriptor retained before its reader starts.
+        stdout: njutest_process::OutputEndpoint,
+        /// The original standard-error descriptor retained before its reader starts.
+        stderr: njutest_process::OutputEndpoint,
+    },
+}
+
+/// Runs with an explicitly acknowledged original native recipient for natural completion.
+///
+/// # Errors
+/// Every original observation, recipient, cancellation and cleanup refusal remains reported.
+pub fn run_with_custody<F>(request: Request<'_, '_>, started: F) -> Result<Ended, WorkError>
+where
+    F: FnOnce(u32) -> std::io::Result<()>,
+{
+    let Request {
+        command,
+        bound,
+        stops,
+        custody,
+    } = request;
+    std::thread::scope(|scope| {
+        let observation = crate::observation::Observation::subscribe();
+        let subscription = stops.subscribe(&observation);
+        let mut group = Group::launch(command)?;
+        match &custody {
+            Custody::Direct => {}
+            #[cfg(unix)]
+            Custody::Original { .. } => {
+                command
+                    .stdout(std::process::Stdio::inherit())
+                    .stderr(std::process::Stdio::inherit());
+            }
+        }
+        let completion = Arc::new(Completion::default());
+        let waiter = ProcessWaiter::launch(
+            scope,
+            group.child()?,
+            Arc::clone(&completion),
+            observation.signal(),
+        );
+        let cleanup = GroupCleanup { group: &mut group };
+        let watched = started(cleanup.group.leader()?)
+            .map_err(|source| WorkError::Watch { source })
+            .and_then(|()| decided(&completion, &observation, bound, stops));
+        let stopped = cleanup.group.close(&watched, stops, custody);
+        let joined = waiter.join();
+        let reaped = cleanup.group.reap();
+        drop(subscription);
+        let mut failures = Vec::new();
+        if let Err(source) = &watched {
+            failures.push((source.kind(), format!("observation: {source}")));
+        }
+        if let Err(source) = &stopped {
+            failures.push((source.kind(), format!("settlement: {source}")));
+        }
+        if let Err(source) = &joined {
+            failures.push((source.kind(), format!("observer join: {source}")));
+        }
+        if let Err(source) = &reaped {
+            failures.push((source.kind(), format!("reap: {source}")));
+        }
+        if let Some((kind, _first)) = failures.first() {
+            return Err(WorkError::Watch {
+                source: std::io::Error::new(
+                    *kind,
+                    failures
+                        .iter()
+                        .map(|(_kind, cause)| cause.as_str())
+                        .collect::<Vec<_>>()
+                        .join("; "),
+                ),
+            });
+        }
+        let ended = watched?;
+        let status = reaped?;
+        Ok(match ended {
+            Some(ended) => ended,
+            None => Ended::Exited(status),
+        })
+    })
+}
+
+fn decided(
+    completion: &Completion,
+    observation: &crate::observation::Observation,
+    mut bound: Option<&mut Bound<'_>>,
+    stops: &Stops,
+) -> Result<Option<Ended>, WorkError> {
     let began = Instant::now();
     let mut last_heard = began;
     loop {
-        let exited = group.try_wait()?;
-        if let Some(bound) = bound.as_deref_mut()
-            && (bound.heard)().map_err(|source| WorkError::Watch { source })?
-        {
-            last_heard = Instant::now();
+        stops.failed()?;
+        if let Some(arrived) = stops.heard() {
+            last_heard = arrived;
         }
-        if let Some(status) = exited {
-            return Ok(Ended::Exited(status));
+        if let Some(bound) = bound.as_deref_mut() {
+            (bound.heard)().map_err(|source| WorkError::Watch { source })?;
+        }
+        stops.failed()?;
+        if completion.done()? {
+            return Ok(None);
         }
         if let Some(signal) = stops.raised() {
-            group.stop()?;
-            return Ok(Ended::Interrupted { signal });
+            return Ok(Some(Ended::Interrupted { signal }));
         }
-        if let Some(bound) = bound.as_deref() {
-            if last_heard.elapsed() >= bound.quiet {
-                group.stop()?;
-                return Ok(Ended::Quiet {
-                    silent: last_heard.elapsed(),
-                });
-            }
-            if began.elapsed() >= bound.ceiling {
-                group.stop()?;
-                return Ok(Ended::OverBudget {
-                    elapsed: began.elapsed(),
-                });
-            }
+        let deadline =
+            match bound.as_deref() {
+                Some(bound) => {
+                    if last_heard.elapsed() >= bound.quiet {
+                        return Ok(Some(Ended::Quiet {
+                            silent: last_heard.elapsed(),
+                        }));
+                    }
+                    if began.elapsed() >= bound.ceiling {
+                        return Ok(Some(Ended::OverBudget {
+                            elapsed: began.elapsed(),
+                        }));
+                    }
+                    Some(
+                        last_heard
+                            .checked_add(bound.quiet)
+                            .ok_or_else(|| WorkError::Watch {
+                                source: std::io::Error::other(
+                                    "the quiet deadline is not representable",
+                                ),
+                            })?
+                            .min(began.checked_add(bound.ceiling).ok_or_else(|| {
+                                WorkError::Watch {
+                                    source: std::io::Error::other(
+                                        "the work deadline is not representable",
+                                    ),
+                                }
+                            })?),
+                    )
+                }
+                None => None,
+            };
+        let waited = observation
+            .wait(
+                "xtask-work",
+                "process-output-signal-or-semantic-deadline",
+                deadline,
+            )
+            .map_err(|source| WorkError::Watch { source })?;
+        stops.record(waited.note);
+        stops.failed()?;
+        match waited.event.map_err(|source| WorkError::Watch { source })? {
+            crate::observation::Event::Changed
+            | crate::observation::Event::Completed
+            | crate::observation::Event::Cancelled
+            | crate::observation::Event::Deadline => {}
         }
-        std::thread::sleep(POLL);
     }
 }
 
-/// Work started in a process group of its own; it is stopped whole and reaped on every path.
+#[derive(Debug, Default)]
+struct Completion {
+    ended: Mutex<Option<std::io::Result<()>>>,
+}
+
+impl Completion {
+    fn publish(&self, result: std::io::Result<()>) {
+        *self.locked() = Some(result);
+    }
+
+    fn locked(&self) -> std::sync::MutexGuard<'_, Option<std::io::Result<()>>> {
+        match self.ended.lock() {
+            Ok(ended) => ended,
+            Err(poisoned) => {
+                drop(poisoned);
+                std::process::abort();
+            }
+        }
+    }
+
+    fn done(&self) -> Result<bool, WorkError> {
+        match self.locked().as_ref() {
+            Some(Ok(())) => Ok(true),
+            None => Ok(false),
+            Some(Err(source)) => Err(WorkError::Watch {
+                source: std::io::Error::new(source.kind(), source.to_string()),
+            }),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ProcessWaiter<'scope> {
+    handle: Option<std::thread::ScopedJoinHandle<'scope, ()>>,
+}
+
+impl<'scope> ProcessWaiter<'scope> {
+    fn launch(
+        scope: &'scope std::thread::Scope<'scope, '_>,
+        child: Arc<njutest_process::ChildEvent>,
+        completion: Arc<Completion>,
+        signal: crate::observation::Signal,
+    ) -> Self {
+        let handle = scope.spawn(move || {
+            let completed = ProcessCompletion { completion, signal };
+            completed.publish(observe_completion(&child));
+        });
+        Self {
+            handle: Some(handle),
+        }
+    }
+
+    fn join(mut self) -> Result<(), WorkError> {
+        let handle = self.handle.take().ok_or_else(|| WorkError::Watch {
+            source: std::io::Error::other("the process observer was already joined"),
+        })?;
+        handle.join().map_err(|panic| {
+            drop(panic);
+            WorkError::Watch {
+                source: std::io::Error::other("the process completion observer panicked"),
+            }
+        })
+    }
+}
+
+impl Drop for ProcessWaiter<'_> {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle.take()
+            && handle.join().is_err()
+        {
+            eprintln!("the owned work completion observer panicked while joining");
+            std::process::abort();
+        }
+    }
+}
+
+struct GroupCleanup<'a> {
+    group: &'a mut Group,
+}
+
+impl Drop for GroupCleanup<'_> {
+    fn drop(&mut self) {
+        if let Some(child) = self.group.child.as_mut()
+            && let Err(source) = child.stop()
+        {
+            eprintln!("the work producer settled with a retained cleanup refusal: {source}");
+        }
+    }
+}
+
+struct ProcessCompletion {
+    completion: Arc<Completion>,
+    signal: crate::observation::Signal,
+}
+
+impl ProcessCompletion {
+    fn publish(self, result: std::io::Result<()>) {
+        self.completion.publish(result);
+    }
+}
+
+impl Drop for ProcessCompletion {
+    fn drop(&mut self) {
+        if self.completion.locked().is_none() {
+            self.completion.publish(Err(std::io::Error::other(
+                "the process observer ended without publishing completion",
+            )));
+        }
+        self.signal.publish(crate::observation::Event::Completed);
+    }
+}
+
+fn observe_completion(child: &njutest_process::ChildEvent) -> std::io::Result<()> {
+    if child.wait(None)? {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(
+            "a blocking process event returned no completion",
+        ))
+    }
+}
+
+/// A producer group whose leader remains retained through signalling, joining and final reaping.
 #[derive(Debug)]
 struct Group {
-    child: Option<Child>,
+    child: Option<njutest_process::GroupChild>,
 }
 
 impl Group {
     fn launch(command: &mut Command) -> Result<Self, WorkError> {
-        grouped(command);
         let program = command.get_program().display().to_string();
-        command
-            .spawn()
+        njutest_process::GroupChild::start(command)
             .map(|child| Self { child: Some(child) })
             .map_err(|source| WorkError::Start { program, source })
     }
 
-    fn leader(&self) -> Option<u32> {
-        self.child.as_ref().map(Child::id)
+    fn child(&self) -> Result<Arc<njutest_process::ChildEvent>, WorkError> {
+        self.child
+            .as_ref()
+            .map(njutest_process::GroupChild::completion)
+            .ok_or_else(|| WorkError::Watch {
+                source: std::io::Error::other("the process leader was already reaped"),
+            })
     }
 
-    fn try_wait(&mut self) -> Result<Option<ExitStatus>, WorkError> {
-        let Some(child) = self.child.as_mut() else {
-            return Ok(None);
-        };
-        let status = child
-            .try_wait()
-            .map_err(|source| WorkError::Watch { source })?;
-        if status.is_some() {
-            self.child = None;
-        }
-        Ok(status)
+    fn leader(&self) -> Result<u32, WorkError> {
+        self.child
+            .as_ref()
+            .and_then(njutest_process::GroupChild::id)
+            .ok_or_else(|| WorkError::Watch {
+                source: std::io::Error::other("the owned process has no live identity"),
+            })
     }
 
-    fn stop(&mut self) -> Result<(), WorkError> {
-        let Some(child) = self.child.as_mut() else {
-            return Ok(());
-        };
-        let asked_to_stop = signal(child, Sent::Ask);
-        let asked = Instant::now();
-        let mut watched = Ok(());
-        while asked.elapsed() < GRACE {
-            match exited(child) {
-                Ok(true) => break,
-                Ok(false) => std::thread::sleep(POLL),
-                Err(unwatched) => {
-                    watched = Err(unwatched);
-                    break;
-                }
+    #[cfg_attr(
+        not(unix),
+        expect(
+            unused_variables,
+            reason = "only a unix original custody waits for its natural output end, and only it reads how the watch ended"
+        )
+    )]
+    fn close(
+        &mut self,
+        watched: &Result<Option<Ended>, WorkError>,
+        stops: &Stops,
+        custody: Custody,
+    ) -> Result<(), WorkError> {
+        match custody {
+            Custody::Direct => self.stop(stops),
+            #[cfg(unix)]
+            Custody::Original {
+                parent,
+                stdout,
+                stderr,
+            } => {
+                let outcome = if matches!(watched, Ok(None)) && stops.raised().is_none() {
+                    stops.failed()?;
+                    let began = Instant::now();
+                    let deadline = began
+                        .checked_add(njutest_process::REAPING_GRACE)
+                        .ok_or_else(|| WorkError::Watch {
+                            source: std::io::Error::other("the natural output backstop overflowed"),
+                        })?;
+                    let mut attempts = 0_u64;
+                    let closed = stdout.closed(deadline, &mut attempts).and_then(|first| {
+                        if first {
+                            stderr.closed(deadline, &mut attempts)
+                        } else {
+                            Ok(false)
+                        }
+                    });
+                    self.note(
+                        stops,
+                        began,
+                        &format!("natural-independent-output-eof; observation-calls={attempts}"),
+                    )?;
+                    stops.failed()?;
+                    if closed.map_err(|source| WorkError::Watch { source })?
+                        && stops.raised().is_none()
+                    {
+                        self.release(&parent)
+                    } else {
+                        self.stop(stops)
+                    }
+                } else {
+                    self.stop(stops)
+                };
+                drop(parent);
+                drop(stdout);
+                drop(stderr);
+                outcome
             }
         }
-        let killed = signal(child, Sent::Kill);
-        child.wait().map_err(|source| WorkError::Watch { source })?;
+    }
+
+    #[cfg(unix)]
+    fn release(&mut self, parent: &njutest_process::ParentSession) -> Result<(), WorkError> {
+        self.child
+            .as_mut()
+            .ok_or_else(|| WorkError::Watch {
+                source: std::io::Error::other(
+                    "the original producer was consumed before custody transfer",
+                ),
+            })?
+            .release_to_parent(parent)
+            .map(|_status| ())
+            .map_err(|source| WorkError::Watch { source })
+    }
+
+    fn stop(&mut self, stops: &Stops) -> Result<(), WorkError> {
+        let began = Instant::now();
+        let leader = self.leader()?;
+        let child = self.child.as_mut().ok_or_else(|| WorkError::Watch {
+            source: std::io::Error::other("the process owner was consumed before settlement"),
+        })?;
+        let settled = child.stop_with_grace(GRACE);
+        Self::note_for(stops, began, leader, "owned-group-exit-and-leader-reap")?;
+        settled.map_err(|source| WorkError::Watch { source })
+    }
+
+    #[cfg(unix)]
+    fn note(&self, stops: &Stops, began: Instant, cause: &str) -> Result<(), WorkError> {
+        Self::note_for(stops, began, self.leader()?, cause)
+    }
+
+    fn note_for(stops: &Stops, began: Instant, leader: u32, cause: &str) -> Result<(), WorkError> {
+        stops.record(crate::observation::WaitNote {
+            owner: format!("process-group:{leader}"),
+            cause: cause.to_owned(),
+            elapsed_ns: u64::try_from(began.elapsed().as_nanos()).map_err(|source| {
+                WorkError::Watch {
+                    source: std::io::Error::other(source),
+                }
+            })?,
+            machine: crate::observation::Machine {
+                os: std::env::consts::OS,
+                cpus: std::thread::available_parallelism()
+                    .map_err(|source| WorkError::Watch { source })?
+                    .get(),
+            },
+        });
+        Ok(())
+    }
+
+    fn reap(&mut self) -> Result<ExitStatus, WorkError> {
+        let child = self.child.as_mut().ok_or_else(|| WorkError::Watch {
+            source: std::io::Error::other("the process owner was consumed before reap"),
+        })?;
+        let status = child
+            .wait_status()
+            .map_err(|source| WorkError::Watch { source })?;
         self.child = None;
-        killed.and(asked_to_stop).and(watched)
+        Ok(status)
     }
 }
 
 impl Drop for Group {
     fn drop(&mut self) {
-        if let Err(unstopped) = self.stop() {
-            let said = std::io::Write::write_all(&mut std::io::stderr(),
-                format!("xtask: the work's group could not be stopped, so this process ends here: {unstopped}\n").as_bytes());
-            match said {
-                Ok(()) | Err(_) => std::process::abort(),
-            }
-        }
-    }
-}
-
-/// How hard work is asked to stop, in the order the asking escalates.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
-pub(crate) enum Sent {
-    /// `SIGTERM`, the chance to stop cleanly.
-    Ask,
-    /// `SIGKILL`, after the grace a hung member ignores.
-    Kill,
-}
-
-#[cfg(unix)]
-fn grouped(command: &mut Command) {
-    use std::os::unix::process::CommandExt as _;
-
-    command.process_group(0);
-}
-
-#[cfg(not(unix))]
-const fn grouped(_command: &mut Command) {}
-
-/// Whether the leader has exited, without reaping it, so the group's id stays reserved while the group is signalled.
-#[cfg(unix)]
-fn exited(child: &Child) -> Result<bool, WorkError> {
-    use rustix::process::{WaitId, WaitIdOptions, waitid};
-
-    let Some(leader) = leader_pid(child) else {
-        return Ok(true);
-    };
-    let options = WaitIdOptions::EXITED | WaitIdOptions::NOWAIT | WaitIdOptions::NOHANG;
-    match waitid(WaitId::Pid(leader), options) {
-        Ok(observed) => Ok(observed.is_some()),
-        Err(errno) => Err(WorkError::Watch {
-            source: std::io::Error::from(errno),
-        }),
-    }
-}
-
-#[cfg(not(unix))]
-#[expect(
-    clippy::missing_const_for_fn,
-    clippy::unnecessary_wraps,
-    reason = "only unix can watch a leader exit without reaping it, so elsewhere the answer is no, in the signature the unix watch needs"
-)]
-fn exited(_child: &Child) -> Result<bool, WorkError> {
-    Ok(false)
-}
-
-#[cfg(unix)]
-fn leader_pid(child: &Child) -> Option<rustix::process::Pid> {
-    match i32::try_from(child.id()) {
-        Ok(raw) => rustix::process::Pid::from_raw(raw),
-        Err(_beyond_a_pid) => None,
-    }
-}
-
-/// Signals the leader's whole group; a group the kernel will not let this process signal whole gets its leader signalled by name, and a group already gone is success.
-#[cfg(unix)]
-fn signal(child: &mut Child, sent: Sent) -> Result<(), WorkError> {
-    let Some(leader) = leader_pid(child) else {
-        return match sent {
-            Sent::Ask => Ok(()),
-            Sent::Kill => child.kill().map_err(|source| WorkError::Watch { source }),
-        };
-    };
-    signal_group(leader, sent)
-}
-
-/// Signals the group `leader` leads, as [`decide_stop`] decides: a group the kernel will not let this process signal whole gets its leader signalled by name, and is stopped only if a look at it finds nobody else.
-#[cfg(unix)]
-pub(crate) fn signal_group(leader: rustix::process::Pid, sent: Sent) -> Result<(), WorkError> {
-    use rustix::io::Errno;
-    use rustix::process::{Signal, kill_process, kill_process_group};
-
-    let signal = match sent {
-        Sent::Ask => Signal::TERM,
-        Sent::Kill => Signal::KILL,
-    };
-    let grouped = kill_process_group(leader, signal);
-    let (alone, others) = match grouped {
-        Err(Errno::PERM) => (
-            kill_process(leader, signal),
-            others_than(leader.as_raw_nonzero().get()),
-        ),
-        Ok(()) | Err(_) => (Ok(()), Others::Unseen),
-    };
-    match decide_stop(delivered(grouped), delivered(alone), others) {
-        StopDecision::Reached(Stopped::Group) => Ok(()),
-        StopDecision::Reached(Stopped::LeaderOnly) => Err(WorkError::Outlived),
-        StopDecision::Failed => Err(WorkError::Watch {
-            source: match (grouped, alone) {
-                (Err(Errno::PERM), Err(errno)) | (Err(errno), _) => std::io::Error::from(errno),
-                (Ok(()), Ok(()) | Err(_)) => {
-                    std::io::Error::other("a stop the kernel answered failed")
-                }
-            },
-        }),
-    }
-}
-
-/// What the kernel's answer to one signal comes to.
-#[cfg(unix)]
-const fn delivered(answer: rustix::io::Result<()>) -> Delivered {
-    match answer {
-        Ok(()) => Delivered::Sent,
-        Err(rustix::io::Errno::SRCH) => Delivered::Gone,
-        Err(rustix::io::Errno::PERM) => Delivered::Refused,
-        Err(_) => Delivered::Failed,
-    }
-}
-
-/// Who besides `leader` its group holds, as the machine's processes are listed.
-#[cfg(unix)]
-fn others_than(leader: i32) -> Others {
-    let Ok(leader) = u32::try_from(leader) else {
-        return Others::Unseen;
-    };
-    match listed() {
-        None => Others::Unseen,
-        Some(processes)
-            if processes
-                .iter()
-                .any(|one| one.pid != leader && one.group == leader && !one.ended) =>
+        if let Some(mut child) = self.child.take()
+            && child.stop().is_err()
         {
-            Others::Somebody
+            std::process::abort();
         }
-        Some(_) => Others::Nobody,
     }
 }
 
@@ -463,75 +1011,276 @@ pub fn listed() -> Option<Vec<Listed>> {
     Some(processes)
 }
 
-/// What stopping a group reached.
-#[cfg(unix)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Stopped {
-    /// Every process of the group was signalled, or none besides its unreaped leader was left.
-    Group,
-    /// The kernel refused the group whole and only its leader was signalled.
-    LeaderOnly,
-}
-
-/// What the kernel answered one signal with.
+/// The original two cancellation strengths, in their inherited escalation order.
 #[cfg(unix)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
-pub enum Delivered {
-    /// It was sent.
-    Sent,
-    /// Nothing by that id was left to send it to.
-    Gone,
-    /// Sending it is beyond this process's authority for some process it names.
-    Refused,
-    /// Any other failure.
-    Failed,
+pub(crate) enum Sent {
+    /// Gives every retained member its original graceful cancellation request.
+    Ask,
+    /// Forcefully cancels every retained native member.
+    Kill,
 }
 
-/// Who besides its leader a group was seen to hold.
+/// Retained native generations acquired only after validating the complete original lane record.
 #[cfg(unix)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
-pub enum Others {
-    /// Nobody.
-    Nobody,
-    /// Somebody still running.
-    Somebody,
-    /// The group could not be looked at.
-    Unseen,
+#[derive(Debug)]
+pub(crate) struct GroupAuthority {
+    leader: u32,
+    members: Vec<njutest_process::ForeignProcess>,
 }
 
-/// What a group stop comes to.
 #[cfg(unix)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StopDecision {
-    /// It reached this much.
-    Reached(Stopped),
-    /// It failed.
-    Failed,
-}
-
-/// What a group stop comes to, decided by the table the engine's runner is held to as well, `crates/rust-mutants/tests/testdata/group-stop.tsv`.
-#[cfg(unix)]
-#[must_use]
-pub const fn decide_stop(group: Delivered, leader: Delivered, others: Others) -> StopDecision {
-    match group {
-        Delivered::Sent | Delivered::Gone => StopDecision::Reached(Stopped::Group),
-        Delivered::Failed => StopDecision::Failed,
-        Delivered::Refused => match (leader, others) {
-            (Delivered::Refused | Delivered::Failed, _) => StopDecision::Failed,
-            (Delivered::Sent | Delivered::Gone, Others::Nobody) => {
-                StopDecision::Reached(Stopped::Group)
+impl GroupAuthority {
+    pub(crate) fn capture(
+        recorded: &crate::lanes::Recorded,
+        start_of: impl Fn(u32) -> crate::lanes::Start,
+        session_of: impl Fn(u32) -> crate::lanes::Session,
+    ) -> Result<Option<Self>, WorkError> {
+        let census = listed().ok_or_else(|| WorkError::Watch {
+            source: std::io::Error::other("the recorded group could not be listed"),
+        })?;
+        match crate::lanes::group_liveness(
+            recorded,
+            &start_of(recorded.pid),
+            Some(&census),
+            &session_of,
+        ) {
+            crate::lanes::Liveness::Gone => return Ok(None),
+            crate::lanes::Liveness::Unseen => {
+                return Err(WorkError::Watch {
+                    source: std::io::Error::other(
+                        "the original recorded group could not be identified",
+                    ),
+                });
             }
-            (Delivered::Sent | Delivered::Gone, Others::Somebody | Others::Unseen) => {
-                StopDecision::Reached(Stopped::LeaderOnly)
+            crate::lanes::Liveness::Alive => {}
+        }
+        let mut members = Vec::new();
+        for listed in census
+            .into_iter()
+            .filter(|one| one.group == recorded.pid && !one.ended)
+        {
+            if let Some(member) = retain_group_member(listed.pid, recorded.pid)? {
+                members.push(member);
             }
-        },
+        }
+        let confirmed = listed().ok_or_else(|| WorkError::Watch {
+            source: std::io::Error::other("the retained original group could not be confirmed"),
+        })?;
+        match crate::lanes::group_liveness(
+            recorded,
+            &start_of(recorded.pid),
+            Some(&confirmed),
+            &session_of,
+        ) {
+            crate::lanes::Liveness::Gone => Ok(None),
+            crate::lanes::Liveness::Unseen => Err(WorkError::Watch {
+                source: std::io::Error::other(
+                    "the retained original group identity became unknown",
+                ),
+            }),
+            crate::lanes::Liveness::Alive => Ok(Some(Self {
+                leader: recorded.pid,
+                members,
+            })),
+        }
     }
 }
 
-#[cfg(not(unix))]
-fn signal(child: &mut Child, sent: Sent) -> Result<(), WorkError> {
-    match sent {
-        Sent::Ask => Ok(()),
-        Sent::Kill => child.kill().map_err(|source| WorkError::Watch { source }),
+/// Delivers cancellation only through retained native generations, never a numeric group facade.
+#[cfg(unix)]
+pub(crate) fn signal_group(group: &GroupAuthority, sent: Sent) -> Result<(), WorkError> {
+    use njutest_process::{Delivered, Others, StopDecision, Stopped, decide_stop};
+
+    let how = match sent {
+        Sent::Ask => njutest_process::GroupStop::Ask,
+        Sent::Kill => njutest_process::GroupStop::Kill,
+    };
+    let mut delivered = Delivered::Sent;
+    let mut leader = Delivered::Gone;
+    let mut others = Others::Nobody;
+    let mut failures = Vec::new();
+    for member in &group.members {
+        let answer = member.signal(how);
+        let actual = match &answer {
+            Ok(()) => Delivered::Sent,
+            Err(source) if source.kind() == std::io::ErrorKind::PermissionDenied => {
+                Delivered::Refused
+            }
+            Err(_source) => Delivered::Failed,
+        };
+        if member.identity().pid() == group.leader {
+            leader = actual;
+        } else {
+            others = Others::Somebody;
+        }
+        match actual {
+            Delivered::Refused if delivered != Delivered::Failed => delivered = Delivered::Refused,
+            Delivered::Sent | Delivered::Gone | Delivered::Refused => {}
+            Delivered::Failed => delivered = Delivered::Failed,
+        }
+        if let Err(source) = answer {
+            failures.push(format!("{}: {source}", member.identity().token()));
+        }
+    }
+    match decide_stop(delivered, leader, others) {
+        StopDecision::Reached(Stopped::Group) => Ok(()),
+        StopDecision::Reached(Stopped::LeaderOnly) => Err(WorkError::Outlived {
+            source: std::io::Error::other(failures.join("; ")),
+        }),
+        StopDecision::Failed => Err(WorkError::Watch {
+            source: std::io::Error::other(failures.join("; ")),
+        }),
+    }
+}
+
+#[cfg(unix)]
+fn retain_group_member(
+    pid: u32,
+    expected: u32,
+) -> Result<Option<njutest_process::ForeignProcess>, WorkError> {
+    let Some(member) = njutest_process::ForeignProcess::retain(pid)
+        .map_err(|source| WorkError::Watch { source })?
+    else {
+        return Ok(None);
+    };
+    let raw = i32::try_from(member.identity().pid()).map_err(|source| WorkError::Watch {
+        source: std::io::Error::other(source),
+    })?;
+    let pid = rustix::process::Pid::from_raw(raw).ok_or_else(|| WorkError::Watch {
+        source: std::io::Error::other("the retained member has no positive native PID"),
+    })?;
+    match rustix::process::getpgid(Some(pid)) {
+        Ok(group) => {
+            let actual =
+                u32::try_from(group.as_raw_nonzero().get()).map_err(|source| WorkError::Watch {
+                    source: std::io::Error::other(source),
+                })?;
+            Ok((actual == expected).then_some(member))
+        }
+        Err(rustix::io::Errno::SRCH) => Ok(None),
+        Err(source) => Err(WorkError::Watch {
+            source: source.into(),
+        }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Stops;
+    use crate::observation::{Event, Observation};
+
+    #[test]
+    fn progress_wakes_coalesce_until_the_original_subscription_reads() {
+        let stops = Stops::arm().expect("the owned original stop observer");
+        let observed = Observation::subscribe();
+        let subscription = stops.subscribe(&observed);
+        for _ in 0..256 {
+            stops.state.publish(Event::Changed);
+        }
+        assert_eq!(
+            observed
+                .pending()
+                .expect("the complete original publication"),
+            Some(Event::Changed)
+        );
+        assert_eq!(
+            observed
+                .pending()
+                .expect("the complete original publication"),
+            None
+        );
+        drop(subscription);
+    }
+
+    #[test]
+    fn progress_wakes_preserve_the_original_cancellation_event() {
+        let stops = Stops::arm().expect("the owned original stop observer");
+        let observed = Observation::subscribe();
+        let subscription = stops.subscribe(&observed);
+        for _ in 0..256 {
+            stops.state.publish(Event::Changed);
+        }
+        stops.state.publish(Event::Cancelled);
+        assert_eq!(
+            observed
+                .pending()
+                .expect("the complete original publication"),
+            Some(Event::Cancelled)
+        );
+        assert_eq!(
+            observed
+                .pending()
+                .expect("the complete original publication"),
+            Some(Event::Changed)
+        );
+        assert_eq!(
+            observed
+                .pending()
+                .expect("the complete original publication"),
+            None
+        );
+        drop(subscription);
+    }
+
+    #[test]
+    fn progress_wakes_preserve_the_first_actual_producer_refusal() {
+        let stops = Stops::arm().expect("the owned original stop observer");
+        let observed = Observation::subscribe();
+        let subscription = stops.subscribe(&observed);
+        let failure = std::sync::Arc::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "the original producer refused its progress",
+        ));
+        stops.state.publish_failure(&failure);
+        for _ in 0..256 {
+            stops.state.publish(Event::Changed);
+        }
+        let retained = observed
+            .ensure_complete()
+            .expect_err("the original refusal");
+        assert_eq!(retained.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(retained.to_string(), failure.to_string());
+        drop(subscription);
+    }
+
+    #[test]
+    fn actual_output_publishers_rearm_progress_after_the_reader_acknowledges() {
+        let stops = Stops::arm().expect("the owned original stop observer");
+        let observed = Observation::subscribe();
+        let subscription = stops.subscribe(&observed);
+        std::thread::scope(|scope| {
+            let publisher = stops.events();
+            njutest_devkit::thread::ScopedThread::launch(scope, move || {
+                for _arrival in 0..256 {
+                    publisher.heard();
+                }
+            })
+            .join()
+            .expect("the actual output publisher joins");
+        });
+        assert!(
+            stops.heard().is_some(),
+            "the real output arrival time remains available"
+        );
+        assert_eq!(
+            observed.pending().expect("coalesced output burst"),
+            Some(Event::Changed)
+        );
+        assert_eq!(
+            observed.pending().expect("one output acknowledgement"),
+            None
+        );
+        stops.events().heard();
+        assert!(
+            stops.heard().is_some(),
+            "the new actual arrival time is retained"
+        );
+        assert_eq!(
+            observed.pending().expect("a new output arrival"),
+            Some(Event::Changed)
+        );
+        assert_eq!(observed.pending().expect("no cached output wake"), None);
+        drop(subscription);
     }
 }

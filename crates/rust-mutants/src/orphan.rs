@@ -106,9 +106,15 @@ impl Orphan {
         let Some(at) = self.at else {
             return true;
         };
-        let from = started.checked_sub(SLACK).unwrap_or(std::time::UNIX_EPOCH);
-        let to = ended.checked_add(SLACK).unwrap_or(ended);
-        from <= at && at <= to
+        let after_start = match started.checked_sub(SLACK) {
+            Some(from) => from <= at,
+            None => true,
+        };
+        let before_end = match ended.checked_add(SLACK) {
+            Some(to) => at <= to,
+            None => true,
+        };
+        after_start && before_end
     }
 }
 

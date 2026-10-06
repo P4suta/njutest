@@ -12,6 +12,8 @@ use super::{Layer, REPORT_FILE};
 
 /// The run the specimen report names.
 pub const RUN: &str = "20260906T101500Z-9f1c2d";
+/// The evidence identity the specimen's answer was keyed on.
+pub const IDENTITY: &str = "d4c1b0e7a2f93e6855b7c4d0a1f23e8b9c6d5a7f0e2b4c6d8a0f2e4c6b8d0a2f4";
 /// The display identity of the specimen's killed mutant.
 pub const KILLED: &str = "aaaaaaaaaaaaaaaaaaaa";
 /// The display identity of the specimen's survivor, which the one finding names.
@@ -19,7 +21,7 @@ pub const SURVIVED: &str = "bbbbbbbbbbbbbbbbbbbb";
 /// The one target the specimen run tested with.
 pub const TARGET: &str = "pkg/test/lib";
 /// The display identity of the fault a planted defect puts.
-pub const FAULTED: &str = "cccccccccccccccccccc";
+pub const FAULTED: &str = "07b38d4b4abead8b3ab4";
 /// The question about the status of the one exchange [`went_past`] holds.
 pub const ASKED: &str = "f714f108a1ce93e4cae5d149115f5f2efc4d4ceb620ccecc762f1c4b914022ed";
 
@@ -28,10 +30,11 @@ pub const ASKED: &str = "f714f108a1ce93e4cae5d149115f5f2efc4d4ceb620ccecc762f1c4
 pub fn base() -> Value {
     json!({
         "schema": "njutest-assurance-report-v1",
-        "schema_version": 2,
+        "schema_version": 3,
         "run_id": RUN,
         "run_kind": "scoped",
         "contract": "standard-v1",
+        "provenance": { "identity": IDENTITY, "cached": false, "source_run_id": null },
         "verdict": "INSUFFICIENT",
         "accounting": {
             "targets": { "selected": 1, "passed": 1, "failed": 0, "skipped": 0, "missing": 0 },
@@ -53,7 +56,7 @@ pub fn base() -> Value {
             },
             "soundness": { "unsafe_items": 0, "packages_with_unsafe": 0, "executed": false },
             "faults": {
-                "sites": 0, "noticed": 0, "unnoticed": 0, "unreached": 0,
+                "sites": 0, "noticed": 0, "unnoticed": 0, "absorbed": 0, "unreached": 0,
                 "waited": 0, "undecided": 0, "not_put": 0
             }
         },
@@ -68,32 +71,7 @@ pub fn base() -> Value {
                 "message": null
             }
         ],
-        "mutants": [
-            {
-                "id": "a".repeat(64),
-                "display_id": KILLED,
-                "path": "src/lib.rs",
-                "position": { "line": 7, "column": 9, "character_column": 9 },
-                "rule": "negate-condition@1",
-                "decision": {
-                    "outcome": "killed", "killed_by": TARGET, "step_boundary": null
-                },
-                "accepted": false,
-                "reuse": { "reused": false, "source_run_id": null }
-            },
-            {
-                "id": "b".repeat(64),
-                "display_id": SURVIVED,
-                "path": "src/lib.rs",
-                "position": { "line": 11, "column": 5, "character_column": 5 },
-                "rule": "return-ok-default@1",
-                "decision": {
-                    "outcome": "survived", "killed_by": null, "step_boundary": null
-                },
-                "accepted": false,
-                "reuse": { "reused": false, "source_run_id": null }
-            }
-        ],
+        "mutants": mutated(),
         "models": [],
         "findings": [
             {
@@ -105,6 +83,44 @@ pub fn base() -> Value {
         ],
         "limitations": []
     })
+}
+
+/// The specimen's two mutation rows: the kill a sealed execution of [`TARGET`]'s one test detected, and the survivor it passed.
+fn mutated() -> Value {
+    json!([
+        {
+            "id": "a".repeat(64),
+            "display_id": KILLED,
+            "path": "src/lib.rs",
+            "position": { "line": 7, "column": 9, "character_column": 9 },
+            "rule": "negate-condition@1",
+            "decision": {
+                "outcome": "killed", "killed_by": TARGET, "step_boundary": null
+            },
+            "evidence": {
+                "kind": "sealed",
+                "executions": [{ "target": TARGET, "test": "tests::one", "came_to": "panicked" }]
+            },
+            "accepted": false,
+            "reuse": { "reused": false, "source_run_id": null }
+        },
+        {
+            "id": "b".repeat(64),
+            "display_id": SURVIVED,
+            "path": "src/lib.rs",
+            "position": { "line": 11, "column": 5, "character_column": 5 },
+            "rule": "return-ok-default@1",
+            "decision": {
+                "outcome": "survived", "killed_by": null, "step_boundary": null
+            },
+            "evidence": {
+                "kind": "sealed",
+                "executions": [{ "target": TARGET, "test": "tests::one", "came_to": "passed" }]
+            },
+            "accepted": false,
+            "reuse": { "reused": false, "source_run_id": null }
+        }
+    ])
 }
 
 /// The display identity of the crash the crashes layer's planted defects put.
@@ -120,7 +136,8 @@ fn crash_reported(decision: &Value, counted: &str, finding: Option<(&str, &str)>
             "path": "src/lib.rs",
             "item": "save",
             "position": null,
-            "decision": decision
+            "decision": decision,
+            "sealed": false
         }],
         "accounting": { "crashes": { "sites": 1, counted: 1 } }
     }));
@@ -138,7 +155,6 @@ fn crash_reported(decision: &Value, counted: &str, finding: Option<(&str, &str)>
 /// One step of the crash [`CRASHED`], as the runner records it.
 fn crash_step(taken: &Value) -> Value {
     json!({
-        "timestamp": "2026-09-06T00:00:07Z", "elapsed_ms": 7,
         "type": "crash-step",
         "step": { "crash": CRASHED, "taken": taken }
     })
@@ -164,14 +180,47 @@ fn crash_run(test: &str, stage: &str, ended: &str, files: &[&str]) -> Value {
         })
     });
     json!({
-        "timestamp": "2026-09-06T00:00:07Z", "elapsed_ms": 7,
         "type": "crash-exec",
         "crash": {
-            "crash": CRASHED, "target": TARGET, "test": test, "stage": stage,
+            "crash": CRASHED, "target": TARGET, "test": test, "stage": stage, "sealed": false,
             "exit_code": exit_code, "outcome": outcome, "noticed": ended == "stopped",
-            "issued": issued, "left": left, "failed": failed
+            "issued": issued, "left": left, "unnamed": null, "failed": failed
         }
     })
+}
+
+/// One sealed instance of `test` with the crash [`CRASHED`] put to it, which came to `outcome`, `halted` where the host stopped it at the notice, with the `files` a halt left or a next instance failed.
+fn sealed_crash_run(test: &str, stage: &str, outcome: &str, files: &[&str]) -> Value {
+    let Value::Object(mut run) = crash_run(
+        test,
+        stage,
+        if outcome == crate::crashes::HALTED {
+            "stopped"
+        } else {
+            "passed"
+        },
+        files,
+    ) else {
+        return Value::Null;
+    };
+    if let Some(Value::Object(record)) = run.get_mut("crash") {
+        record.insert("sealed".to_owned(), Value::Bool(true));
+        record.insert("exit_code".to_owned(), Value::Null);
+        record.insert("outcome".to_owned(), Value::String(outcome.to_owned()));
+    }
+    Value::Object(run)
+}
+
+/// `document` with its one crash site said to be sealed.
+fn said_sealed(mut document: Value) -> Value {
+    if let Some(site) = document
+        .get_mut("crashes")
+        .and_then(|crashes| crashes.get_mut(0))
+        .and_then(Value::as_object_mut)
+    {
+        site.insert("sealed".to_owned(), Value::Bool(true));
+    }
+    document
 }
 
 /// The defects planted for the crashes layer about the evidence a stop is decided on: a notice the engine never read, one naming another run's nonce, and a run issued another mutation.
@@ -356,6 +405,19 @@ fn crashes_planted(clean: &Perturbation) -> Vec<Perturbation> {
             crash_reported(&json!({ "decision": "unreached" }), "unreached", None),
             crash_recorded(Vec::new()),
         ),
+        planted(
+            "a sealed crash said to have restarted whose one round's next instance panicked",
+            said_sealed(crash_reported(&restarted, "restarted", None)),
+            crash_recorded(vec![
+                sealed_crash_run("t", "crash", crate::crashes::HALTED, &["count"]),
+                sealed_crash_run("t", "next", "panicked", &["t"]),
+            ]),
+        ),
+        planted(
+            "a crash said to be sealed whose runs were processes",
+            said_sealed(crash_reported(&restarted, "restarted", None)),
+            crash_recorded(crash_restarted()),
+        ),
     ]
     .into_iter()
     .chain(crashes_planted_against_order(clean))
@@ -381,7 +443,7 @@ fn crashes_planted_against_order(clean: &Perturbation) -> Vec<Perturbation> {
                 "crashes": [{
                     "catalog_index": 0, "id": "d".repeat(64), "display_id": CRASHED,
                     "path": "src/lib.rs", "item": "save", "position": null,
-                    "decision": restarted
+                    "decision": restarted, "sealed": false
                 }],
                 "accounting": { "crashes": { "sites": 7, "restarted": 1 } }
             })),
@@ -500,18 +562,17 @@ fn besides_planted(clean: &Perturbation) -> Vec<Perturbation> {
             events: Some(
                 fault_recorded(&json!({ "decision": "unnoticed" }), "survived")
                     .into_iter()
-                    .chain([4, 5].map(|at| {
+                    .chain(std::iter::repeat_n(
                         json!({
-                            "timestamp": "2026-09-06T00:00:04Z", "elapsed_ms": at,
                             "type": "beside-run",
                             "pair": {
                                 "mutant": SURVIVED, "fault": FAULTED, "target": TARGET,
                                 "alone": "killed", "with": "killed"
                             }
-                        })
-                    }))
+                        }),
+                        2,
+                    ))
                     .chain([json!({
-                        "timestamp": "2026-09-06T00:00:06Z", "elapsed_ms": 6,
                         "type": "beside",
                         "beside": {
                             "mutant": SURVIVED, "fault": FAULTED, "target": TARGET,
@@ -589,8 +650,118 @@ fn faults_planted(clean: &Perturbation) -> Vec<Perturbation> {
         },
     ]
     .into_iter()
+    .chain(faults_planted_routed(clean))
     .chain(faults_owing(clean))
+    .chain(faults_fated(clean))
     .collect()
+}
+
+/// The faults layer's planted defects about what a route's reaching rests on: a baseline that reaches a site the route leaves out, and a route that puts a target at a site its baseline never reached.
+fn faults_planted_routed(clean: &Perturbation) -> Vec<Perturbation> {
+    let disagreed = |name: &'static str, route: Value, baseline: Value| Perturbation {
+        name,
+        document: with(json!({
+            "faults": [fault_site(&json!({ "decision": "unnoticed" }))],
+            "accounting": { "faults": { "sites": 1, "unnoticed": 1 } },
+            "findings": [{}, {
+                "kind": "unnoticed-fault",
+                "subject": FAULTED,
+                "detail": "nothing noticed the call failing",
+                "position": null
+            }]
+        })),
+        events: Some(
+            routes()
+                .into_iter()
+                .chain([
+                    route,
+                    baseline,
+                    json!({
+                        "type": "fault-exec",
+                        "fault": {
+                            "fault": FAULTED, "role": "first", "target": TARGET, "args": [],
+                            "outcome": "survived", "duration_ms": 5, "alone": false
+                        }
+                    }),
+                    json!({
+                        "type": "fault",
+                        "fault": fault_site(&json!({ "decision": "unnoticed" }))
+                    }),
+                ])
+                .collect(),
+        ),
+        ..clean.clone()
+    };
+    vec![
+        disagreed(
+            "a fault route that leaves out a target its faulted baseline says reached the site",
+            json!({ "type": "fault-route", "route": { "fault": FAULTED, "reaching": [] } }),
+            json!({
+                "type": "fault-baseline",
+                "baseline": { "target": TARGET, "doc": false, "reached": [0] }
+            }),
+        ),
+        disagreed(
+            "a fault route that puts a target at a site its faulted baseline never reached",
+            json!({
+                "type": "fault-route",
+                "route": { "fault": FAULTED, "reaching": [TARGET] }
+            }),
+            json!({
+                "type": "fault-baseline",
+                "baseline": { "target": TARGET, "doc": false, "reached": [] }
+            }),
+        ),
+    ]
+}
+
+/// The faults layer's planted defects about where a failure went: an absorbed fault whose run again read the failure, and an unnoticed one whose every run again dropped it unread.
+fn faults_fated(clean: &Perturbation) -> Vec<Perturbation> {
+    let fated = |decision: &str, read: u64| {
+        let decided = json!({ "decision": decision });
+        fault_recorded(&decided, "survived")
+            .into_iter()
+            .chain([
+                json!({
+                    "type": "fault-route",
+                    "route": { "fault": FAULTED, "reaching": [TARGET] }
+                }),
+                json!({
+                    "type": "fault-fate",
+                    "fate": {
+                        "fault": FAULTED, "target": TARGET, "outcome": "survived",
+                        "fate": { "made": 1, "read": read, "dropped": 1 }
+                    }
+                }),
+            ])
+            .collect::<Vec<Value>>()
+    };
+    let reported = |decision: &str| {
+        with(json!({
+            "faults": [fault_site(&json!({ "decision": decision }))],
+            "accounting": { "faults": { "sites": 1, decision: 1 } },
+            "findings": [{}, {
+                "kind": "unnoticed-fault",
+                "subject": FAULTED,
+                "detail": "nothing noticed the call failing",
+                "position": null
+            }]
+        }))
+    };
+    vec![
+        Perturbation {
+            name: "a fault said to be absorbed whose run again read the failure it made",
+            document: reported("absorbed"),
+            events: Some(fated("absorbed", 1)),
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "a fault said to be unnoticed whose every run again dropped its failure unread",
+            document: reported("unnoticed"),
+            events: Some(fated("unnoticed", 0)),
+            ..clean.clone()
+        },
+    ]
 }
 
 /// The faults layer's planted defects about what a fault's decision owes: the finding a decision raises, and the attribution a write rests on.
@@ -637,6 +808,32 @@ fn faults_owing(clean: &Perturbation) -> Vec<Perturbation> {
             ..clean.clone()
         },
         Perturbation {
+            name: "a write no fault run alone was tied to that the report does not say",
+            document: with(json!({
+                "faults": [fault_site(&json!({ "decision": "unnoticed" }))],
+                "accounting": { "faults": { "sites": 1, "unnoticed": 1 } },
+                "findings": [{}, {
+                    "kind": "unnoticed-fault",
+                    "subject": FAULTED,
+                    "detail": "nothing noticed the call failing",
+                    "position": null
+                }]
+            })),
+            events: Some(
+                fault_recorded(&json!({ "decision": "unnoticed" }), "survived")
+                    .into_iter()
+                    .chain([json!({
+                        "type": "fault-attribution",
+                        "attribution": {
+                            "fault": FAULTED, "target": TARGET, "path": "stray.log",
+                            "faulted": true, "passed": true, "unfaulted": "wrote"
+                        }
+                    })])
+                    .collect(),
+            ),
+            ..clean.clone()
+        },
+        Perturbation {
             name: "a fault site the recording holds and the report dropped",
             events: Some(fault_recorded(
                 &json!({ "decision": "unnoticed" }),
@@ -649,11 +846,11 @@ fn faults_owing(clean: &Perturbation) -> Vec<Perturbation> {
 
 /// A route and an execution for each mutant of [`base`], then one fault the one target ran to `outcome`, and the site the run said it came to `decision`.
 fn fault_recorded(decision: &Value, outcome: &str) -> Vec<Value> {
+    let fault = fault_site(decision);
     routes()
         .into_iter()
         .chain([
             json!({
-                "timestamp": "2026-09-06T00:00:02Z", "elapsed_ms": 2,
                 "type": "fault-exec",
                 "fault": {
                     "fault": FAULTED, "role": "first", "target": TARGET, "args": [],
@@ -661,21 +858,64 @@ fn fault_recorded(decision: &Value, outcome: &str) -> Vec<Value> {
                 }
             }),
             json!({
-                "timestamp": "2026-09-06T00:00:03Z", "elapsed_ms": 3,
                 "type": "fault",
-                "fault": fault_site(decision)
+                "fault": fault
             }),
         ])
         .collect()
 }
 
 /// One fault site, decided `decision`.
-fn fault_site(decision: &Value) -> Value {
+///
+/// # Panics
+/// Only where its fixed fields stop fitting the length prefix they are minted with, which is a change to the engine's identity framing.
+#[must_use]
+#[expect(
+    clippy::expect_used,
+    reason = "a sentinel's fixed fields always fit, and a test reads a failure to as a setup failure"
+)]
+pub fn fault_site(decision: &Value) -> Value {
+    let original = "read(path)";
+    let replacement = "::core::result::Result::Err(rust_mutants::injected())";
+    let span = (16_u32, 26_u32);
+    let source_digest = {
+        use sha2::Digest as _;
+        hex::encode(sha2::Sha256::digest(b"pub fn load() {}"))
+    };
+    let id = {
+        use sha2::Digest as _;
+        let mut hasher = sha2::Sha256::new();
+        for field in [
+            crate::engineaudit::ID_DOMAIN,
+            "src/lib.rs",
+            "inject-error",
+            "1",
+            "16",
+            "26",
+            source_digest.as_str(),
+            &hex::encode(sha2::Sha256::digest(original.as_bytes())),
+            &hex::encode(sha2::Sha256::digest(replacement.as_bytes())),
+        ] {
+            hasher.update(
+                u32::try_from(field.len())
+                    .expect("a short field")
+                    .to_be_bytes(),
+            );
+            hasher.update(field.as_bytes());
+        }
+        hex::encode(hasher.finalize())
+    };
     json!({
         "catalog_index": 0,
-        "id": "c".repeat(64),
+        "id": id,
         "display_id": FAULTED,
         "path": "src/lib.rs",
+        "rule": "inject-error",
+        "rule_version": 1,
+        "span": { "start": span.0, "end": span.1 },
+        "source_digest": source_digest,
+        "original": original,
+        "replacement": replacement,
         "item": "load",
         "position": { "line": 13, "column": 16, "character_column": 16 },
         "decision": decision
@@ -728,12 +968,10 @@ pub fn confirmation(mutant: &str, answer: &str, reproduced: Option<&str>) -> Vec
     };
     vec![
         json!({
-            "timestamp": "2026-09-06T00:00:02Z", "elapsed_ms": 2,
             "type": "control",
             "control": { "target": TARGET, "test": null, "asked_for": mutant, "answer": answer }
         }),
         json!({
-            "timestamp": "2026-09-06T00:00:03Z", "elapsed_ms": 3,
             "type": "confirm",
             "confirm": {
                 "mutant": mutant, "target": TARGET, "test": null, "expected": "killed",
@@ -758,7 +996,6 @@ fn route_events(mutants: &[(&str, &str)]) -> Vec<Value> {
     let mut events = Vec::new();
     for &(mutant, outcome) in mutants {
         events.push(json!({
-            "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0,
             "type": "route",
             "route": {
                 "mutant": mutant, "granularity": "block", "fallback": null,
@@ -766,7 +1003,6 @@ fn route_events(mutants: &[(&str, &str)]) -> Vec<Value> {
             }
         }));
         events.push(json!({
-            "timestamp": "2026-09-06T00:00:01Z", "elapsed_ms": 1,
             "type": "mutant-exec",
             "mutant": {
                 "mutant": mutant, "target": "t1", "args": [], "outcome": outcome,
@@ -783,24 +1019,6 @@ fn numbered(mut events: Vec<Value>) -> Vec<Value> {
         merge(event, json!({ "seq": seq }));
     }
     events
-}
-
-/// The recording of [`routes`], after which one target, `blunt`, was put to both mutations and noticed neither.
-#[must_use]
-pub fn never_noticed() -> Vec<Value> {
-    let mut events = routes();
-    for mutant in [KILLED, SURVIVED] {
-        events.push(json!({
-            "timestamp": "2026-09-06T00:00:02Z",
-            "elapsed_ms": 2,
-            "type": "mutant-exec",
-            "mutant": {
-                "mutant": mutant, "target": "blunt", "args": [], "outcome": "survived",
-                "duration_ms": 5
-            }
-        }));
-    }
-    numbered(events)
 }
 
 /// One exchange that went past the `api` seam, which licenses the question [`ASKED`] among others.
@@ -928,15 +1146,18 @@ pub fn knobbed(state: &str) -> Value {
     })
 }
 
-/// The report's drift record about [`TARGET`], in the standing `state` names.
+/// The report's drift record about [`TARGET`], in the standing `state` names, with the repair count a moved one owes.
 #[must_use]
 pub fn drifted(state: &str) -> Value {
-    let record = match state {
-        "moved" => moved(TARGET),
-        "not-measured" => json!({ "target": TARGET, "state": state, "why": "no-control" }),
-        other => json!({ "target": TARGET, "state": other }),
+    let (record, repaired) = match state {
+        "moved" => (moved(TARGET), json!([{ "target": TARGET, "again": 0 }])),
+        "not-measured" => (
+            json!({ "target": TARGET, "state": state, "why": "no-control" }),
+            json!([]),
+        ),
+        other => (json!({ "target": TARGET, "state": other }), json!([])),
     };
-    json!({ "drift": [record] })
+    json!({ "drift": [record], "repaired": repaired })
 }
 
 /// A drift record saying `target` reached one more site on a control than on its baseline, and nothing else moved.
@@ -977,6 +1198,27 @@ pub enum SpecimenError {
         /// Its position in the recording.
         at: usize,
     },
+    /// One event states a sequence number that is not after every one the recording has used.
+    #[error(
+        "event {at} of the specimen recording says it is number {stated}, and the next the \
+         recording can write is {next}"
+    )]
+    Sequence {
+        /// Its position in the recording.
+        at: usize,
+        /// The number it states.
+        stated: Value,
+        /// The first number the recording has not used.
+        next: u64,
+    },
+    /// One event states a clock, which the writer keeps.
+    #[error("event {at} of the specimen recording states its own {field}, which the writer keeps")]
+    Clock {
+        /// Its position in the recording.
+        at: usize,
+        /// The field it states.
+        field: &'static str,
+    },
     /// The flat report could not be completed into the document a run writes.
     #[error(transparent)]
     Incomplete(#[from] crate::specimen::CompletionError),
@@ -988,7 +1230,9 @@ impl crate::error::Coded for SpecimenError {
             Self::Directory { .. } | Self::Unwritable { .. } => {
                 crate::error::XtCode::SpecimenUnwritable
             }
-            Self::NotAnObject { .. } => crate::error::XtCode::SpecimenEvent,
+            Self::NotAnObject { .. } | Self::Sequence { .. } | Self::Clock { .. } => {
+                crate::error::XtCode::SpecimenEvent
+            }
             Self::Incomplete(_) => crate::error::XtCode::SpecimenIncomplete,
         }
     }
@@ -1083,10 +1327,14 @@ fn shard_of((mutant, outcome): (&str, &str), index: u64) -> Result<Shard, Specim
     {
         events.extend(confirmation(id, "passed", Some("killed")));
     }
+    let mut engine = vec![touch("baseline", &[0, 1]), touch("control", &[0, 1])];
+    if let Some(rows) = flat.get("mutants") {
+        engine.extend(sealed_execs(rows));
+    }
     Ok(Shard {
         document: crate::specimen::shard(&flat, (&format!("{MERGED}-s{index}"), index, 2))?,
         events: Some(concluding(&flat, &events)),
-        engine: Some(vec![touch("baseline", &[0, 1]), touch("control", &[0, 1])]),
+        engine: Some(engine),
     })
 }
 
@@ -1107,6 +1355,9 @@ pub fn sharded_clean() -> Result<Perturbation, SpecimenError> {
         engine: None,
         shards,
         outputs: Vec::new(),
+        beside: Vec::new(),
+        kept: None,
+        tree: Vec::new(),
     })
 }
 
@@ -1151,26 +1402,42 @@ fn record_into(
 }
 
 /// `events` as the lines `producer` writes, each payload completed with what its test leaves out.
+///
+/// The writer keeps the envelope as the runner's sink does: it numbers the events in turn, one may say it comes later than the one before it and none earlier, and it writes the clock itself.
 fn stream_of(
     events: &[Value],
     producer: crate::schemas::Producer,
 ) -> Result<String, SpecimenError> {
     let mut stream = String::new();
-    for ((at, event), position) in events.iter().enumerate().zip(1_u64..) {
+    let mut next: u64 = 1;
+    for (at, event) in events.iter().enumerate() {
         let mut payload = event
             .as_object()
             .cloned()
             .ok_or(SpecimenError::NotAnObject { at })?;
-        let seq = payload.remove("seq").unwrap_or_else(|| json!(position));
-        let timestamp = payload
-            .remove("timestamp")
-            .unwrap_or_else(|| json!("2026-09-06T00:00:00Z"));
-        let elapsed_ms = payload.remove("elapsed_ms").unwrap_or_else(|| json!(at));
+        if let Some(field) = ["timestamp", "elapsed_ms"]
+            .into_iter()
+            .find(|field| payload.contains_key(*field))
+        {
+            return Err(SpecimenError::Clock { at, field });
+        }
+        let seq = match payload.remove("seq") {
+            None => next,
+            Some(stated) => match stated.as_u64() {
+                Some(stated) if stated >= next => stated,
+                Some(_) | None => return Err(SpecimenError::Sequence { at, stated, next }),
+            },
+        };
+        next = seq.checked_add(1).ok_or_else(|| SpecimenError::Sequence {
+            at,
+            stated: json!(seq),
+            next,
+        })?;
         crate::specimen::completed(producer, &mut payload);
         let envelope = json!({
             "seq": seq,
-            "timestamp": timestamp,
-            "elapsed_ms": elapsed_ms,
+            "timestamp": "2026-09-06T00:00:00Z",
+            "elapsed_ms": at,
             "payload": Value::Object(payload),
         });
         stream.push_str(&envelope.to_string());
@@ -1194,6 +1461,12 @@ pub struct Perturbation {
     pub shards: Vec<Shard>,
     /// What runs in the recording said, each by the path its exec record gives, kept beside the recording.
     pub outputs: Vec<(&'static str, &'static str)>,
+    /// What the one configured build's engine kept beside its recording of the answers it carried, each by its file name.
+    pub beside: Vec<(&'static str, Value)>,
+    /// The record stream the run kept beside its report, or nothing where it kept none.
+    pub kept: Option<String>,
+    /// The files of the tree the run measured, each by its path under the root the audit is given, or nothing where no root is.
+    pub tree: Vec<(&'static str, String)>,
 }
 
 /// The clean specimen every perturbation starts from, on which no layer may find anything.
@@ -1219,6 +1492,9 @@ pub fn clean() -> Perturbation {
         engine: Some(clean_engine()),
         shards: Vec::new(),
         outputs: Vec::new(),
+        beside: Vec::new(),
+        kept: None,
+        tree: Vec::new(),
     }
 }
 
@@ -1229,6 +1505,7 @@ pub struct Laid {
     trace: Option<TempDir>,
     shards: Vec<TempDir>,
     traces: Option<TempDir>,
+    root: Option<TempDir>,
 }
 
 impl Laid {
@@ -1242,6 +1519,12 @@ impl Laid {
     #[must_use]
     pub fn trace(&self) -> Option<&Path> {
         self.trace.as_ref().map(TempDir::path)
+    }
+
+    /// The tree the run measured, when the perturbation lays one.
+    #[must_use]
+    pub fn root(&self) -> Option<&Path> {
+        self.root.as_ref().map(TempDir::path)
     }
 
     /// The run directory of each shard a merged report was merged from, in the order they were laid.
@@ -1264,12 +1547,16 @@ impl Perturbation {
     /// [`SpecimenError`] when either cannot be written.
     pub fn lay(&self) -> Result<Laid, SpecimenError> {
         let run = run_directory(&self.document)?;
+        if let Some(kept) = &self.kept {
+            written(&run.path().join(crate::proofaudit::LINES_FILE), kept)?;
+        }
         let trace = self
             .events
             .as_deref()
             .map(|events| {
                 let trace = recorded(&concluding(&self.document, events))?;
                 lay_engine(trace.path(), self.engine.as_deref())?;
+                lay_beside(trace.path(), &self.beside)?;
                 Ok::<_, SpecimenError>(trace)
             })
             .transpose()?;
@@ -1315,11 +1602,13 @@ impl Perturbation {
             }
             Some(traces)
         };
+        let root = lay_tree(&self.tree)?;
         Ok(Laid {
             run,
             trace,
             shards,
             traces,
+            root,
         })
     }
 }
@@ -1385,13 +1674,223 @@ fn reuse_planted(clean: Perturbation) -> Vec<Perturbation> {
             })),
             ..clean.clone()
         },
-        carried_past_its_killer(clean),
+        carried_past_its_killer(clean.clone()),
+        carried_elsewhere(clean.clone()),
+        carried_through_another_body(clean.clone()),
+        carried(
+            "a kill carried from an earlier tree though a body its killer entered starts elsewhere since",
+            clean.clone(),
+            &json!({ "line": 2, "column": 1 }),
+        ),
+        unreached_plan(clean),
+        believed_without_running_again(),
     ]
+}
+
+/// The defects planted for the proofs layer: a native kill by a target a proof discharged, and a sealed detection by one.
+fn proofs_planted(clean: Perturbation) -> Vec<Perturbation> {
+    vec![
+        Perturbation {
+            name: "a kill by a target a proof discharged",
+            events: Some(discharged_then_killed()),
+            ..clean
+        },
+        discharged_then_detected_sealed(),
+    ]
+}
+
+/// The defect planted for the reuse layer: a kill carried though the body its killer entered is, in the tree the run measured, not the body whose digest the build kept.
+#[must_use]
+pub fn carried_through_another_body(clean: Perturbation) -> Perturbation {
+    let measured = CARRIED_SOURCE.replace("{ !ready }", "{ ready! }");
+    let mut planted = carried(
+        "a kill carried though the body its killer entered is another in the tree the run measured",
+        clean,
+        &json!({ "line": BODY_START.0, "column": BODY_START.1 }),
+    );
+    for (file, document) in &mut planted.beside {
+        if *file == "skeletons-v1.json" {
+            merge(
+                document,
+                json!({ "files": {
+                    "src/lib.rs": crate::engineaudit::carry::digest_of(measured.as_bytes())
+                } }),
+            );
+        }
+    }
+    planted.tree = vec![("src/lib.rs", measured)];
+    planted
+}
+
+/// The defect planted for the reuse layer: a kill carried under a record whose locus names another place in the body than the mutation's edit.
+#[must_use]
+pub fn carried_elsewhere(clean: Perturbation) -> Perturbation {
+    let mut planted = carried(
+        "a kill carried under a record whose locus is another place in the body than the mutation's",
+        clean,
+        &json!({ "line": BODY_START.0, "column": BODY_START.1 }),
+    );
+    for (file, document) in &mut planted.beside {
+        if *file == "carried-v1.json" {
+            merge(
+                document,
+                json!({ "records": [{ "record": { "locus": { "start": 4, "end": 5 } } }] }),
+            );
+        }
+    }
+    planted
+}
+
+/// The defect planted for the reuse layer: a kill carried under a plan that runs a target the guards' record says reaches nothing of the mutation.
+fn unreached_plan(clean: Perturbation) -> Perturbation {
+    let mut planted = carried(
+        "a kill carried under a plan that runs a target the guards' record says reaches nothing of it",
+        clean,
+        &json!({ "line": BODY_START.0, "column": BODY_START.1 }),
+    );
+    for (file, document) in &mut planted.beside {
+        if *file == "touched-v1.json" {
+            merge(document, json!({ "targets": reached_by(&[1]) }));
+        }
+    }
+    planted
+}
+
+/// The guards' record's targets, of [`TARGET`] reaching the mutations at `sites` from a thread no test answers for.
+fn reached_by(sites: &[u64]) -> Value {
+    json!({ TARGET: {
+        "reached": { "loose": sites }, "bodies": {}, "infected": {}, "entered": {}, "ran": []
+    } })
+}
+
+/// The run that established the answers a specimen carries.
+pub const EARLIER: &str = "20260905T090000Z-1a2b3c";
+
+/// The one item the carry evidence of a specimen names: the body of `src/lib.rs` its killed mutant is in, which starts at [`BODY_START`].
+fn carried_item() -> Value {
+    json!({ "package": "pkg", "path": "src/lib.rs", "ordinal": 0 })
+}
+
+/// Where the body of `carried_item` starts now.
+pub const BODY_START: (u64, u64) = (6, 23);
+
+/// The column of the carried kill's edit, the `!` two bytes into the body `{ !ready }` that starts at [`BODY_START`].
+const EDIT_COLUMN: u64 = 25;
+
+/// The file the carried kill is in, as the tree the run measured holds it: the body of `carried_item` at bytes 80 to 90, at [`BODY_START`].
+const CARRIED_SOURCE: &str = "//\n//\n//\n//\n// xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nfn negated(ready:bool){ !ready }\n";
+
+/// The skeletons a specimen's build keeps beside its recording: `carried_item` with the body `digest` starting at `now`, in [`CARRIED_SOURCE`].
+fn carried_skeletons(digest: &str, now: &Value) -> Value {
+    json!({
+        "document_type": "rust-mutants/skeletons", "schema_version": 4,
+        "items": [{
+            "index": 0, "item": carried_item(), "name": "negated",
+            "body_digest": digest, "sealed": true, "unsealed": null, "start": now
+        }],
+        "files": {
+            "src/lib.rs": crate::engineaudit::carry::digest_of(CARRIED_SOURCE.as_bytes())
+        },
+        "units": []
+    })
+}
+
+/// The catalog a specimen's build keeps beside its recording: the carried kill's edit, which takes the `!` out of the body of `carried_item`.
+fn carried_catalog() -> Value {
+    json!({
+        "document_type": "rust-mutants/catalog", "schema_version": 1,
+        "tool_version": "0.1.0", "workspace": {}, "selection": {},
+        "mutants": [{
+            "index": 0, "id": "a".repeat(64), "display_id": KILLED,
+            "path": "src/lib.rs", "package": "pkg", "family": "condition",
+            "rule": "negate-condition", "item": "negated", "rule_version": 1,
+            "line": BODY_START.0, "column": EDIT_COLUMN,
+            "start_byte": 82, "end_byte": 83,
+            "source_digest": "0".repeat(64), "original": "!", "replacement": ""
+        }],
+        "rejections": [], "skips": []
+    })
+}
+
+/// The specimen with its kill carried from [`EARLIER`] by an execution of [`TARGET`] that entered `carried_item` where `entered` says its body started, and the carry evidence the engine keeps beside its recording; every premise of ADR 0041 holds where `entered` is [`BODY_START`].
+#[must_use]
+pub fn carried(name: &'static str, clean: Perturbation, entered: &Value) -> Perturbation {
+    let digest = crate::engineaudit::carry::digest_of(b"{ !ready }");
+    let skeleton = crate::engineaudit::carry::digest_of(b"");
+    let now = json!({ "line": BODY_START.0, "column": BODY_START.1 });
+    let mut events = numbered(vec![json!({
+        "type": "route",
+        "route": {
+            "mutant": KILLED, "granularity": "block", "fallback": null,
+            "reaching": [TARGET], "tests": [], "discharged": [], "considered": [],
+            "reused": EARLIER, "refused": null, "rule": "carried", "carry_refused": null
+        }
+    })]);
+    events.extend(routes_for(&[(SURVIVED, "survived")]));
+    Perturbation {
+        name,
+        document: with(json!({
+            "mutants": [{
+                "catalog_index": 0,
+                "position": { "line": BODY_START.0, "column": EDIT_COLUMN, "character_column": EDIT_COLUMN },
+                "original": "!",
+                "replacement": "",
+                "reuse": { "reused": true, "source_run_id": EARLIER }
+            }],
+            "accounting": { "mutants": { "reused_killed": 1 } }
+        })),
+        events: Some(numbered(events)),
+        tree: vec![("src/lib.rs", CARRIED_SOURCE.to_owned())],
+        beside: vec![
+            ("catalog-v1.json", carried_catalog()),
+            (
+                "touched-v1.json",
+                json!({
+                    "targets": reached_by(&[0]), "limitations": [],
+                    "items": [{
+                        "index": 0, "package": "pkg", "path": "src/lib.rs", "name": "negated",
+                        "span": { "start": 60, "end": 90 },
+                        "body": { "start": 80, "end": 90 },
+                        "measurable": true
+                    }]
+                }),
+            ),
+            ("skeletons-v1.json", carried_skeletons(&digest, &now)),
+            (
+                "carried-v1.json",
+                json!({
+                    "document_type": "rust-mutants/carried", "schema_version": 2,
+                    "records": [{
+                        "mutant": "a".repeat(64),
+                        "record": {
+                            "schema": "rust-mutants-carried-v2",
+                            "locus": {
+                                "item": carried_item(), "body_digest": digest,
+                                "start": 2, "end": 3, "replacement": "", "rule": "negate-condition@1"
+                            },
+                            "keyed": {}, "outcome": "killed", "target": TARGET, "tests_run": 1,
+                            "failed_tests": ["tests::one"], "run_id": EARLIER,
+                            "executions": [{
+                                "target": TARGET, "filter": null, "skeleton": skeleton,
+                                "entered": [{
+                                    "item": carried_item(), "body_digest": digest,
+                                    "start": entered
+                                }],
+                                "completeness": "whole", "detected": true
+                            }]
+                        },
+                        "plan": [{ "target": TARGET, "filter": null }]
+                    }]
+                }),
+            ),
+        ],
+        ..clean
+    }
 }
 
 /// The defect planted for the reuse layer: a kill carried from an earlier tree by a target this run's route no longer reaches, which the engine refuses as `filter-differs`.
 fn carried_past_its_killer(clean: Perturbation) -> Perturbation {
-    let earlier = "20260905T090000Z-1a2b3c";
+    let earlier = EARLIER;
     let mut events = numbered(vec![json!({
         "type": "route",
         "route": {
@@ -1414,13 +1913,153 @@ fn carried_past_its_killer(clean: Perturbation) -> Perturbation {
 
 /// The engine recording of the clean specimen: its build, its single-threaded baseline, one control, and one knob's control that held.
 fn clean_engine() -> Vec<Value> {
-    vec![
+    engine_of(&mutated())
+}
+
+/// The clean specimen's engine recording, with the sealed executions `rows` rest on.
+fn engine_of(rows: &Value) -> Vec<Value> {
+    let mut engine = vec![
         built(),
         verified(&["--test-threads=1"]),
         touch("baseline", &[0, 1]),
         touch("control", &[0, 1]),
         perturbed("survived", &[], &recorded_reach(&[0, 1])),
-    ]
+    ];
+    engine.extend(sealed_execs(rows));
+    engine
+}
+
+/// The clean specimen with its kill a sealed survivor too, [`TARGET`]'s one test passing under both mutations as its engine recorded: a target that answered about two mutations and noticed neither, which the report does not say.
+#[must_use]
+pub fn noticing_nothing_sealed() -> Perturbation {
+    let mut clean = clean();
+    merge(
+        &mut clean.document,
+        json!({ "mutants": [{
+            "decision": { "outcome": "survived", "killed_by": null, "step_boundary": null },
+            "evidence": { "executions": [{ "came_to": "passed" }] }
+        }] }),
+    );
+    let engine = match clean.document.get("mutants") {
+        Some(rows) => engine_of(rows),
+        None => Vec::new(),
+    };
+    Perturbation {
+        name: "a target its sealed executions show noticing nothing, which the report does not name",
+        engine: Some(engine),
+        ..clean
+    }
+}
+
+/// The defect planted for the proofs layer that only a sealed execution shows: a proof removed [`TARGET`] from what could notice the kill, and [`TARGET`]'s sealed execution then detected it, while the one native kill came from a target the route kept.
+#[must_use]
+pub fn discharged_then_detected_sealed() -> Perturbation {
+    let mut events = vec![
+        json!({
+            "type": "route",
+            "route": {
+                "mutant": KILLED, "granularity": "block", "fallback": null,
+                "reaching": ["t1"],
+                "discharged": [{ "target": TARGET, "proof": "never-infected" }],
+                "considered": [], "reused": null
+            }
+        }),
+        json!({
+            "type": "mutant-exec",
+            "mutant": {
+                "mutant": KILLED, "target": "t1", "args": [], "outcome": "killed",
+                "duration_ms": 5
+            }
+        }),
+    ];
+    events.extend(route_events(&[(SURVIVED, "survived")]));
+    events.extend(confirmation(&"a".repeat(64), "passed", Some("killed")));
+    Perturbation {
+        name: "a sealed detection by a target a proof discharged",
+        events: Some(numbered(events)),
+        ..clean()
+    }
+}
+
+/// The clean specimen with its survivor's route widened to every target and nothing of it run natively, its one sealed execution the only work its failed premise ended in.
+#[must_use]
+pub fn widened_and_run_sealed() -> Perturbation {
+    let mut events = route_events(&[(KILLED, "killed")]);
+    events.push(json!({
+        "type": "route",
+        "route": {
+            "mutant": SURVIVED, "granularity": "all", "fallback": "coverage-incomplete",
+            "reaching": ["t1"], "discharged": [], "considered": [], "reused": null
+        }
+    }));
+    events.extend(confirmation(&"a".repeat(64), "passed", Some("killed")));
+    Perturbation {
+        name: "a route widened to every target whose only execution is sealed",
+        events: Some(numbered(events)),
+        ..clean()
+    }
+}
+
+/// The defect planted for the reuse layer that only the sealed executions show: a kill read back from [`EARLIER`] that no sealed execution on this run's bench made again (ADR 0046, decision 7).
+#[must_use]
+pub fn believed_without_running_again() -> Perturbation {
+    let clean = clean();
+    let mut document = clean.document.clone();
+    merge(
+        &mut document,
+        json!({
+            "mutants": [{ "reuse": { "reused": true, "source_run_id": EARLIER } }],
+            "accounting": { "mutants": { "reused_killed": 1 } }
+        }),
+    );
+    let mut events = vec![json!({
+        "type": "route",
+        "route": {
+            "mutant": KILLED, "granularity": "block", "fallback": null,
+            "reaching": [TARGET], "discharged": [], "considered": [], "reused": EARLIER
+        }
+    })];
+    events.extend(route_events(&[(SURVIVED, "survived")]));
+    let engine = clean_engine()
+        .into_iter()
+        .filter(|event| event.pointer("/sealed/mutant").and_then(Value::as_str) != Some(KILLED))
+        .collect();
+    Perturbation {
+        name: "a sealed kill read back that no execution on this run's bench made again",
+        document,
+        events: Some(numbered(events)),
+        engine: Some(engine),
+        ..clean
+    }
+}
+
+/// The engine's record of every sealed execution the mutation `rows` rest on, each under the row's display identity and its place among them.
+fn sealed_execs(rows: &Value) -> Vec<Value> {
+    let mut events = Vec::new();
+    let Some(rows) = rows.as_array() else {
+        return events;
+    };
+    for (index, row) in rows.iter().enumerate() {
+        let Some(executions) = row
+            .pointer("/evidence/executions")
+            .and_then(Value::as_array)
+        else {
+            continue;
+        };
+        for execution in executions {
+            events.push(json!({
+                "type": "sealed-exec",
+                "sealed": {
+                    "mutant": row.get("display_id"),
+                    "index": index,
+                    "target": execution.get("target"),
+                    "test": execution.get("test"),
+                    "came_to": execution.get("came_to"),
+                }
+            }));
+        }
+    }
+    events
 }
 
 /// The planted defect of the concurrency layer: a delayed guard whose control ran past its bound, recorded as a sample that passed.
@@ -1503,11 +2142,43 @@ fn lay_engine(into: &Path, engine: Option<&[Value]>) -> Result<(), SpecimenError
     Ok(())
 }
 
+/// Writes each of `beside` into the engine directory of the one configured build of the recording directory `into`.
+/// The tree the run measured, laid in a directory of its own, or nothing where the perturbation names no file of it.
+fn lay_tree(tree: &[(&'static str, String)]) -> Result<Option<TempDir>, SpecimenError> {
+    if tree.is_empty() {
+        return Ok(None);
+    }
+    let root = directory()?;
+    for (relative, text) in tree {
+        let at = root.path().join(relative);
+        if let Some(parent) = at.parent() {
+            std::fs::create_dir_all(parent).map_err(|source| SpecimenError::Unwritable {
+                path: parent.display().to_string(),
+                source,
+            })?;
+        }
+        written(&at, text)?;
+    }
+    Ok(Some(root))
+}
+
+fn lay_beside(into: &Path, beside: &[(&'static str, Value)]) -> Result<(), SpecimenError> {
+    let namespace = into.join("builds").join("0000000000").join("engine");
+    for (file, document) in beside {
+        std::fs::create_dir_all(&namespace).map_err(|source| SpecimenError::Unwritable {
+            path: namespace.display().to_string(),
+            source,
+        })?;
+        written(&namespace.join(file), &document.to_string())?;
+    }
+    Ok(())
+}
+
 /// The recording of a kill by a target the route's proof had discharged.
 fn discharged_then_killed() -> Vec<Value> {
     vec![
         json!({
-            "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0,
+            "seq": 1,
             "type": "route",
             "route": {
                 "mutant": KILLED, "granularity": "block", "fallback": null,
@@ -1517,7 +2188,7 @@ fn discharged_then_killed() -> Vec<Value> {
             }
         }),
         json!({
-            "seq": 2, "timestamp": "2026-09-06T00:00:01Z", "elapsed_ms": 1,
+            "seq": 2,
             "type": "mutant-exec",
             "mutant": {
                 "mutant": KILLED, "target": "t2", "args": [], "outcome": "killed",
@@ -1547,7 +2218,8 @@ fn repaired_where_nothing_moved(clean: Perturbation) -> Perturbation {
         "type": "repair",
         "repair": {
             "mutant": SURVIVED, "target": "t1",
-            "was": "survived", "now": "survived", "reached": "reached"
+            "was": "survived", "now": "survived", "reached": "reached",
+            "by": { "kind": "native" }
         }
     }));
     Perturbation {
@@ -1557,11 +2229,48 @@ fn repaired_where_nothing_moved(clean: Perturbation) -> Perturbation {
     }
 }
 
+/// The defect planted for the repair layer: a sealed verdict put again on the sealed bench against its moved target, said to survive where the executions that put came to detected the mutation.
+fn sealed_put_said_to_survive_a_detection(clean: Perturbation) -> Perturbation {
+    let mut events = routes();
+    events.push(json!({
+        "type": "repair",
+        "repair": {
+            "mutant": SURVIVED, "target": TARGET, "was": "survived", "now": "survived",
+            "reached": "reached",
+            "by": { "kind": "sealed", "evidence": { "kind": "sealed", "executions": [
+                { "target": TARGET, "test": "tests::one", "came_to": "panicked" }
+            ] } }
+        }
+    }));
+    Perturbation {
+        name: "a sealed put again said to survive where its executions detected the mutation",
+        document: with(json!({
+            "drift": [moved(TARGET)],
+            "repaired": [{ "target": TARGET, "again": 1 }]
+        })),
+        events: Some(events),
+        engine: Some(vec![touch("baseline", &[0]), touch("control", &[0, 1])]),
+        ..clean
+    }
+}
+
+/// The defect planted for the repair layer: a part that counts a disposition run again against its moved target that no repair record holds, which a merge would state as `reach-moved`.
+fn repair_counted_that_never_ran(clean: Perturbation) -> Perturbation {
+    Perturbation {
+        name: "a part counting a repair its recording does not hold",
+        document: with(json!({
+            "drift": [moved(TARGET)],
+            "repaired": [{ "target": TARGET, "again": 1 }]
+        })),
+        engine: Some(vec![touch("baseline", &[0]), touch("control", &[0, 1])]),
+        ..clean
+    }
+}
+
 /// The defect planted for the repair layer: a repair whose run nothing could observe, said to have survived.
 fn unobserved_repair_called_a_survival() -> Perturbation {
     let mut events = routes();
     events.push(json!({
-        "timestamp": "2026-09-06T00:00:02Z", "elapsed_ms": 2,
         "type": "mutant-exec",
         "mutant": {
             "mutant": SURVIVED, "target": TARGET, "args": [], "outcome": "inconclusive",
@@ -1572,7 +2281,8 @@ fn unobserved_repair_called_a_survival() -> Perturbation {
         "type": "repair",
         "repair": {
             "mutant": SURVIVED, "target": TARGET,
-            "was": "survived", "now": "survived", "reached": "reached"
+            "was": "survived", "now": "survived", "reached": "reached",
+            "by": { "kind": "native" }
         }
     }));
     let mut repair = touch("repair", &[1]);
@@ -1584,7 +2294,10 @@ fn unobserved_repair_called_a_survival() -> Perturbation {
         document: with(json!({
             "drift": [moved(TARGET)],
             "mutants": [{}, { "catalog_index": 1 }],
-            "limitations": [{ "name": "reach-moved", "detail": TARGET }]
+            "limitations": [{
+                "name": "reach-moved",
+                "detail": format!("the reach of a target moved ({TARGET})")
+            }]
         })),
         events: Some(events),
         engine: Some(vec![
@@ -1594,6 +2307,9 @@ fn unobserved_repair_called_a_survival() -> Perturbation {
         ]),
         shards: Vec::new(),
         outputs: Vec::new(),
+        beside: Vec::new(),
+        kept: None,
+        tree: Vec::new(),
     }
 }
 
@@ -1619,6 +2335,7 @@ pub fn merge_plant(
     let clean = sharded_clean()?;
     let mut document = clean.document.clone();
     let mut shards = clean.shards.clone();
+    let mut kept = clean.kept.clone();
     let name = match rule {
         MergeRule::Division => {
             shards.truncate(1);
@@ -1676,11 +2393,21 @@ pub fn merge_plant(
             "a merge that completes a model batch no merge can"
         }
         MergeRule::Shards => forged_alike(&mut document, &mut shards),
+        MergeRule::Sealed => unwitnessed(&mut shards),
+        MergeRule::Dimensions => {
+            kept = Some(established_everywhere());
+            "a merge whose record stream calls every dimension established and names one open"
+        }
+        MergeRule::Moved => {
+            kept = Some(repaired_unseen(kept.as_deref()));
+            "a merge whose record stream says a target moved and was repaired that no part saw move"
+        }
     };
     Ok(Perturbation {
         name,
         document,
         shards,
+        kept,
         ..clean
     })
 }
@@ -1694,6 +2421,30 @@ fn merge_plants() -> Vec<Perturbation> {
             Err(_unbuilt_is_refused_by_the_merge_gate) => None,
         })
         .collect()
+}
+
+/// The record stream `kept`, or none, with a `reach-moved` limitation about [`TARGET`], whose reach no part of the clean specimen saw move.
+fn repaired_unseen(kept: Option<&str>) -> String {
+    let stated = format!(
+        "LIMITATION\treach-moved\ta target reached something on an original-code control that it \
+         did not reach on its baseline; 1 disposition that rested on its baseline was run again \
+         against it ({TARGET})\n"
+    );
+    match kept {
+        Some(stream) => format!("{stream}{stated}"),
+        None => stated,
+    }
+}
+
+/// A record stream whose every column says there was nothing to ask, beside a finding that names one of them open, which no `standard-v1` merge of the clean specimen's parts says.
+fn established_everywhere() -> String {
+    let mut kept = crate::proofaudit::DIMENSIONS
+        .iter()
+        .map(|dimension| format!("DIMENSION\t{dimension}\tnothing-to-ask\tplanted\n"))
+        .collect::<Vec<String>>()
+        .concat();
+    kept.push_str("FINDING\tdimension-not-measured\tmutation\tplanted\n");
+    kept
 }
 
 /// A kill reported as a survivor in the first shard and in the merged part it became, alike, which only re-deciding the shard against its recording can see.
@@ -1714,6 +2465,19 @@ fn forged_alike(document: &mut Value, shards: &mut [Shard]) -> &'static str {
     "a kill reported as a survivor in a shard and in its merge alike"
 }
 
+/// The survivor's shard with its engine recording keeping no sealed execution, so the merged survivor rests on executions the run that measured its part never recorded.
+fn unwitnessed(shards: &mut [Shard]) -> &'static str {
+    if let Some(shard) = shards.get_mut(1) {
+        shard.engine = shard.engine.take().map(|events| {
+            events
+                .into_iter()
+                .filter(|event| event.get("type").and_then(Value::as_str) != Some("sealed-exec"))
+                .collect()
+        });
+    }
+    "a merged survivor the run that measured its part recorded no sealed execution of"
+}
+
 /// `document` with the array at `pointer` cut to its first element.
 fn keep_first(document: &mut Value, pointer: &str) {
     if let Some(Value::Array(items)) = document.pointer_mut(pointer) {
@@ -1724,7 +2488,6 @@ fn keep_first(document: &mut Value, pointer: &str) {
 /// A `control` event: what the original code answered to [`TARGET`], asked for `asked_for`.
 fn control_event(asked_for: &str, answer: &Value) -> Value {
     json!({
-        "timestamp": "2026-09-06T00:00:02Z", "elapsed_ms": 2,
         "type": "control",
         "control": { "target": TARGET, "test": null, "asked_for": asked_for, "answer": answer }
     })
@@ -1736,7 +2499,6 @@ fn confirm_event(
     (expected, answered_for, reproduced): (&str, &str, Option<&str>),
 ) -> Value {
     json!({
-        "timestamp": "2026-09-06T00:00:03Z", "elapsed_ms": 3,
         "type": "confirm",
         "confirm": {
             "mutant": mutant, "target": target, "test": null, "expected": expected,
@@ -1769,7 +2531,13 @@ fn missing_plants() -> Vec<Perturbation> {
     let killed = "a".repeat(64);
     let passed = json!({ "kind": "passed" });
     vec![
-        confirmed_by("a kill the recording holds no confirmation of", Vec::new()),
+        Perturbation {
+            document: resting(clean().document, 0, lead()),
+            ..confirmed_by(
+                "a kill no sealed execution decided, which the recording holds no confirmation of",
+                Vec::new(),
+            )
+        },
         confirmed_by(
             "a kill confirmed against a target other than the one said to kill it",
             vec![
@@ -1868,16 +2636,47 @@ fn confirmation_plants() -> Vec<Perturbation> {
 }
 
 impl Layer {
+    /// The defects planted for this layer that only a sealed execution shows, each of which it must report as a violation; none for a layer that reads no sealed execution.
+    #[must_use]
+    pub fn sealed_planted(self) -> Vec<Perturbation> {
+        match self {
+            Self::Executions => vec![sealed_never_run(clean())],
+            Self::Proofs => vec![discharged_then_detected_sealed()],
+            Self::Hollow => vec![noticing_nothing_sealed()],
+            Self::Reuse => vec![believed_without_running_again()],
+            Self::Accounting
+            | Self::Killers
+            | Self::Findings
+            | Self::Acceptances
+            | Self::Wire
+            | Self::Model
+            | Self::Merge
+            | Self::Drift
+            | Self::Faults
+            | Self::Repair
+            | Self::Knobs
+            | Self::Crashes
+            | Self::Dimensions
+            | Self::Concurrency
+            | Self::Confirmations
+            | Self::Soundness
+            | Self::Evidence => Vec::new(),
+        }
+    }
+
     /// The defects planted for this layer, each of which it must report as a violation.
     #[must_use]
     pub fn planted(self) -> Vec<Perturbation> {
         let clean = clean();
         match self {
-            Self::Accounting => vec![Perturbation {
-                name: "a mutant column the records contradict",
-                document: with(json!({ "accounting": { "mutants": { "killed": 5 } } })),
-                ..clean
-            }],
+            Self::Accounting => vec![
+                Perturbation {
+                    name: "a mutant column the records contradict",
+                    document: with(json!({ "accounting": { "mutants": { "killed": 5 } } })),
+                    ..clean.clone()
+                },
+                assured_over_a_lead(clean),
+            ],
             Self::Killers => vec![Perturbation {
                 name: "a kill by a target the run never recorded",
                 document: with(
@@ -1885,11 +2684,14 @@ impl Layer {
                 ),
                 ..clean
             }],
-            Self::Findings => vec![Perturbation {
-                name: "a survivor no finding names",
-                document: with(json!({ "findings": [] })),
-                ..clean
-            }],
+            Self::Findings => vec![
+                Perturbation {
+                    name: "a survivor no finding names",
+                    document: with(json!({ "findings": [] })),
+                    ..clean.clone()
+                },
+                lead_named_as_a_survivor(clean),
+            ],
             Self::Acceptances => vec![Perturbation {
                 name: "an unmatched acceptance the whole catalog resolves",
                 document: with(json!({
@@ -1903,16 +2705,8 @@ impl Layer {
                 ..clean
             }],
             Self::Reuse => reuse_planted(clean),
-            Self::Proofs => vec![Perturbation {
-                name: "a kill by a target a proof discharged",
-                events: Some(discharged_then_killed()),
-                ..clean
-            }],
-            Self::Hollow => vec![Perturbation {
-                name: "a hollow target the report does not name",
-                events: Some(never_noticed()),
-                ..clean
-            }],
+            Self::Proofs => proofs_planted(clean),
+            Self::Hollow => vec![noticing_nothing_sealed()],
             Self::Wire => vec![Perturbation {
                 name: "a question nothing noticed that the report does not name",
                 events: Some(vec![went_past(), was_put(ASKED, "unnoticed")]),
@@ -1935,15 +2729,165 @@ impl Layer {
             }],
             Self::Repair => vec![
                 unobserved_repair_called_a_survival(),
+                repair_counted_that_never_ran(clean.clone()),
+                sealed_put_said_to_survive_a_detection(clean.clone()),
                 repaired_where_nothing_moved(clean),
             ],
             Self::Knobs => knobs_planted(clean),
             Self::Concurrency => concurrency_planted(&clean),
             Self::Confirmations => confirmation_plants(),
             Self::Soundness => soundness_planted(&clean),
-            Self::Executions => LIED_OUTCOMES.into_iter().filter_map(lie).collect(),
+            Self::Executions => executions_planted(clean),
+            Self::Evidence => evidence_planted(&clean),
         }
     }
+}
+
+/// The defects planted for the executions layer: outcomes no recorded execution came to, and verdicts resting on sealed executions their engine never recorded.
+fn executions_planted(clean: Perturbation) -> Vec<Perturbation> {
+    let mut planted: Vec<Perturbation> = LIED_OUTCOMES.into_iter().filter_map(lie).collect();
+    planted.push(unreached_yet_reached(clean.clone()));
+    planted.push(sealed_never_run(clean));
+    planted
+}
+
+/// The planted defect of a sealed unreached verdict: a row no sealed test reaches, whose guard its engine recorded a sealed control reaching.
+fn unreached_yet_reached(clean: Perturbation) -> Perturbation {
+    let mut document = clean.document.clone();
+    merge(
+        &mut document,
+        json!({ "mutants": [{}, {
+            "catalog_index": 1,
+            "decision": { "outcome": "unreached", "killed_by": null, "step_boundary": null },
+            "evidence": { "kind": "sealed", "executions": [] }
+        }] }),
+    );
+    let mut engine = match document.get("mutants") {
+        Some(rows) => engine_of(rows),
+        None => Vec::new(),
+    };
+    engine.push(json!({
+        "type": "sealed-control",
+        "control": {
+            "target": TARGET, "test": "tests::one", "standing": "controlled", "reached": [1]
+        }
+    }));
+    Perturbation {
+        name: "a row no sealed test reaches whose guard a sealed control reached",
+        document,
+        engine: Some(engine),
+        ..clean
+    }
+}
+
+/// The planted defect of the sealed executions: verdicts resting on sealed executions their engine never recorded.
+fn sealed_never_run(clean: Perturbation) -> Perturbation {
+    let engine = clean_engine()
+        .into_iter()
+        .filter(|event| event.get("type").and_then(Value::as_str) != Some("sealed-exec"))
+        .collect();
+    Perturbation {
+        name: "verdicts resting on sealed executions their engine never recorded",
+        engine: Some(engine),
+        ..clean
+    }
+}
+
+/// What a lead rests on: a test that reaches the mutation ran only natively.
+fn lead() -> Value {
+    json!({ "kind": "unproven", "reasons": ["native"] })
+}
+
+/// `document` with what its row at `index` rests on replaced by `evidence`.
+fn resting(mut document: Value, index: usize, evidence: Value) -> Value {
+    if let Some(Value::Object(row)) = document.pointer_mut(&format!("/mutants/{index}")) {
+        row.insert("evidence".to_owned(), evidence);
+    }
+    document
+}
+
+/// The planted defect of the accounting layer about leads: an assurance over a kill no sealed execution decided, with every other row answered and nothing found.
+fn assured_over_a_lead(clean: Perturbation) -> Perturbation {
+    Perturbation {
+        name: "an assurance over a kill no sealed execution decided",
+        document: resting(
+            with(json!({
+                "verdict": "SCOPE_ASSURED",
+                "accounting": { "mutants": { "accepted": 1, "observers": { "unproven": 1 } } },
+                "mutants": [{}, { "accepted": true }],
+                "findings": []
+            })),
+            0,
+            lead(),
+        ),
+        ..clean
+    }
+}
+
+/// The planted defect of the findings layer about leads: a survival no sealed execution decided, named as a surviving mutation rather than as unproven.
+fn lead_named_as_a_survivor(clean: Perturbation) -> Perturbation {
+    Perturbation {
+        name: "a lead named as a survivor rather than as unproven",
+        document: resting(
+            with(json!({ "accounting": { "mutants": { "observers": { "unproven": 1 } } } })),
+            1,
+            lead(),
+        ),
+        ..clean
+    }
+}
+
+/// The defects planted for the evidence layer: verdicts resting on what cannot establish them, a lead a reviewer accepted, and a lead the accounting does not count.
+fn evidence_planted(clean: &Perturbation) -> Vec<Perturbation> {
+    let plant = |name: &'static str, document: Value| Perturbation {
+        name,
+        document,
+        ..clean.clone()
+    };
+    vec![
+        plant(
+            "a kill its sealed executions never detected",
+            with(
+                json!({ "mutants": [{ "evidence": { "executions": [{ "came_to": "passed" }] } }] }),
+            ),
+        ),
+        plant(
+            "a kill named for a target other than the one whose sealed execution detected it first",
+            with(json!({
+                "mutants": [{ "evidence": { "executions": [{ "target": "pkg/test/other" }] } }]
+            })),
+        ),
+        plant(
+            "a survival resting on a sealed execution that established nothing",
+            with(json!({
+                "mutants": [{}, { "evidence": { "executions": [{ "came_to": "unaccounted" }] } }]
+            })),
+        ),
+        plant(
+            "a kill resting on no execution at all",
+            resting(with(json!({})), 0, Value::Null),
+        ),
+        plant(
+            "a lead a reviewer's acceptance answers",
+            resting(
+                with(json!({
+                    "accounting": { "mutants": { "accepted": 1, "observers": { "unproven": 1 } } },
+                    "mutants": [{}, { "accepted": true }],
+                    "findings": [{ "kind": "unproven-mutant" }]
+                })),
+                1,
+                lead(),
+            ),
+        ),
+        plant(
+            "a lead the accounting counts as decided",
+            resting(
+                with(json!({ "findings": [{ "kind": "unproven-mutant" }] })),
+                1,
+                lead(),
+            ),
+        ),
+    ]
 }
 
 /// The lies about knobs the knobs layer must refuse.
@@ -1958,10 +2902,11 @@ fn knobs_planted(clean: Perturbation) -> Vec<Perturbation> {
     ]
 }
 
-/// A recorded run of the interpreter over the suite that ended with `code` and said `said`, kept at `output/1.txt` with its size and digest.
+/// A recorded run of the interpreter over the suite, the recording's hundredth event, that ended with `code` and said `said`, kept at `output/100.txt` with its size and digest.
 fn interpreted(code: i64, said: &str) -> Value {
     use sha2::Digest as _;
     json!({
+        "seq": 100,
         "type": "exec",
         "exec": {
             "argv": ["cargo", "+nightly", "miri", "test", "--workspace"],
@@ -1969,7 +2914,7 @@ fn interpreted(code: i64, said: &str) -> Value {
             "stopped": { "kind": "exited", "exit": { "kind": "code", "value": code } },
             "duration_ms": 1, "output_bytes": said.len(),
             "output_sha256": hex::encode(sha2::Sha256::digest(said.as_bytes())),
-            "output_truncated": false, "output_path": "output/1.txt", "error": null
+            "output_truncated": false, "output_path": "output/100.txt", "error": null
         }
     })
 }
@@ -1981,10 +2926,13 @@ const SETUP_FAILED: &str =
 /// What Miri prints when every test it ran passed.
 const PASSED: &str = "     Running unittests src/lib.rs (x)\n\nrunning 1 test\ntest t ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n";
 
+/// What Miri prints when a test failed and it said nothing of undefined behaviour.
+const FAILED_WITHOUT_UNDEFINED: &str = "     Running unittests src/lib.rs (x)\n\nrunning 1 test\ntest t ... FAILED\n\nfailures:\n\n---- t stdout ----\nOUT_DIR: NotPresent\n\nfailures:\n    t\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n";
+
 /// What Miri prints when a test failed and its captured output quotes the words of undefined behaviour.
 const QUOTED_UNDEFINED: &str = "     Running unittests src/lib.rs (x)\n\nrunning 1 test\ntest t ... FAILED\n\nfailures:\n\n---- t stdout ----\nerror: Undefined Behavior: quoted by the test\n\nfailures:\n    t\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n";
 
-/// The report saying the suite was interpreted and a test failed under the interpreter.
+/// The report saying the suite was interpreted and a test that failed under the interpreter is a defect of the suite.
 fn failing_under_the_interpreter() -> Value {
     with(json!({
         "accounting": { "soundness": { "executed": true } },
@@ -1997,10 +2945,11 @@ fn failing_under_the_interpreter() -> Value {
     }))
 }
 
-/// A recorded run of the interpreter that ran out of time, whose kept output is at `output/1.txt`.
+/// A recorded run of the interpreter that ran out of time, the recording's hundredth event, whose kept output is at `output/100.txt`.
 fn interpreted_until_the_clock(said: &str) -> Value {
     use sha2::Digest as _;
     json!({
+        "seq": 100,
         "type": "exec",
         "exec": {
             "argv": ["cargo", "+nightly", "miri", "test", "--workspace"],
@@ -2008,7 +2957,7 @@ fn interpreted_until_the_clock(said: &str) -> Value {
             "stopped": { "kind": "timed-out", "raised": null },
             "duration_ms": 1, "output_bytes": said.len(),
             "output_sha256": hex::encode(sha2::Sha256::digest(said.as_bytes())),
-            "output_truncated": false, "output_path": "output/1.txt", "error": null
+            "output_truncated": false, "output_path": "output/100.txt", "error": null
         }
     })
 }
@@ -2030,7 +2979,14 @@ fn soundness_planted(clean: &Perturbation) -> Vec<Perturbation> {
             name: "a test failing under an interpreter that ran no test",
             document: failing_under_the_interpreter(),
             events: with_run(101, SETUP_FAILED),
-            outputs: vec![("output/1.txt", SETUP_FAILED)],
+            outputs: vec![("output/100.txt", SETUP_FAILED)],
+            ..clean.clone()
+        },
+        Perturbation {
+            name: "a test the interpreter failed without undefined behaviour read as a defect",
+            document: failing_under_the_interpreter(),
+            events: with_run(101, FAILED_WITHOUT_UNDEFINED),
+            outputs: vec![("output/100.txt", FAILED_WITHOUT_UNDEFINED)],
             ..clean.clone()
         },
         Perturbation {
@@ -2045,7 +3001,7 @@ fn soundness_planted(clean: &Perturbation) -> Vec<Perturbation> {
                 }]
             })),
             events: with_run(101, QUOTED_UNDEFINED),
-            outputs: vec![("output/1.txt", QUOTED_UNDEFINED)],
+            outputs: vec![("output/100.txt", QUOTED_UNDEFINED)],
             ..clean.clone()
         },
         Perturbation {
@@ -2056,7 +3012,7 @@ fn soundness_planted(clean: &Perturbation) -> Vec<Perturbation> {
                 events.push(interpreted_until_the_clock("running 1 test\n"));
                 events
             }),
-            outputs: vec![("output/1.txt", "running 1 test\n")],
+            outputs: vec![("output/100.txt", "running 1 test\n")],
             ..clean.clone()
         },
         Perturbation {
@@ -2064,7 +3020,7 @@ fn soundness_planted(clean: &Perturbation) -> Vec<Perturbation> {
             document: failing_under_the_interpreter(),
             events: with_run(0, PASSED),
             outputs: vec![(
-                "output/1.txt",
+                "output/100.txt",
                 "test result: FAILED. 0 passed; 1 failed; 0 ignored\n",
             )],
             ..clean.clone()

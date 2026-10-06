@@ -3,11 +3,12 @@
 
 //! Assembling what a run is, as one number, from the tree and the machine it runs on.
 
+use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::path::Path;
 
 use crate::config::{Config, ConfigError};
-use crate::evidence::digest::{Inputs, Mode, identity};
+use crate::evidence::digest::{Fields, Inputs, Mode, identity};
 use crate::evidence::key::{self, Common};
 use crate::evidence::tree::{Scan, ScanError, dependencies_of, scan};
 
@@ -90,7 +91,7 @@ pub struct Evidence {
 pub struct Keying {
     /// The tree, file by file.
     pub scan: Scan,
-    /// The digest of the resolved dependencies.
+    /// The digest of the resolved locks and every explicitly allowed outside tree.
     pub dependencies: String,
     /// What every key shares.
     pub common: Common,
@@ -124,10 +125,10 @@ impl Evidence {
     /// Falling back to the run identity is safe only for an unknown evidence value, which callers already refuse to persist.
     #[must_use]
     pub fn continuation_identity(&self) -> String {
-        self.keying.as_ref().map_or_else(
-            || self.identity.clone(),
-            |keying| key::continuation_identity(&self.identity, &keying.common.build),
-        )
+        match &self.keying {
+            Some(keying) => key::continuation_identity(&self.identity, &keying.common.build),
+            None => self.identity.clone(),
+        }
     }
 }
 
@@ -175,18 +176,16 @@ pub fn inputs(
         elsewhere,
     } = *asked;
     let excluded = crate::evidence::tree::Excluded::beside(config.reports.directory.as_path())?;
-    let scanned = scan(
-        root,
-        &crate::evidence::tree::Bounds {
-            exclude: &[],
-            elsewhere,
-            excluded: &excluded,
-        },
-    )?;
+    let bounds = crate::evidence::tree::Bounds {
+        exclude: &[],
+        elsewhere,
+        excluded: &excluded,
+    };
+    let scanned = scan(root, &bounds)?;
     Ok(Inputs {
         tree: scanned.tree,
         corpus: scanned.corpus,
-        dependencies: dependencies_of(root)?,
+        dependencies: dependencies(asked, &bounds)?,
         toolchain: machine.toolchain.to_owned(),
         platform: machine.platform.to_owned(),
         engine: machine.engine.to_owned(),
@@ -211,15 +210,13 @@ pub fn of(
 ) -> Result<Evidence, IdentityError> {
     let excluded =
         crate::evidence::tree::Excluded::beside(asked.config.reports.directory.as_path())?;
-    let scanned = scan(
-        asked.root,
-        &crate::evidence::tree::Bounds {
-            exclude: &[],
-            elsewhere: asked.elsewhere,
-            excluded: &excluded,
-        },
-    )?;
-    let dependencies = dependencies_of(asked.root)?;
+    let bounds = crate::evidence::tree::Bounds {
+        exclude: &[],
+        elsewhere: asked.elsewhere,
+        excluded: &excluded,
+    };
+    let scanned = scan(asked.root, &bounds)?;
+    let dependencies = dependencies(asked, &bounds)?;
     let read = Inputs {
         tree: scanned.tree.clone(),
         corpus: scanned.corpus.clone(),
@@ -243,6 +240,36 @@ pub fn of(
             common,
         }),
     })
+}
+
+/// The locked graph and every allowed outside tree, shared by whole-run identities and target keys.
+fn dependencies(
+    asked: &Asked<'_>,
+    bounds: &crate::evidence::tree::Bounds<'_>,
+) -> Result<String, IdentityError> {
+    let locked = dependencies_of(asked.root)?;
+    if asked.config.project.allow_outside.is_empty() {
+        return Ok(locked);
+    }
+    let declared: BTreeSet<_> = asked.config.project.allow_outside.iter().collect();
+    let mut outside = Vec::with_capacity(declared.len());
+    for path in declared {
+        let spelling = path
+            .to_str()
+            .ok_or_else(|| ScanError::PathNotUtf8 { path: path.clone() })?;
+        let root = asked.root.join(path);
+        let read = scan(&root, bounds)?;
+        let mut input = Fields::new("njutest-outside-tree-v1");
+        input
+            .field("path", spelling)
+            .field("tree", &read.tree)
+            .field("corpus", &read.corpus)
+            .field("lock", &dependencies_of(&root)?);
+        outside.push(input.finish());
+    }
+    let mut inputs = Fields::new("njutest-allowed-dependencies-v1");
+    inputs.field("lock", &locked).list("outside", outside);
+    Ok(inputs.finish())
 }
 
 /// The variables of `vars` a run selects for its test processes under `config`, by name and value.

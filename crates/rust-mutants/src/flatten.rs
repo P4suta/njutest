@@ -4,7 +4,7 @@
 //! Renders one Rust fragment on a single line, preserving its meaning.
 
 /// Why a fragment could not be flattened.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum FlattenError {
     /// The fragment does not lex as Rust.
@@ -32,17 +32,24 @@ pub enum FlattenError {
         detail: String,
     },
     /// The fragment could not be read at all, which says nothing about how it lexes.
-    #[error("fragment could not be read: {detail}")]
+    #[error("fragment could not be read: {source}")]
     Unread {
-        /// Why, with the code it carries.
-        detail: String,
+        /// Why the reading failed, which carries its own code.
+        #[from]
+        source: ReadingError,
     },
 }
 
 impl FlattenError {
-    fn unread(unread: &ReadingError) -> Self {
-        Self::Unread {
-            detail: format!("{}: {unread}", unread.code().code),
+    /// The stable code of this failure: a reading's own where the fragment could not be read, and the fold's otherwise.
+    #[must_use]
+    pub const fn code(&self) -> crate::error::ErrorCode {
+        match self {
+            Self::Untokenizable { .. } => crate::error::READING_SYNTAX,
+            Self::Literal { .. } | Self::NotFlat { .. } | Self::NotIdentical { .. } => {
+                crate::error::INSTRUMENT_FLATTEN_FAILED
+            }
+            Self::Unread { source } => source.code(),
         }
     }
 }
@@ -60,8 +67,11 @@ enum TokenDifferenceError {
         expected: String,
         actual: String,
     },
-    #[error("a literal could not be read: {0}")]
-    Unread(ReadingError),
+    #[error("a literal could not be read: {source}")]
+    Unread {
+        #[from]
+        source: ReadingError,
+    },
 }
 
 use proc_macro2::{Delimiter, Literal, TokenStream, TokenTree};
@@ -74,8 +84,7 @@ use crate::parsing::{Parsing, ReadingError};
 /// Returns a fragment that does not lex, a literal that cannot be re-spelled,
 /// or a postcondition violation.
 pub fn flatten(src: &str) -> Result<String, FlattenError> {
-    crate::parsing::apart(|parsing| flatten_with(parsing, src))
-        .map_err(|unread| FlattenError::unread(&unread))?
+    crate::parsing::apart(|parsing| flatten_with(parsing, src))?
 }
 
 /// [`flatten`], reading with `parsing` on the thread already reading.
@@ -98,7 +107,10 @@ pub(crate) fn flatten_with(parsing: &Parsing, src: &str) -> Result<String, Flatt
             }
         }
         out.push_str(&leaf.text);
-        previous_end = Some(previous_end.map_or(leaf.end, |end| end.max(leaf.end)));
+        previous_end = Some(match previous_end {
+            Some(end) => end.max(leaf.end),
+            None => leaf.end,
+        });
     }
 
     if let Some(byte) = out.find(['\n', '\r']) {
@@ -112,7 +124,7 @@ pub(crate) fn flatten_with(parsing: &Parsing, src: &str) -> Result<String, Flatt
         | FlattenError::Unread { .. }) => other,
     })?;
     same_tokens(parsing, &stream, &relexed).map_err(|error| match error {
-        TokenDifferenceError::Unread(unread) => FlattenError::unread(&unread),
+        TokenDifferenceError::Unread { source } => FlattenError::from(source),
         different @ (TokenDifferenceError::Count { .. }
         | TokenDifferenceError::Delimiter { .. }
         | TokenDifferenceError::Token { .. }) => FlattenError::NotIdentical {
@@ -125,9 +137,9 @@ pub(crate) fn flatten_with(parsing: &Parsing, src: &str) -> Result<String, Flatt
 fn lex(parsing: &Parsing, src: &str) -> Result<TokenStream, FlattenError> {
     parsing.tokens(src).map_err(|unread| match unread {
         ReadingError::Syntax { message, .. } => FlattenError::Untokenizable { message },
-        other @ (ReadingError::Exhausted { .. } | ReadingError::ThreadUnavailable { .. }) => {
-            FlattenError::unread(&other)
-        }
+        other @ (ReadingError::Exhausted { .. }
+        | ReadingError::ThreadUnavailable { .. }
+        | ReadingError::TooDeep { .. }) => FlattenError::from(other),
     })
 }
 
@@ -220,8 +232,12 @@ fn respell(parsing: &Parsing, literal: &Literal) -> Result<String, FlattenError>
     let parsed: syn::Lit = match parsing.read(&spelled) {
         Ok(parsed) => parsed,
         Err(ReadingError::Syntax { .. }) => return Err(refuse()),
-        Err(unread @ (ReadingError::Exhausted { .. } | ReadingError::ThreadUnavailable { .. })) => {
-            return Err(FlattenError::unread(&unread));
+        Err(
+            unread @ (ReadingError::Exhausted { .. }
+            | ReadingError::ThreadUnavailable { .. }
+            | ReadingError::TooDeep { .. }),
+        ) => {
+            return Err(FlattenError::from(unread));
         }
     };
     match parsed {
@@ -277,8 +293,7 @@ fn same_tokens(
             }
             (TokenTree::Ident(x), TokenTree::Ident(y)) if x == y => {}
             (TokenTree::Punct(x), TokenTree::Punct(y)) if x.as_char() == y.as_char() => {}
-            (TokenTree::Literal(x), TokenTree::Literal(y))
-                if same_literal(parsing, x, y).map_err(TokenDifferenceError::Unread)? => {}
+            (TokenTree::Literal(x), TokenTree::Literal(y)) if same_literal(parsing, x, y)? => {}
             (a, b) => {
                 return Err(TokenDifferenceError::Token {
                     index,

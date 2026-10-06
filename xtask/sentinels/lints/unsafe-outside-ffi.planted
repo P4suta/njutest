@@ -1,0 +1,34 @@
+=== block source crates/app/src/lib.rs
+fn read() -> u8 { unsafe { core::ptr::null::<u8>().read() } }
+=== function source crates/app/src/lib.rs
+unsafe fn read() {}
+=== trait-method source crates/app/src/lib.rs
+trait Boundary { unsafe fn cross(); }
+=== trait source crates/app/src/lib.rs
+unsafe trait Marker {}
+=== implementation source crates/app/src/lib.rs
+unsafe impl Send for Handle {}
+=== foreign-block source crates/app/src/lib.rs
+unsafe extern "system" { fn CloseHandle(handle: isize) -> i32; }
+=== unsafe-attribute source crates/app/src/lib.rs
+#[unsafe(no_mangle)]
+pub extern "C" fn entry() {}
+=== expectation source crates/app/src/lib.rs
+#[expect(unsafe_code, reason = "one boundary")]
+fn cross() {}
+=== conditional-expectation source crates/app/src/lib.rs
+#[cfg_attr(windows, expect(unsafe_code, reason = "one boundary"))]
+fn cross() {}
+=== lowered-level source crates/app/src/lib.rs
+#![warn(unsafe_code)]
+=== in-a-macro source crates/app/src/lib.rs
+macro_rules! cross { ($call:expr) => { unsafe { $call } } }
+=== handed-to-a-macro source crates/app/src/lib.rs
+fn read() { cross!(unsafe { core::ptr::null::<u8>().read() }); }
+=== a-test source crates/app/tests/boundary.rs
+#[test]
+fn reads() { unsafe { core::ptr::null::<u8>().read() }; }
+=== a-named-module-elsewhere source crates/app/src/runner/windows.rs
+fn close(handle: isize) { unsafe { CloseHandle(handle) }; }
+=== beside-a-named-module source crates/rust-mutants/src/capdir/mod.rs
+fn close(handle: isize) { unsafe { CloseHandle(handle) }; }

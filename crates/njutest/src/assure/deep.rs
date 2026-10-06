@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use rust_mutants::runner::{Spec, run};
 
+use super::ended::ProcessEnd;
 use crate::error::RunnerError;
 use crate::report::{Finding, FindingKind, Limitation};
 use crate::trace::ExecRecord;
@@ -106,7 +107,7 @@ pub fn interpret(
 ) -> Result<Interpreted, RunnerError> {
     let mut argv: Vec<OsString> = vec![
         interpreting.cargo.path().as_os_str().to_owned(),
-        OsString::from("+nightly"),
+        interpreter_toolchain(&interpreting.env),
         OsString::from("miri"),
         OsString::from("test"),
     ];
@@ -126,10 +127,10 @@ pub fn interpret(
     }
     let mut spec = Spec::new(
         argv,
-        interpreting.timeout.map_or(
-            rust_mutants::runner::Bound::Unbounded,
-            rust_mutants::runner::Bound::After,
-        ),
+        match interpreting.timeout {
+            Some(after) => rust_mutants::runner::Bound::After(after),
+            None => rust_mutants::runner::Bound::Unbounded,
+        },
     );
     spec.dir = Some(interpreting.root.to_path_buf());
     spec.env = Some(environment(interpreting));
@@ -140,22 +141,22 @@ pub fn interpret(
         phase: "miri",
         source,
     })?;
-    if ran.error().is_some() || absent(said) {
+    let ending = match ProcessEnd::of(&ran.termination) {
+        ProcessEnd::Interrupted => return Err(RunnerError::Interrupted),
+        ProcessEnd::Unlaunched { why } => return unavailable(interpreting.absent, why),
+        ProcessEnd::Passed => Ending::Passed,
+        ProcessEnd::Failed => Ending::Failed,
+        ProcessEnd::TimedOut => Ending::TimedOut,
+        ProcessEnd::Unanswered { .. } => Ending::Unanswered,
+    };
+    if absent(said) {
         return unavailable(interpreting.absent, absence(said, ran.error()));
     }
-    if !ran.timed_out()
-        && ran.conventional_exit_code() != 0
+    if ending == Ending::Failed
         && let Some(absence) = missing(interpreting, watch)?
     {
         return unavailable(interpreting.absent, absence);
     }
-    let ending = if ran.timed_out() {
-        Ending::TimedOut
-    } else if ran.conventional_exit_code() == 0 {
-        Ending::Passed
-    } else {
-        Ending::Failed
-    };
     Ok(read(said, ending))
 }
 
@@ -176,14 +177,14 @@ fn unavailable(absent: Absent, message: String) -> Result<Interpreted, RunnerErr
                 position: None,
             }],
             limitations: vec![Limitation::new(
-                crate::limitation::MIRI_UNAVAILABLE,
+                crate::limitation::Limitation::MiriUnavailable,
                 &format!("the toolchain has no interpreter: {message}"),
             )],
         }),
     }
 }
 
-/// What the toolchain says when it has no interpreter, asked once the run it was given has failed.
+/// What the toolchain says when it has no interpreter, asked once the run it was given has failed: absent only where nothing launched or it says so, since a question nobody answered says nothing either way.
 fn missing(
     interpreting: &Interpreting<'_>,
     watch: Watch<'_>,
@@ -191,7 +192,7 @@ fn missing(
     let mut spec = Spec::new(
         [
             interpreting.cargo.path().as_os_str().to_owned(),
-            OsString::from("+nightly"),
+            interpreter_toolchain(&interpreting.env),
             OsString::from("miri"),
             OsString::from("--version"),
         ],
@@ -201,14 +202,19 @@ fn missing(
     spec.env = Some(environment(interpreting));
     let asked = run(&spec, watch.cancel);
     watch.trace.exec_result(ExecRecord::of(&spec, &asked));
-    if asked.error().is_none() && asked.conventional_exit_code() == 0 {
-        return Ok(None);
+    match ProcessEnd::of(&asked.termination) {
+        ProcessEnd::Interrupted => Err(RunnerError::Interrupted),
+        ProcessEnd::Unlaunched { why } => Ok(Some(why)),
+        ProcessEnd::Failed => {
+            let said =
+                std::str::from_utf8(&asked.output).map_err(|source| RunnerError::PhaseOutput {
+                    phase: "miri version probe",
+                    source,
+                })?;
+            Ok(absent(said).then(|| absence(said, None)))
+        }
+        ProcessEnd::Passed | ProcessEnd::TimedOut | ProcessEnd::Unanswered { .. } => Ok(None),
     }
-    let said = std::str::from_utf8(&asked.output).map_err(|source| RunnerError::PhaseOutput {
-        phase: "miri version probe",
-        source,
-    })?;
-    Ok(Some(absence(said, asked.error())))
 }
 
 /// What Miri's own environment is: the run's, plus what the configuration passes to the interpreter.
@@ -220,6 +226,17 @@ fn environment(interpreting: &Interpreting<'_>) -> rust_mutants::vars::Variables
     env
 }
 
+/// The `+toolchain` argument that picks the interpreter's toolchain under `env`: the one `NJUTEST_NIGHTLY` names, or `nightly`.
+#[must_use]
+pub fn interpreter_toolchain(env: &rust_mutants::vars::Variables) -> OsString {
+    let mut selected = OsString::from("+");
+    match env.var("NJUTEST_NIGHTLY") {
+        Some(nightly) => selected.push(nightly),
+        None => selected.push("nightly"),
+    }
+    selected
+}
+
 /// How one Miri run ended, apart from what it said.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Ending {
@@ -229,22 +246,21 @@ enum Ending {
     Failed,
     /// It ran out of time.
     TimedOut,
+    /// It ended without an answer of its own, by a signal or a failure to supervise it.
+    Unanswered,
 }
 
 /// Records that the interpreter ended without a test result, which says nothing about the suite.
 fn ran_no_test(interpreted: &mut Interpreted, said: &str) {
     interpreted.executed = false;
     let read = reading(said);
-    let last = said
-        .lines()
-        .map(str::trim)
-        .rfind(|line| !line.is_empty())
-        .map_or_else(
-            || "it said nothing".to_owned(),
-            |line| format!("it last said: {line}"),
-        );
+    let last = said.lines().map(str::trim).rfind(|line| !line.is_empty());
+    let last = match last {
+        Some(line) => format!("it last said: {line}"),
+        None => "it said nothing".to_owned(),
+    };
     interpreted.limitations.push(Limitation::new(
-        crate::limitation::MIRI_RAN_NO_TEST,
+        crate::limitation::Limitation::MiriRanNoTest,
         &format!(
             "the interpreter ended without a test result that says a test failed or every one \
              passed, so its status is its own trouble and not the suite's; it started {} test \
@@ -292,17 +308,7 @@ struct Reading {
 /// `said` read line by line: a test's captured output skipped, binaries and results counted apart since cargo and libtest write them to different streams, and diagnostics taken only where the interpreter or the toolchain speaks.
 fn reading(said: &str) -> Reading {
     let mut read = Reading::default();
-    let mut captured = false;
-    let lines: Vec<&str> = said.lines().map(str::trim_end).collect();
-    for (at, line) in lines.iter().copied().enumerate() {
-        if line.starts_with(CAPTURE_OPEN) && CAPTURED.iter().any(|end| line.ends_with(end)) {
-            captured = true;
-            continue;
-        }
-        if captured {
-            captured = !closes_capture(&lines, at);
-            continue;
-        }
+    for line in uncaptured(said) {
         let spoken = line.trim_start();
         if BINARY.iter().any(|start| spoken.starts_with(start)) {
             read.started = read.started.saturating_add(1);
@@ -312,10 +318,13 @@ fn reading(said: &str) -> Reading {
             read.results.push(ended);
             continue;
         }
-        let after_test = spoken
+        let after_test = match spoken
             .strip_prefix(TEST_PREFIX.0)
             .and_then(|rest| rest.split_once(TEST_PREFIX.1))
-            .map_or(spoken, |(_name, after)| after);
+        {
+            Some((_name, after)) => after,
+            None => spoken,
+        };
         let Some(diagnostic) = after_test.strip_prefix(DIAGNOSTIC) else {
             continue;
         };
@@ -330,6 +339,25 @@ fn reading(said: &str) -> Reading {
         read.absent |= ABSENT.iter().any(|marker| diagnostic.contains(marker));
     }
     read
+}
+
+/// The lines of `said` outside every test's captured output, where the harness, the toolchain and a sanitizer's runtime speak rather than a test.
+pub(super) fn uncaptured(said: &str) -> Vec<&str> {
+    let lines: Vec<&str> = said.lines().map(str::trim_end).collect();
+    let mut open = Vec::with_capacity(lines.len());
+    let mut captured = false;
+    for (at, line) in lines.iter().copied().enumerate() {
+        if line.starts_with(CAPTURE_OPEN) && CAPTURED.iter().any(|end| line.ends_with(end)) {
+            captured = true;
+            continue;
+        }
+        if captured {
+            captured = !closes_capture(&lines, at);
+            continue;
+        }
+        open.push(line);
+    }
+    open
 }
 
 /// Whether the line at `at` is the `failures:` libtest closes a binary's captured output with: one or more names indented four spaces, a blank line, and the binary's exact summary; a `failures:` a test printed is followed by anything else.
@@ -397,7 +425,7 @@ fn read(said: &str, ending: Ending) -> Interpreted {
     if ending == Ending::TimedOut {
         interpreted.executed = false;
         interpreted.limitations.push(Limitation::new(
-            crate::limitation::MIRI_TIMED_OUT,
+            crate::limitation::Limitation::MiriTimedOut,
             "the interpreter ran out of time, so the suite was not interpreted whole",
         ));
         return interpreted;
@@ -416,7 +444,7 @@ fn read(said: &str, ending: Ending) -> Interpreted {
     }
     if let Some(unsupported) = read.unsupported {
         interpreted.limitations.push(Limitation::new(
-            crate::limitation::MIRI_UNSUPPORTED,
+            crate::limitation::Limitation::MiriUnsupported,
             &format!("the interpreter could not interpret the suite whole: {unsupported}"),
         ));
         interpreted.findings.push(Finding {
@@ -436,16 +464,29 @@ fn read(said: &str, ending: Ending) -> Interpreted {
         && read.results.len() == read.started
         && read.results.iter().all(|ended| *ended == Ended::Passed);
     match ending {
-        Ending::Failed if failed => interpreted.findings.push(Finding {
-            kind: FindingKind::FailingTest,
-            subject: "soundness".to_owned(),
-            detail: "a test fails under the interpreter that passes without it".to_owned(),
-            origin: crate::report::FindingOrigin::Global,
-            path: None,
-            position: None,
-        }),
+        Ending::Failed if failed => {
+            interpreted.limitations.push(Limitation::new(
+                crate::limitation::Limitation::MiriFailedIsolated,
+                "a test failed under the interpreter, which withholds from a test the \
+                 environment variables, files and clocks it is given natively, and the \
+                 interpreter did not say it found undefined behaviour",
+            ));
+            interpreted.findings.push(Finding {
+                kind: FindingKind::NotMeasured,
+                subject: "soundness".to_owned(),
+                detail: "a test failed under the interpreter on what it withholds rather than \
+                         on undefined behaviour, so nothing is claimed about the unsafe the suite \
+                         holds"
+                    .to_owned(),
+                origin: crate::report::FindingOrigin::Global,
+                path: None,
+                position: None,
+            });
+        }
         Ending::Passed if passed => {}
-        Ending::Failed | Ending::Passed | Ending::TimedOut => ran_no_test(&mut interpreted, said),
+        Ending::Failed | Ending::Passed | Ending::TimedOut | Ending::Unanswered => {
+            ran_no_test(&mut interpreted, said);
+        }
     }
     interpreted
 }
@@ -464,8 +505,9 @@ fn absent(said: &str) -> bool {
 
 /// What to say about a Miri that is not there.
 fn absence(said: &str, error: Option<rust_mutants::runner::RunFailure<'_>>) -> String {
-    error.map_or_else(
-        || first_line(said, "error").unwrap_or_else(|| "the toolchain has no miri".to_owned()),
-        |failure| failure.to_string(),
-    )
+    match (error, first_line(said, "error")) {
+        (Some(failure), _) => failure.to_string(),
+        (None, Some(line)) => line,
+        (None, None) => "the toolchain has no miri".to_owned(),
+    }
 }

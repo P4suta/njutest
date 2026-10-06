@@ -76,6 +76,51 @@ where
     Ok(found)
 }
 
+/// Whether a build compiled the file it was asked about again, which is the only build a comparison may speak for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Recompiled {
+    /// Every unit that read the file was compiled, and at least one did.
+    Every,
+    /// Cargo reused the artifact of a unit that read the file, so that artifact was built from the bytes before the file changed.
+    Reused,
+    /// No unit of the build read the file, so nothing the build produced was compiled from it.
+    Unread,
+}
+
+/// Whether every unit of `units` that read the file at `changed` was compiled rather than reused, a file named however its dep-info spells it.
+///
+/// `provenance` separates the two ways a build's products may have been established: an actual compiler process, whose own fresh bit is the honesty this check exists to hold, and the engine's verified record, whose key covers `changed`'s bytes and whose artifacts a real compiler run produced, so a reading unit of that record was compiled from those bytes however the record marks them.
+#[must_use]
+pub fn recompiled(
+    units: &[crate::cargo::Unit],
+    changed: &Path,
+    provenance: crate::cargo::Provenance,
+) -> Recompiled {
+    let named = crate::cargo::resolved(changed);
+    let verified_reuse = match provenance {
+        crate::cargo::Provenance::VerifiedReuse => true,
+        crate::cargo::Provenance::Compiler | crate::cargo::Provenance::SharedRefusal => false,
+    };
+    let mut read = false;
+    for unit in units {
+        let reads = unit.inputs.iter().any(|input| {
+            input.file_name() == changed.file_name() && crate::cargo::resolved(input) == named
+        });
+        if !reads {
+            continue;
+        }
+        if unit.fresh && !verified_reuse {
+            return Recompiled::Reused;
+        }
+        read = true;
+    }
+    if read {
+        Recompiled::Every
+    } else {
+        Recompiled::Unread
+    }
+}
+
 /// What one build's artifacts say about another's.
 #[must_use]
 pub fn compare(original: &Artifacts, mutated: &Artifacts) -> Identity {

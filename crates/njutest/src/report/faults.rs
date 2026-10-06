@@ -20,8 +20,10 @@ pub enum FaultDecision {
         /// The target that noticed.
         by: String,
     },
-    /// Every test that reached the site passed with the call failing.
+    /// Every test that reached the site passed with the call failing, and something formatted the failure it made, or the record cannot say.
     Unnoticed,
+    /// Every test that reached the site passed with the call failing, and a run of each dropped every failure it made without anything reading it (ADR 0032 decision 5).
+    Absorbed,
     /// No test reached the site, so every test runs the same with the call failing.
     Unreached,
     /// A bound expired with the call failing before a test finished, which establishes nothing.
@@ -50,6 +52,7 @@ impl FaultDecision {
         match self {
             Self::Noticed { .. }
             | Self::Unnoticed
+            | Self::Absorbed
             | Self::Unreached
             | Self::Waited { .. }
             | Self::Undecided { .. }
@@ -64,6 +67,7 @@ impl FaultDecision {
         let every = vec![
             Self::Noticed { by: "t".to_owned() },
             Self::Unnoticed,
+            Self::Absorbed,
             Self::Unreached,
             Self::Waited { on: "t".to_owned() },
             Self::Undecided {
@@ -87,6 +91,7 @@ impl FaultDecision {
         match self {
             Self::Noticed { .. } => "noticed",
             Self::Unnoticed => "unnoticed",
+            Self::Absorbed => "absorbed",
             Self::Unreached => "unreached",
             Self::Waited { .. } => "waited",
             Self::Undecided { .. } => "undecided",
@@ -107,6 +112,18 @@ pub struct FaultRecord {
     pub display_id: String,
     /// The file the `?` is in, relative to the workspace root.
     pub path: String,
+    /// The rule that proposed it, whose name is part of its identity.
+    pub rule: String,
+    /// The version of that rule, which is part of its identity too.
+    pub rule_version: u32,
+    /// The bytes of the file the call it fails covers.
+    pub span: rust_mutants::span::Span,
+    /// The lowercase hex SHA-256 of the whole file as the run read it.
+    pub source_digest: String,
+    /// The call it fails, exactly as the file spells it over `span`.
+    pub original: String,
+    /// What the call becomes under the fault.
+    pub replacement: String,
     /// The item that holds it.
     pub item: String,
     /// Where the call it fails starts.
@@ -120,10 +137,10 @@ impl FaultRecord {
     /// Where a person reads it: the file, and the line where the run knows one.
     #[must_use]
     pub fn place(&self) -> String {
-        self.position.map_or_else(
-            || self.path.clone(),
-            |at| format!("{}:{}", self.path, at.line),
-        )
+        match self.position {
+            Some(at) => format!("{}:{}", self.path, at.line),
+            None => self.path.clone(),
+        }
     }
 }
 
@@ -147,6 +164,20 @@ pub enum Failed {
     /// The target failed with the call failing, and passed with the mutation beside it.
     Alone,
 }
+
+impl Failed {
+    /// The name a drawing spells it with.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Beside => "beside",
+            Self::Alone => "alone",
+        }
+    }
+}
+
+/// What a survivor a target told from the original only with the call at its own site failing is called: evidence it is no equivalence, in no kill count and no score (ADR 0032 decision 6).
+pub const OBSERVABLE_UNDER_FAULT: &str = "observable-under-fault";
 
 /// A survivor put again with the fault at its own call beside it, where a target told it from the call failing alone (ADR 0032 decision 6).
 ///
@@ -186,12 +217,14 @@ pub struct BesideRun {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FaultAccounting {
-    /// Every site, which the six after it add up to.
+    /// Every site, which the seven after it add up to.
     pub sites: u32,
     /// How many a test noticed.
     pub noticed: u32,
-    /// How many every reaching test passed.
+    /// How many every reaching test passed, with the failure read by something or the record unable to say.
     pub unnoticed: u32,
+    /// How many every reaching test passed with the failure dropped unread.
+    pub absorbed: u32,
     /// How many no test reached.
     pub unreached: u32,
     /// How many a bound expired on.
@@ -213,6 +246,7 @@ impl FaultAccounting {
             let (field, count) = match record.decision {
                 FaultDecision::Noticed { .. } => ("fault noticed", &mut counted.noticed),
                 FaultDecision::Unnoticed => ("fault unnoticed", &mut counted.unnoticed),
+                FaultDecision::Absorbed => ("fault absorbed", &mut counted.absorbed),
                 FaultDecision::Unreached => ("fault unreached", &mut counted.unreached),
                 FaultDecision::Waited { .. } => ("fault waited", &mut counted.waited),
                 FaultDecision::Undecided { .. } => ("fault undecided", &mut counted.undecided),
@@ -228,12 +262,13 @@ impl FaultAccounting {
         Ok(counted)
     }
 
-    /// Whether the six decisions add up to the sites, which every report holds.
+    /// Whether the seven decisions add up to the sites, which every report holds.
     #[must_use]
     pub fn adds_up(self) -> bool {
         [
             self.noticed,
             self.unnoticed,
+            self.absorbed,
             self.unreached,
             self.waited,
             self.undecided,
@@ -257,6 +292,17 @@ pub fn found(records: &[FaultRecord]) -> Vec<Finding> {
                     format!(
                         "the call the `?` at {} asks about failed and every test that reached \
                          it passed: no test asserts what `{}` does when it fails",
+                        record.place(),
+                        record.item
+                    ),
+                ),
+                FaultDecision::Absorbed => (
+                    FindingKind::UnnoticedFault,
+                    format!(
+                        "the call the `?` at {} asks about failed, every test that reached it \
+                         passed, and the failure it made was dropped without anything reading \
+                         it: `{}` goes on as if the call had not failed, and no test asserts \
+                         what it does instead",
                         record.place(),
                         record.item
                     ),
@@ -309,7 +355,7 @@ pub fn limited(records: &[FaultRecord]) -> Vec<Limitation> {
         .map(|(class, places)| format!("{class} at {}", places.join(", ")))
         .collect();
     vec![Limitation::new(
-        crate::limitation::FAULT_NOT_PUT,
+        crate::limitation::Limitation::FaultNotPut,
         &format!(
             "the compiler refused {} fault(s), because the engine makes only the standard \
              error types it can build without guessing and these sites propagate another, so \
@@ -322,8 +368,11 @@ pub fn limited(records: &[FaultRecord]) -> Vec<Limitation> {
 
 /// The compiler's error code in a first line, or the whole line where it named none.
 fn class(diagnostic: &str) -> &str {
-    diagnostic
+    match diagnostic
         .strip_prefix("error[")
         .and_then(|rest| rest.split_once(']'))
-        .map_or(diagnostic, |(code, _message)| code)
+    {
+        Some((code, _message)) => code,
+        None => diagnostic,
+    }
 }

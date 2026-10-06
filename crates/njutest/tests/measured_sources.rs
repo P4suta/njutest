@@ -115,6 +115,7 @@ fn measured(read: Option<rust_mutants::id::HexDigest>) -> BuildReport {
         item: "sign".to_owned(),
         original: ">".to_owned(),
         replacement: ">=".to_owned(),
+        evidence: njutest::testkit::reports::sealed_as(&njutest::report::Decided::Survived),
         outcome: njutest::report::Decided::Survived,
         accepted: false,
         reuse: njutest::report::Reuse(njutest::report::Established::Here),
@@ -137,7 +138,7 @@ fn measured(read: Option<rust_mutants::id::HexDigest>) -> BuildReport {
         "no test noticed gt-to-ge",
     ));
     source.limitations.push(Limitation::new(
-        "git-metadata-unavailable",
+        njutest::limitation::Limitation::GitMetadataUnavailable,
         "this fixture is not a git repository",
     ));
     source.verdict = source.concluded();

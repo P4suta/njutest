@@ -33,7 +33,7 @@ fn prepare_narrowed(fixture: &Fixture, narrowing: Vec<Pattern>) -> Session {
             tier: Tier::All,
             touch: true,
             narrowing,
-            ..PrepareOptions::default()
+            ..PrepareOptions::new(Tier::Balanced)
         },
         &Cancel::new(),
     )

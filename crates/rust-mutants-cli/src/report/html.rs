@@ -97,20 +97,16 @@ fn controls() -> String {
 }
 
 fn score(document: &RunDocument) -> String {
-    document.score.as_ref().map_or_else(
-        || {
-            "<p class=\"none\">The run decided nothing, which is not a score of zero.</p>"
-                .to_owned()
-        },
-        |score| {
-            format!(
-                "<p class=\"score\">{:.1}%</p>\n<p>{} detected of {} decided</p>",
-                score.value * 100.0,
-                score.detected,
-                score.decided
-            )
-        },
-    )
+    match document.score.as_ref() {
+        Some(score) => format!(
+            "<p class=\"score\">{:.1}%</p>\n<p>{} detected of {} decided</p>",
+            score.value * 100.0,
+            score.detected,
+            score.decided
+        ),
+        None => "<p class=\"none\">The run decided nothing, which is not a score of zero.</p>"
+            .to_owned(),
+    }
 }
 
 fn accounting(document: &RunDocument) -> String {
@@ -263,13 +259,16 @@ fn listing(text: &str, mutants: &[&RunMutantDocument]) -> String {
             Ok(representable) => on_line.get(&representable),
             Err(_) => None,
         };
-        let class = here.map_or("l", |rows| {
-            if rows.iter().any(|one| noticed(one)) && rows.iter().all(|one| noticed(one)) {
-                "l has killed"
-            } else {
-                "l has"
+        let class = match here {
+            Some(rows) => {
+                if rows.iter().any(|one| noticed(one)) && rows.iter().all(|one| noticed(one)) {
+                    "l has killed"
+                } else {
+                    "l has"
+                }
             }
-        });
+            None => "l",
+        };
         crate::text::append(
             &mut out,
             format_args!(
@@ -308,17 +307,18 @@ fn rejections(document: &RunDocument) -> String {
         return "<p class=\"none\">The compiler accepted every candidate.</p>".to_owned();
     }
     let mut out = String::from(
-        "<table>\n<tr><th>where</th><th>rule</th><th>code</th><th>alone</th>\
+        "<table>\n<tr><th>where</th><th>rule</th><th>why</th><th>code</th><th>alone</th>\
          <th>what the compiler said</th></tr>\n",
     );
     for rejection in &document.rejections {
         crate::text::line(
             &mut out,
             format_args!(
-                "<tr><td><code>{path}</code></td><td>{rule}</td><td>{code}</td><td>{alone}</td>\
-             <td>{diagnostic}</td></tr>",
+                "<tr><td><code>{path}</code></td><td>{rule}</td><td>{why}</td><td>{code}</td>\
+             <td>{alone}</td><td>{diagnostic}</td></tr>",
                 path = escape(&rejection.path),
                 rule = escape(&rejection.rule),
+                why = rejection.reason.name(),
                 code = escape(match rejection.code.as_deref() {
                     Some(code) => code,
                     None => "—",

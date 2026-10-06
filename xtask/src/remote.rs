@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::thread::JoinHandle;
 
+use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
 /// Why a commit could not be put to the other machines, or what they said about it.
@@ -176,8 +177,8 @@ pub fn script(fleet: &Fleet, machine: &Machine, sha: &str) -> String {
                 format!("export CARGO_TARGET_DIR={dir}\n")
             });
             format!(
-                "set -e\n{prelude}cd {repository}\n[ -d {worktree} ] || git worktree add -q --detach {worktree} HEAD\n\
-                 cd {worktree}\ngit fetch -q ~/{BUNDLE} HEAD\n\
+                "set -e\nbundle_path=\"$PWD/{BUNDLE}\"\n{prelude}cd {repository}\n[ -d {worktree} ] || git worktree add -q --detach {worktree} HEAD\n\
+                 cd {worktree}\ngit fetch -q \"$bundle_path\" HEAD\n\
                  git checkout -q --detach {sha}\nmise trust -q . >/dev/null 2>&1 || true\n{target}{command}\n",
                 repository = machine.repository,
                 worktree = machine.worktree,
@@ -190,9 +191,9 @@ pub fn script(fleet: &Fleet, machine: &Machine, sha: &str) -> String {
                 format!("$env:CARGO_TARGET_DIR = '{dir}'\n")
             });
             format!(
-                "$ErrorActionPreference = 'Stop'\n$PSNativeCommandUseErrorActionPreference = $true\n{prelude}\
+                "$ErrorActionPreference = 'Stop'\n$PSNativeCommandUseErrorActionPreference = $true\n$bundlePath = Join-Path (Get-Location) '{BUNDLE}'\n{prelude}\
                  Set-Location '{repository}'\nif (-not (Test-Path '{worktree}')) {{ git worktree add -q --detach '{worktree}' HEAD }}\n\
-                 Set-Location '{worktree}'\ngit fetch -q (Join-Path $HOME '{BUNDLE}') HEAD\n\
+                 Set-Location '{worktree}'\ngit fetch -q $bundlePath HEAD\n\
                  git checkout -q --detach {sha}\n$PSNativeCommandUseErrorActionPreference = $false\nmise trust -q . *> $null\n\
                  $PSNativeCommandUseErrorActionPreference = $true\n{target}{command}\n",
                 repository = machine.repository,
@@ -219,57 +220,50 @@ pub fn known(machine: &Machine) -> String {
     }
 }
 
-/// The remote command line that runs `script` on a machine spoken to by `shell`, with nothing in it a shell could reinterpret.
+/// A real program and distinct arguments accepted by the native transport.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Invocation {
+    /// The actual shell executable.
+    pub program: &'static str,
+    /// The separate arguments selecting the complete immutable script file.
+    pub arguments: Vec<String>,
+}
+
+impl Invocation {
+    /// The executable followed by every separate transport argument.
+    pub fn argv(&self) -> impl Iterator<Item = &str> {
+        std::iter::once(self.program).chain(self.arguments.iter().map(String::as_str))
+    }
+}
+
+/// The complete script's fixed name inside its immutable native input snapshot.
 #[must_use]
-pub fn invocation(shell: Shell, script: &str) -> String {
+pub const fn script_name(shell: Shell) -> &'static str {
     match shell {
-        Shell::Posix => format!("echo {} | base64 -d | bash -l", base64(script.as_bytes())),
-        Shell::Powershell => {
-            let wide: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
-            format!(
-                "pwsh -NoProfile -NonInteractive -EncodedCommand {}",
-                base64(&wide)
-            )
-        }
+        Shell::Posix => "njutest-native-check.sh",
+        Shell::Powershell => "njutest-native-check.ps1",
     }
 }
 
-/// The base64 digit for the low six bits of `value`.
-fn digit(value: u32) -> char {
-    const DIGITS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let at = match usize::try_from(value & 0x3f) {
-        Ok(at) => at,
-        Err(_six_bits_always_fit) => return '=',
-    };
-    match DIGITS.get(at) {
-        Some(byte) => char::from(*byte),
-        None => '=',
-    }
-}
-
-/// Standard base64 with padding.
+/// A finite native file invocation whose words never contain the complete script.
 #[must_use]
-pub fn base64(bytes: &[u8]) -> String {
-    let mut encoded = String::with_capacity(bytes.len().div_ceil(3).saturating_mul(4));
-    for chunk in bytes.chunks(3) {
-        let (joined, kept) = match *chunk {
-            [first, second, third] => (
-                (u32::from(first) << 16) | (u32::from(second) << 8) | u32::from(third),
-                4,
-            ),
-            [first, second] => ((u32::from(first) << 16) | (u32::from(second) << 8), 3),
-            [first] => (u32::from(first) << 16, 2),
-            _ => continue,
-        };
-        for (index, shift) in [18_u32, 12, 6, 0].into_iter().enumerate() {
-            encoded.push(if index < kept {
-                digit(joined >> shift)
-            } else {
-                '='
-            });
-        }
+pub fn file_invocation(shell: Shell) -> Invocation {
+    let arguments = match shell {
+        Shell::Posix => vec!["-l".to_owned(), script_name(shell).to_owned()],
+        Shell::Powershell => vec![
+            "-NoProfile".to_owned(),
+            "-NonInteractive".to_owned(),
+            "-File".to_owned(),
+            script_name(shell).to_owned(),
+        ],
+    };
+    Invocation {
+        program: match shell {
+            Shell::Posix => "bash",
+            Shell::Powershell => "pwsh",
+        },
+        arguments,
     }
-    encoded
 }
 
 /// The lines of a suite's output that say what failed, each once, in the order they came.
@@ -324,8 +318,20 @@ fn run(program: &str, arguments: &[&str], directory: &Path) -> Result<Output, Re
         })
 }
 
+/// What git says in `directory`, asked through the one door that has it read the tree itself.
+fn asked_git(directory: &Path, arguments: &[&str]) -> Result<Output, RemoteError> {
+    crate::repository::git(directory)
+        .args(arguments)
+        .current_dir(directory)
+        .output()
+        .map_err(|source| RemoteError::Start {
+            program: "git".to_owned(),
+            source,
+        })
+}
+
 fn git(directory: &Path, step: &'static str, arguments: &[&str]) -> Result<String, RemoteError> {
-    let output = run("git", arguments, directory)?;
+    let output = asked_git(directory, arguments)?;
     if !output.status.success() {
         return Err(RemoteError::Git { step });
     }
@@ -363,12 +369,8 @@ fn shared(root: &Path, answer: &[u8]) -> Vec<String> {
         .map(str::trim)
         .filter(|line| line.len() == 40 && line.bytes().all(|byte| byte.is_ascii_hexdigit()))
         .filter(|sha| {
-            run(
-                "git",
-                &["cat-file", "-e", &format!("{sha}^{{commit}}")],
-                root,
-            )
-            .is_ok_and(|output| output.status.success())
+            asked_git(root, &["cat-file", "-e", &format!("{sha}^{{commit}}")])
+                .is_ok_and(|output| output.status.success())
         })
         .map(ToOwned::to_owned)
         .collect()
@@ -376,50 +378,85 @@ fn shared(root: &Path, answer: &[u8]) -> Vec<String> {
 
 fn ask(asked: &Asked) -> Result<Answer, RemoteError> {
     let log = asked.logs.join(format!("{}.log", asked.machine.name));
-    let queried = run(
-        "ssh",
-        &[
-            &asked.machine.host,
-            &invocation(asked.machine.shell, &known(&asked.machine)),
-        ],
-        &asked.root,
-    )?;
+    let packet = tempfile::Builder::new()
+        .prefix("njutest-native-input-")
+        .tempdir()
+        .map_err(|source| RemoteError::Log {
+            path: asked.logs.display().to_string(),
+            source,
+        })?;
+    let queried = dispatch(asked, packet.path(), &known(&asked.machine))?;
+    if !queried.status.success() {
+        let mut said = queried.stdout;
+        said.extend_from_slice(&queried.stderr);
+        return answer(asked, log, false, &said);
+    }
     let assumed = shared(&asked.root, &queried.stdout);
-    let bundle = asked.logs.join(format!("{}.bundle", asked.machine.name));
-    let bundle_path = bundle
-        .as_os_str()
-        .to_str()
-        .map_or_else(String::new, ToOwned::to_owned);
-    let mut arguments = vec!["bundle", "create", "-q", bundle_path.as_str(), "HEAD"];
-    if !assumed.is_empty() {
+    let bundle = packet.path().join(BUNDLE);
+    let bundle_path = bundle.to_str().ok_or(RemoteError::NotText {
+        step: "bundle path",
+    })?;
+    let mut arguments = vec!["bundle", "create", "-q", bundle_path, "HEAD"];
+    if !assumed.is_empty() && !assumed.contains(&asked.sha) {
         arguments.push("--not");
         arguments.extend(assumed.iter().map(String::as_str));
     }
     git(&asked.root, "bundle", &arguments)?;
-    let destination = format!("{}:{BUNDLE}", asked.machine.host);
-    let copied = run("scp", &["-q", &bundle_path, &destination], &asked.logs)?;
-    let mut said = copied.stdout;
-    said.extend_from_slice(&copied.stderr);
-    let passed = if copied.status.success() {
-        let line = invocation(
-            asked.machine.shell,
-            &script(&asked.fleet, &asked.machine, &asked.sha),
-        );
-        let ran = run("ssh", &[&asked.machine.host, &line], &asked.logs)?;
-        said.extend_from_slice(&ran.stdout);
-        said.extend_from_slice(&ran.stderr);
-        ran.status.success()
-    } else {
-        false
-    };
-    std::fs::write(&log, &said).map_err(|source| RemoteError::Log {
+    let ran = dispatch(
+        asked,
+        packet.path(),
+        &script(&asked.fleet, &asked.machine, &asked.sha),
+    )?;
+    let mut said = ran.stdout;
+    said.extend_from_slice(&ran.stderr);
+    answer(asked, log, ran.status.success(), &said)
+}
+
+fn dispatch(asked: &Asked, packet: &Path, script: &str) -> Result<Output, RemoteError> {
+    let path = packet.join(script_name(asked.machine.shell));
+    std::fs::write(&path, script).map_err(|source| RemoteError::Log {
+        path: path.display().to_string(),
+        source,
+    })?;
+    let line = file_invocation(asked.machine.shell);
+    let mut identity = Sha256::new();
+    for part in [
+        asked.sha.as_bytes(),
+        asked.machine.host.as_bytes(),
+        packet.as_os_str().as_encoded_bytes(),
+        script.as_bytes(),
+    ]
+    .into_iter()
+    .chain(line.argv().map(str::as_bytes))
+    {
+        identity.update(part);
+        identity.update(b"\0");
+    }
+    let identity = hex::encode(identity.finalize());
+    let submission = identity.get(..32).ok_or(RemoteError::NotText {
+        step: "native submission identity",
+    })?;
+    let mut run_arguments = vec![
+        "run",
+        &asked.machine.host,
+        "--submission",
+        submission,
+        "--wait",
+        "--",
+    ];
+    run_arguments.extend(line.argv());
+    run("domyjob", &run_arguments, packet)
+}
+
+fn answer(asked: &Asked, log: PathBuf, passed: bool, said: &[u8]) -> Result<Answer, RemoteError> {
+    std::fs::write(&log, said).map_err(|source| RemoteError::Log {
         path: log.display().to_string(),
         source,
     })?;
     Ok(Answer {
         machine: asked.machine.name.clone(),
         passed,
-        failures: if passed { Vec::new() } else { read_back(&said) },
+        failures: if passed { Vec::new() } else { read_back(said) },
         log,
     })
 }

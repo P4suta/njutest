@@ -1,0 +1,34 @@
+{
+  "schema": "njutest-reader-producer-v1",
+  "command": [
+    "/Users/yasunobu/projects/github.com/P4suta/njutest-w18/target/debug/njutest",
+    "verify",
+    "--offline",
+    "--locked",
+    "--trace",
+    "--ui=plain"
+  ],
+  "cwd": "/Users/yasunobu/njutest-oc/evidence/batch/phase3/package-C/reader-recording-products/documents-baseline/trees/fixture-baseline",
+  "environment": {
+    "CARGO_BUILD_JOBS": "6",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "CARGO_INCREMENTAL": "0",
+    "RUSTC_WRAPPER": "",
+    "RUSTUP_TOOLCHAIN": "1.98.0",
+    "NO_COLOR": "1",
+    "XDG_CACHE_HOME": "/Users/yasunobu/njutest-oc/evidence/batch/phase3/package-C/reader-recording-products/documents-baseline/cache",
+    "TMPDIR": "/Users/yasunobu/njutest-oc/evidence/batch/phase3/package-C/reader-recording-products/documents-baseline/temp",
+    "TMP": "/Users/yasunobu/njutest-oc/evidence/batch/phase3/package-C/reader-recording-products/documents-baseline/temp",
+    "TEMP": "/Users/yasunobu/njutest-oc/evidence/batch/phase3/package-C/reader-recording-products/documents-baseline/temp",
+    "NJUTEST_FIXTURE_BUILD_CACHE": "/Users/yasunobu/projects/github.com/P4suta/njutest-w18/target/fixture-build-cache"
+  },
+  "producer_revision": "38bba9e90ba9df4bc8dee4e1c3e8e999eed4d669",
+  "producer_patch_sha256": "fe83a32c90bccac08978c679c93d127e484fea84d03a00247e19dbfd4061ace4",
+  "binary_sha256": "79f2a0c16eb6fae341f6ae557eb22294741381ed88296b432ac0dce4e372f018",
+  "exit_code": 2,
+  "started": "2026-10-02T12:57:37.461458+00:00",
+  "duration_seconds": 13.604368791013258,
+  "stdout_sha256": "a824fd1e466e629b7bd17f478854f10bf4c21b32439b496fc959bbd139022349",
+  "stderr_sha256": "29deea246820792d376d2c1b83ae1c8e725e7a17d31464673387e12c393b8f34"
+}

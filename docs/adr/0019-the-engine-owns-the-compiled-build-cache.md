@@ -23,12 +23,18 @@ Two programs collecting the same class of state cannot agree about liveness from
 
 1. rust-mutants' stable target directory is the only persistent compiled build cache used by a verification.
    Its lifecycle, locking, and collection belong to the engine.
+   Native builds are keyed to the source root; sealed builds are keyed to the tree's content, so linker object paths, preopens and environment values stay identical across source roots ([sealed execution](../engine/sealed.md#remembering-what-one-execution-established)).
 2. njutest owns no persistent compiled layer.
    Its `[cache]` table controls only outcome answers: `max_bytes`, `ttl`, export, and import.
 3. Cargo started from a test process remains isolated with `CARGO_TARGET_DIR` under that run's `Scratch`.
    This is disposable process isolation, not a cache shared across runs.
 4. `njutest cache` neither reports nor collects compiled artifacts.
    The retired `build_dir` and `build_max_bytes` keys are rejected as unknown fields, and an upgrade removes them.
+
+Compiler inputs are held by canonical filesystem identity before the complete key is minted.
+Every actual dep-info path is resolved through that same identity boundary before graph coverage is accepted.
+An included source's climbing spelling and a shared target spelling therefore name the same verified input.
+Resolution failures and genuinely external inputs remain refusals with their original I/O cause.
 
 ## Consequences
 
@@ -58,9 +64,12 @@ The fixture reproduction is two runs of `fixture-witness-downstream` sharing a t
    That moment is older than every unit built from those bytes, since the member's older units were removed at it, and newer than every unit built from any others.
    So a file's time says what cargo needs to know whoever wrote it, and bytes the engine writes again the same, as instrumenting an unchanged tree does, compile nothing.
 4. `CompileOptions` names its target directory as a `BuildDir`, which carries the members, so no build into a shared directory can skip the settling.
-5. A directory inside another that keeps its own record, such as `witness`, `coverage` or `pristine`, is another target directory; settling the outer one passes over it.
-   The copy as it was written is checked in `pristine`, apart from the instrumented builds, because one directory given the two trees in turn would compile each of them every run.
-6. A record that cannot be read, or that is not one this release writes, is `RM1022`, rather than a record the run trusts or silently replaces.
+ 5. A directory inside another that keeps its own record, such as `witness`, `coverage` or `pristine`, is another target directory; settling the outer one passes over it.
+    The copy as it was written is checked in `pristine`, apart from the instrumented builds, because one directory given the two trees in turn would compile each of them every run.
+ 6. Since 2026-09-29 the record is `rust-mutants-built-v2`, and a member's files are also every file of the copy outside its directory its units read, which a `#[path]` can name: after each build the record keeps, from the dep-info of that build, every such file each member's units read, and the digest settling compares takes them in with the member's own.
+    A file no member's directory holds therefore moves the member that reads it, where before it moved nothing, and only a clock that disagreed with its time kept cargo from reusing what it built.
+    A `rust-mutants-built-v1` record kept no such file, so it is read as no record: every member is compiled again once, and the next build writes the record this release reads.
+ 7. A record that cannot be read, or that is not one this release writes, is `RM1022`, rather than a record the run trusts or silently replaces.
 
 ### Consequences
 
@@ -71,3 +80,318 @@ The fixture reproduction is two runs of `fixture-witness-downstream` sharing a t
 - A file no member's directory holds keeps the time it was written, which only a person changes, and cargo reads that time as it always has.
 - The pristine check moved into `pristine`, so a path under the target directory that a unit's dep-info names now begins `$target/pristine/`, and outcome keys that name one change once.
 - Documentation examples run through `cargo test --doc` against the tree the last settled build compiled; nothing writes the tree between that build and them.
+
+## Amendment, 2026-10-01: identical fixture copies share compiled content
+
+An explicit `NJUTEST_FIXTURE_BUILD_CACHE` root allows copied fixtures to claim an engine-owned build slot addressed by the complete snapshot digest, toolchain identity and build environment.
+One verified immutable source graph is published under its owned event lease, and every claim creates a separate mutable copy from that graph.
+The graph's directory is declared a retained cache under the claim that copied it, never let go and claimed again (ADR 0006 decision 11), so whatever takes its lock afterwards, a sweep, a watcher or the next run, finds a published graph.
+An arbitrary number of claims uses the same graph without a four-slot fallback or a second semantic source survey.
+The final copied graph is loaded once, and build scripts and procedural macros require the full environment in the target directory identity; ordinary graphs rely on Cargo's dep-info for compile-time environment dependencies while diagnostic and scratch names do not fragment the pool.
+The engine's owner lock holds the slot through execution, cleanup and the lifetime of every shared set of sealed modules.
+Every invocation keeps its own scratch, runtime records and verdict state.
+No target directory is copied.
+
+Wasmtime's built-in cache separately shares compiled host modules by bytes, engine configuration and Wasmtime version.
+It is an engine-owned compilation layer, independent of the outcome and transcript stores.
+Count diagnostics distinguish module-cache hits from transcript-cache answers.
+
+## Amendment, 2026-10-02: a verified build hit starts no Cargo
+
+The engine's compiler facade records eligible locked builds by their complete source, graph, configuration, toolchain, selection, flag and environment content identity.
+The record lives under the engine-owned target directory and includes digests for every returned artifact and dep-info file.
+Reuse reconstructs the compilation only after verifying that inventory and its Cargo messages; doubt returns to Cargo.
+Opaque build scripts and procedural macros cannot establish this record because they may read undeclared inputs.
+Flag variables are classified under the argument protocol cargo actually splits them by: the encoded forms on the unit separator alone, the plain ones on whitespace, with every attached and separate `-C` form read alike.
+The sealed target admits the engine's exact deterministic linker switches and its WebAssembly platform object, bound by content beside the toolchain-owned linker.
+The object must be a valid core WebAssembly module with known linking metadata and the engine's `platform.o` filename.
+That format carries symbols and relocations in its own bytes, rather than response arguments or filesystem members.
+Only established scalar codegen options and configuration arguments are admitted otherwise.
+Response files, archives, dynamic or unknown object metadata, other object formats, file-bearing compiler options, unknown switches and unsupported separate values fall back to Cargo with their exact cause.
+The bound file inputs also add a content fingerprint to the actual compiler flags before the key is computed.
+Cargo therefore recompiles when an object's bytes change at the same path, even when its dep-info omits that object.
+The fingerprint also changes for corrupt object bytes before their format refusal, so fallback Cargo cannot publish an old fresh output for that change.
+Cargo's absent uplifted library dep-info is tolerated only when the remaining compiler unit inventory still proves the complete input set.
+A native target's link arguments remain refused, because its system linker is no toolchain input.
+This layer applies to users' repeated runs as well as leased fixture slots, and its hit/miss notes always identify the key.
+The suite count gate budgets unique bound build keys plus uncacheable requests per binary, rather than allowing a warm cache to hide new build requests.
+
+## Amendment, 2026-10-02: complete products and independent witnesses have distinct owners
+
+### Context
+
+A content key alone did not own the mutable paths Cargo returned.
+Another compilation could overwrite those paths, concurrent cold requests could each prepare them, and Cargo's fresh bit could be mistaken for complete source provenance.
+An equivalence control could also receive its original cache entry as an independent reproducibility witness.
+A later prepare must measure an altered execution copy without changing the immutable products used as compiler proof.
+
+### Decision
+
+1. One kernel preparation lease covers input binding, settling, the actual process and publication into a target directory.
+   A bound cold miss invalidates fingerprints for every package in the complete graph before the actual compiler runs.
+   Publication owns a distinct immutable product inventory for each actual producer, rather than borrowing Cargo's mutable output paths.
+   Source, dependency, configuration, executable, argument and environment inputs are checked again before publication and every reuse.
+   Opaque input graphs continue through actual Cargo and cannot certify a complete bound identity.
+2. The original actual producer has a private-constructor `CompilerObservation`.
+   It retains complete or unbound input identity, typed product or independent-control purpose, actual execution and leader identity, raw stderr and stream digests.
+   Reuse retains that observation and the original Cargo fresh bits without publishing another execution.
+   `Compiler`, `VerifiedReuse` and `SharedRefusal` distinguish actual work, verified products and a waiting cohort's failed producer.
+3. Preparation, process and publication failures have exhaustive typed stages.
+   A publication generation lets requests that waited for the same producer share its actual refusal.
+   A later request may recover, including after input A, input B and restored input A.
+   A failed product publication never returns a bound mutable result.
+4. Equivalence keeps an owned reproducibility pair for one complete input identity.
+   The independent control must run a distinct actual compiler process, force the graph's fingerprints, recompile every source-reading unit and match the original immutable products.
+   A pair retains both original observations and may answer further identical questions only while their complete identities still match the restored tree.
+   An unbound graph requires another actual independent control, and a changed identity withdraws the old pair.
+   A cache entry cannot witness itself, and a process that reused a source-reading unit still establishes no independent control.
+5. Native execution receives separate `ExecutionProducts` copied only from the explicit compiler inventory under the same preparation lease.
+   Their marker binds the immutable origin, while later prepares observe existing execution bytes without repairing them.
+   Compiler proof continues to read the immutable inventory, so another compilation or an altered execution copy cannot change its witness.
+6. Toolchain banners, target facts and locked metadata are reusable owned observations only for their exact executable bytes, environment, complete graph and configuration.
+   The retained result carries the original actual process and raw captures.
+   A hit starts no process, and actual standalone probes are counted once at their producer.
+   Private standalone purpose types own an uncosted watch, while metadata retains its caller's actual execution recorder.
+   Retained commands must match the executable, purpose, arguments, working directory and environment identity they claim.
+   Unbound dynamic-loader search graphs remain opaque inputs and always use actual probes.
+   Unknown executable selectors and incomplete metadata graphs use actual processes.
+7. Unreadable compiler flag inputs expose a typed I/O cause and named input path.
+   Refusal tests inspect that cause and identity rather than localized operating-system display text.
+
+### Consequences
+
+- Warm complete-input builds and repeated equivalence questions reuse verified products and one genuine independent pair.
+- Freshness, source-reading and independent-process requirements remain enforced for actual compiler witnesses.
+- An altered execution copy is remeasured without changing its compiler proof.
+- Waiting failed requests retain the actual refusal, and later complete requests may recover.
+- No target directory is copied, no repeated-build waiver is granted, and no reuse fabricates work.
+
+## Amendment, 2026-10-03: doctest capture has an immutable preparation result
+
+`PreparedDoctests` retains the original actual compiler observation, rustdoc report and captured inventory together.
+The capture program has one cold preparation owner and a distinct immutable output path for each actual rustc producer.
+Its source marker alone cannot certify a program; reuse verifies the original process and program bytes.
+A changed program is observed as changed and recovery publishes another path.
+
+Doctest preparation binds the complete source graph, actual rustdoc executable, capture program, compiler flags, requested arguments and full environment.
+Only the internally owned output staging address varies with publication; the actual argv remains in the original observation.
+Cargo message records and rustdoc report bytes are separated from the same raw stdout, and every reuse derives the report from that original stdout again.
+The explicit compiler artifact and dep-info inventory is frozen beside the captured binaries, and source inputs are checked against those original dependency records.
+A publication verifies complete capture accounting and every file digest.
+Unaccounted reports remain actual observations and do not publish reusable products.
+
+External include macros and unresolved documentation attributes cannot establish a complete doctest input graph.
+They continue through an actual compiler and never receive a verified capture hit.
+Prepared captures share the target's preparation lease, including settling, actual work, publication and failure evidence.
+The legacy capture and emptying APIs retain their public behavior, while compiler preparation also holds its owned lease.
+No successful removal or signal delivery certifies late-writer completion.
+
+The private snapshot removal capability is constructed only after every observed producer's retained kernel generation has completed.
+Lock release follows that completion, and production cleanup and Drop make one removal attempt.
+A completion or removal refusal retains its typed cause and snapshot identity instead of being discarded or replaced by guessed retry sleeps.
+The legacy cleanup adapter retains its explicitly injected clock and original controls, after the same producer completion boundary.
+
+## Amendment, 2026-10-03: retained source placement preserves Cargo discovery
+
+A standalone manifest must not inherit an unrelated workspace from the retained cache's ancestors.
+The exhaustive retained or isolated source owner uses the caller's explicit isolated temporary root when the retained placement would cross that boundary.
+An isolated placement with the same foreign ancestor is refused with its input identity.
+Both placements retain one immutable complete source graph and separate editable leases without changing the original manifest.
+The unchanged FNV 1.0.7 Rust 2015 control binds every original source digest, the complete catalog and every report row to its actual trace.
+Both actual compiler tiers must pass all original sealed baselines and agree on all eleven outcomes.
+Its one declared doubt remains the exact typed StackOverflow mutation, while all nine killed and one unreached outcomes remain established.
+
+## Amendment, 2026-10-03: repeated reproducibility questions retain their actual pair
+
+The devkit's fixed reproducibility fixture retains an immutable source owner and three actual compiler observations.
+Original, changed and restored stages have exhaustive identities and distinct retained kernel generations, process IDs and publication nonces.
+Every stage invalidates Cargo's source fingerprints and requires non-fresh source-reading units.
+The restored stage cannot borrow the original observation as its independent control.
+Original Cargo output, exact arguments, environment, source graph and artifact inventories remain verified on reuse.
+
+Semantic input identity contains verified bytes and modes, while filesystem change stamps only guard observation reuse.
+Restored A inputs therefore recover the original A pair after a different B pair without treating timestamps as content.
+One owned kernel lease covers preparation, all three actual processes and publication.
+Concurrent questions retain that one pair, and a corrupt record or artifact requires new actual work.
+Opaque source macros, build scripts, compiler selectors and configuration inputs retain the original actual compiler fallback.
+No cache entry manufactures an independent compiler process or changes Cargo's original freshness evidence.
+
+## Amendment, 2026-10-03: loader namespaces and acquisition identities are inputs
+
+A macOS fallback-library search is reusable only after each absolute search namespace, absent directory, alias and regular-file content has been captured and checked unchanged.
+The same owned loader observation binds compiler products, toolchain banners and metadata; unknown loader selectors still require actual processes.
+Known link-file bytes alter Cargo freshness before complete-graph eligibility is decided, including when the rest of the graph is opaque.
+That link-content fingerprint excludes source placement, while the complete cache key retains path, environment and source-graph identity.
+Generated native extension imports resolve the standard-library alias in their own runtime module on every supported edition.
+
+A doctest acquisition retains either its complete request or its original unbound refusal identity.
+Requests, misses, actual launches, failed launches and compiler provenance carry that same owned identity.
+Actual launch presence is recorded before interpreting the process result, including cancellation and supervision failures.
+The existing accounting law, independent compiler requirements and original cost records remain authoritative.
+
+## Amendment, 2026-10-04: owned observations exclude only explicit output boundaries
+
+A command observation shares its owner's strong filesystem change-stamp and content memo across fresh captures and retained responses.
+Executable resolution, directory aliases, loader namespaces and complete file content remain checked before publication and reuse.
+Caller-owned snapshot exclusions and the actual report directory identify outputs explicitly; guessed directory names cannot establish that boundary.
+Metadata must name only manifest and target source paths present in the bound source inventory, so an excluded source cannot certify a reusable response.
+
+## Amendment, 2026-10-04: expression macros have one private lexical owner
+
+Rust 2015 resolves a module's unqualified macro re-export at the crate root, which refused eight actual FNV 1.0.7 alternatives.
+Each instrumented file instead declares one private expression macro before its first owning item, after the original crate attributes and source prefix.
+The runtime module and macro share a collision-free name, and native and sealed alternatives use the same lexical declaration.
+The macro expands to the original expression without another scope, inference boundary or exported crate item.
+Every inserted byte maps through the existing splice offsets for branch and constant diagnostics, while source line counts remain unchanged.
+Statement-only files emit no unused expression macro.
+Generated imports retain their module-relative standard-library aliases under every supported edition.
+
+## Retained toolchain input identities
+
+The existing process identity memo is retained with its original toolchain observation.
+A cache hit still opens the current input and checks its canonical path, filesystem object, change time, length, modification time, and permissions before reusing the original digest.
+Changed or unreadable generations cannot use the retained identity.
+Unknown selectors, loader inputs, and incomplete observations retain actual hashing or Cargo fallback.
+Every capture still checks the complete source and loader namespace.
+Later compiler and runtime captures publish their identities through the same owned observation lease.
+The retained cursor restores only while it stays byte-identical to the original publication its own content key names.
+A publication whose content key the cursor has superseded merges its captures into the cursor's record without reading input bytes, and the cursor keeps naming the newer publication.
+The input memo cannot create a compiler unit, a fresh artifact, or an independent reproducibility witness.
+Actual hash reads and completed bytes remain recorded separately from process starts.
+An unchanged second listing must read zero toolchain bytes and start zero physical processes.
+
+## Amendment, 2026-10-05: a verified hit settles the directory it answers for
+
+A verified hit answers without Cargo, but Cargo still reads its target directory afterwards: the documentation target runs there through `cargo test --doc`.
+Every new copy of a tree writes its files later than the units an earlier build left, so after an unsettled hit Cargo judged those units stale, and the documentation compiled the library again where no build note counted it.
+A hit therefore settles its directory under its preparation lease before it returns, as an actual build settles before Cargo starts, which decision 4 of the 2026-09-26 amendment already asks of every build into a shared directory.
+An unchanged tree keeps every unit, so the documentation runs against the units the reused compilation stands for; a member the directory last built from other bytes loses its units, and Cargo compiles it again there.
+A doctest capture hit leaves its directory as it found it, because every Cargo command into a capture directory settles before it starts.
+
+## Amendment, 2026-10-05: one rule says what a build can read
+
+The source slot and the verified compilation record each named the variables they leave out, in two lists.
+The record left out every `NJUTEST_` and `NEXTEST_` variable; the slot named three `NJUTEST_` variables, and when each binary began to label its cost record with `NJUTEST_COST_PRODUCT` and its whole command line, `NJUTEST_COST_COMMAND`, the slot took both as build inputs.
+Two runs of one tree from two roots, or with and without `--no-cache`, then claimed two slots, compiled their modules at two paths, and one execution of one tree came to two transcript digests.
+Both identities now ask one function, `cargo::compilation_input`, so a label the product adds is left out of both or of neither.
+A variable a build does read, such as one Cargo reads, still separates slots, and a unit whose dep-info names a left-out variable is still never a verified hit.
+
+## Amendment, 2026-10-05: a stamp stands for content only once it has settled
+
+A rewrite of the same length within one tick of the filesystem's clock leaves every field of a stamp equal: length, modification and change time, file identity and mode.
+Linux dates a write from a coarse clock that advances once a scheduler tick, so two writes a few milliseconds apart carry the same change time.
+On the Linux build host the toolchain identity memo, its published record, the loader-input reuse, the loader image classification and the devkit's reproducibility witness each handed back the identity of bytes that were gone.
+
+Each of them now holds a stamp as `njutest_fixture_tree::settled::Taken`, the stamp and the moment the clock read just before it was taken.
+A stamp justifies reuse only once its newest time is older than that moment by more than `settled::GRANULARITY`.
+Every write after the moment is then dated newer than the stamp, so a stamp that still agrees proves that no write happened since.
+This is how git treats a racily clean index entry, with the moment recorded beside each stamp rather than read from the index file's own time.
+
+The newest time is the later of the modification and the change time.
+The change time is the one time no writer can set: restoring a modification time with `utimensat` or `SetFileTime` stamps a new change time as it does so.
+A stamp without a change time therefore never settles, which is the devkit's witness on Windows and the engine's stamp on a filesystem that reports a zero `ChangeTime`.
+
+The granularity is three seconds.
+FAT dates writes in two-second steps and ext3 and HFS+ in whole seconds, and the coarse clock a write is dated by lags the precise one `SystemTime::now` reads by up to a scheduler tick: ten milliseconds at Linux's lowest rate and about sixteen on Windows.
+A second above FAT's resolution covers that lag with room to spare.
+What the margin costs is that a file written in the last three seconds is read again rather than reused, and an installed toolchain or a finished build product is older than that.
+A network filesystem whose server dates writes by a clock further off than that is outside the rule.
+
+The moment is published with the stamp, in the tool observation record (`rust-mutants-tool-observation-v5`) and in the witness pair (`njutest-independent-compiler-pair-v3`).
+A stamp recorded within the granularity of its write stays unable to justify reuse in every later process, until an observation of the same file with a settled moment replaces it.
+Two captures of one stamp contradict each other only when both were taken settled; an unsettled capture beside a different one is the history of a racy rewrite, not a conflict.
+
+A stamp is compared only through `Taken`.
+`Taken::holds` justifies reuse, and `Taken::changed` proves a change and justifies nothing.
+`settled::Stamp::same` takes a `settled::Comparing` that only `Taken` can make, so a stamp type has no equality of its own for a memo to key by.
+The `raw-stamp` lint refuses a type that implements `settled::Stamp` and derives or implements equality, and a change time read in a file that implements no stamp, outside the engine's Windows FFI that reads it for one.
+
+A test that needs a reuse waits until the stamp of the file it wrote has settled, because a change time cannot be set into the past, and a test that restores an old modification time still gets a new change time.
+A test that rewrites a file within one tick of observing it is the reproduction of the defect, and is not made to wait.
+
+The apparatus's survey of test executables and `njutest watch` compare stamps to notice a change rather than to reuse an identity, and they hold no content to fall back on, so they are outside this decision.
+
+## Amendment, 2026-10-05: an app execution alias is a named loader entry
+
+Windows puts `%LOCALAPPDATA%\Microsoft\WindowsApps` on every user's `PATH`, which is the DLL search namespace a compile binds, and that directory holds app execution aliases such as `python.exe` and `winget.exe`.
+An alias is a reparse point tagged `IO_REPARSE_TAG_APPEXECLINK`, which only process creation interprets: a file open that follows it fails with `ERROR_CANT_ACCESS_FILE`, and `std::fs::read_link` refuses its tag as an unsupported reparse point.
+The capture took every reparse point for a link to read, so that one directory left every compile on a GitHub Windows runner unbound, and nothing was reused.
+
+`capdir::Kind::ExecutionAlias` now names the tag where the capability directory reads an entry without following it, so every match on an entry's kind decides what an alias is.
+The loader binds an alias by its name and its kind and never opens it, as it binds a file no loader can map by its name alone: no loader can map an alias, so neither its reparse data nor its target is a loader input.
+Every other reparse point is still a link to read and resolve, and one that cannot be read still refuses the capture.
+
+## Amendment, 2026-10-05: a loader variable is one this platform's loader reads
+
+The capture refused `LD_*` and `DYLD_*` variables on every platform as opaque loader inputs, and a GitHub Windows runner sets `LD_LIBRARY_PATH`, so every compile there came out unbound and nothing was reused.
+The Windows loader reads no `LD_` or `DYLD_` variable, and Linux's reads no `DYLD_` one; on those platforms such a variable is a value, and the build key binds it as one, as it binds every variable a build can read.
+`cargo::build_cache::loaders::loader_variable` now answers which variables this platform's loader reads: `LD_` on Linux and the other ELF systems, `DYLD_` and the `LD_` its linker reads on macOS, and none on Windows, whose loader reads `PATH`, which the capture binds as a search namespace.
+The loader capture and the compiler environment both ask it, so the two refusals cannot disagree.
+
+## Amendment, 2026-10-05: a mount point the host refuses to traverse is a named loader entry
+
+Windows refuses a process under redirection trust to traverse a junction a non-administrator made, `ERROR_UNTRUSTED_MOUNT_POINT`, and a session started through Windows OpenSSH runs under it; every process such a process starts inherits the refusal.
+The owner's `PATH` holds such a junction, `%LOCALAPPDATA%\Programs\Herdr\bin`, so `std::fs::canonicalize` refused the capture, RM1024 said only `Uncategorized`, and every compile on that machine came out unbound.
+No loader of a process the compile starts can reach anything through that entry, because the refusal is inherited, so the capture binds it by its spelling and that it was refused, as it binds an absent directory.
+A link entry whose target the host refuses to traverse is bound the same way, beside its target's spelling.
+One resolver, `Reached`, answers every path the capture follows as an object, nothing, or refused, and any other failure still refuses the capture.
+RM1024 now names the operating system's code beside the kind, which is never translated.
+
+## Amendment, 2026-10-05: a 128-bit file identity is spelled as text in a record
+
+The engine's Windows stamp holds the file identity `FileIdInfo` reports, and ReFS makes it 128 bits wide.
+serde_json wrote it as the integer it is, and the engine reads every record through `strictjson`, which builds a `serde_json::Value` first and holds a number past 64 bits only as a float, so the tool observation record that held such a stamp never read back: `invalid type: floating point 1.3132052638633093e+24, expected u128`.
+On a ReFS volume no published toolchain identity or observation was reused by a later process, and on NTFS, whose identities fit 64 bits, every record read back and nothing showed.
+The stamp now holds the identity as `rust_mutants::wide::Wide`, its canonical decimal digits in a string, which reads back exactly whatever its width, and the tool observation record is `rust-mutants-tool-observation-v5`, so a record written with the number is never read as one written with the text.
+The `wide-record-integer` lint refuses a 128-bit integer in any type that derives `Serialize` or `Deserialize`, because a value that happens to fit 64 bits on the machine running the tests hides the defect from them.
+
+## Amendment, 2026-10-05: a search path entry the Windows loader searched first is bound by its spelling
+
+The loader capture read every entry of every directory on `PATH`, and every Windows `PATH` holds `System32` and the Windows directory, thousands of images the capture opened, classified and hashed for each compile, each open scanned again by the antivirus.
+On the owner's Windows machine compiles failed with `LoaderInputError` at `C:\WINDOWS\system32`, "the loader search namespace changed", as the system wrote there during the run, and a run of the toolchain suites ended with the machine hung and rebooted, Kernel-Power event 41.
+Microsoft Learn's "Dynamic-link library search order" gives the order a desktop application's loader searches in: after the redirections, the loaded modules and the known DLLs, the directory the application was loaded from, the system directory (`GetSystemDirectoryW`), the 16-bit system directory, the Windows directory (`GetWindowsDirectoryW`), the current directory, and only then the directories `PATH` lists; with safe DLL search mode off the current directory moves ahead of the system directory, and still behind nothing on `PATH`.
+A library found in one of those fixed directories was found before `PATH` was read, and one not found there is not found through `PATH`'s copy of the same directory either, so such an entry adds nothing to resolution and its contents are no loader input of the path's.
+On Windows a search directory whose canonical path equals one of the three, compared without regard to ASCII case, is bound by its spelling and by that fact, `windows-fixed-search-directory`, and none of its entries is read.
+The three come from the operating system through the capability directory's Windows FFI, `GetSystemDirectoryW`, its sibling `System`, and `GetWindowsDirectoryW`, never from `SystemRoot` or `windir`, which a caller can point anywhere.
+Every other directory on `PATH` is captured as before, and a failure to read one still refuses the capture.
+
+## Amendment, 2026-10-05: a loader search directory is bound by what it holds
+
+On Windows the compiler's current directory is a loader search directory, the one the search order above reads after the Windows directory and before `PATH`, so the capture binds it for every compile.
+The capture bound every search directory by the volume and the object on it beside its entries.
+The directory a compile runs in is the copy of the tree its run made, and every run makes that copy again, so its object was new each time and the compilation key with it.
+Every Windows build was then a cold miss, and a bound miss removes the fingerprints of every package in the graph before Cargo starts, so a second run of an unchanged tree compiled every unit again and published its products under the new key.
+Measured on the owner's Windows machine with `TEMP` spelled by its short name, as GitHub's Windows runner spells it: two runs of `fixture-simple` from one root and a third from a copy compiled 12 units each, and the keys of the first two differed in the loader digest alone.
+A remembered baseline names each test executable by its path under those products, so its key moved with them, and an unchanged tree measured its baseline again.
+No loader reads which object a directory is: it looks names up in it and maps the images it finds there.
+The capture now binds a search directory, and a directory an alias leads to, by its spelling, its canonical path and its entries, and compares the object only to refuse a directory that moved while it was read.
+`capdir::Identity` keeps its volume and object private, so outside the capability directory two identities can be compared and neither can be spelled into a key; the one reader is the Windows change stamp, which tells the identity memo whether a toolchain file is still the object it read.
+A compile on Unix with absolute search paths never bound its directory, which is why only Windows showed it, but a search directory made again with the same entries now binds the same input on every platform.
+
+## Amendment, 2026-10-06: an app execution alias is no loader input
+
+GitHub's Windows runner refused one compile in a run of 4,362 tests with "RM1022: ...
+compiler inputs changed while preparing their products: the loader search entry \\?\C:\Users\runneradmin\AppData\Local\Microsoft\WindowsApps\WindowsPackageManagerMCPServer.exe appeared".
+`WindowsApps` is on every user's `PATH` and holds app execution aliases, which Windows adds and removes as packaged apps install and update, at any moment of a run.
+An alias is an `IO_REPARSE_TAG_APPEXECLINK` reparse point that only process creation resolves: no open of it as a file succeeds, so no loader can map it, and its presence or absence changes no library a compile could load.
+The capture binds nothing for an alias, neither its name nor its kind, so a search directory that gains or loses one binds the input it did.
+An alias that appears in the instant the capture reads its directory still reads as a namespace that changed, which refuses that capture rather than binding a half-read directory.
+
+## Amendment, 2026-10-06: the current user's app execution alias directory is bound by its name
+
+GitHub's Windows runner refused a compile again after the amendment above, with "RM1022: ...
+compiler inputs changed while preparing their products: the loader search entry \\?\C:\Users\runneradmin\AppData\Local\Microsoft\WindowsApps\MicrosoftCorporationII.WindowsSubsystemForLinux_8wekyb3d8bbwe appeared".
+Leaving aliases out answered one kind of entry, and Windows also adds and removes a folder per package in that directory, at any moment of a run.
+The class is a search directory the operating system changes on its own schedule and that holds nothing a loader maps; answered one kind of entry at a time, it leaves the next kind to refuse a compile.
+
+Microsoft Learn's [Microsoft Store page for the Sysinternals Suite](https://learn.microsoft.com/en-us/sysinternals/downloads/microsoft-store) says app execution aliases are "a special type of reparse point managed by Windows for MSIX packages", stored in `%LOCALAPPDATA%\Microsoft\WindowsApps`, a directory in the user profile that is on the path, with a folder per package listing that package's aliases, and deleted when the package is uninstalled.
+[Dynamic-link library search order](https://learn.microsoft.com/en-us/windows/win32/dlls/dynamic-link-library-search-order) has the loader look a module's name up in each directory `PATH` lists, so a folder inside one of them is searched only where `PATH` names it too, and the amendment above shows that no loader maps an alias.
+On Windows a search directory whose canonical path equals the current user's alias directory, compared without regard to ASCII case, is now bound by its spelling and by that fact, `windows-execution-alias-directory`, and none of its entries is read, as a fixed search directory is.
+The directory is `Microsoft\WindowsApps` in the local application data directory that [`SHGetKnownFolderPath`](https://learn.microsoft.com/en-us/windows/win32/api/shlobj_core/nf-shlobj_core-shgetknownfolderpath) names for `FOLDERID_LocalAppData` and this process's token, through the capability directory's Windows FFI, never from `LOCALAPPDATA`, which a caller can point anywhere.
+Asked with no token, `SHGetKnownFolderPath` expands the folder from the process's own `USERPROFILE`, which a caller can point anywhere too, and so at a directory of its choosing that would then be bound by its name: on the owner's Windows machine, with `USERPROFILE` pointed at an empty directory, it named a directory under that one.
+Asked with the process's token, it named the user's own directory wherever `USERPROFILE` pointed, and a test holds that by running the decision again in a child process whose `USERPROFILE` names somewhere else.
+A failure to name the directory refuses the capture, and a user whose alias directory does not exist has every search directory read.
+Every other directory on `PATH`, a package's folder that `PATH` names among them, is captured as before.
+
+Unlike a fixed search directory, which adds nothing a loader resolves, this is a trade.
+A library somebody copies into the alias directory by hand is a loader input the capture no longer binds: Windows makes the directory for aliases, and the capture takes that account of it rather than refuse every compile on a machine whose packaged apps update during the run.

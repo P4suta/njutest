@@ -64,6 +64,8 @@ const fn relevant_payload(payload: &Payload) -> RelevantPayload<'_> {
         | Payload::Identical { .. }
         | Payload::Evidence { .. }
         | Payload::MutantExec { .. }
+        | Payload::SealedControl { .. }
+        | Payload::SealedExec { .. }
         | Payload::Note { .. }
         | Payload::RunEnd { .. } => RelevantPayload::Other,
     }
@@ -121,6 +123,79 @@ fn the_schema_is_frozen() {
     assert_eq!(OUTPUT_DIRECTORY_NAME, "output");
     assert_eq!(OUTPUT_FILE_LIMIT, 1 << 20);
     assert_eq!(TRUNCATION_MARKER, "...");
+}
+
+#[test]
+fn actual_module_preparation_work_validates_against_the_published_trace_schema() {
+    let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(include_str!(
+        "../../../schema/rust-mutants-trace-v1.json"
+    ))
+    .expect("the published schema is JSON");
+    let sealed = schema["properties"]["payload"]["oneOf"]
+        .as_array()
+        .expect("the payload alternatives")
+        .iter()
+        .find(|alternative| alternative["properties"]["type"]["const"] == "run-end")
+        .map(|end| &end["properties"]["run"]["properties"]["sealed"])
+        .expect("the actual run-end sealed diagnostics");
+    let validator = jsonschema::validator_for(sealed).expect("the published boundary compiles");
+    let directory = njutest_devkit::temporary::CacheDirectory::make("trace-modules-")
+        .expect("the actual producing test process has a parent suite cache owner");
+    let cache = rust_mutants_sealed::CompilationCache::retained(directory.path().to_path_buf())
+        .expect("the parent-owned compilation cache");
+    let modules = rust_mutants_sealed::ModuleOwner::default();
+    let runner = rust_mutants_sealed::SealedRunner::cached(
+        &modules,
+        std::time::Duration::from_secs(60),
+        &cache,
+    )
+    .expect("an actual preparation owner");
+    let command = b"\0asm\x01\0\0\0\x01\x04\x01\x60\0\0\x03\x02\x01\0\x05\x03\x01\0\x01\x07\x13\x02\x06memory\x02\0\x06_start\0\0\x0a\x04\x01\x02\0\x0b";
+    let invocation = rust_mutants_sealed::Invocation {
+        arguments: rust_mutants_sealed::Arguments::new(vec!["command".to_owned()])
+            .expect("valid arguments"),
+        environment: rust_mutants_sealed::Environment::new(Vec::new()).expect("valid environment"),
+        preopens: rust_mutants_sealed::Preopens::new(Vec::new()).expect("valid preopens"),
+        seed: 11,
+        fuel: 1_000_000,
+        limits: rust_mutants_sealed::Limits {
+            memory: 1 << 20,
+            stdout: 1 << 16,
+            stderr: 1 << 16,
+            overlay: 1 << 20,
+        },
+        clock: rust_mutants_sealed::ClockPolicy {
+            realtime_origin: 1_000_000_000_000_000_000,
+            monotonic_origin: 5_000_000_000,
+            nanos_per_fuel: std::num::NonZeroU64::MIN,
+        },
+        halt: None,
+    };
+    for _request in 0..2 {
+        let transcript = runner
+            .prepare(command)
+            .expect("the actual WASI command")
+            .invoke(&invocation, &rust_mutants_sealed::Interrupt::of(Vec::new()))
+            .expect("actual independent host execution");
+        assert_eq!(transcript.stop(), rust_mutants_sealed::SealedStop::Returned);
+        runner
+            .prepare(b"\0asm\x01\0\0\0\x05\x03\x01\0\x01")
+            .expect_err("a compiled core module without the command interface is refused");
+    }
+    let spent = runner.spent().expect("the actual preparation work");
+    let compilation = spent.compilation.expect("measured physical preparations");
+    assert_eq!(spent.failures, Some(2));
+    assert_eq!(
+        (
+            compilation.attempts,
+            compilation.process,
+            compilation.failed_cold,
+            compilation.failed_disk
+        ),
+        (Some(3), Some(1), Some(1), Some(1))
+    );
+    let recorded = serde_json::to_value(spent).expect("the actual diagnostic document");
+    assert!(validator.is_valid(&recorded), "{recorded}");
 }
 
 #[test]
@@ -821,6 +896,22 @@ fn the_v1_reader_distinguishes_an_explicit_null_from_a_missing_field() {
 }
 
 #[test]
+fn the_reader_refuses_an_exec_record_whose_command_line_names_no_program() {
+    let event = rust_mutants::trace::Event {
+        seq: 1,
+        timestamp: "2027-01-15T08:00:00Z".to_owned(),
+        elapsed_ms: 0,
+        payload: Payload::Exec { exec: exec(&[]) },
+    };
+    let text = serde_json::to_string(&event).expect("the malformed event");
+    let error = read_events(text.as_bytes()).expect_err(
+        "a command line names at least its program, which is what the schema's minItems says, \
+         so an empty one is no record a recorder writes rather than a program named nothing",
+    );
+    assert_eq!(error.line(), 1, "{error}");
+}
+
+#[test]
 fn check_reports_sequence_gaps_a_missing_run_end_and_drops() {
     let recorder = memory_recorder();
     recorder.note("a", "1");
@@ -916,6 +1007,7 @@ fn one_of_each_preparation(recorder: &Recorder) {
             code: Some("E0308".to_owned()),
             said: "mismatched types".to_owned(),
         }],
+        carried: Vec::new(),
         unattributed: vec!["error: something else".to_owned()],
     });
     recorder.bisect(rust_mutants::trace::BisectRecord {
@@ -1036,6 +1128,20 @@ fn one_of_each_execution(recorder: &Recorder) {
         step_notice: None,
         declined: Vec::new(),
     });
+    recorder.sealed_control(rust_mutants::trace::SealedControlRecord {
+        target: "demo/lib/demo".to_owned(),
+        test: "demo::tests::le_bound".to_owned(),
+        standing: "controlled".to_owned(),
+        reached: vec![0, 1],
+    });
+    recorder.sealed_exec(rust_mutants::trace::SealedExecRecord {
+        mutant: "b".repeat(20),
+        index: 1,
+        target: "demo/lib/demo".to_owned(),
+        test: "demo::tests::le_bound".to_owned(),
+        came_to: "panicked".to_owned(),
+        transcript: Some("d".repeat(64)),
+    });
     recorder.cache(rust_mutants::trace::CacheRecord {
         mutant: "b".repeat(20),
         key: "d".repeat(64),
@@ -1082,6 +1188,11 @@ fn every_event_type_has_one_golden_line_and_validates_against_the_schema() {
     one_of_each_preparation(&recorder);
     one_of_each_measurement(&recorder);
     phase.end();
+    let counted = recorder.sealed_counts();
+    counted.assembled();
+    counted.compiled().expect("the count fits");
+    counted.instantiated().expect("the count fits");
+    counted.answered().expect("the count fits");
     recorder
         .run_end(rust_mutants::trace::RunOutcome::Detected, None)
         .expect("trace closes");
@@ -1226,6 +1337,7 @@ fn a_phase_that_never_ended_is_a_problem_a_reader_is_told_about() {
                     error: Some("killed".to_owned()),
                     events_emitted: 3,
                     events_dropped: 0,
+                    sealed: None,
                 },
             },
         ),
@@ -1277,6 +1389,7 @@ fn a_phase_that_began_and_ended_is_no_problem() {
                     error: None,
                     events_emitted: 6,
                     events_dropped: 0,
+                    sealed: None,
                 },
             },
         ),
@@ -1494,6 +1607,36 @@ fn the_schema_names_every_granularity_and_every_fallback_a_route_can_carry() {
 }
 
 #[test]
+fn every_word_a_carry_refusal_has_is_one_the_published_schema_allows() {
+    let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(include_str!(
+        "../../../schema/rust-mutants-trace-v1.json"
+    ))
+    .expect("the schema is JSON");
+    let refused = schema["properties"]["payload"]["oneOf"]
+        .as_array()
+        .expect("the payload alternatives")
+        .iter()
+        .find(|alternative| alternative["properties"]["type"]["const"] == "cache")
+        .map(|cache| cache["properties"]["cache"]["properties"]["refused"]["enum"].clone())
+        .expect("a cache record");
+    let published: Vec<Option<&str>> = refused
+        .as_array()
+        .expect("a closed list")
+        .iter()
+        .map(serde_json::Value::as_str)
+        .collect();
+    let mut written: Vec<Option<&str>> = rust_mutants::carry::Refusal::ALL
+        .iter()
+        .map(|refusal| Some(refusal.name()))
+        .collect();
+    written.push(None);
+    assert_eq!(
+        published, written,
+        "a carried lookup's cache record names the premise that failed, so the schema lists each"
+    );
+}
+
+#[test]
 fn every_reason_a_select_record_can_carry_is_one_the_published_schema_allows() {
     let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(include_str!(
         "../../../schema/rust-mutants-trace-v1.json"
@@ -1547,4 +1690,412 @@ fn the_schema_lists_exactly_the_outcomes_a_run_can_end_with() {
         .map(|outcome| outcome.name().to_owned())
         .collect();
     assert_eq!(listed, known);
+}
+
+#[test]
+fn closing_a_channel_sink_publishes_completion_to_its_reader() {
+    let (sender, events) = std::sync::mpsc::sync_channel(2);
+    let sink = Sink::Channel(rust_mutants::trace::ChannelSink::new(sender));
+    sink.close().expect("the producer closes its stream");
+    assert!(
+        matches!(
+            events.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Disconnected)
+        ),
+        "a closed producer must wake its blocked reader through channel completion"
+    );
+}
+
+#[test]
+fn a_stalled_observation_reader_retains_a_bounded_overflow_refusal() {
+    let observation = rust_mutants::observation::Observation::subscribe();
+    let producer = observation.signal();
+    for _publication in 0..4096 {
+        producer.publish(rust_mutants::observation::Event::Changed);
+    }
+    let waited = observation
+        .wait("source-tree", "filesystem-change", None)
+        .expect("the executing host can measure the wait");
+    let refused = waited
+        .event
+        .expect_err("a stalled reader cannot certify an unlimited observation backlog");
+    assert!(refused.to_string().contains("full"), "{refused}");
+    assert_eq!(waited.note.owner, "source-tree");
+    assert!(waited.note.machine.cpus > 0);
+}
+
+#[test]
+fn a_transferred_reader_keeps_its_original_subscription_and_queued_completion() {
+    use rust_mutants::observation::{Event, Observation};
+    let mut observation = Observation::subscribe();
+    observation.signal().publish(Event::Completed);
+    std::thread::scope(|scope| {
+        let reader = njutest_devkit::thread::ScopedThread::launch(scope, move || {
+            let refused = observation.wait("producer", "completion", None);
+            assert_eq!(
+                result_state(&refused),
+                Refused,
+                "a transferred subscription refuses its previous thread: {refused:?}"
+            );
+            observation
+                .bind_current_thread()
+                .expect("the exclusive receiver transfers to its actual owner");
+            let waited = observation
+                .wait("producer", "completion", None)
+                .expect("the retained subscription measures its actual new host reader");
+            assert_eq!(
+                waited.event.expect("the queued original event"),
+                Event::Completed
+            );
+            assert!(waited.note.machine.cpus > 0);
+        });
+        reader.join().expect("the actual transferred reader joins");
+    });
+}
+
+#[test]
+fn reading_actual_answers_consumes_wakes_without_hiding_a_producer_refusal() {
+    use rust_mutants::observation::{Event, Observation};
+    let observed = Observation::subscribe();
+    for _answer in 0..128 {
+        observed.signal().publish(Event::Changed);
+        assert_eq!(
+            observed.pending().expect("the actual wake"),
+            Some(Event::Changed)
+        );
+    }
+    assert_eq!(observed.pending().expect("no unconsumed wake"), None);
+    observed.signal().failed(io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        "the answer producer lost its terminal record",
+    ));
+    observed.signal().publish(Event::Completed);
+    let refusal = observed
+        .pending()
+        .expect_err("an answer cannot erase its producer refusal");
+    assert_eq!(refusal.kind(), io::ErrorKind::PermissionDenied);
+}
+
+#[test]
+fn completion_after_observation_overflow_does_not_hide_the_lost_evidence() {
+    let observation = rust_mutants::observation::Observation::subscribe();
+    let producer = observation.signal();
+    for _publication in 0..4096 {
+        producer.publish(rust_mutants::observation::Event::Changed);
+    }
+    producer.publish(rust_mutants::observation::Event::Completed);
+    for _read in 0..2 {
+        let waited = observation
+            .wait("producer", "completion", None)
+            .expect("the executing host can measure the wait");
+        assert!(waited.event.is_err(), "completion cannot erase overflow");
+    }
+}
+
+#[test]
+fn filesystem_invalidations_retain_one_wake_until_the_actual_reader_receives_it() {
+    use rust_mutants::observation::{Event, Observation};
+    let root = tempfile::tempdir().expect("an actual filesystem resource");
+    let observed = Observation::filesystem_except(root.path(), false, &["fence"])
+        .expect("the resource is subscribed before its producer starts");
+    let witness = Observation::filesystem(root.path(), false)
+        .expect("an independent native observer is registered before every write");
+    for change in 0..128 {
+        fs::write(
+            root.path().join(format!("change-{change}")),
+            b"actual write",
+        )
+        .expect("the actual producer changes its resource");
+        let waited = witness
+            .wait("actual-source-tree", "native-filesystem-change", None)
+            .expect("the host observes the actual writer");
+        assert_eq!(
+            waited.event.expect("the actual native notification"),
+            Event::Changed
+        );
+        while witness
+            .pending()
+            .expect("every witness event is retained")
+            .is_some()
+        {}
+    }
+    observed
+        .fence("fence")
+        .expect("the observed stream itself delivers every write before its later fence");
+    observed
+        .ensure_complete()
+        .expect("resource invalidations must coalesce without losing counted product events");
+    assert_eq!(
+        observed.pending().expect("the retained invalidation"),
+        Some(Event::Changed)
+    );
+    assert_eq!(
+        observed
+            .pending()
+            .expect("the invalidation is acknowledged once"),
+        None
+    );
+}
+
+#[test]
+fn a_fence_returns_once_its_own_stream_has_delivered_every_earlier_write() {
+    use rust_mutants::observation::{Event, Observation};
+    let root = tempfile::tempdir().expect("an actual filesystem resource");
+    let observed = Observation::filesystem_except(root.path(), false, &["fence"])
+        .expect("the resource is subscribed before its producer starts");
+    fs::write(root.path().join("change"), b"actual write")
+        .expect("the actual producer changes its resource");
+    observed
+        .fence("fence")
+        .expect("the subscription's own stream delivers its fence after the write");
+    assert_eq!(
+        observed
+            .pending()
+            .expect("the write was delivered before the fence returned"),
+        Some(Event::Changed)
+    );
+    assert_eq!(
+        observed
+            .pending()
+            .expect("neither the write nor its fence raises a later wake"),
+        None
+    );
+}
+
+#[test]
+fn a_fence_refuses_a_marker_or_reader_its_stream_cannot_order() {
+    use rust_mutants::observation::Observation;
+    let root = tempfile::tempdir().expect("an actual filesystem resource");
+    let included =
+        Observation::filesystem(root.path(), false).expect("a subscription that excludes nothing");
+    let nested = Observation::filesystem_except(root.path(), false, &["nested/fence"])
+        .expect("a subscription whose excluded name its stream never reports");
+    for (observed, marker) in [(&included, "fence"), (&nested, "nested/fence")] {
+        let refused = observed
+            .fence(marker)
+            .expect_err("a marker that raises a wake, or never arrives, cannot fence");
+        assert_eq!(refused.kind(), io::ErrorKind::InvalidInput, "{refused}");
+    }
+    assert!(
+        Observation::subscribe().fence("fence").is_err(),
+        "a subscription without a native stream has nothing to fence"
+    );
+    let moved = Observation::filesystem_except(root.path(), false, &["fence"])
+        .expect("a fenceable subscription");
+    let elsewhere = njutest_devkit::thread::JoinedThread::launch(move || moved.fence("fence"))
+        .join()
+        .expect("the refusing thread joins");
+    assert!(
+        elsewhere.is_err(),
+        "a stream wakes only its subscribed reader"
+    );
+    assert_eq!(
+        fs::read_dir(root.path())
+            .expect("the observed root")
+            .count(),
+        0,
+        "a refused fence writes no marker"
+    );
+}
+
+#[derive(Debug)]
+struct SemanticClock(std::cell::Cell<std::time::Instant>);
+
+impl rust_mutants::observation::Clock for SemanticClock {
+    fn now(&self) -> std::time::Instant {
+        self.0.get()
+    }
+
+    fn park(&self, remaining: Option<std::time::Duration>) -> io::Result<()> {
+        let remaining = remaining.ok_or_else(|| io::Error::other("no injected deadline"))?;
+        let next = self
+            .0
+            .get()
+            .checked_add(remaining)
+            .ok_or_else(|| io::Error::other("the injected deadline overflowed"))?;
+        self.0.set(next);
+        Ok(())
+    }
+}
+
+#[test]
+fn an_injected_observation_deadline_expires_at_equality_without_a_host_sleep() {
+    use rust_mutants::observation::{Clock as _, Event, Observation, Waiting};
+    let clock = SemanticClock(std::cell::Cell::new(std::time::Instant::now()));
+    let deadline = clock
+        .now()
+        .checked_add(std::time::Duration::from_nanos(10))
+        .expect("the semantic deadline fits");
+    let observation = Observation::subscribe();
+    let waited = observation
+        .wait_with(
+            Waiting {
+                owner: "semantic-window",
+                cause: "deadline",
+                deadline: Some(deadline),
+            },
+            &clock,
+        )
+        .expect("the actual host can measure the injected decision");
+    assert_eq!(waited.event.expect("a complete decision"), Event::Deadline);
+    assert_eq!(clock.now(), deadline);
+    assert!(waited.note.machine.cpus > 0);
+}
+
+#[test]
+fn a_retained_publication_precedes_an_injected_deadline() {
+    use rust_mutants::observation::{Clock as _, Event, Observation, Waiting};
+    let clock = SemanticClock(std::cell::Cell::new(std::time::Instant::now()));
+    let observation = Observation::subscribe();
+    observation.signal().publish(Event::Completed);
+    let now = clock.now();
+    let waited = observation
+        .wait_with(
+            Waiting {
+                owner: "completed-producer",
+                cause: "completion",
+                deadline: Some(now),
+            },
+            &clock,
+        )
+        .expect("the actual host can measure the injected decision");
+    assert_eq!(
+        waited.event.expect("the producer's event"),
+        Event::Completed
+    );
+    assert_eq!(clock.now(), now);
+}
+
+#[derive(Debug)]
+struct ConcurrentFailureClock(rust_mutants::observation::Signal);
+
+impl rust_mutants::observation::Clock for ConcurrentFailureClock {
+    fn now(&self) -> std::time::Instant {
+        std::time::Instant::now()
+    }
+
+    fn park(&self, _remaining: Option<std::time::Duration>) -> io::Result<()> {
+        std::thread::scope(|scope| {
+            let publisher = njutest_devkit::thread::ScopedThread::launch(scope, || {
+                self.0.publish(rust_mutants::observation::Event::Completed);
+                self.0.failed(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "the actual producer lost its completion evidence",
+                ));
+            });
+            publisher
+                .join()
+                .map_err(|_panic| io::Error::other("the actual publication panicked"))
+        })
+    }
+}
+
+#[test]
+fn a_concurrent_completion_cannot_erase_a_retained_producer_failure() {
+    let observation = rust_mutants::observation::Observation::subscribe();
+    let clock = ConcurrentFailureClock(observation.signal());
+    for _decision in 0..2 {
+        let waited = observation
+            .wait_with(
+                rust_mutants::observation::Waiting {
+                    owner: "actual-concurrent-producer",
+                    cause: "complete evidence or producer refusal",
+                    deadline: None,
+                },
+                &clock,
+            )
+            .expect("the actual registered observation");
+        let refusal = waited
+            .event
+            .expect_err("queued completion erased a concurrent producer failure");
+        assert_eq!(refusal.kind(), io::ErrorKind::PermissionDenied);
+        assert!(
+            refusal.to_string().contains("lost its completion evidence"),
+            "{refusal}"
+        );
+    }
+}
+
+#[test]
+fn resource_invalidations_coalesce_until_received_and_keep_terminal_events_distinct() {
+    use rust_mutants::observation::{Event, Observation};
+    let observed = Observation::subscribe();
+    let resource = observed.invalidation();
+    for _actual_change in 0..4096 {
+        resource.changed();
+    }
+    observed
+        .ensure_complete()
+        .expect("a latest-resource wake is not a counted backlog");
+    assert_eq!(
+        observed.pending().expect("one retained wake"),
+        Some(Event::Changed)
+    );
+    assert_eq!(observed.pending().expect("one acknowledgement"), None);
+    observed.signal().publish(Event::Completed);
+    observed.signal().publish(Event::Cancelled);
+    resource.changed();
+    assert_eq!(
+        observed.pending().expect("independent completion"),
+        Some(Event::Completed)
+    );
+    assert_eq!(
+        observed.pending().expect("independent cancellation"),
+        Some(Event::Cancelled)
+    );
+    assert_eq!(
+        observed
+            .pending()
+            .expect("independent resource invalidation"),
+        Some(Event::Changed)
+    );
+    assert_eq!(observed.pending().expect("all evidence received"), None);
+}
+
+#[test]
+fn resource_invalidations_keep_the_first_refusal_and_counted_overflow_sticky() {
+    use rust_mutants::observation::{Event, Observation};
+    let observed = Observation::subscribe();
+    let resource = observed.invalidation();
+    resource.changed();
+    resource.failed(io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        "native resource refused",
+    ));
+    resource.failed(io::Error::other("a later producer refusal"));
+    observed.signal().publish(Event::Completed);
+    for _read in 0..2 {
+        let error = observed
+            .pending()
+            .expect_err("the original refusal remains authoritative");
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(error.to_string(), "native resource refused");
+    }
+    let counted = Observation::subscribe();
+    for _event in 0..4096 {
+        counted.signal().publish(Event::Changed);
+        counted.invalidation().changed();
+    }
+    assert!(
+        counted
+            .pending()
+            .expect_err("counted evidence was lost")
+            .to_string()
+            .contains("full")
+    );
+}
+
+#[test]
+fn a_retained_subscription_endpoint_expires_with_its_actual_reader() {
+    let observed = rust_mutants::observation::Observation::subscribe();
+    let retained = observed.retained_signal();
+    assert!(
+        retained.upgrade().is_some(),
+        "the real reader owns its endpoint"
+    );
+    drop(observed);
+    assert!(
+        retained.upgrade().is_none(),
+        "a producer must not retain a disposed reader registration"
+    );
 }

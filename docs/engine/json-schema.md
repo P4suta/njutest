@@ -48,7 +48,7 @@ Current independent audits require the v1 schema names and reject v1 explicitly;
     "source_digest": "<64 hex>", "original": "<=", "replacement": "<",
     "branch": { "direction": "decreasing", "body_start": {"line": 12, "column": 14}, "body_end": {"line": 14, "column": 2} }
   }],
-  "rejections": [{ "index": 7, "id": "…", "path": "…", "rule": "add-to-sub", "code": "E0369", "diagnostic": "…" }],
+  "rejections": [{ "index": 7, "id": "…", "path": "…", "rule": "add-to-sub", "code": "E0369", "diagnostic": "…", "isolated": true, "reason": "compiler-refused" }],
   "skips": [{ "path": "…", "reason": "macro-invocation", "count": 4 }]
 }
 ```
@@ -57,6 +57,8 @@ Current independent audits require the v1 schema names and reject v1 explicitly;
 `direction` is diagnostic: a consumer must not branch on it.
 
 `index` is dense over the accepted mutants and the refused candidates together: every index from zero to their combined count appears exactly once in one list or the other, which is what lets a reader check that a catalog lost nothing.
+A rejection's `reason` says why validation left it out: `compiler-refused` where the compiler refused the edit, and `evaluated-before-run` where the compiler evaluates the `const fn` it is in before the program runs, so the function keeps its `const` and no guard can live in it ([ADR 0047](../adr/0047-a-const-fn-is-mutated-where-nothing-evaluates-it-early.md)).
+Each of the second is also a place in the `evaluated-before-run` skip of its file, which counts exactly them.
 `path`, `rule`, `rule_version`, `start_byte`, `end_byte`,
 `source_digest`, `original`, and `replacement` are exactly what minting the identity takes, so a reader can re-mint `id` from the row and find out whether it is the mutant it says it is.
 
@@ -67,7 +69,7 @@ Written by `rust-mutants run` to `<reports.directory>/<run id>/run-report-v1.jso
 ```jsonc
 {
   "document_type": "rust-mutants/run-report",
-  "schema_version": 3,
+  "schema_version": 5,
   "tool_version": "0.1.0",
   "run": { "id": "20260905T132650666Z", "started_at": "…", "finished_at": "…",
            "duration_ms": 812, "interrupted": false, "exit_code": 1 },
@@ -75,14 +77,23 @@ Written by `rust-mutants run` to `<reports.directory>/<run id>/run-report-v1.jso
   "selection": { "tier": "all", "operators": [], "include": [], "exclude": [], "packages": [],
                  "build": ["--features", "extra"], "mutant_steps": 50000000 },
   "accounting": { "cataloged": 6, "refused": 0, "skipped": 5, "executed": 6,
-                  "killed": 5, "survived": 1, "step_limit_reached": 0, "waited": 0,
-                  "inconclusive": 0,
-                  "errored": 0, "not_run": 0, "unreached": 0, "expected": 0 },
+                  "killed": 5, "survived": 1, "unproven": 0, "step_limit_reached": 0,
+                  "waited": 0, "inconclusive": 0, "errored": 0, "not_run": 0,
+                  "unreached": 0, "declined": 0, "expected": 0,
+                  "unproven_killed": 0, "unproven_survived": 0, "unproven_unreached": 0,
+                  "unproven_discharged": 0 },
   "score": { "detected": 5, "decided": 6, "value": 0.8333333333333334 },
+  "targets": [{ "id": "a/lib/a", "kind": "lib", "harness": true, "tests": 1, "limitations": [],
+                "sealed": { "state": "sealed", "remedy": null, "uncontrolled": [] } },
+              { "id": "a/test/io", "kind": "test", "harness": true, "tests": 2, "limitations": [],
+                "sealed": { "state": "sealed", "remedy": null, "uncontrolled": [
+                  { "test": "reads_a_fixture", "reason": "panicked" }] } }],
   "mutants": [{ "…": "as in the catalog document, plus:",
                 "outcome": "survived", "target": "a/lib/a", "exit_code": 0,
                 "duration_ms": 41, "tests_run": 1, "killed_by": ["a::tests::bound"],
-                "signal": null, "retried": false, "expected": false, "unreached": false }],
+                "signal": null, "retried": false, "expected": false, "unreached": false,
+                "evidence": { "kind": "sealed", "executions": [
+                  { "target": "a/lib/a", "test": "a::tests::bound", "came_to": "passed" }] } }],
   "rejections": [], "skips": [],
   "expectations": [{ "id": "…", "reason": "…", "outcome": "survived", "mutant": "<64 hex>",
                      "standing": "met", "actual": null, "why": null }],
@@ -90,10 +101,12 @@ Written by `rust-mutants run` to `<reports.directory>/<run id>/run-report-v1.jso
 }
 ```
 
-The outcome columns add up: `killed + survived + step_limit_reached + waited + inconclusive + errored == executed`, and `executed + not_run == cataloged`.
-`unreached` counts the `not_run` mutants a coverage measurement proved no target reaches,
-so it is never larger than `not_run` and is zero in a run that measured none.
-`score` is `detected / decided` where `detected = killed` and `decided = killed + survived`; it is **absent** when the run decided nothing, which is not the same as a score of zero.
+The outcome columns add up: `killed + survived + unproven + step_limit_reached + waited + inconclusive + errored == executed`, and `executed + not_run == cataloged`.
+`killed`, `survived` and `unreached` count only what sealed executions established.
+`unproven` counts the mutants whose finding is `unproven-mutant`: no sealed execution decided them, and a native run said something of them, which is a lead.
+`unproven_killed`, `unproven_survived`, `unproven_unreached` and `unproven_discharged` say what the native run said of them, and add up to `unproven`.
+`unreached` counts the `not_run` mutants no sealed control reaches, so it is never larger than `not_run`.
+`score` is `detected / decided` where `detected = killed` and `decided = killed + survived`, so it is made of sealed verdicts alone; it is **absent** when the run decided nothing, which is not the same as a score of zero.
 `step_limit_reached` carries `step_notice`, whose nonce,
 catalog, mutant, allowance and observed `N + 1` count were verified against that execution.
 It is an execution bound, not a verdict, so it contributes to neither half of the score and is not reusable from the outcome cache.
@@ -101,23 +114,32 @@ Every other outcome prohibits `step_notice` in the schema.
 `waited` is a bound that expired with nothing else running, which is also unresolved; a bound that expired once and did not expire again is `inconclusive`.
 
 Here `cataloged` is the number of candidate rows in `mutants`, not a blanket claim that the compiler accepted every row.
-`refused` candidates live in `rejections`.
+Every candidate validation left out lives in `rejections`: `refused` counts the ones whose `reason` is `compiler-refused`, and `skipped` counts the others with the places discovery passed over, as the `evaluated-before-run` skip records say.
+A report whose `evaluated-before-run` skip records and rejections disagree about a file is refused.
 In a filtered run, a row with `outcome: "not_run"` and `not_run_reason: "unselected"` may deliberately have skipped instrumentation and compiler validation.
 Every other outcome is about a compiler-accepted guard present in that run's build.
 
-`exit_code` is the one the process returned: `0` every mutant was noticed,
-`1` something was not, `2` the run itself failed, `130` it was interrupted, `143` it was terminated.
+`exit_code` is the one the process returned: `0` a sealed execution detected every mutant the run decided, `1` there is a finding and nothing is unproven, `2` something is unproven, `130` it was interrupted, `143` it was terminated.
+A command that failed, or was used wrongly, exits `3` and writes no report.
 
-A row's `exit_code` is the code its test process returned, or `-1` where no code the process chose decides anything: the run stopped it, at a bound or at the first test its harness said failed.
+A row's `exit_code` is the code its test process returned, or `-1` where no code the process chose decides anything: the run stopped it, at a bound or at the first test its harness said failed, or sealed executions decided the row and no native process ran.
 A process stopped at its first failing test holds `-1` whether it exited before the stop reached it or not, since which of the two came first is the machine's timing, and a row has to read the same from two runs of one catalogue.
 
-A `finding` is one of `surviving-mutant`, `step-limit-reached-mutant`, `inconclusive-mutant`,
-`waited-mutant`, `errored-mutant`, `not-run-mutant`, `unreached-mutant`,
-`discharged-mutant`, `stale-expectation`, `unmatched-expectation`, or `unmatched-skip`.
+A `finding` is one of `surviving-mutant`, `step-limit-reached-mutant`, `inconclusive-mutant`, `waited-mutant`, `errored-mutant`, `not-run-mutant`, `unreached-mutant`, `unproven-mutant`, `stale-expectation`, `unmatched-expectation`, or `unmatched-skip`.
+An `unproven-mutant` is one no sealed execution decided: its outcome is what a native run said, which is a lead, and its `evidence` says every reason there is no verdict.
 A `waited-mutant` is one this machine stopped waiting for twice: a bound expiring is a fact about the machine that watched, so the run established nothing about the mutation and says so rather than counting it.
 A mutant no measured target reaches is an `unreached-mutant` finding rather than a `not-run-mutant` one: it says the tests have a gap where the mutant is, not that the run failed to get to it.
-A `discharged-mutant` says the same thing about a mutation the tests do run and cannot observe: every target that could have noticed it was removed by a proof.
+A mutation every target of which a proof removed is a lead, since the proof reads what a native run recorded: its finding is `unproven-mutant`, and `accounting.unproven_discharged` counts it.
 An `unmatched-skip` is a `rust-mutants: skip` marker that hid nothing, which is a claim about code that has moved or gone.
+
+A mutant's `evidence` says what its verdict rests on ([ADR 0046](../adr/0046-a-verdict-is-what-a-sealed-run-observed.md)).
+A target's `tests` is how many tests its own baseline ran, and `null` where its baseline did not run, as under `--no-verify`, so that nothing counted them; schema version 5 made it nullable, where version 4 wrote `1` for a target nothing had counted.
+A target's `sealed` says where the reasons come from: `state` is `sealed` where the target has sealed tests, or the reason it has none, with `remedy` saying what to do about it; `uncontrolled` names each test its native baseline ran that has no sealed control, and why — what its control came to, `unbuilt`, or `not-held` where the sealed build does not hold it; a test whose control declined to measure has a control, which holds its words (ADR 0043).
+A route to a target that is not sealed, or to one of its uncontrolled tests, is what `test-absent` in a mutant's `evidence` is.
+`sealed` lists the sealed executions that established it, in the order they ran, each with its target, its test, and what it came to; a reader decides the verdict again from them, and refuses a report whose outcome is not that verdict.
+A mutant's `part_run_id` is null in a run's own report, part of a catalog or whole, which decided every row itself; in a report `merge` wrote it names the run of the part that decided the row, on whose bench its sealed executions ran, since a merge runs nothing.
+A reader refuses a report some of whose rows name a part run and some do not, and a part of a catalog whose row names one.
+`unproven` lists every reason there is no verdict, and the outcome beside it is a lead.
 
 A mutant's `not_run_reason` says which of six things left it unexecuted, or left its execution measuring nothing:
 `unreached` and `discharged` are proofs and are findings, `interrupted` is a run that was killed, and `unselected` and `stopped-early` are the run doing what it was asked to — a filter took the mutant out, or `--fail-fast` stopped before reaching it.
@@ -179,6 +201,10 @@ A run writes `touched-v1.json` (`schema/rust-mutants-touched-v1.json`),
 They are the premises its proof layers rest on: what each target's guards recorded about which of its tests reached which mutation, entered which proved body, entered which item, and saw which mutation differ from what it replaces — with `narrowing` saying which mutants the tree could record anything about, so an absence in it is evidence rather than silence, and `items` the catalog an entered item's index names ([item reach](item-reach.md)) — the measurement the coverage build left behind, empty when nothing was measured,
 which says so, the body digests, sealing and unit skeletons an answer would be carried across an edit by ([carrying an answer](carry.md)), every carried record the run believed, with every execution each rests on, and the catalog with the branch bodies the compiler vouched for.
 `cargo xtask engine-audit` reads them and re-decides every route without the engine that produced them, which is what makes a report's `discharged` a proof rather than a claim.
+
+`skeletons-v1.json` is at schema version 4: version 3 added `files`, the digest of every file an item of the catalog is in, and version 4 made `items[].body_digest` nullable where no unit read the body.
+A reader of this release refuses earlier versions rather than trust a digest nobody measured.
+The file keeps its name, which names the family of documents, and the version inside it says which of them it is.
 
 Writing them never fails a run.
 A file that could not be written is one an audit calls unaudited, which is the honest answer.

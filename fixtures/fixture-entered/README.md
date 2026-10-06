@@ -32,7 +32,7 @@ src/lib.rs:18:5 return-default killed
 src/lib.rs:18:8 condition-to-false survived
 src/lib.rs:18:8 condition-to-true survived
 src/lib.rs:18:8 negate-condition survived
-src/lib.rs:18:10 gt-to-ge not_run
+src/lib.rs:18:10 gt-to-ge survived
 src/lib.rs:18:12 int-decrement survived
 src/lib.rs:18:12 int-increment survived
 src/lib.rs:18:17 return-default unreached

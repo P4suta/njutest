@@ -300,7 +300,7 @@ pub fn limited(knobs: &[KnobRecord]) -> Vec<Limitation> {
         .into_iter()
         .map(|((knob, why), targets)| {
             Limitation::new(
-                crate::limitation::KNOB_NOT_PUT,
+                crate::limitation::Limitation::KnobNotPut,
                 &format!(
                     "{} was asked for and not put, because {}, so nothing is claimed about whether \
                      {} on it ({})",
@@ -318,7 +318,7 @@ pub fn limited(knobs: &[KnobRecord]) -> Vec<Limitation> {
         .collect();
     limitations.extend(uncompared.into_iter().map(|((knob, why), targets)| {
         Limitation::new(
-            crate::limitation::KNOB_NOT_COMPARED,
+            crate::limitation::Limitation::KnobNotCompared,
             &format!(
                 "the controls under {} established nothing to compare, because {why}, so whether \
                  the verdict and reach of {} under it is not known ({})",

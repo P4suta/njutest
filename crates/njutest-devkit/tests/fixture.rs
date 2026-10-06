@@ -8,7 +8,28 @@ include!("support/missing.rs");
 include!("support/ok.rs");
 include!("support/some.rs");
 
-use njutest_devkit::fixture::{Fixture, RUN_OUTPUT, copy_tree, run_output_in};
+use njutest_devkit::fixture::{Fixture, RUN_OUTPUT, copy_tree, names_in, run_output_in};
+
+#[test]
+fn filesystem_fixture_discovery_reaches_nested_groups_and_refuses_stray_files() {
+    let root = tempfile::tempdir().expect("fixture directory");
+    let nested = root.path().join("deep/more/fixture-a");
+    let sibling = root.path().join("deep/fixture-b");
+    std::fs::create_dir_all(&nested).expect("nested fixture");
+    std::fs::create_dir_all(&sibling).expect("sibling fixture");
+    std::fs::write(nested.join("Cargo.toml"), "[workspace]\n").expect("nested manifest");
+    std::fs::write(sibling.join("Cargo.toml"), "[workspace]\n").expect("sibling manifest");
+    assert_eq!(
+        names_in(root.path()).expect("nested fixture groups"),
+        ["deep/fixture-b", "deep/more/fixture-a"]
+    );
+
+    std::fs::write(root.path().join("deep/more/stray.txt"), "not a fixture\n").expect("stray file");
+    assert!(
+        names_in(root.path()).is_err(),
+        "a group file is not silently absent from the fate suite"
+    );
+}
 
 #[test]
 fn a_fixture_copy_is_a_throwaway_tree_with_temp_and_cache_beside_it() {

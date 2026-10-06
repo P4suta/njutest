@@ -4,13 +4,16 @@
 //! A prepared workspace: every accepted mutant instrumented into one build, and the test binaries that build produced.
 
 mod carry;
+mod compiled;
 pub(crate) mod prepare;
+mod rerun;
 mod route;
 mod verify;
 
 pub use carry::{Answered, Tree as CarriedTree};
-pub use prepare::{prepare, rewrite_needed};
+pub use prepare::{discovered, prepare, rewrite_needed};
 use prepare::{pristine, selection};
+pub use rerun::Rerunnable;
 use verify::verify;
 pub use verify::{Baseline, BaselineCacheError, Measured, Passing, Verified};
 
@@ -22,6 +25,11 @@ pub use route::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::time::Duration;
+
+pub use rust_mutants_adapt::claim::{Named, Resolution};
+pub use rust_mutants_decision::claim::Edit;
+use rust_mutants_decision::claim::Located;
+use rust_mutants_decision::decline::Concluded;
 
 use crate::EngineError;
 use crate::catalog::{Catalog, Mutant};
@@ -38,6 +46,24 @@ use crate::syntax::{LineIndex, Position, Skip};
 use crate::trace::{MutantExecRecord, ReachRecord};
 use crate::validate::{Rejection, Validated};
 use crate::workspace::{SessionError, Workspace};
+
+/// The directory inside a sealed build an active mutant's instrumented tree is compiled in.
+pub(crate) const COMPILED_MUTANT: &str = "compiled-mutant";
+
+/// The directory inside a sealed build's target directory its doctests are captured in.
+pub(crate) const DOCTESTS: &str = "doctests";
+
+/// The directory inside [`DOCTESTS`] the capture program is built in.
+pub(crate) const CAPTURE: &str = "capture";
+
+/// The directory inside [`DOCTESTS`] a library's listed doctests are captured in.
+pub(crate) const LISTED: &str = "listed";
+
+/// The directory inside [`DOCTESTS`] a library's ignored doctests are listed in.
+pub(crate) const IGNORED: &str = "ignored";
+
+/// The directory inside [`DOCTESTS`] a library's standalone doctests are kept in.
+pub(crate) const KEPT: &str = "kept";
 
 /// Where a mutation is and what it edits, which is how a reviewer names one that outlives an edit elsewhere in the file.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -102,10 +128,13 @@ impl Locator {
     /// Whether this names `edit`, wherever it sits: the one reading of a locator's path, rule, original and item, which a claim and a name on a command line both take.
     #[must_use]
     pub fn names_edit(&self, edit: &Edit<'_>) -> bool {
-        edit.path == self.path
-            && edit.rule == self.rule
-            && (self.original.is_empty() || edit.original == self.original.as_bytes())
-            && edit.item.is_some_and(|item| names(item, &self.item))
+        rust_mutants_decision::claim::Wanted {
+            path: &self.path,
+            item: &self.item,
+            rule: &self.rule,
+            original: &self.original,
+        }
+        .names(edit)
     }
 
     /// How a claim written as this locator is named to a reader: every field that tells it apart from another, the line included.
@@ -174,24 +203,6 @@ pub enum LocateError {
     },
 }
 
-/// Whether an item path is the one a locator names, which a suffix says.
-fn names(item: &str, wanted: &str) -> bool {
-    item == wanted || item.ends_with(&format!("::{wanted}"))
-}
-
-/// What a mutation edits, as a locator reads it apart from where it sits: the file, the rule, the bytes it replaces, and the item it is in where one is known.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Edit<'a> {
-    /// The workspace-relative path with forward slashes.
-    pub path: &'a str,
-    /// The rule's name.
-    pub rule: &'a str,
-    /// The bytes the edit replaces.
-    pub original: &'a [u8],
-    /// The item it is in, when one is known.
-    pub item: Option<&'a str>,
-}
-
 /// The ones of `edits` a locator names, which a run and a check of the claims before one both ask here.
 ///
 /// # Errors
@@ -207,7 +218,7 @@ pub fn locate<'a, T>(
         .map(|(one, _)| one)
         .collect();
     let narrowed: Vec<T> = match locator.line {
-        Some(line) if matching.len() > 1 => matching
+        Some(line) if rust_mutants_decision::claim::narrows(matching.len()) => matching
             .into_iter()
             .filter(|one| line_of(one) == Some(line))
             .collect(),
@@ -222,17 +233,14 @@ pub fn locate<'a, T>(
             })
             .collect()
     };
-    match (narrowed.len(), locator.count) {
-        (0, _) => Err(LocateError::Nothing),
-        (held, Some(wanted)) if usize::try_from(wanted).is_ok_and(|wanted| held == wanted) => {
-            Ok(narrowed)
-        }
-        (_, Some(wanted)) => Err(LocateError::Counted {
+    match rust_mutants_decision::claim::located(narrowed.len(), locator.count) {
+        Located::Nothing => Err(LocateError::Nothing),
+        Located::Named => Ok(narrowed),
+        Located::Counted { wanted } => Err(LocateError::Counted {
             wanted,
             display_ids: labelled(&narrowed),
         }),
-        (1, None) => Ok(narrowed),
-        (_, None) => Err(LocateError::Several {
+        Located::Several => Err(LocateError::Several {
             display_ids: labelled(&narrowed),
         }),
     }
@@ -337,9 +345,9 @@ impl Perturbation {
             }),
             arguments: self
                 .schedule
-                .arguments()
+                .owns()
                 .iter()
-                .map(|argument| (*argument).to_owned())
+                .map(|option| option.spelled().to_owned())
                 .collect(),
             delay: self.delay.map(|delay| crate::trace::DelayRecord {
                 site: delay.site,
@@ -448,6 +456,11 @@ impl Stop {
         Self(false)
     }
 
+    /// A stop where the run ended as a stop at the call ends, `stopped`, and its runtime published exactly the notice `notice` says it was issued.
+    fn verified(stopped: bool, notice: &Notice) -> Self {
+        Self(stopped && notice.published())
+    }
+
     /// Whether the engine verified that the run stopped at the call.
     #[must_use]
     pub const fn noticed(self) -> bool {
@@ -469,16 +482,26 @@ impl Kept {
     }
 
     /// Every file and directory the run left in its temporary directory, a directory named with a trailing `/`, relative to it, and under its own home, named from `~/`, in path order; the engine keeps its own files beside them and leaves out what it made for the home, so every one of them is the run's, and each is what the next run over them is given.
+    /// Where the run left an entry whose name is not text, what it left cannot be named, and that entry is what it answers.
     ///
     /// # Errors
     /// [`SessionError::ScratchUnreadable`] where the directory could not be walked.
-    pub fn left(&self) -> Result<Vec<String>, EngineError> {
-        let mut found: Vec<String> = walked(self.0.tmp())?
-            .into_iter()
-            .map(|(relative, _file)| relative)
-            .collect();
+    pub fn left(&self) -> Result<Left, EngineError> {
+        let mut found: Vec<String> = match walked(self.0.tmp())? {
+            Walked::Entries(entries) => entries
+                .into_iter()
+                .map(|(relative, _file)| relative)
+                .collect(),
+            Walked::Unnamed(entry) => return Ok(Left::Unnamed(entry)),
+        };
         if let Some((home, made)) = self.0.made_in_home() {
-            for (relative, file) in walked(home)? {
+            let entries = match walked(home)? {
+                Walked::Entries(entries) => entries,
+                Walked::Unnamed(entry) => {
+                    return Ok(Left::Unnamed(format!("{HOME_LEFT}{entry}")));
+                }
+            };
+            for (relative, file) in entries {
                 let engines = match (made.get(&relative), file) {
                     (Some(None), None) => true,
                     (Some(Some(digest)), Some(path)) => {
@@ -498,19 +521,77 @@ impl Kept {
             }
         }
         found.sort();
-        Ok(found)
+        Ok(Left::Named(found))
     }
+}
+
+/// What a sealed instance a crash was put to left, kept so a next instance can start over it, and what its stop was decided on (ADR 0035, amended by ADR 0046).
+#[derive(Debug, Clone)]
+pub struct SealedKept {
+    crashed: crate::sealed::bench::Crashed,
+    stop: Stop,
+    notice: Notice,
+}
+
+impl SealedKept {
+    /// Whether the instance stopped at the call its crash was put at: the host halted it where its runtime published exactly the notice it was issued.
+    #[must_use]
+    pub const fn stop(&self) -> Stop {
+        self.stop
+    }
+
+    /// What the stop was decided on.
+    #[must_use]
+    pub const fn notice(&self) -> &Notice {
+        &self.notice
+    }
+
+    /// How the instance ended.
+    #[must_use]
+    pub const fn ended(&self) -> crate::sealed::bench::Crashing {
+        self.crashed.ended
+    }
+
+    /// The status the instance exited with, where it ended by exiting.
+    #[must_use]
+    pub const fn exit(&self) -> Option<u32> {
+        self.crashed.exit
+    }
+
+    /// Every change the instance made outside the runtime's records, named as a crash's `left` names one, in the order its overlay lists them: what a next instance starts over.
+    #[must_use]
+    pub fn left(&self) -> &[String] {
+        &self.crashed.named
+    }
+}
+
+/// What a stopped run left in its scratch, as the next run over it is given it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Left {
+    /// Every file and directory it left, each named as [`Kept::left`] says, in path order.
+    Named(Vec<String>),
+    /// It left an entry whose name is not text, so what it left cannot be named: the entry, relative to its scratch as [`Kept::left`] places it, its name spelled without loss.
+    Unnamed(String),
 }
 
 /// How what a run left under its own home is named among what it left, before the path under the home.
 const HOME_LEFT: &str = "~/";
 
-/// Every file and directory under `root`, relative to it, a directory named with a trailing `/`, each file with its path.
+/// What a walk of a scratch found.
+enum Walked {
+    /// Every file and directory, relative to the root, a directory named with a trailing `/`, each file with its path.
+    Entries(Vec<(String, Option<PathBuf>)>),
+    /// The first entry whose path below the root is not text, spelled without loss.
+    Unnamed(String),
+}
+
+/// Every file and directory under `root`, or the first entry whose path below it is not text.
 ///
 /// # Errors
 /// [`SessionError::ScratchUnreadable`] where the directory could not be walked.
-fn walked(root: &std::path::Path) -> Result<Vec<(String, Option<PathBuf>)>, EngineError> {
+fn walked(root: &std::path::Path) -> Result<Walked, EngineError> {
     let mut found = Vec::new();
+    let mut unnamed: Option<Vec<u8>> = None;
     let mut pending = vec![root.to_path_buf()];
     while let Some(directory) = pending.pop() {
         let entries =
@@ -533,24 +614,25 @@ fn walked(root: &std::path::Path) -> Result<Vec<(String, Option<PathBuf>)>, Engi
             let Ok(relative) = path.strip_prefix(root) else {
                 continue;
             };
-            let relative = crate::id::slashed(relative).map_err(|_not_utf8| {
-                SessionError::ScratchUnreadable {
-                    path: path.clone(),
-                    source: std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "a path left in the scratch is not UTF-8",
-                    ),
+            let Ok(named) = crate::id::slashed(relative) else {
+                let bytes = relative.as_os_str().as_encoded_bytes().to_vec();
+                if unnamed.as_ref().is_none_or(|first| bytes < *first) {
+                    unnamed = Some(bytes);
                 }
-            })?;
+                continue;
+            };
             if kind.is_dir() {
-                found.push((format!("{relative}/"), None));
+                found.push((format!("{named}/"), None));
                 pending.push(path);
             } else {
-                found.push((relative, Some(path)));
+                found.push((named, Some(path)));
             }
         }
     }
-    Ok(found)
+    Ok(match unnamed {
+        Some(bytes) => Walked::Unnamed(crate::telling::LosslessBytes::new(&bytes).to_string()),
+        None => Walked::Entries(found),
+    })
 }
 
 /// A fresh nonce a crash notice must carry to be this execution's.
@@ -592,9 +674,9 @@ pub enum Reachability {
     Unreached,
 }
 
-/// How many times the active mutant's guard may be taken before its process is stopped, when nobody says.
+/// How many boundaries an execution may pass once the active mutant's guard has been taken, before its process is stopped, when nobody says.
 ///
-/// Fifty million takes of one site is a number a test written by a person does not approach, and every machine agrees on the number itself.
+/// Fifty million boundaries, test code included, is a number a test written by a person does not approach, and every machine agrees on the number itself.
 /// What they do not agree on is what it costs: this was sized for the in-memory counter the durable step protocol replaced, where it passed in about a second.
 /// Measured since, a take is about half a microsecond on one developer machine with the per-take `fsync` lifted out, so fifty million spend about twenty-five seconds against a thirty-second derived floor -- and were 7.3ms each on Windows before that, where they would have spent days.
 /// So the ceiling does not reliably stop an unbounded execution before the clock does, and which of the two answers is a fact about the machine (ADR 0023).
@@ -631,6 +713,8 @@ pub struct PrepareOptions {
     pub skips: Vec<discover::SkipRule>,
     /// Where to remember successful measurements of this exact tree.
     pub measurements: Option<PathBuf>,
+    /// Where to remember sealed transcripts by invocation digest; `None` establishes everything afresh.
+    pub transcripts: Option<PathBuf>,
     /// Run every test target once with nothing active, and refuse to hand back a session whose instrumented baseline does not pass.
     pub verify: bool,
     /// Ask the guards, on that same run, which of each target's tests reached them, so a mutation is put to the tests that reached it rather than to every test of every target that did.
@@ -647,7 +731,7 @@ pub struct PrepareOptions {
     pub build_timeout: Option<Duration>,
     /// How long one mutant execution may take, when the caller does not say.
     pub mutant_timeout: Timeout,
-    /// How many times the active mutant's guard may be taken before its process is stopped.
+    /// How many boundaries of the instrumented workspace, test code included, an execution may pass once the active mutant's guard has been taken, before its process is stopped.
     ///
     /// A mutant that does not terminate has to be stopped by something, and a clock is the wrong something: the same mutant on a loaded machine and on a quiet one is two verdicts.
     /// A count of guard takes is the number every machine agrees on, and the guard of the selected mutant sits where the mutation does — so a loop whose condition was mutated takes it once an iteration and an unbounded execution is counted as it runs.
@@ -665,24 +749,16 @@ pub struct PrepareOptions {
     pub skip_targets: Vec<String>,
     /// Which mutants to place in the compiled tree when a later run is already known to ask about only part of the catalog.
     pub validation_filter: Option<crate::run::Filter>,
+    /// Whether the instrumented tree is also built for the sealed target (ADR 0046).
+    pub sealing: crate::sealed::Sealing,
 }
 
 impl PrepareOptions {
-    /// The patterns a file must match to be mutated: the change set's where there is one, the configuration's otherwise.
+    /// Configures a preparation with an explicitly chosen mutation tier.
     #[must_use]
-    pub fn mutable(&self) -> &[Pattern] {
-        if self.narrowing.is_empty() {
-            &self.include
-        } else {
-            &self.narrowing
-        }
-    }
-}
-
-impl Default for PrepareOptions {
-    fn default() -> Self {
+    pub fn new(tier: Tier) -> Self {
         Self {
-            tier: Tier::Balanced,
+            tier,
             operators: Vec::new(),
             scratch_working_directory: false,
             include: Vec::new(),
@@ -691,6 +767,7 @@ impl Default for PrepareOptions {
             packages: Vec::new(),
             skips: Vec::new(),
             measurements: None,
+            transcripts: None,
             harness_args: Vec::new(),
             verify: true,
             touch: true,
@@ -705,6 +782,17 @@ impl Default for PrepareOptions {
             build: crate::cargo::BuildConfig::default(),
             skip_targets: Vec::new(),
             validation_filter: None,
+            sealing: crate::sealed::Sealing::On,
+        }
+    }
+
+    /// The patterns a file must match to be mutated: the change set's where there is one, the configuration's otherwise.
+    #[must_use]
+    pub fn mutable(&self) -> &[Pattern] {
+        if self.narrowing.is_empty() {
+            &self.include
+        } else {
+            &self.narrowing
         }
     }
 }
@@ -868,7 +956,7 @@ pub struct Session {
     mutant_timeout: Timeout,
     mutant_steps: Option<u64>,
     /// The arguments every test binary of this session is started with, unless one execution names its own.
-    harness_args: Vec<String>,
+    harness_args: crate::libtest::Configured,
     /// The files as they were before instrumentation, so a position can be counted in the file a person would open rather than in the rewrite.
     sources: BTreeMap<String, String>,
     /// Which package each mutant belongs to.
@@ -897,6 +985,20 @@ pub struct Session {
     inputs: crate::select::Inputs,
     /// The digest of the manifests, the lock file, and the cargo configuration the build read.
     manifests: String,
+    /// The instrumented tree built for the sealed target, or why it was not (ADR 0046).
+    sealed: crate::sealed::SealedBuild,
+    compile_time: compiled::Compiler,
+    /// Where to remember exact sealed invocations across runs.
+    transcripts: Option<PathBuf>,
+}
+
+/// One separately built mutant, holding the outputs until its modules or native targets have finished using them.
+#[derive(Debug)]
+pub(crate) struct Compiled<'session> {
+    pub(crate) targets: Vec<TestTarget>,
+    pub(crate) sealed: crate::sealed::SealedBuild,
+    pub(crate) apparatus: crate::apparatus::Apparatus,
+    _owning: std::sync::MutexGuard<'session, ()>,
 }
 
 /// What the carry rule has taken of a session so far: its tree, once, and each target's reach as it is first asked about.
@@ -954,10 +1056,18 @@ impl Session {
         &self.validated.accepted
     }
 
-    /// The candidates the compiler refused, with its own words.
+    /// The candidates validation left out, each with the compiler's own words and why.
     #[must_use]
     pub fn rejections(&self) -> &[Rejection] {
         &self.validated.rejections
+    }
+
+    /// The candidates the compiler refused: every rejection but the ones in a function the compiler evaluates before the program runs, which are places passed over.
+    pub fn refused(&self) -> impl Iterator<Item = &Rejection> {
+        self.validated
+            .rejections
+            .iter()
+            .filter(|rejection| rejection.reason.refused())
     }
 
     /// Whether compiler validation considered this catalog index.
@@ -966,7 +1076,7 @@ impl Session {
         self.eligible.contains(&index)
     }
 
-    /// Every place discovery passed over, with its reason.
+    /// Every place the run passed over, with its reason: what discovery decided, and every candidate validation found in a function evaluated before the program runs.
     #[must_use]
     pub fn skips(&self) -> &[Skip] {
         &self.skips
@@ -988,6 +1098,84 @@ impl Session {
     #[must_use]
     pub fn targets(&self) -> &[TestTarget] {
         &self.targets
+    }
+
+    /// The instrumented tree built for the sealed target: each target's module, or why it has none (ADR 0046).
+    #[must_use]
+    pub const fn sealed(&self) -> &crate::sealed::SealedBuild {
+        &self.sealed
+    }
+
+    /// Every sealed module of this session prepared on `runner`, listed, and each test's control run in the instrumented tree (ADR 0046), every execution stopping when `cancel` is raised.
+    ///
+    /// # Errors
+    /// A file of the tree or a module that cannot be read, an environment that is not text, a host that cannot run what it is given, or [`EngineError::Interrupted`].
+    pub fn bench<'runner>(
+        &self,
+        runner: &'runner rust_mutants_sealed::SealedRunner,
+        cancel: &Cancel,
+    ) -> Result<crate::sealed::bench::Bench<'runner>, EngineError> {
+        let tree = self.sealed_tree()?;
+        let bounds = self.touch_bounds()?;
+        let natives = self
+            .verified
+            .targets
+            .iter()
+            .map(|(id, measured)| {
+                let baseline = measured.baseline();
+                let named = usize::try_from(baseline.tests)
+                    .is_ok_and(|counted| counted == baseline.ran.len());
+                let ran = crate::sealed::bench::Ran {
+                    tests: baseline.ran.clone(),
+                    whole: named,
+                    ignored: baseline.ignored,
+                    should_panic: baseline.should_panic.clone(),
+                };
+                (id.clone(), ran)
+            })
+            .collect();
+        let bench = crate::sealed::bench::Bench::assemble(
+            (runner, cancel.clone()),
+            (&self.sealed, &natives),
+            (tree, &self.harness_args),
+            (
+                self.catalog.digest(),
+                bounds,
+                rust_mutants_sealed::Transcripts::under(self.transcripts.as_deref()),
+                self.trace().sealed_counts(),
+            ),
+        )?;
+        for (target, station) in &bench.stations {
+            for (test, control) in &station.controls {
+                let (standing, reached) = match control {
+                    Ok(control) => (
+                        "controlled".to_owned(),
+                        control.reached.iter().copied().collect(),
+                    ),
+                    Err(why) => (why.name().to_owned(), Vec::new()),
+                };
+                self.trace()
+                    .sealed_control(crate::trace::SealedControlRecord {
+                        target: target.clone(),
+                        test: test.clone(),
+                        standing,
+                        reached,
+                    });
+            }
+        }
+        Ok(bench)
+    }
+
+    /// The instrumented tree as a sealed instance reads it, every file of the snapshot read now.
+    fn sealed_tree(&self) -> Result<crate::sealed::bench::Tree, EngineError> {
+        Ok(crate::sealed::bench::Tree::read(
+            self.workspace.snapshot_root(),
+            self.workspace
+                .snapshot
+                .manifest()
+                .iter()
+                .map(|entry| entry.rel_path.as_str()),
+        )?)
     }
 
     /// What bounds every index a touch log of this session may name: the catalog's mutants and its items.
@@ -1019,25 +1207,34 @@ impl Session {
         context: &Context<'_>,
         (cancel, log): (&Cancel, Option<&std::path::Path>),
     ) -> Result<MutantResult, EngineError> {
+        self.observed_on(exec, (context, &self.apparatus), (cancel, log))
+    }
+
+    /// Observes one execution against the apparatus its own compilation left.
+    fn observed_on(
+        &self,
+        exec: &ExecRequest<'_>,
+        (context, apparatus): (&Context<'_>, &crate::apparatus::Apparatus),
+        (cancel, log): (&Cancel, Option<&std::path::Path>),
+    ) -> Result<MutantResult, EngineError> {
         let before = self.orphans();
         let started = std::time::SystemTime::now();
-        let mutant = context
-            .active
-            .map_or_else(String::new, |(mutant, _catalog)| self.display_of(mutant));
-        let began = self
-            .apparatus
+        let mutant = match context.active {
+            Some((mutant, _catalog)) => self.display_of(mutant),
+            None => String::new(),
+        };
+        let began = apparatus
             .running
             .lock()
             .map_err(|_poisoned| SessionError::CoordinationPoisoned)?
             .begin(&mutant);
         let mut result = execute::exec(exec, context, cancel, &self.workspace.trace);
-        let beside = self
-            .apparatus
+        let beside = apparatus
             .running
             .lock()
             .map_err(|_poisoned| SessionError::CoordinationPoisoned)?
             .end(&mutant, began);
-        let changes = self.apparatus.changed();
+        let changes = apparatus.changed();
         if !changes.is_empty() {
             return Err(SessionError::ApparatusChanged {
                 mutant,
@@ -1048,7 +1245,7 @@ impl Session {
         }
         result.entered = self.entered_by(log, &result, cancel);
         let ended = std::time::SystemTime::now();
-        let unseen = self.uncontrolled(&exec.target().id)
+        let unseen = self.uncontrolled(exec.target().id())
             || self.orphaned(before.as_ref(), (started, ended), result.leader)?;
         if unseen {
             if result.conclusion == MutantConclusion::Survived {
@@ -1058,7 +1255,7 @@ impl Session {
                 entered.completeness = crate::touch::Completeness::Cut;
             }
         }
-        Ok(self.declined(&exec.target().id, result))
+        Ok(self.declined(exec.target().id(), result))
     }
 
     /// `result`, a mutant execution against `target`, with its survival held to the tests that declined in it (ADR 0043).
@@ -1068,28 +1265,44 @@ impl Session {
         if result.conclusion != MutantConclusion::Survived {
             return result;
         }
-        result.conclusion = match &result.declines {
+        let believed = match &result.declines {
             crate::decline::Declines::Unbelieved { because } => {
                 self.workspace.trace.note(
                     crate::decline::DECLINE_NOTICE_FILE,
                     &format!("{target}: {}", because.said()),
                 );
-                MutantConclusion::Errored
+                None
             }
-            crate::decline::Declines::Read { declined, .. } => {
-                match crate::decline::held(declined, self.declined_in_baseline(target)) {
-                    crate::decline::Held::Detected { by } => {
-                        MutantConclusion::DeclinedUnderTheMutant { by }
-                    }
-                    crate::decline::Held::SetAside(tests)
-                        if !tests.is_empty() && tests.len() == result.passed_tests.len() =>
-                    {
-                        MutantConclusion::Declined { tests }
-                    }
-                    crate::decline::Held::SetAside(_) => MutantConclusion::Survived,
-                }
-            }
+            crate::decline::Declines::Read { declined, .. } => Some(declined.as_slice()),
         };
+        let decided = match rust_mutants_decision::decline::concluded(
+            believed,
+            self.declined_in_baseline(target),
+            result.passed_tests.len(),
+        ) {
+            Concluded::Errored => MutantConclusion::Errored,
+            Concluded::DeclinedUnderTheMutant { by } => {
+                MutantConclusion::DeclinedUnderTheMutant { by: by.clone() }
+            }
+            Concluded::Declined => MutantConclusion::Declined {
+                tests: result.declines.believed().to_vec(),
+            },
+            Concluded::Survived => MutantConclusion::Survived,
+        };
+        if let Err(error) = crate::decline::checked_decision(
+            &result.declines,
+            (result.reading(), &result.passed_tests),
+            self.declined_in_baseline(target),
+            &decided,
+        ) {
+            self.workspace.trace.note(
+                crate::decline::DECLINE_NOTICE_FILE,
+                &format!("{target}: {error}"),
+            );
+            result.conclusion = MutantConclusion::Errored;
+        } else {
+            result.conclusion = decided;
+        }
         result
     }
 
@@ -1108,11 +1321,15 @@ impl Session {
 
     /// The short name a person reads for the mutant whose full identity is `id`, or the identity itself where the catalog holds no such mutant.
     fn display_of(&self, id: &str) -> String {
-        self.catalog
+        match self
+            .catalog
             .mutants()
             .iter()
             .find(|mutant| mutant.id.as_str() == id)
-            .map_or_else(|| id.to_owned(), |mutant| mutant.display_id.to_string())
+        {
+            Some(mutant) => mutant.display_id.to_string(),
+            None => id.to_owned(),
+        }
     }
 
     /// Whether a process of the tree may have run without the environment the run gave it while something ran from the first time to the second, which a directory that cannot be read cannot rule out.
@@ -1152,11 +1369,10 @@ impl Session {
     /// Whether a process of `target`'s tree ran without the environment the run gave it, so a survival it reports is not one.
     #[must_use]
     pub fn uncontrolled(&self, target: &str) -> bool {
-        self.verified
-            .touched
-            .limitations
-            .iter()
-            .any(|one| one.split_once(':') == Some((crate::limitation::UNCONTROLLED_CHILD, target)))
+        self.verified.touched.limitations.iter().any(|one| {
+            one.limitation == crate::limitation::Limitation::UncontrolledChild
+                && one.target.as_ref().is_some_and(|id| id.as_str() == target)
+        })
     }
 
     /// The digest of the pristine sources every unit of this build compiled.
@@ -1195,6 +1411,18 @@ impl Session {
         &self.workspace.target_dir
     }
 
+    /// The shared module cache beside this session's build caches.
+    pub(crate) fn module_cache(
+        &self,
+    ) -> Result<rust_mutants_sealed::CompilationCache, rust_mutants_sealed::SealedError> {
+        crate::sealed::module_cache(&self.workspace.target_dir, Some(&self.workspace.base_env))
+    }
+
+    /// The explicit compiled-module owner shared by this session's preparation paths.
+    pub(crate) const fn module_owner(&self) -> &crate::sealed::ModuleOwner {
+        &self.workspace.module_owner
+    }
+
     /// The root of the copy everything runs in.
     #[must_use]
     pub fn snapshot_root(&self) -> &std::path::Path {
@@ -1212,6 +1440,20 @@ impl Session {
         match index.position(mutant.candidate.span.start) {
             Ok(position) => Some(position),
             Err(_inconsistent) => None,
+        }
+    }
+
+    /// Where a mutant's edit is, for anything written about it that has to say where it is.
+    ///
+    /// # Errors
+    /// [`SessionError::UnplacedMutation`] where the session holds no text of its file, or its edit has no position in it.
+    pub fn placed(&self, mutant: &Mutant) -> Result<Position, SessionError> {
+        match self.position(mutant) {
+            Some(position) => Ok(position),
+            None => Err(SessionError::UnplacedMutation {
+                mutant: mutant.display_id.to_string(),
+                path: mutant.candidate.path.clone(),
+            }),
         }
     }
 
@@ -1250,11 +1492,9 @@ impl Session {
             several => Err(LocateError::Several {
                 display_ids: several
                     .iter()
-                    .map(|mutant| {
-                        self.position(mutant).map_or_else(
-                            || mutant.display_id.to_string(),
-                            |at| format!("{}@{}", mutant.display_id, at.line),
-                        )
+                    .map(|mutant| match self.position(mutant) {
+                        Some(at) => format!("{}@{}", mutant.display_id, at.line),
+                        None => mutant.display_id.to_string(),
                     })
                     .collect(),
             }),
@@ -1360,12 +1600,16 @@ impl Session {
                 .targets
                 .iter()
                 .map(|target| TargetDescription {
-                    id: target.id.clone(),
-                    package: target.package.clone(),
-                    kind: target.kind.name().to_owned(),
-                    name: target.name.clone(),
+                    id: target.id().to_owned(),
+                    package: target.package().to_owned(),
+                    kind: target.kind().name().to_owned(),
+                    name: target.name().to_owned(),
                     harness: target.harness,
-                    limitations: target.limitations.clone(),
+                    limitations: target
+                        .limitations
+                        .iter()
+                        .map(|limitation| limitation.name().to_owned())
+                        .collect(),
                 })
                 .collect(),
             workspace_digest: self.workspace_digest().to_owned(),
@@ -1423,14 +1667,22 @@ impl Session {
         &self.verified
     }
 
-    /// How many tests one target's baseline ran, which is what asking the whole of it about one mutation costs.
+    /// How many tests one target's own baseline ran, or nothing where its baseline did not run.
     #[must_use]
-    pub fn tests_of(&self, target: &str) -> u32 {
+    pub fn baseline_tests(&self, target: &str) -> Option<u32> {
         self.verified
             .targets
             .get(target)
-            .map_or(1, |measured| measured.baseline().tests)
-            .max(1)
+            .map(|measured| measured.baseline().tests)
+    }
+
+    /// How many tests one target's baseline ran, which is what asking the whole of it about one mutation costs.
+    #[must_use]
+    pub fn tests_of(&self, target: &str) -> u32 {
+        match self.verified.targets.get(target) {
+            Some(measured) => measured.baseline().tests.max(1),
+            None => 1,
+        }
     }
 
     /// How many tests this session started to establish that a set of them answers on its own.
@@ -1466,14 +1718,13 @@ impl Session {
         };
         self.targets
             .iter()
-            .filter(|target| target.kind == TargetKind::Doc && target.package == package)
+            .filter(|target| target.kind() == TargetKind::Doc && target.package() == package)
             .filter(|target| {
                 !target
                     .limitations
-                    .iter()
-                    .any(|one| one == crate::limitation::DOCTESTS_NONE)
+                    .contains(&crate::limitation::Limitation::DoctestsNone)
             })
-            .map(|target| target.id.as_str())
+            .map(TestTarget::id)
             .collect()
     }
 
@@ -1513,7 +1764,10 @@ impl Session {
     #[must_use]
     pub fn timing(&self, target: &str) -> Timing {
         Timing::new(
-            self.baseline(target).unwrap_or(DEFAULT_MUTANT_TIMEOUT),
+            match self.baseline(target) {
+                Some(timed) => timed,
+                None => DEFAULT_MUTANT_TIMEOUT,
+            },
             self.tests_of(target),
         )
     }
@@ -1521,17 +1775,31 @@ impl Session {
     /// The longest a target's own baseline took, which is what an estimate of a run's cost rests on.
     #[must_use]
     pub fn slowest_baseline(&self) -> Duration {
-        self.verified
+        match self
+            .verified
             .targets
             .values()
             .map(|measured| measured.baseline().duration)
             .max()
-            .unwrap_or(Duration::from_secs(1))
+        {
+            Some(slowest) => slowest,
+            None => Duration::from_secs(1),
+        }
     }
 
     /// Which targets could notice this mutation, and what the answer rests on.
     #[must_use]
     pub fn route(&self, mutant: &Mutant) -> Route {
+        if self.compiled_item(mutant.index) {
+            return Route::All {
+                reaching: self
+                    .targets
+                    .iter()
+                    .map(|target| target.id().to_owned())
+                    .collect(),
+                fallback: Fallback::CompileTime,
+            };
+        }
         if self.verified.touched.measured() {
             let (targets, measurable, also_reaching) = self.among(mutant);
             let among = Routing {
@@ -1550,6 +1818,16 @@ impl Session {
     /// Which targets the coverage measurement alone puts at this mutation, which is how a run routes when the guards recorded nothing.
     #[must_use]
     pub fn route_by_coverage(&self, mutant: &Mutant) -> Route {
+        if self.compiled_item(mutant.index) {
+            return Route::All {
+                reaching: self
+                    .targets
+                    .iter()
+                    .map(|target| target.id().to_owned())
+                    .collect(),
+                fallback: Fallback::CompileTime,
+            };
+        }
         let (targets, measurable, also_reaching) = self.among(mutant);
         let Some(position) = self.position(mutant) else {
             return Route::All {
@@ -1581,16 +1859,12 @@ impl Session {
 
     /// Every target, the ones a measurement can place, and the ones routed to `mutant` by another rule.
     fn among(&self, mutant: &Mutant) -> (Vec<&str>, Vec<&str>, Vec<&str>) {
-        let targets = self
-            .targets
-            .iter()
-            .map(|target| target.id.as_str())
-            .collect();
+        let targets = self.targets.iter().map(TestTarget::id).collect();
         let measurable = self
             .targets
             .iter()
-            .filter(|target| target.kind != TargetKind::Doc)
-            .map(|target| target.id.as_str())
+            .filter(|target| target.kind() != TargetKind::Doc)
+            .map(TestTarget::id)
             .collect();
         (targets, measurable, self.documenting(mutant))
     }
@@ -1607,7 +1881,7 @@ impl Session {
         chosen: &Chosen,
         cancel: &Cancel,
     ) -> Result<Option<Vec<String>>, EngineError> {
-        let Some(named) = chosen.tests_of(&target.id) else {
+        let Some(named) = chosen.tests_of(target.id()) else {
             return Ok(None);
         };
         if self.usable(target, named, cancel)?.is_none() {
@@ -1623,7 +1897,7 @@ impl Session {
         tests: &[String],
         cancel: &Cancel,
     ) -> Result<Option<Duration>, EngineError> {
-        let key = (target.id.clone(), tests.to_vec());
+        let key = (target.id().to_owned(), tests.to_vec());
         let mut established = self
             .established
             .lock()
@@ -1642,12 +1916,13 @@ impl Session {
             steps: None,
             profile: None,
             crash: None,
+            fate: None,
         };
-        let timeout = self.mutant_timeout.of(self.baseline(&target.id))?.0;
+        let timeout = self.mutant_timeout.of(self.baseline(target.id()))?.0;
         let request = ExecRequest::new(target)
             .with_tests(tests.to_vec())
             .with_timeout(Some(timeout))
-            .with_scratch(self.exec_scratch(self.home_of(&target.id))?)
+            .with_scratch(self.exec_scratch(self.home_of(target.id()))?)
             .in_scratch(self.scratch_working_directory);
         let result = execute::exec(&request, &context, cancel, &self.workspace.trace);
         let asked = u32::try_from(tests.len())
@@ -1673,7 +1948,7 @@ impl Session {
                 &format!(
                     "{}: the set {} ({}), so every test of it runs instead of the ones a \
                      measurement named",
-                    target.id,
+                    target.id(),
                     why,
                     result.outcome().name()
                 ),
@@ -1977,8 +2252,8 @@ impl Session {
     ) -> Result<(MutantResult, Kept), EngineError> {
         let mutant = self.executable(&request.mutant)?;
         let target = self.named(request)?;
-        let timeout = self.timeout_for(request, &target.id)?.0;
-        let scratch = self.exec_scratch(self.home_of(&target.id))?;
+        let timeout = self.timeout_for(request, target.id())?.0;
+        let scratch = self.exec_scratch(self.home_of(target.id()))?;
         let notice = scratch.engine().join("crash-notice");
         let nonce = crash_nonce()?;
         let context = Context {
@@ -1995,9 +2270,10 @@ impl Session {
                 notice: &notice,
                 nonce: &nonce,
             }),
+            fate: None,
         };
         let mut exec = ExecRequest::new(target)
-            .with_args(self.arguments(request))
+            .with_args(self.arguments(request, &[]))
             .with_timeout(Some(timeout))
             .with_scratch(scratch.clone())
             .in_scratch(self.scratch_working_directory);
@@ -2005,7 +2281,7 @@ impl Session {
             exec = exec.with_test(test.clone());
         }
         let result = self.declined(
-            &target.id,
+            target.id(),
             execute::exec(&exec, &context, cancel, &self.workspace.trace),
         );
         let evidence = Notice {
@@ -2017,8 +2293,63 @@ impl Session {
                 Err(_absent_or_unreadable) => None,
             },
         };
-        let stopped = result.exit_code == crate::instrument::CRASH_EXIT && evidence.published();
-        Ok((result, Kept(scratch, Stop(stopped), evidence)))
+        let stop = Stop::verified(result.exit_code == crate::instrument::CRASH_EXIT, &evidence);
+        Ok((result, Kept(scratch, stop, evidence)))
+    }
+
+    /// Puts the crash `request` names to the one test of the one target it names in a sealed instance on `bench`, where the bench answers for that test at the crash's guard, and keeps what the instance left for a next instance to start over (ADR 0035, amended by ADR 0046); nothing where the bench does not answer for it.
+    ///
+    /// # Errors
+    /// [`SessionError::UnknownMutant`] and [`SessionError::UnknownTarget`], a nonce the system could not give, and what the bench could not run.
+    pub fn crash_sealed(
+        &self,
+        bench: &crate::sealed::bench::Bench<'_>,
+        request: &Request,
+    ) -> Result<Option<SealedKept>, EngineError> {
+        let mutant = self.executable(&request.mutant)?;
+        let target = self.named(request)?;
+        let Some(test) = request.test.as_deref() else {
+            return Ok(None);
+        };
+        if !bench.reaches(target.id(), test, mutant.index) {
+            return Ok(None);
+        }
+        let nonce = crash_nonce()?;
+        let Some(crashed) = bench.crash((target.id(), test), (mutant.id.as_str(), &nonce))? else {
+            return Ok(None);
+        };
+        let notice = Notice {
+            mutant: mutant.id.to_string(),
+            catalog: self.catalog.digest().to_owned(),
+            nonce,
+            read: crashed.read.clone(),
+        };
+        let stop = Stop::verified(
+            crashed.ended == crate::sealed::bench::Crashing::Halted,
+            &notice,
+        );
+        Ok(Some(SealedKept {
+            crashed,
+            stop,
+            notice,
+        }))
+    }
+
+    /// Runs the one test of the one target `request` names with nothing active, in a fresh sealed instance on `bench` started from what `kept` left, judged against the test's control, or says that what it left is no state such an instance starts in; nothing where the bench has no control of it.
+    ///
+    /// # Errors
+    /// [`SessionError::UnknownTarget`], and what the bench could not run.
+    pub fn next_sealed(
+        &self,
+        bench: &crate::sealed::bench::Bench<'_>,
+        request: &Request,
+        kept: &SealedKept,
+    ) -> Result<Option<crate::sealed::bench::After>, EngineError> {
+        let target = self.named(request)?;
+        let Some(test) = request.test.as_deref() else {
+            return Ok(None);
+        };
+        Ok(bench.after((target.id(), test), &kept.crashed)?)
     }
 
     /// Runs the one target `request` names with nothing active, in the scratch directory `kept` holds, over whatever the run that kept it left there.
@@ -2032,7 +2363,7 @@ impl Session {
         cancel: &Cancel,
     ) -> Result<MutantResult, EngineError> {
         let target = self.named(request)?;
-        let timeout = self.timeout_for(request, &target.id)?.0;
+        let timeout = self.timeout_for(request, target.id())?.0;
         let none = Perturbation::none();
         let fresh = self.exec_scratch(execute::Home::Given)?;
         Ok(self.control_once(
@@ -2052,12 +2383,15 @@ impl Session {
 
     /// The one target a request names.
     fn named(&self, request: &Request) -> Result<&TestTarget, EngineError> {
-        let name = request.target.as_deref().unwrap_or_default();
+        let name = match request.target.as_deref() {
+            Some(named) => named,
+            None => "",
+        };
         let targets = self.selected(Some(name))?;
         targets.into_iter().next().ok_or_else(|| {
             EngineError::from(SessionError::UnknownTarget {
                 name: name.to_owned(),
-                available: self.targets.iter().map(|one| one.id.clone()).collect(),
+                available: self.targets.iter().map(|one| one.id().to_owned()).collect(),
             })
         })
     }
@@ -2095,7 +2429,10 @@ impl Session {
     ) -> Result<(MutantResult, SiteReach), EngineError> {
         let mutant = self.executable(&request.mutant)?;
         let beside = self.beside(request, mutant)?;
-        let name = request.target.as_deref().unwrap_or_default();
+        let name = match request.target.as_deref() {
+            Some(named) => named,
+            None => "",
+        };
         let target = self
             .selected(Some(name))?
             .into_iter()
@@ -2103,11 +2440,11 @@ impl Session {
             .ok_or_else(|| {
                 EngineError::from(SessionError::UnknownTarget {
                     name: name.to_owned(),
-                    available: self.targets.iter().map(|one| one.id.clone()).collect(),
+                    available: self.targets.iter().map(|one| one.id().to_owned()).collect(),
                 })
             })?;
-        let (timeout, source) = self.timeout_for(request, &target.id)?;
-        let scratch = self.exec_scratch(self.home_of(&target.id))?;
+        let (timeout, source) = self.timeout_for(request, target.id())?;
+        let scratch = self.exec_scratch(self.home_of(target.id()))?;
         let log = scratch.engine().join(CONTROL_TOUCH_LOG);
         let context = Context {
             base_env: &self.workspace.base_env,
@@ -2124,16 +2461,27 @@ impl Session {
             profile: None,
             leaders: Some(&self.leaders),
             crash: None,
+            fate: None,
         };
-        let mut exec = ExecRequest::new(target)
-            .with_args(self.arguments(request))
-            .with_timeout(Some(timeout))
-            .with_scratch(scratch)
-            .in_scratch(self.scratch_working_directory);
-        if let Some(test) = &request.test {
-            exec = exec.with_test(test.clone());
-        }
-        let result = self.observed(&exec, &context, (cancel, None))?;
+        let in_scratch = |scratch: execute::Scratch| {
+            let exec = ExecRequest::new(target)
+                .with_args(self.arguments(request, &[]))
+                .with_timeout(Some(timeout))
+                .with_scratch(scratch)
+                .in_scratch(self.scratch_working_directory);
+            match &request.test {
+                Some(test) => exec.with_test(test.clone()),
+                None => exec,
+            }
+        };
+        let result = self.observed(&in_scratch(scratch), &context, (cancel, None))?;
+        let unrecorded = result.exit_code == crate::instrument::TOUCH_UNAVAILABLE_EXIT;
+        let result = if unrecorded {
+            let again = in_scratch(self.exec_scratch(self.home_of(target.id()))?);
+            self.unrecorded_again(target, (&again, &context), cancel)?
+        } else {
+            result
+        };
         self.record_mutant_exec(Executed {
             mutant,
             target,
@@ -2142,8 +2490,86 @@ impl Session {
             source,
             alone: false,
         })?;
+        if unrecorded {
+            return Ok((result, SiteReach::Unrecorded));
+        }
         let reach = self.site_reach(target, &log, (mutant.index, mutant.id.as_str(), &result))?;
         Ok((result, reach))
+    }
+
+    /// Runs `exec` of `target` again with nothing to record, after a run that could not write what its guards reached, as a control is run again (ADR 0036 decision 1).
+    ///
+    /// # Errors
+    /// What [`Session::exec_reaching`] refuses.
+    fn unrecorded_again(
+        &self,
+        target: &TestTarget,
+        (exec, context): (&ExecRequest<'_>, &Context<'_>),
+        cancel: &Cancel,
+    ) -> Result<MutantResult, EngineError> {
+        self.workspace.trace.note(
+            crate::touch::UNRECORDED,
+            &format!(
+                "{}: a mutation run again against it could not write what its guards reached, \
+                 so it is run again with nothing to record and whether it reached the site is \
+                 not known",
+                target.id()
+            ),
+        );
+        self.observed(
+            exec,
+            &Context {
+                touch: None,
+                ..*context
+            },
+            (cancel, None),
+        )
+    }
+
+    /// Runs one fault against the one target `request` names, asking its runtime to record what became of each failure it made (ADR 0032).
+    ///
+    /// # Errors
+    /// [`SessionError::UnknownMutant`] and [`SessionError::UnknownTarget`], which is also what a request naming no target is.
+    pub fn exec_fated(
+        &self,
+        request: &Request,
+        cancel: &Cancel,
+    ) -> Result<(MutantResult, crate::fate::Fated), EngineError> {
+        let mutant = self.executable(&request.mutant)?;
+        let target = self.named(request)?;
+        let timeout = self.timeout_for(request, target.id())?.0;
+        let scratch = self.exec_scratch(self.home_of(target.id()))?;
+        let record = scratch.engine().join("fault-fate");
+        let context = Context {
+            base_env: &self.workspace.base_env,
+            cargo: Some(self.workspace.toolchain.cargo()),
+            sysroot: self.workspace.toolchain.sysroot(),
+            active: Some((mutant.id.as_str(), self.catalog.digest())),
+            beside: None,
+            touch: None,
+            steps: self.mutant_steps,
+            profile: None,
+            leaders: Some(&self.leaders),
+            crash: None,
+            fate: Some(&record),
+        };
+        let mut exec = ExecRequest::new(target)
+            .with_args(self.arguments(request, &[]))
+            .with_timeout(Some(timeout))
+            .with_scratch(scratch)
+            .in_scratch(self.scratch_working_directory);
+        if let Some(test) = &request.test {
+            exec = exec.with_test(test.clone());
+        }
+        let result = self.declined(
+            target.id(),
+            execute::exec(&exec, &context, cancel, &self.workspace.trace),
+        );
+        let fated = match crate::limitation::appended(std::fs::read_to_string(&record)) {
+            Ok(text) => crate::fate::Fated::read(&text, self.catalog.digest()),
+            Err(_unreadable) => crate::fate::Fated::Unreadable,
+        };
+        Ok((result, fated))
     }
 
     /// Whether the run that wrote `log` reached the site at `index`, recording what it reached as a `repair` touch record.
@@ -2166,7 +2592,7 @@ impl Session {
         let reached = recorded.reached.any(index);
         let gathered = crate::touch::TargetTouches::of(recorded, &result.passed_tests);
         let mut record = verify::touch_record(
-            &target.id,
+            target.id(),
             crate::trace::Measurement::Repair,
             &gathered,
             crate::trace::SummaryRecord::of(result),
@@ -2240,16 +2666,17 @@ impl Session {
             mutant,
             beside,
         } = how;
-        let mut targets = self.selected(request.target.as_deref())?;
+        let compiled = self.compiled(mutant.index, cancel)?;
+        let mut targets = self.compiled_targets(request, compiled.as_ref())?;
         if let Some(first) = request.first.as_deref() {
-            targets.sort_by_key(|target| target.id != first);
+            targets.sort_by_key(|target| target.id() != first);
         }
         let targets = match chosen {
             Chosen::Everything => targets,
             Chosen::Narrowed { only, .. } => {
                 let routed: Vec<&TestTarget> = targets
                     .into_iter()
-                    .filter(|target| only.iter().any(|one| one == &target.id))
+                    .filter(|target| only.iter().any(|one| one == target.id()))
                     .collect();
                 if routed.is_empty() {
                     return Ok(Ran {
@@ -2262,15 +2689,15 @@ impl Session {
         };
         let mut asked: Vec<MutantResult> = Vec::new();
         for target in targets {
-            let (timeout, source) = self.timeout_for(request, &target.id)?;
-            let scratch = self.exec_scratch(self.home_of(&target.id))?;
+            let (timeout, source) = self.timeout_for(request, target.id())?;
+            let scratch = self.exec_scratch(self.home_of(target.id()))?;
             let log = match request.entered {
                 Recording::Off => None,
                 Recording::Items => Some(scratch.engine().join(ENTERED_LOG)),
             };
             let context = self.mutant_context((mutant, beside), log.as_deref());
             let mut exec = ExecRequest::new(target)
-                .with_args(self.arguments(request))
+                .with_args(self.arguments(request, &[]))
                 .with_timeout(Some(timeout))
                 .with_scratch(scratch)
                 .in_scratch(self.scratch_working_directory);
@@ -2279,7 +2706,12 @@ impl Session {
             } else if let Some(named) = self.filtering(target, chosen, cancel)? {
                 exec = exec.with_tests(named);
             }
-            let result = self.observed(&exec, &context, (cancel, log.as_deref()))?;
+            let apparatus = match &compiled {
+                Some(compiled) => &compiled.apparatus,
+                None => &self.apparatus,
+            };
+            let result =
+                self.observed_on(&exec, (&context, apparatus), (cancel, log.as_deref()))?;
             self.record_mutant_exec(Executed {
                 mutant,
                 target,
@@ -2296,6 +2728,7 @@ impl Session {
                 });
             }
         }
+        drop(compiled);
         let taken = verdict_result(&asked).ok_or_else(|| {
             EngineError::from(SessionError::NoTargets {
                 packages: self.packages(),
@@ -2325,6 +2758,7 @@ impl Session {
             steps: self.mutant_steps,
             profile: None,
             crash: None,
+            fate: None,
         }
     }
 
@@ -2395,7 +2829,7 @@ impl Session {
         self.workspace.trace.mutant_exec(MutantExecRecord {
             id: mutant.id.to_string(),
             index: mutant.index,
-            target: target.id.clone(),
+            target: target.id().to_owned(),
             outcome: result.outcome().name().to_owned(),
             step_notice: result.step_notice().cloned(),
             exit_code: result.exit_code,
@@ -2424,7 +2858,7 @@ impl Session {
             entered_records: None,
             id: String::new(),
             index: u32::MAX,
-            target: target.id.clone(),
+            target: target.id().to_owned(),
             outcome: result.outcome().name().to_owned(),
             step_notice: result.step_notice().cloned(),
             exit_code: result.exit_code,
@@ -2453,7 +2887,7 @@ impl Session {
                 self.workspace
                     .trace
                     .perturbed(crate::trace::PerturbedRecord {
-                        target: target.id.clone(),
+                        target: target.id().to_owned(),
                         perturbation,
                         outcome: result.outcome().name().to_owned(),
                         failed_tests: result.failed_tests.clone(),
@@ -2472,12 +2906,12 @@ impl Session {
         Ok(())
     }
 
-    /// The arguments one execution's test binary is started with.
-    fn arguments(&self, request: &Request) -> Vec<String> {
+    /// The arguments one execution's test binary is started with, beside the options `own` it sets itself.
+    fn arguments(&self, request: &Request, own: &[crate::libtest::Own]) -> Vec<String> {
         if request.args.is_empty() {
-            self.harness_args.clone()
+            self.harness_args.beside(own)
         } else {
-            request.args.clone()
+            crate::libtest::Configured::new(request.args.clone()).beside(own)
         }
     }
 
@@ -2580,8 +3014,8 @@ impl Session {
         let mut asked = Vec::new();
         let mut observed = Vec::new();
         for target in targets {
-            let (timeout, source) = self.timeout_for(request, &target.id)?;
-            let scratch = self.exec_scratch(self.home_of(&target.id))?;
+            let (timeout, source) = self.timeout_for(request, target.id())?;
+            let scratch = self.exec_scratch(self.home_of(target.id()))?;
             let log = (observing == Observing::Reach
                 && request.test.is_none()
                 && verify::recordable(target))
@@ -2602,12 +3036,12 @@ impl Session {
                         "{}: the control could not write what its guards reached, so it is run \
                          again with nothing to record and whether its baseline reach holds is \
                          not measured",
-                        target.id
+                        target.id()
                     ),
                 );
                 result = self.control_once(
                     &once,
-                    (self.exec_scratch(self.home_of(&target.id))?, None),
+                    (self.exec_scratch(self.home_of(target.id()))?, None),
                     cancel,
                 );
             }
@@ -2630,7 +3064,7 @@ impl Session {
             };
             if let Some(steadiness) = steadiness {
                 observed.push(Observed {
-                    target: target.id.clone(),
+                    target: target.id().to_owned(),
                     steadiness,
                 });
             }
@@ -2673,24 +3107,19 @@ impl Session {
             steps: None,
             profile: None,
             crash: None,
+            fate: None,
         };
         if perturbation.schedule != execute::Schedule::AsConfigured && !once.target.harness {
             return MutantResult::apparatus_error(
-                &once.target.id,
+                once.target.id(),
                 format!(
                     "{:?} is a libtest argument, and {} does not run under libtest",
-                    perturbation.schedule, once.target.id
+                    perturbation.schedule,
+                    once.target.id()
                 ),
             );
         }
-        let mut arguments = self.arguments(once.request);
-        arguments.extend(
-            perturbation
-                .schedule
-                .arguments()
-                .iter()
-                .map(|argument| (*argument).to_owned()),
-        );
+        let arguments = self.arguments(once.request, perturbation.schedule.owns());
         let mut exec = ExecRequest::new(once.target)
             .with_args(arguments)
             .with_timeout(Some(once.timeout))
@@ -2726,7 +3155,7 @@ impl Session {
         let unreadable = |why: &dyn std::fmt::Display| {
             self.workspace.trace.note(
                 crate::touch::UNREADABLE,
-                &format!("{}: the control's record: {why}", target.id),
+                &format!("{}: the control's record: {why}", target.id()),
             );
             Steadiness::NotMeasured(Unmeasured::Unreadable)
         };
@@ -2741,7 +3170,7 @@ impl Session {
         };
         let control = crate::touch::TargetTouches::of(recorded, &result.passed_tests);
         let touch = verify::touch_record(
-            &target.id,
+            target.id(),
             crate::trace::Measurement::Control,
             &control,
             crate::trace::SummaryRecord::of(result),
@@ -2760,25 +3189,23 @@ impl Session {
         result: &MutantResult,
     ) -> crate::touch::Steadiness {
         use crate::touch::{Steadiness, Unmeasured};
-        let retried = format!(
-            "{}:{}",
-            crate::limitation::BASELINE_PASSED_ON_RETRY,
-            target.id
+        let retried = crate::limitation::Limited::for_target(
+            crate::limitation::Limitation::BaselinePassedOnRetry,
+            crate::limitation::TargetId::generated(target.id()),
         );
         if self.verified.touched.limitations.contains(&retried) {
             return Steadiness::NotMeasured(Unmeasured::BaselineRetried);
         }
-        let unparsed = format!(
-            "{}:{}",
-            crate::limitation::BASELINE_PASSED_UNPARSED,
-            target.id
+        let unparsed = crate::limitation::Limited::for_target(
+            crate::limitation::Limitation::BaselinePassedUnparsed,
+            crate::limitation::TargetId::generated(target.id()),
         );
         if result.reading() == Reading::Short
             || self.verified.touched.limitations.contains(&unparsed)
         {
             return Steadiness::NotMeasured(Unmeasured::Unparsed);
         }
-        let Some(baseline) = self.verified.touched.targets.get(&target.id) else {
+        let Some(baseline) = self.verified.touched.targets.get(target.id()) else {
             return Steadiness::NotMeasured(Unmeasured::NoBaseline);
         };
         let passed = |ran: &[String]| ran.iter().cloned().collect::<BTreeSet<String>>();
@@ -2814,14 +3241,15 @@ impl Session {
             steps: None,
             profile: None,
             crash: None,
+            fate: None,
         };
         let mut asked = Vec::new();
         for target in targets {
-            let (timeout, source) = self.timeout_for(request, &target.id)?;
+            let (timeout, source) = self.timeout_for(request, target.id())?;
             let mut exec = ExecRequest::new(target)
-                .with_args(self.arguments(request))
+                .with_args(self.arguments(request, &[]))
                 .with_timeout(Some(timeout))
-                .with_scratch(self.exec_scratch(self.home_of(&target.id))?)
+                .with_scratch(self.exec_scratch(self.home_of(target.id()))?)
                 .in_scratch(self.scratch_working_directory);
             if let Some(test) = &request.test {
                 exec = exec.with_test(test.clone());
@@ -2884,8 +3312,7 @@ impl Session {
                 .filter(|target| {
                     !target
                         .limitations
-                        .iter()
-                        .any(|one| one == crate::limitation::DOCTESTS_NONE)
+                        .contains(&crate::limitation::Limitation::DoctestsNone)
                 })
                 .collect();
             if answering.is_empty() {
@@ -2898,12 +3325,12 @@ impl Session {
         let matching: Vec<&TestTarget> = self
             .targets
             .iter()
-            .filter(|target| target.id == name || target.name == name)
+            .filter(|target| target.id() == name || target.name() == name)
             .collect();
         if matching.is_empty() {
             return Err(EngineError::from(SessionError::UnknownTarget {
                 name: name.to_owned(),
-                available: self.targets.iter().map(|one| one.id.clone()).collect(),
+                available: self.targets.iter().map(|one| one.id().to_owned()).collect(),
             }));
         }
         Ok(matching)
@@ -2942,52 +3369,6 @@ pub fn preview(
     Ok(discovery)
 }
 
-/// What one claim of a configuration names in a tree read without building it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Resolution {
-    /// It names as many mutations as it says, by display identity.
-    Names {
-        /// The display identities, in catalog order.
-        mutants: Vec<String>,
-    },
-    /// It names as many mutations as it says, and the line it holds is not where the first of them now is.
-    Moved {
-        /// The display identities, in catalog order.
-        mutants: Vec<String>,
-        /// The line the claim holds.
-        from: u32,
-        /// The line the first of them is on now.
-        to: u32,
-    },
-    /// What it names sits only in a file no unit of this build reads, so it is judged where one does (ADR 0042).
-    Uncompiled,
-    /// It names nothing, or not as many as it says, so a run finds it unmatched.
-    Unmatched {
-        /// Why, in the words a run gives it.
-        why: String,
-    },
-}
-
-impl Resolution {
-    /// Whether the claim says something that is not so: it names nothing, not as many as it says, or a line its mutation left.
-    #[must_use]
-    pub const fn rotted(&self) -> bool {
-        match self {
-            Self::Unmatched { .. } | Self::Moved { .. } => true,
-            Self::Names { .. } | Self::Uncompiled => false,
-        }
-    }
-
-    /// Whether what it names sits only in a file another build reads.
-    #[must_use]
-    pub const fn uncompiled(&self) -> bool {
-        match self {
-            Self::Uncompiled => true,
-            Self::Names { .. } | Self::Moved { .. } | Self::Unmatched { .. } => false,
-        }
-    }
-}
-
 /// What each of `expectations` names in the tree `discovery` read, found by the locator a run finds it by.
 ///
 /// # Errors
@@ -3004,10 +3385,10 @@ pub fn resolve_claims(
             Ok(id) => discovery.catalog.by_id(id.as_str()),
             Err(_unnameable) => None,
         };
-        catalogued.map_or_else(
-            || located.found.item.clone(),
-            |mutant| mutant.display_id.to_string(),
-        )
+        match catalogued {
+            Some(mutant) => mutant.display_id.to_string(),
+            None => located.found.item.clone(),
+        }
     };
     let located = |locator: &Locator| {
         locate(
@@ -3029,11 +3410,14 @@ pub fn resolve_claims(
             ),
         )
         .map(|found| {
-            let moved = locator.line.zip(found.first()).and_then(|(from, first)| {
-                let to = first.found.position.line;
-                (to != from).then_some((from, to))
-            });
-            (found.iter().map(label).collect::<Vec<_>>(), moved)
+            let moved = rust_mutants_decision::claim::moved(
+                locator.line,
+                found.first().map(|first| first.found.position.line),
+            );
+            Named {
+                mutants: found.iter().map(label).collect(),
+                moved,
+            }
         })
     };
     Ok(expectations
@@ -3045,27 +3429,26 @@ pub fn resolve_claims(
                     None => discovery
                         .catalog
                         .resolve_prefix(id)
-                        .map(|mutant| (vec![mutant.display_id.to_string()], None))
+                        .map(|mutant| Named {
+                            mutants: vec![mutant.display_id.to_string()],
+                            moved: None,
+                        })
                         .map_err(|error| error.to_string()),
                 },
                 (None, Some(locator)) => located(locator).map_err(|error| error.to_string()),
                 (None, None) => Err("the claim names no mutant".to_owned()),
             };
             match named {
-                Ok((mutants, None)) => Resolution::Names { mutants },
-                Ok((mutants, Some((from, to)))) => Resolution::Moved { mutants, from, to },
-                Err(_)
-                    if expectation.locator.as_ref().is_some_and(|locator| {
+                Ok(named) => Resolution::named(named),
+                Err(why) => Resolution::unnamed(why, || {
+                    expectation.locator.as_ref().is_some_and(|locator| {
                         unread_in(
                             (workspace.snapshot_root(), &discovery.files),
                             &selection,
                             locator,
                         ) == Unread::Named
-                    }) =>
-                {
-                    Resolution::Uncompiled
-                }
-                Err(why) => Resolution::Unmatched { why },
+                    })
+                }),
             }
         })
         .collect())
@@ -3160,21 +3543,23 @@ impl Chosen {
             (None, _) => {}
             (Some(_), false) => return Self::Everything,
             (Some(target), true) => {
-                return route
-                    .narrowing()
-                    .map_or(Self::Everything, |_| Self::Narrowed {
+                return match route.narrowing() {
+                    Some(_narrowed) => Self::Narrowed {
                         only: vec![target.clone()],
                         asked: route.asked(),
-                    });
+                    },
+                    None => Self::Everything,
+                };
             }
         }
         match asking {
-            Asking::Anything => route
-                .narrowing()
-                .map_or(Self::Everything, |only| Self::Narrowed {
+            Asking::Anything => match route.narrowing() {
+                Some(only) => Self::Narrowed {
                     only,
                     asked: route.asked(),
-                }),
+                },
+                None => Self::Everything,
+            },
             Asking::ThisRun => Self::Narrowed {
                 only: route
                     .reaching()
@@ -4052,6 +4437,7 @@ const fn unreached() -> MutantResult {
         failed_tests: Vec::new(),
         passed_tests: Vec::new(),
         ignored_tests: Vec::new(),
+        should_panic_tests: Vec::new(),
         leader: None,
         stopped: execute::Stopped::NotStarted {
             cause: execute::StartFailure::NotAsked,
@@ -4069,10 +4455,57 @@ pub fn target_name(package: &str, kind: TargetKind, name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{AttemptLedger, InitialAttempt, WaitedAttempt, aggregate_outcomes, retry_outcome};
+    use super::{
+        AttemptLedger, InitialAttempt, PrepareOptions, WaitedAttempt, aggregate_outcomes,
+        retry_outcome,
+    };
     use crate::execute::{MutantConclusion, MutantResult, StepLimitNotice};
     use crate::outcome::Outcome;
+    use crate::rule::Tier;
     use std::time::Duration;
+
+    #[test]
+    fn preparation_keeps_the_chosen_tier() {
+        for tier in Tier::ALL {
+            assert_eq!(PrepareOptions::new(tier).tier, tier);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_stop_that_left_a_name_that_is_not_text_answers_that_name_rather_than_failing() {
+        use std::os::unix::ffi::OsStrExt as _;
+        let own = tempfile::tempdir().expect("a directory of the execution's own");
+        let scratch = crate::execute::Scratch::made(
+            own.path(),
+            crate::execute::Home::Confined,
+            &crate::vars::Variables::empty(),
+        )
+        .expect("the scratch");
+        std::fs::write(scratch.tmp().join("count"), "count=1").expect("a file named in text");
+        std::fs::write(
+            scratch
+                .tmp()
+                .join(std::ffi::OsStr::from_bytes(b"torn-\xff")),
+            "",
+        )
+        .expect("a file whose name is not text, which Linux keeps");
+        let kept = super::Kept(
+            scratch,
+            super::Stop(true),
+            super::Notice {
+                mutant: String::new(),
+                catalog: String::new(),
+                nonce: String::new(),
+                read: None,
+            },
+        );
+        assert_eq!(
+            kept.left().expect("the scratch walks"),
+            super::Left::Unnamed("bytes:746f726e2dff".to_owned()),
+            "what the stop left cannot be named, and the name that could not is what it answers"
+        );
+    }
 
     fn result(conclusion: MutantConclusion, duration: Duration) -> MutantResult {
         MutantResult {

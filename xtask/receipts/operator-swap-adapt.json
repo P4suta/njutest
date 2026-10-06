@@ -1,0 +1,515 @@
+{
+  "schema": "njutest-mutation-receipt-v1",
+  "decision": "operator-swap",
+  "package": "rust-mutants-adapt",
+  "module": "crates/rust-mutants-adapt/src/swap.rs",
+  "source_sha256": "9e8722ffb9e305697c15d2baceffe9d4cc760158ac0433414512960f3c7623fd",
+  "mutants": [
+    {
+      "display_id": "9c5be66ca40aee81e652",
+      "position": "12:5",
+      "rule": "return-default",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::a_planted_mapping_that_confuses_two_operators_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::an_operand_is_regrouped_only_where_it_is_an_operator_the_new_one_reads_apart",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "b32fd006fb708e3e070c",
+      "position": "13:22",
+      "rule": "delete-match-arm",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::a_planted_mapping_that_confuses_two_operators_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::an_operand_is_regrouped_only_where_it_is_an_operator_the_new_one_reads_apart",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "486cade9f1fc2b45bf57",
+      "position": "14:22",
+      "rule": "delete-match-arm",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::a_planted_mapping_that_confuses_two_operators_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::an_operand_is_regrouped_only_where_it_is_an_operator_the_new_one_reads_apart",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "ce7420dfa3095c34bcea",
+      "position": "15:22",
+      "rule": "delete-match-arm",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::a_planted_mapping_that_confuses_two_operators_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::an_operand_is_regrouped_only_where_it_is_an_operator_the_new_one_reads_apart",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "acfdcfb4395fe9b9904a",
+      "position": "16:22",
+      "rule": "delete-match-arm",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::a_planted_mapping_that_confuses_two_operators_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::an_operand_is_regrouped_only_where_it_is_an_operator_the_new_one_reads_apart",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "94e20e8ae1080f1a3f52",
+      "position": "17:22",
+      "rule": "delete-match-arm",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::a_planted_mapping_that_confuses_two_operators_is_caught",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::an_operand_is_regrouped_only_where_it_is_an_operator_the_new_one_reads_apart",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "65549c395b0d1dbde3f9",
+      "position": "18:22",
+      "rule": "delete-match-arm",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::an_operand_is_regrouped_only_where_it_is_an_operator_the_new_one_reads_apart",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "4a5c449373eb8e6dd7b4",
+      "position": "19:22",
+      "rule": "delete-match-arm",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::an_operand_is_regrouped_only_where_it_is_an_operator_the_new_one_reads_apart",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "e315928d4d69a9619873",
+      "position": "20:25",
+      "rule": "delete-match-arm",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::an_operand_is_regrouped_only_where_it_is_an_operator_the_new_one_reads_apart",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "885028423f740ac50249",
+      "position": "21:25",
+      "rule": "delete-match-arm",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::an_operand_is_regrouped_only_where_it_is_an_operator_the_new_one_reads_apart",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "94a01fd57d71d3ffff03",
+      "position": "22:24",
+      "rule": "delete-match-arm",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::an_operand_is_regrouped_only_where_it_is_an_operator_the_new_one_reads_apart",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "dd51d77e32997f09a80c",
+      "position": "23:21",
+      "rule": "delete-match-arm",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::an_operand_is_regrouped_only_where_it_is_an_operator_the_new_one_reads_apart",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "90cd0cb86eeca6b38d78",
+      "position": "24:21",
+      "rule": "delete-match-arm",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::an_operand_is_regrouped_only_where_it_is_an_operator_the_new_one_reads_apart",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "a438fc90b6221e96edcd",
+      "position": "25:21",
+      "rule": "delete-match-arm",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::an_operand_is_regrouped_only_where_it_is_an_operator_the_new_one_reads_apart",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "fa231c34db843b1fc5ea",
+      "position": "26:21",
+      "rule": "delete-match-arm",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::an_operand_is_regrouped_only_where_it_is_an_operator_the_new_one_reads_apart",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "e030022b0ed112c4566a",
+      "position": "27:21",
+      "rule": "delete-match-arm",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::an_operand_is_regrouped_only_where_it_is_an_operator_the_new_one_reads_apart",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "bfc37b29c23501c8e9cd",
+      "position": "28:21",
+      "rule": "delete-match-arm",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::an_operand_is_regrouped_only_where_it_is_an_operator_the_new_one_reads_apart",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "cb13598cc6275e4520d9",
+      "position": "29:22",
+      "rule": "delete-match-arm",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::an_operand_is_regrouped_only_where_it_is_an_operator_the_new_one_reads_apart",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "1a2e6d1a1112f9162297",
+      "position": "30:21",
+      "rule": "delete-match-arm",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::an_operand_is_regrouped_only_where_it_is_an_operator_the_new_one_reads_apart",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "658bb335a3ef72845c2f",
+      "position": "31:28",
+      "rule": "delete-match-arm",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::an_operand_is_regrouped_only_where_it_is_an_operator_the_new_one_reads_apart",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "18c8f5dca05a4e6c34e3",
+      "position": "32:28",
+      "rule": "delete-match-arm",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::an_operand_is_regrouped_only_where_it_is_an_operator_the_new_one_reads_apart",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "21d8d347f615390f93dc",
+      "position": "33:28",
+      "rule": "delete-match-arm",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::an_operand_is_regrouped_only_where_it_is_an_operator_the_new_one_reads_apart",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "679f4cdc882d7f33bdde",
+      "position": "34:28",
+      "rule": "delete-match-arm",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::an_operand_is_regrouped_only_where_it_is_an_operator_the_new_one_reads_apart",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "32bd4646c8bf42e671b7",
+      "position": "35:28",
+      "rule": "delete-match-arm",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::an_operand_is_regrouped_only_where_it_is_an_operator_the_new_one_reads_apart",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "36e3fe2c875e0de33175",
+      "position": "36:31",
+      "rule": "delete-match-arm",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::an_operand_is_regrouped_only_where_it_is_an_operator_the_new_one_reads_apart",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "0b41543f1449df29521e",
+      "position": "37:31",
+      "rule": "delete-match-arm",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::an_operand_is_regrouped_only_where_it_is_an_operator_the_new_one_reads_apart",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "805f9105401b5528f017",
+      "position": "38:30",
+      "rule": "delete-match-arm",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::an_operand_is_regrouped_only_where_it_is_an_operator_the_new_one_reads_apart",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "dedab687906add6cf780",
+      "position": "39:28",
+      "rule": "delete-match-arm",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::an_operand_is_regrouped_only_where_it_is_an_operator_the_new_one_reads_apart",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "673ca865adc5109fa264",
+      "position": "40:28",
+      "rule": "delete-match-arm",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::an_operand_is_regrouped_only_where_it_is_an_operator_the_new_one_reads_apart",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "468399ccb9da599f7827",
+      "position": "48:5",
+      "rule": "return-default",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::an_operand_is_regrouped_only_where_it_is_an_operator_the_new_one_reads_apart",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "6736b65aab531264257d",
+      "position": "49:27",
+      "rule": "return-default",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::an_operand_is_regrouped_only_where_it_is_an_operator_the_new_one_reads_apart",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "19736f632b873d602d41",
+      "position": "60:16",
+      "rule": "false-to-true",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::an_operand_is_regrouped_only_where_it_is_an_operator_the_new_one_reads_apart",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "e5f6f037a6db040cda38",
+      "position": "62:5",
+      "rule": "negate-bool-method",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::an_operand_is_regrouped_only_where_it_is_an_operator_the_new_one_reads_apart",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "c371ea474ddba31c0306",
+      "position": "62:5",
+      "rule": "return-true",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-adapt/lib/rust_mutants_adapt",
+          "test": "swap::tests::an_operand_is_regrouped_only_where_it_is_an_operator_the_new_one_reads_apart",
+          "came_to": "panicked"
+        }
+      ]
+    }
+  ]
+}

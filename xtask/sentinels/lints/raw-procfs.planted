@@ -1,0 +1,36 @@
+=== a-formatted-pid source crates/app/src/lib.rs
+fn started(pid: u32) -> std::io::Result<String> { std::fs::read_to_string(format!("/proc/{pid}/stat")) }
+=== a-numbered-process source crates/app/src/lib.rs
+fn first() -> std::io::Result<String> { std::fs::read_to_string("/proc/1/stat") }
+=== this-process source crates/app/src/lib.rs
+fn own() -> std::io::Result<std::path::PathBuf> { std::fs::read_link("/proc/self/cwd") }
+=== the-listing source crates/app/src/lib.rs
+fn listed() -> std::io::Result<std::fs::ReadDir> { std::fs::read_dir("/proc") }
+=== joined-onto-the-table source crates/app/src/lib.rs
+fn stat(pid: u32) -> std::path::PathBuf { std::path::Path::new("/proc/").join(pid.to_string()).join("stat") }
+=== a-constant source crates/app/src/lib.rs
+const TABLE: &str = "/proc";
+=== a-doubled-separator source crates/app/src/lib.rs
+fn first() -> std::io::Result<String> { std::fs::read_to_string("//proc/1/stat") }
+=== a-dot-segment source crates/app/src/lib.rs
+fn first() -> std::io::Result<String> { std::fs::read_to_string("/./proc/1/stat") }
+=== back-out-of-the-settings source crates/app/src/lib.rs
+fn first() -> std::io::Result<String> { std::fs::read_to_string("/proc/sys/../1/stat") }
+=== bytes source crates/app/src/lib.rs
+fn path() -> &'static [u8] { b"/proc/1/stat" }
+=== a-c-string source crates/app/src/lib.rs
+fn path() -> &'static core::ffi::CStr { c"/proc/self/stat" }
+=== concatenated source crates/app/src/lib.rs
+fn path() -> &'static str { concat!("/proc/", "1/stat") }
+=== in-a-nested-macro source crates/app/src/lib.rs
+fn paths(pid: u32) -> Vec<String> { vec![format!("/proc/{pid}/stat")] }
+=== the-engine source crates/rust-mutants/src/escaped.rs
+fn started(pid: u32) -> std::io::Result<String> { std::fs::read_to_string(format!("/proc/{pid}/stat")) }
+=== a-gate source xtask/src/lanes.rs
+fn started(pid: u32) -> std::io::Result<String> { std::fs::read_to_string(format!("/proc/{pid}/stat")) }
+=== test-support source crates/njutest-devkit/src/process.rs
+fn listed() -> std::io::Result<std::fs::ReadDir> { std::fs::read_dir("/proc") }
+=== a-test source crates/app/tests/interrupt.rs
+fn listed() -> std::io::Result<std::fs::ReadDir> { std::fs::read_dir("/proc") }
+=== a-test-module source crates/app/src/lib.rs
+#[cfg(test)] mod tests { fn listed() -> std::io::Result<std::fs::ReadDir> { std::fs::read_dir("/proc") } }

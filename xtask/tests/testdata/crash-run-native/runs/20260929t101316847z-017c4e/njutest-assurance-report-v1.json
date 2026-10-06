@@ -1,0 +1,913 @@
+{
+  "document_type": "complete",
+  "report": {
+    "schema": "njutest-assurance-report-v1",
+    "schema_version": 3,
+    "run_id": "20260929t101316847z-017c4e",
+    "run_kind": "full",
+    "contract": "standard-v1",
+    "tool": {
+      "njutest": "0.1.0",
+      "rust_mutants": "0.1.0"
+    },
+    "repository": {
+      "root_name": "fixture-durable-calls",
+      "packages": [
+        "fixture-durable-calls"
+      ],
+      "workspace_digest": "e14ca626438bc309a1ee47b27570ef0bbac4f818ff6e94e35fca5999df2b7a17",
+      "configuration_digest": "cc18c9fe93ff2e150a0d6c2891dfa11ea7d6ce9623623c1f8e2f7985eb920cea",
+      "git": {
+        "available": false,
+        "commit": "unavailable",
+        "branch": "unavailable",
+        "dirty": false,
+        "merge_base": null,
+        "changed_files": []
+      }
+    },
+    "provenance": {
+      "identity": "c89da516f62bdfdf84b5adacfb19db1a7a31003e3b62dbb6515dcd17fb081b4b",
+      "cached": false,
+      "source_run_id": null
+    },
+    "scope": {
+      "requested_packages": [],
+      "resolved_packages": [],
+      "included": [],
+      "excluded": [],
+      "configuration": ".njutest.toml",
+      "configured_builds": [
+        "default"
+      ],
+      "shard": null
+    },
+    "composition": {
+      "kind": "direct"
+    },
+    "builds": [
+      {
+        "name": "default",
+        "configuration": {
+          "features": [],
+          "all_features": false,
+          "no_default_features": false,
+          "target": null,
+          "profile": null,
+          "jobs": null,
+          "debug": false,
+          "digest": "c5a587d94348b75388f86ec2495002bcecf82b4abb21333627414c945c0746ed"
+        },
+        "parts": [
+          {
+            "run_id": "20260929t101316847z-017c4e-b0000000000",
+            "part": {
+              "kind": "whole"
+            },
+            "toolchain": {
+              "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+              "cargo": "cargo 1.98.0 (797e8a9bc 2026-08-05)",
+              "target": "aarch64-apple-darwin",
+              "os": "macos",
+              "arch": "aarch64"
+            },
+            "timing": {
+              "started": "2026-09-29T10:13:16.84772Z",
+              "finished": "2026-09-29T10:13:32.039636Z",
+              "duration_ms": 15191
+            },
+            "accounting": {
+              "targets": {
+                "selected": 3,
+                "passed": 2,
+                "failed": 0,
+                "skipped": 0,
+                "missing": 1
+              },
+              "mutants": {
+                "cataloged": 3,
+                "rejected": 0,
+                "executed": 3,
+                "killed": 2,
+                "survived": 1,
+                "step_limit_reached": 0,
+                "waited": 0,
+                "unreached": 0,
+                "model_noticed": 0,
+                "model_proved": 0,
+                "equivalent": 0,
+                "accepted": 0,
+                "reused_killed": 0,
+                "reused_survived": 0,
+                "observers": {
+                  "types": 0,
+                  "tests": 0,
+                  "model_noticed": 0,
+                  "model_proved": 0,
+                  "step_limit_reached": 0,
+                  "proved": 0,
+                  "unnoticed": 0,
+                  "unreached": 0,
+                  "unproven": 3,
+                  "waited": 0,
+                  "errored": 0
+                }
+              },
+              "soundness": {
+                "unsafe_items": 0,
+                "packages_with_unsafe": 0,
+                "executed": false
+              },
+              "faults": {
+                "sites": 0,
+                "noticed": 0,
+                "unnoticed": 0,
+                "absorbed": 0,
+                "unreached": 0,
+                "waited": 0,
+                "undecided": 0,
+                "not_put": 0
+              },
+              "crashes": {
+                "sites": 15,
+                "restarted": 10,
+                "corrupt": 4,
+                "unshared": 0,
+                "unreached": 0,
+                "undecided": 1,
+                "not_put": 0
+              }
+            },
+            "resources": [],
+            "candidates": [],
+            "seams": [],
+            "faults": [],
+            "beside": [],
+            "crashes": [
+              {
+                "catalog_index": 0,
+                "id": "da005deee91ca3973207ae60423ba7d567773ae5a592253af9f204df73584040",
+                "display_id": "da005deee91ca3973207",
+                "path": "src/lib.rs",
+                "item": "save_by_copy",
+                "position": {
+                  "line": 12,
+                  "column": 5,
+                  "character_column": 5
+                },
+                "decision": {
+                  "decision": "restarted",
+                  "on": "fixture-durable-calls/test/calls::a_count_copied_into_place_goes_up",
+                  "left": [
+                    "fixture-durable-calls/",
+                    "fixture-durable-calls/copied.staged"
+                  ]
+                },
+                "sealed": false
+              },
+              {
+                "catalog_index": 1,
+                "id": "9595373fb573d713bd4f6f10ff2d0d26adb14ead7014de6bc36a2cba05074c0c",
+                "display_id": "9595373fb573d713bd4f",
+                "path": "src/lib.rs",
+                "item": "save_by_copy",
+                "position": {
+                  "line": 13,
+                  "column": 5,
+                  "character_column": 5
+                },
+                "decision": {
+                  "decision": "restarted",
+                  "on": "fixture-durable-calls/test/calls::a_count_copied_into_place_goes_up",
+                  "left": [
+                    "fixture-durable-calls/",
+                    "fixture-durable-calls/copied",
+                    "fixture-durable-calls/copied.staged"
+                  ]
+                },
+                "sealed": false
+              },
+              {
+                "catalog_index": 2,
+                "id": "ab0f0516e69888d7b9a3538e0213006b72a58d087cb7963011a9c91f8b2083d0",
+                "display_id": "ab0f0516e69888d7b9a3",
+                "path": "src/lib.rs",
+                "item": "save_by_copy",
+                "position": {
+                  "line": 14,
+                  "column": 5,
+                  "character_column": 5
+                },
+                "decision": {
+                  "decision": "restarted",
+                  "on": "fixture-durable-calls/test/calls::a_count_copied_into_place_goes_up",
+                  "left": [
+                    "fixture-durable-calls/",
+                    "fixture-durable-calls/copied"
+                  ]
+                },
+                "sealed": false
+              },
+              {
+                "catalog_index": 3,
+                "id": "292d4ac548720092fc5daf31e7eae07dc8ece8e29c09cdac4df08f1e773e0eae",
+                "display_id": "292d4ac548720092fc5d",
+                "path": "src/lib.rs",
+                "item": "save_synced",
+                "position": {
+                  "line": 19,
+                  "column": 20,
+                  "character_column": 20
+                },
+                "decision": {
+                  "decision": "corrupt",
+                  "on": "fixture-durable-calls/test/calls::a_count_synced_goes_up",
+                  "failed": [
+                    "a_count_synced_goes_up"
+                  ]
+                },
+                "sealed": false
+              },
+              {
+                "catalog_index": 4,
+                "id": "8f8b0858744192a22485be1761e12e8184820c7f1565581202112c301e733295",
+                "display_id": "8f8b0858744192a22485",
+                "path": "src/lib.rs",
+                "item": "save_synced",
+                "position": {
+                  "line": 20,
+                  "column": 5,
+                  "character_column": 5
+                },
+                "decision": {
+                  "decision": "restarted",
+                  "on": "fixture-durable-calls/test/calls::a_count_synced_goes_up",
+                  "left": [
+                    "fixture-durable-calls/",
+                    "fixture-durable-calls/synced"
+                  ]
+                },
+                "sealed": false
+              },
+              {
+                "catalog_index": 5,
+                "id": "35ea7fc9dc737d61b29f0058dd51c74c613539c7b3e84eda2519527e22e476a4",
+                "display_id": "35ea7fc9dc737d61b29f",
+                "path": "src/lib.rs",
+                "item": "save_synced",
+                "position": {
+                  "line": 21,
+                  "column": 5,
+                  "character_column": 5
+                },
+                "decision": {
+                  "decision": "restarted",
+                  "on": "fixture-durable-calls/test/calls::a_count_synced_goes_up",
+                  "left": [
+                    "fixture-durable-calls/",
+                    "fixture-durable-calls/synced"
+                  ]
+                },
+                "sealed": false
+              },
+              {
+                "catalog_index": 6,
+                "id": "46d6515c44e7a03b4027be321e9c3611a5d3b52835de0e143e5841b5f7208b1f",
+                "display_id": "46d6515c44e7a03b4027",
+                "path": "src/lib.rs",
+                "item": "save_synced",
+                "position": {
+                  "line": 22,
+                  "column": 5,
+                  "character_column": 5
+                },
+                "decision": {
+                  "decision": "restarted",
+                  "on": "fixture-durable-calls/test/calls::a_count_synced_goes_up",
+                  "left": [
+                    "fixture-durable-calls/",
+                    "fixture-durable-calls/synced"
+                  ]
+                },
+                "sealed": false
+              },
+              {
+                "catalog_index": 7,
+                "id": "038e61c5e5563678098a9fbd38f5011782c575ef37a14de5b1ab35f07bb7576a",
+                "display_id": "038e61c5e5563678098a",
+                "path": "src/lib.rs",
+                "item": "save_cut",
+                "position": {
+                  "line": 33,
+                  "column": 5,
+                  "character_column": 5
+                },
+                "decision": {
+                  "decision": "corrupt",
+                  "on": "fixture-durable-calls/test/calls::a_count_cut_and_written_again_goes_up",
+                  "failed": [
+                    "a_count_cut_and_written_again_goes_up"
+                  ]
+                },
+                "sealed": false
+              },
+              {
+                "catalog_index": 8,
+                "id": "03aa2069fa70302ad8ef17a1c6204a63ba50f3059946d5b2434b90736528a30d",
+                "display_id": "03aa2069fa70302ad8ef",
+                "path": "src/lib.rs",
+                "item": "save_cut",
+                "position": {
+                  "line": 34,
+                  "column": 5,
+                  "character_column": 5
+                },
+                "decision": {
+                  "decision": "restarted",
+                  "on": "fixture-durable-calls/test/calls::a_count_cut_and_written_again_goes_up",
+                  "left": [
+                    "fixture-durable-calls/",
+                    "fixture-durable-calls/cut"
+                  ]
+                },
+                "sealed": false
+              },
+              {
+                "catalog_index": 9,
+                "id": "2fd0547df2b31383ccac8d32e8e52bbf4dd9056e5259df708be46478bc705d99",
+                "display_id": "2fd0547df2b31383ccac",
+                "path": "src/lib.rs",
+                "item": "save_buffered",
+                "position": {
+                  "line": 39,
+                  "column": 46,
+                  "character_column": 46
+                },
+                "decision": {
+                  "decision": "corrupt",
+                  "on": "fixture-durable-calls/test/calls::a_count_kept_through_a_buffer_goes_up",
+                  "failed": [
+                    "a_count_kept_through_a_buffer_goes_up"
+                  ]
+                },
+                "sealed": false
+              },
+              {
+                "catalog_index": 10,
+                "id": "afa2b77939a0384e80a89e543d507ffec1af6489a244962a161edc025008dcc8",
+                "display_id": "afa2b77939a0384e80a8",
+                "path": "src/lib.rs",
+                "item": "save_buffered",
+                "position": {
+                  "line": 40,
+                  "column": 5,
+                  "character_column": 5
+                },
+                "decision": {
+                  "decision": "corrupt",
+                  "on": "fixture-durable-calls/test/calls::a_count_kept_through_a_buffer_goes_up",
+                  "failed": [
+                    "a_count_kept_through_a_buffer_goes_up"
+                  ]
+                },
+                "sealed": false
+              },
+              {
+                "catalog_index": 11,
+                "id": "3944b9bbd9a36d15f77f610b64f53e29f0ac92adf7fe5266a75e734f65a03b9b",
+                "display_id": "3944b9bbd9a36d15f77f",
+                "path": "src/lib.rs",
+                "item": "save_buffered",
+                "position": {
+                  "line": 41,
+                  "column": 5,
+                  "character_column": 5
+                },
+                "decision": {
+                  "decision": "restarted",
+                  "on": "fixture-durable-calls/test/calls::a_count_kept_through_a_buffer_goes_up",
+                  "left": [
+                    "fixture-durable-calls/",
+                    "fixture-durable-calls/buffered"
+                  ]
+                },
+                "sealed": false
+              },
+              {
+                "catalog_index": 12,
+                "id": "26ee3cce8b9b29d147cc02c047b476fb59e82ccb8ab4b369b1daaab771dc3748",
+                "display_id": "26ee3cce8b9b29d147cc",
+                "path": "src/lib.rs",
+                "item": "save_guarded",
+                "position": {
+                  "line": 47,
+                  "column": 5,
+                  "character_column": 5
+                },
+                "decision": {
+                  "decision": "restarted",
+                  "on": "fixture-durable-calls/test/calls::a_count_kept_beside_a_guard_goes_up",
+                  "left": [
+                    "fixture-durable-calls/",
+                    "fixture-durable-calls/guarded"
+                  ]
+                },
+                "sealed": false
+              },
+              {
+                "catalog_index": 13,
+                "id": "aa49c12539df0c2f4d1c8b1d3c3ddaa0be44c175b14d29b320000ba717cb59f3",
+                "display_id": "aa49c12539df0c2f4d1c",
+                "path": "src/lib.rs",
+                "item": "<Guard as Drop>::drop",
+                "position": {
+                  "line": 55,
+                  "column": 9,
+                  "character_column": 9
+                },
+                "decision": {
+                  "decision": "restarted",
+                  "on": "fixture-durable-calls/test/calls::a_count_kept_beside_a_guard_goes_up",
+                  "left": [
+                    "fixture-durable-calls/",
+                    "fixture-durable-calls/guarded",
+                    "fixture-durable-calls/guarded.dropped"
+                  ]
+                },
+                "sealed": false
+              },
+              {
+                "catalog_index": 14,
+                "id": "d34933c33f5c8f73db80749478f4e2ba0bd73fe4c6eaa59c71262db47d53ec87",
+                "display_id": "d34933c33f5c8f73db80",
+                "path": "src/lib.rs",
+                "item": "save_from_a_child",
+                "position": {
+                  "line": 61,
+                  "column": 5,
+                  "character_column": 5
+                },
+                "decision": {
+                  "decision": "undecided",
+                  "on": "fixture-durable-calls/test/child::a_count_kept_by_a_child_goes_up",
+                  "why": "a process the test started stopped at the call and the test's own process ended with no exit status of its own, so the stop is not one the next run's test made"
+                },
+                "sealed": false
+              }
+            ],
+            "targets": [
+              {
+                "id": "fc891cbf474869ba159e4091b8e1cad7d371771868a9e6d811a3416d6fb1e390",
+                "name": "fixture-durable-calls/test/calls",
+                "package": "fixture-durable-calls",
+                "status": "passed",
+                "duration_ms": 30,
+                "message": null
+              },
+              {
+                "id": "5020eb1537e4db6aff26ea84a8af383889e839b81b10a6f1efe9956432c61ced",
+                "name": "fixture-durable-calls/lib/fixture_durable_calls",
+                "package": "fixture-durable-calls",
+                "status": "missing",
+                "duration_ms": 29,
+                "message": "the target ran nothing, so nothing was observed"
+              },
+              {
+                "id": "c6b8543f9a12a6a06696c559b25e352d8a650e998fc49e64950b586c562660e1",
+                "name": "fixture-durable-calls/test/child",
+                "package": "fixture-durable-calls",
+                "status": "passed",
+                "duration_ms": 28,
+                "message": null
+              }
+            ],
+            "sources": [
+              {
+                "path": "src/lib.rs",
+                "digest": "340f821e0e4c44e76a984a59bd87d92a21156a0dd1e1ac60a7701c8db6707de4"
+              }
+            ],
+            "mutants": [
+              {
+                "catalog_index": 0,
+                "id": "6de8164de42cdbacbda9632d6fae7a50e7b86d515fd032157479725d409bedca",
+                "display_id": "6de8164de42cdbacbda9",
+                "path": "src/lib.rs",
+                "position": {
+                  "line": 28,
+                  "column": 16,
+                  "character_column": 16
+                },
+                "rule": "true-to-false",
+                "item": "save_cut",
+                "original": "true",
+                "replacement": "false",
+                "decision": {
+                  "outcome": "killed",
+                  "killed_by": "fixture-durable-calls/test/calls",
+                  "step_boundary": null
+                },
+                "evidence": {
+                  "kind": "unproven",
+                  "reasons": [
+                    "not-sealed"
+                  ]
+                },
+                "accepted": false,
+                "blind_in": [],
+                "routing": {
+                  "granularity": "test",
+                  "reaching": [
+                    "fixture-durable-calls/test/calls"
+                  ],
+                  "discharged": [],
+                  "fallback": null,
+                  "answered": [
+                    {
+                      "target": "fixture-durable-calls/test/calls",
+                      "outcome": "killed"
+                    }
+                  ]
+                },
+                "reuse": {
+                  "reused": false,
+                  "source_run_id": null
+                }
+              },
+              {
+                "catalog_index": 1,
+                "id": "f2bf6da1f6716e159487f82d868252557c56e3a79fdc59e61c1e007e31ea2abe",
+                "display_id": "f2bf6da1f6716e159487",
+                "path": "src/lib.rs",
+                "position": {
+                  "line": 29,
+                  "column": 17,
+                  "character_column": 17
+                },
+                "rule": "true-to-false",
+                "item": "save_cut",
+                "original": "true",
+                "replacement": "false",
+                "decision": {
+                  "outcome": "killed",
+                  "killed_by": "fixture-durable-calls/test/calls",
+                  "step_boundary": null
+                },
+                "evidence": {
+                  "kind": "unproven",
+                  "reasons": [
+                    "not-sealed"
+                  ]
+                },
+                "accepted": false,
+                "blind_in": [],
+                "routing": {
+                  "granularity": "test",
+                  "reaching": [
+                    "fixture-durable-calls/test/calls"
+                  ],
+                  "discharged": [],
+                  "fallback": null,
+                  "answered": [
+                    {
+                      "target": "fixture-durable-calls/test/calls",
+                      "outcome": "killed"
+                    }
+                  ]
+                },
+                "reuse": {
+                  "reused": false,
+                  "source_run_id": null
+                }
+              },
+              {
+                "catalog_index": 2,
+                "id": "1d99dd6558026df69c231eda925e68e4726bd7bc0f11dc06d96be33fde1f1b3b",
+                "display_id": "1d99dd6558026df69c23",
+                "path": "src/lib.rs",
+                "position": {
+                  "line": 30,
+                  "column": 19,
+                  "character_column": 19
+                },
+                "rule": "false-to-true",
+                "item": "save_cut",
+                "original": "false",
+                "replacement": "true",
+                "decision": {
+                  "outcome": "survived",
+                  "killed_by": null,
+                  "step_boundary": null
+                },
+                "evidence": {
+                  "kind": "unproven",
+                  "reasons": [
+                    "not-sealed"
+                  ]
+                },
+                "accepted": false,
+                "blind_in": [],
+                "routing": {
+                  "granularity": "test",
+                  "reaching": [
+                    "fixture-durable-calls/test/calls"
+                  ],
+                  "discharged": [],
+                  "fallback": null,
+                  "answered": [
+                    {
+                      "target": "fixture-durable-calls/test/calls",
+                      "outcome": "survived"
+                    }
+                  ]
+                },
+                "reuse": {
+                  "reused": false,
+                  "source_run_id": null
+                }
+              }
+            ],
+            "findings": [
+              {
+                "kind": "target-missing",
+                "subject": "fixture-durable-calls/lib/fixture_durable_calls",
+                "detail": "the target ran nothing, so nothing was observed",
+                "origin": {
+                  "scope": "source",
+                  "build": "default",
+                  "run_id": "20260929t101316847z-017c4e-b0000000000",
+                  "part": {
+                    "kind": "whole"
+                  }
+                },
+                "path": null,
+                "position": null
+              },
+              {
+                "kind": "unproven-mutant",
+                "subject": "6de8164de42cdbacbda9",
+                "detail": "no sealed execution established a verdict about true-to-false at src/lib.rs (nothing was sealed to put it to), so the native run's killed is a lead and not a verdict",
+                "origin": {
+                  "scope": "source",
+                  "build": "default",
+                  "run_id": "20260929t101316847z-017c4e-b0000000000",
+                  "part": {
+                    "kind": "whole"
+                  }
+                },
+                "path": "src/lib.rs",
+                "position": {
+                  "line": 28,
+                  "column": 16,
+                  "character_column": 16
+                }
+              },
+              {
+                "kind": "unproven-mutant",
+                "subject": "f2bf6da1f6716e159487",
+                "detail": "no sealed execution established a verdict about true-to-false at src/lib.rs (nothing was sealed to put it to), so the native run's killed is a lead and not a verdict",
+                "origin": {
+                  "scope": "source",
+                  "build": "default",
+                  "run_id": "20260929t101316847z-017c4e-b0000000000",
+                  "part": {
+                    "kind": "whole"
+                  }
+                },
+                "path": "src/lib.rs",
+                "position": {
+                  "line": 29,
+                  "column": 17,
+                  "character_column": 17
+                }
+              },
+              {
+                "kind": "unproven-mutant",
+                "subject": "1d99dd6558026df69c23",
+                "detail": "no sealed execution established a verdict about false-to-true at src/lib.rs (nothing was sealed to put it to), so the native run's survived is a lead and not a verdict",
+                "origin": {
+                  "scope": "source",
+                  "build": "default",
+                  "run_id": "20260929t101316847z-017c4e-b0000000000",
+                  "part": {
+                    "kind": "whole"
+                  }
+                },
+                "path": "src/lib.rs",
+                "position": {
+                  "line": 30,
+                  "column": 19,
+                  "character_column": 19
+                }
+              },
+              {
+                "kind": "corrupt-after-crash",
+                "subject": "292d4ac548720092fc5d",
+                "detail": "the process stopped just after the call at src/lib.rs:19 writes, and the next run of fixture-durable-calls/test/calls::a_count_synced_goes_up failed over what it left (a_count_synced_goes_up): what `save_synced` writes cannot be started over after a stop there",
+                "origin": {
+                  "scope": "source",
+                  "build": "default",
+                  "run_id": "20260929t101316847z-017c4e-b0000000000",
+                  "part": {
+                    "kind": "whole"
+                  }
+                },
+                "path": "src/lib.rs",
+                "position": {
+                  "line": 19,
+                  "column": 20,
+                  "character_column": 20
+                }
+              },
+              {
+                "kind": "corrupt-after-crash",
+                "subject": "038e61c5e5563678098a",
+                "detail": "the process stopped just after the call at src/lib.rs:33 writes, and the next run of fixture-durable-calls/test/calls::a_count_cut_and_written_again_goes_up failed over what it left (a_count_cut_and_written_again_goes_up): what `save_cut` writes cannot be started over after a stop there",
+                "origin": {
+                  "scope": "source",
+                  "build": "default",
+                  "run_id": "20260929t101316847z-017c4e-b0000000000",
+                  "part": {
+                    "kind": "whole"
+                  }
+                },
+                "path": "src/lib.rs",
+                "position": {
+                  "line": 33,
+                  "column": 5,
+                  "character_column": 5
+                }
+              },
+              {
+                "kind": "corrupt-after-crash",
+                "subject": "2fd0547df2b31383ccac",
+                "detail": "the process stopped just after the call at src/lib.rs:39 writes, and the next run of fixture-durable-calls/test/calls::a_count_kept_through_a_buffer_goes_up failed over what it left (a_count_kept_through_a_buffer_goes_up): what `save_buffered` writes cannot be started over after a stop there",
+                "origin": {
+                  "scope": "source",
+                  "build": "default",
+                  "run_id": "20260929t101316847z-017c4e-b0000000000",
+                  "part": {
+                    "kind": "whole"
+                  }
+                },
+                "path": "src/lib.rs",
+                "position": {
+                  "line": 39,
+                  "column": 46,
+                  "character_column": 46
+                }
+              },
+              {
+                "kind": "corrupt-after-crash",
+                "subject": "afa2b77939a0384e80a8",
+                "detail": "the process stopped just after the call at src/lib.rs:40 writes, and the next run of fixture-durable-calls/test/calls::a_count_kept_through_a_buffer_goes_up failed over what it left (a_count_kept_through_a_buffer_goes_up): what `save_buffered` writes cannot be started over after a stop there",
+                "origin": {
+                  "scope": "source",
+                  "build": "default",
+                  "run_id": "20260929t101316847z-017c4e-b0000000000",
+                  "part": {
+                    "kind": "whole"
+                  }
+                },
+                "path": "src/lib.rs",
+                "position": {
+                  "line": 40,
+                  "column": 5,
+                  "character_column": 5
+                }
+              },
+              {
+                "kind": "not-measured",
+                "subject": "d34933c33f5c8f73db80",
+                "detail": "a stop just after the call at src/lib.rs:61 writes was not decided on fixture-durable-calls/test/child::a_count_kept_by_a_child_goes_up: a process the test started stopped at the call and the test's own process ended with no exit status of its own, so the stop is not one the next run's test made",
+                "origin": {
+                  "scope": "source",
+                  "build": "default",
+                  "run_id": "20260929t101316847z-017c4e-b0000000000",
+                  "part": {
+                    "kind": "whole"
+                  }
+                },
+                "path": "src/lib.rs",
+                "position": {
+                  "line": 61,
+                  "column": 5,
+                  "character_column": 5
+                }
+              }
+            ],
+            "limitations": [
+              {
+                "name": "git-metadata-unavailable",
+                "detail": "git could not be asked, so the run cannot name the commit it verified"
+              },
+              {
+                "name": "baseline-passed-unparsed",
+                "detail": "the tests the target's baseline was read as passing do not come to the count its own summary gave, so a line the suite wrote past the harness read as a result; which tests passed is not known, and its reach is not compared with a control's (fixture-durable-calls/test/child)"
+              },
+              {
+                "name": "touch-not-recorded",
+                "detail": "the target's guards recorded nothing this run can route by, so every test of it reaches every mutation in it and none of them is narrowed (fixture-durable-calls/doc/fixture_durable_calls)"
+              },
+              {
+                "name": "drift-not-measured",
+                "detail": "no original-code control over the tests its baseline passed recorded what 2 targets reached, so whether their reach is a function of the target is not known and every proof read off their baseline rests on one run (fixture-durable-calls/lib/fixture_durable_calls, fixture-durable-calls/test/child)"
+              },
+              {
+                "name": "schedule-not-explored",
+                "detail": "4 test binaries are not proven to run one thread and no schedule of them was explored, so what they do when their threads interleave otherwise is not known (fixture-durable-calls/doc/fixture_durable_calls, fixture-durable-calls/lib/fixture_durable_calls, fixture-durable-calls/test/calls, fixture-durable-calls/test/child)"
+              }
+            ],
+            "drift": [
+              {
+                "state": "not-measured",
+                "target": "fixture-durable-calls/lib/fixture_durable_calls",
+                "why": "control-failed"
+              },
+              {
+                "state": "held",
+                "target": "fixture-durable-calls/test/calls"
+              },
+              {
+                "state": "not-measured",
+                "target": "fixture-durable-calls/test/child",
+                "why": "unparsed"
+              }
+            ],
+            "repaired": [],
+            "knobs": [],
+            "concurrency": [
+              {
+                "target": "fixture-durable-calls/doc/fixture_durable_calls",
+                "standing": {
+                  "state": "not-proven",
+                  "why": [
+                    {
+                      "kind": "no-touch"
+                    },
+                    {
+                      "kind": "doctest"
+                    }
+                  ]
+                },
+                "explored": {
+                  "state": "unexplored",
+                  "why": "not-passing"
+                }
+              },
+              {
+                "target": "fixture-durable-calls/lib/fixture_durable_calls",
+                "standing": {
+                  "state": "concurrent",
+                  "because": [
+                    {
+                      "kind": "parallel-tests"
+                    }
+                  ]
+                },
+                "explored": {
+                  "state": "unexplored",
+                  "why": "not-passing"
+                }
+              },
+              {
+                "target": "fixture-durable-calls/test/calls",
+                "standing": {
+                  "state": "concurrent",
+                  "because": [
+                    {
+                      "kind": "parallel-tests"
+                    }
+                  ]
+                },
+                "explored": {
+                  "state": "unexplored",
+                  "why": "not-asked"
+                }
+              },
+              {
+                "target": "fixture-durable-calls/test/child",
+                "standing": {
+                  "state": "concurrent",
+                  "because": [
+                    {
+                      "kind": "parallel-tests"
+                    }
+                  ]
+                },
+                "explored": {
+                  "state": "unexplored",
+                  "why": "no-site"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "global_findings": [],
+    "model_completion": {
+      "kind": "not-required"
+    }
+  }
+}

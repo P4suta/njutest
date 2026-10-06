@@ -36,7 +36,7 @@ const SOURCE: &str = "fn f(a: bool, b: bool, c: bool) -> bool { a || b && c }\n"
 #[test]
 fn the_probe_sees_a_text_read_on_this_thread() {
     let before = texts_on_this_thread();
-    let read = syn::parse_file(SOURCE);
+    let read = njutest_devkit::lexed::file(SOURCE);
     assert!(read.is_ok(), "the source parses");
     assert_eq!(
         texts_on_this_thread(),
@@ -73,7 +73,7 @@ fn a_file_whose_read_backs_would_spend_the_threads_locations_is_refused_by_name(
         whole.is_ok(),
         "with the ceiling a thread has, the file discovers"
     );
-    let two_readings = (source.len() * 3 + 1) * 2;
+    let two_readings = (source.len() + 1) * 2;
     let refused = rust_mutants::testkit::source::discover_within(two_readings, source);
     let Err(error) = refused else {
         panic!(
@@ -86,6 +86,99 @@ fn a_file_whose_read_backs_would_spend_the_threads_locations_is_refused_by_name(
         "RM0018",
         "the refusal names the ceiling it met, not a parse error or a smaller discovery: {error}"
     );
+}
+
+#[test]
+fn a_reading_spends_of_its_threads_locations_what_it_lexes_and_no_more() {
+    let source = "fn f(a: u8) -> u8 { a }\n";
+    let two_readings = (source.len() + 1) * 2;
+    let read = rust_mutants::testkit::source::discover_within(two_readings, source);
+    assert!(
+        read.is_ok(),
+        "discovery lexes the file twice, and each lexing takes its length and the one position \
+         left between texts: a thread with exactly that much reads it: {read:?}"
+    );
+    let short = rust_mutants::testkit::source::discover_within(two_readings - 1, source);
+    assert!(
+        short.is_err(),
+        "and a thread with one position less refuses it: {short:?}"
+    );
+}
+
+/// Negative numbers where syn reads each back to split its sign from its digits, one context to a text, each at the one position a law can count.
+const RELEXED: [&str; 12] = [
+    "fn f(x: i8) { match x { -1 => {} _ => {} } }",
+    "fn f(x: i8) { match x { -2..=-1 => {} _ => {} } }",
+    "fn f(x: i8) { match x { -1 | -2 => {} _ => {} } }",
+    "fn f(x: (i8, i8)) { match x { (-1, _) => {} _ => {} } }",
+    "fn f(x: i8) { let -1 = x else { return }; }",
+    "type T = F<-1>;",
+    "type T = F<-1, -2>;",
+    "fn f() -> F<-1> { g::<-1>() }",
+    "struct S<const N: i8 = -1>;",
+    "impl Tr<-1> for S {}",
+    "#[a = -1] fn f() {}",
+    "fn f(x: f32) { match x { -1.5 => {} _ => {} } }",
+];
+
+#[test]
+fn syn_reads_a_negative_number_back_no_more_often_than_a_reading_charges_it() {
+    for text in RELEXED {
+        let sites = text.matches('-').count();
+        let counted = rust_mutants::parsing::apart(|_| {
+            let before = texts_on_this_thread();
+            let read = njutest_devkit::lexed::file(text);
+            let after = texts_on_this_thread();
+            (read.is_ok(), after - before - 2)
+        });
+        let Ok((true, again)) = counted else {
+            panic!("the context is Rust: {text}")
+        };
+        assert!(
+            again <= rust_mutants::parsing::READ_AGAIN * sites,
+            "syn lexed {again} texts again for {sites} negative numbers, more than the {} a \
+             reading charges each, so a text of them would spend what nobody charged: {text}",
+            rust_mutants::parsing::READ_AGAIN
+        );
+    }
+    let most = rust_mutants::parsing::apart(|_| {
+        let before = texts_on_this_thread();
+        let read = njutest_devkit::lexed::file("type T = F<-1>;");
+        (read.is_ok(), texts_on_this_thread() - before - 2)
+    });
+    assert!(
+        matches!(most, Ok((true, again)) if again == rust_mutants::parsing::READ_AGAIN),
+        "a generic argument is where syn reads a negative number back the most, and the charge \
+         is that and no more: {most:?}"
+    );
+}
+
+#[test]
+fn a_file_is_charged_its_length_and_what_syn_may_lex_of_it_again_exactly() {
+    let again = rust_mutants::parsing::READ_AGAIN;
+    for (text, numbers) in [
+        ("fn f() {}", 0),
+        ("fn f(a: u8) -> u8 { a + 1 }", 0),
+        ("fn f(a: u8) -> u8 { a - 1 }", 3),
+        ("fn f(x: i8) { match x { -2..=-1 => {} _ => {} } }", 6),
+        ("type T = F<-1, -2>;", 6),
+        ("fn f(x: f32) { match x { -1.5 => {} _ => {} } }", 5),
+        ("fn f(x: i64) { match x { - 100 => {} _ => {} } }", 5),
+    ] {
+        let exact = text.len() + 1 + again * numbers;
+        let read = rust_mutants::testkit::source::file_within(exact, text);
+        assert!(
+            read.is_ok(),
+            "{text:?} reads on exactly its length and one position after it, and {again} readings \
+             of every number a minus sign stands before, at its length, its sign and one position \
+             after it: {read:?}"
+        );
+        let short = rust_mutants::testkit::source::file_within(exact - 1, text);
+        assert!(
+            matches!(short, Err(ref error) if error.code().code == "RM0018"),
+            "and one position less is refused before it is lexed: {text:?}: {short:?}"
+        );
+    }
 }
 
 #[test]

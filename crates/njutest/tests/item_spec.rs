@@ -120,9 +120,12 @@ fn a_change_nothing_was_established_about_is_neither_pinned_nor_free() {
 #[test]
 fn a_change_one_build_noticed_and_another_did_not_is_free_and_says_which_is_which() {
     let mut killed = at(0, Decided::Killed { by: LIB.to_owned() });
-    killed.routing = Some(routed(&[LIB], &[], &[(LIB, Outcome::Killed)]));
+    njutest::testkit::reports::asked(&mut killed, routed(&[LIB], &[], &[(LIB, Outcome::Killed)]));
     let mut survived = at(0, Decided::Survived);
-    survived.routing = Some(routed(&[LIB], &[], &[(LIB, Outcome::Survived)]));
+    njutest::testkit::reports::asked(
+        &mut survived,
+        routed(&[LIB], &[], &[(LIB, Outcome::Survived)]),
+    );
     let report = run(vec![("default", vec![killed]), ("release", vec![survived])]);
     let spec = specified(&report, &Subject::Everything).expect("a run with one change");
     let change = only(&spec);
@@ -165,7 +168,10 @@ fn a_change_one_build_noticed_and_another_did_not_is_free_and_says_which_is_whic
 #[test]
 fn a_change_that_is_the_same_program_in_one_build_and_free_in_another_is_free() {
     let mut survived = at(0, Decided::Survived);
-    survived.routing = Some(routed(&[LIB], &[], &[(LIB, Outcome::Survived)]));
+    njutest::testkit::reports::asked(
+        &mut survived,
+        routed(&[LIB], &[], &[(LIB, Outcome::Survived)]),
+    );
     let report = run(vec![
         ("default", vec![at(0, Decided::Equivalent)]),
         ("release", vec![survived]),
@@ -177,7 +183,7 @@ fn a_change_that_is_the_same_program_in_one_build_and_free_in_another_is_free() 
 #[test]
 fn a_change_one_build_noticed_and_another_found_the_same_program_is_pinned() {
     let mut killed = at(0, Decided::Killed { by: LIB.to_owned() });
-    killed.routing = Some(routed(&[LIB], &[], &[(LIB, Outcome::Killed)]));
+    njutest::testkit::reports::asked(&mut killed, routed(&[LIB], &[], &[(LIB, Outcome::Killed)]));
     let report = run(vec![
         ("default", vec![killed]),
         ("release", vec![at(0, Decided::Equivalent)]),
@@ -194,11 +200,14 @@ fn a_change_one_build_noticed_and_another_found_the_same_program_is_pinned() {
 #[test]
 fn a_kill_names_who_ran_it_first_and_who_reaches_it_and_was_never_asked() {
     let mut killed = at(0, Decided::Killed { by: IT.to_owned() });
-    killed.routing = Some(routed(
-        &[LIB, IT, MORE],
-        &[],
-        &[(LIB, Outcome::Survived), (IT, Outcome::Killed)],
-    ));
+    njutest::testkit::reports::asked(
+        &mut killed,
+        routed(
+            &[LIB, IT, MORE],
+            &[],
+            &[(LIB, Outcome::Survived), (IT, Outcome::Killed)],
+        ),
+    );
     assert_eq!(
         held(killed).0,
         Held::Pinned(Pin::Tests {
@@ -217,25 +226,30 @@ fn a_kill_names_who_ran_it_first_and_who_reaches_it_and_was_never_asked() {
 }
 
 #[test]
-fn a_survivor_a_proof_removed_every_target_of_says_the_proof_and_not_that_anything_ran_it() {
+fn a_survivor_a_proof_removed_every_target_of_is_a_lead_since_nothing_sealed_ran_it() {
     let mut removed = at(0, Decided::Survived);
-    removed.routing = Some(routed(&[], &[LIB], &[]));
+    removed.evidence = Some(rust_mutants::sealed::record::Evidence::Unproven {
+        reasons: vec![rust_mutants::sealed::record::Doubt::NotSealed],
+    });
+    njutest::testkit::reports::asked(&mut removed, routed(&[], &[LIB], &[]));
     assert_eq!(
         held(removed).0,
-        Held::Free {
-            free: Free::Removed(vec![Discharged {
-                target: LIB.to_owned(),
-                proof: NEVER_INFECTED,
-            }]),
-            accepted: false,
-        }
+        Held::Unsettled(Unsettled::Unproven {
+            lead: "survived",
+            reasons: vec![rust_mutants::sealed::record::Doubt::NotSealed.said()],
+        }),
+        "a proof over what a native run recorded removed every target, and nothing sealed ran \
+         it, so the survival is a lead and the specification says so (ADR 0046)"
     );
 }
 
 #[test]
 fn a_survivor_some_targets_ran_and_a_proof_removed_the_rest_of_says_both() {
     let mut partly = at(0, Decided::Survived);
-    partly.routing = Some(routed(&[IT], &[LIB], &[(IT, Outcome::Survived)]));
+    njutest::testkit::reports::asked(
+        &mut partly,
+        routed(&[IT], &[LIB], &[(IT, Outcome::Survived)]),
+    );
     assert_eq!(
         held(partly).0,
         Held::Free {
@@ -265,7 +279,10 @@ fn a_change_nothing_executes_is_free_because_nothing_ran_it_and_not_because_noth
 #[test]
 fn an_accepted_survivor_is_free_and_says_a_reviewer_accepted_it() {
     let mut accepted = at(0, Decided::Survived);
-    accepted.routing = Some(routed(&[LIB], &[], &[(LIB, Outcome::Survived)]));
+    njutest::testkit::reports::asked(
+        &mut accepted,
+        routed(&[LIB], &[], &[(LIB, Outcome::Survived)]),
+    );
     accepted.accepted = true;
     assert_eq!(
         held(accepted).0,
@@ -296,7 +313,7 @@ fn what_the_compiler_refuses_the_types_pin_and_what_it_renders_identically_is_th
 fn an_answer_an_earlier_run_established_says_which_run_and_claims_nothing_about_who_else_was_asked()
 {
     let mut reused = at(0, Decided::Killed { by: IT.to_owned() });
-    reused.routing = Some(routed(&[LIB, IT], &[], &[]));
+    njutest::testkit::reports::asked(&mut reused, routed(&[LIB, IT], &[], &[]));
     reused.reuse = Reuse(Established::ReadBackFrom("an-earlier-run".to_owned()));
     let (held, established) = held(reused.clone());
     assert_eq!(
@@ -492,6 +509,9 @@ fn said(held: &Held) -> Vec<&'static str> {
         Held::Same(Same::Compiled) => vec!["the compiler renders it identically"],
         Held::Same(Same::Model) => {
             vec!["the model checker proves the two equal throughout its domain"]
+        }
+        Held::Unsettled(Unsettled::Unproven { .. }) => {
+            vec!["no sealed execution decided it"]
         }
         Held::Unsettled(Unsettled::StepLimit { .. }) => {
             vec!["pkg/test/it crossed its step allowance at 11 without a verdict"]
@@ -694,11 +714,14 @@ fn a_free_change_that_rests_on_a_target_whose_reach_moved_says_so_and_a_kill_doe
         },
     };
     let mut kept_off = at(0, Decided::Survived);
-    kept_off.routing = Some(routed(&[IT], &[], &[(IT, Outcome::Survived)]));
+    njutest::testkit::reports::asked(
+        &mut kept_off,
+        routed(&[IT], &[], &[(IT, Outcome::Survived)]),
+    );
     let mut asked = at(1, Decided::Survived);
-    asked.routing = Some(routed(&[LIB], &[], &[(LIB, Outcome::Survived)]));
+    njutest::testkit::reports::asked(&mut asked, routed(&[LIB], &[], &[(LIB, Outcome::Survived)]));
     let mut killed = at(2, Decided::Killed { by: IT.to_owned() });
-    killed.routing = Some(routed(&[IT], &[], &[(IT, Outcome::Killed)]));
+    njutest::testkit::reports::asked(&mut killed, routed(&[IT], &[], &[(IT, Outcome::Killed)]));
     let report = njutest::testkit::reports::completed_with_drift(
         "the-run",
         RunKind::Full,

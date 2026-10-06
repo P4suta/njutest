@@ -77,23 +77,29 @@ fn collect_items(items: &[syn::Item], within: &mut Vec<String>, found: &mut BTre
 }
 
 fn production_harnesses() -> BTreeSet<String> {
-    let source_root = root().join("crates/rust-mutants/src");
     let mut found = BTreeSet::new();
-    for entry in walkdir::WalkDir::new(&source_root) {
-        let entry = entry.expect("the production source tree is readable");
-        let path = entry.path();
-        if !entry.file_type().is_file()
-            || path.extension().is_none_or(|extension| extension != "rs")
-        {
-            continue;
+    for crate_source in [
+        "crates/rust-mutants/src",
+        "crates/rust-mutants-decision/src",
+    ] {
+        let source_root = root().join(crate_source);
+        for entry in walkdir::WalkDir::new(&source_root) {
+            let entry = entry.expect("the production source tree is readable");
+            let path = entry.path();
+            if !entry.file_type().is_file()
+                || path.extension().is_none_or(|extension| extension != "rs")
+            {
+                continue;
+            }
+            let source = std::fs::read_to_string(path).expect("production Rust source is readable");
+            let syntax =
+                njutest_devkit::lexed::file(&source).expect("production Rust source parses");
+            let relative = path
+                .strip_prefix(&source_root)
+                .expect("the walk yields paths under its own root");
+            let mut within = module_path(relative);
+            collect_items(&syntax.items, &mut within, &mut found);
         }
-        let source = std::fs::read_to_string(path).expect("production Rust source is readable");
-        let syntax = syn::parse_file(&source).expect("production Rust source parses");
-        let relative = path
-            .strip_prefix(&source_root)
-            .expect("the walk yields paths under its own root");
-        let mut within = module_path(relative);
-        collect_items(&syntax.items, &mut within, &mut found);
     }
     found
 }
@@ -112,7 +118,9 @@ fn every_production_kani_harness_is_proved_by_the_exact_local_and_ci_task() {
         .collect();
     let spoken = arguments.join(" ");
     assert!(
-        spoken.starts_with("kani -p rust-mutants --lib --exact --no-assertion-reach-checks"),
+        spoken.starts_with(
+            "kani -p rust-mutants -p rust-mutants-decision --lib --exact --no-assertion-reach-checks"
+        ),
         "the verifier must reject an ambiguous harness name: {spoken}"
     );
     assert!(
@@ -123,6 +131,15 @@ fn every_production_kani_harness_is_proved_by_the_exact_local_and_ci_task() {
         .into_iter()
         .map(str::to_owned)
         .collect();
+    assert!(
+        xtask::kanilaws::INPUTS.contains(&"crates/rust-mutants-decision/src"),
+        "the cached proof key must include the kernel source"
+    );
+    assert!(
+        xtask::kanilaws::INPUTS.contains(&"crates/rust-mutants-adapt/src")
+            && xtask::kanilaws::INPUTS.contains(&"crates/rust-mutants-adapt/Cargo.toml"),
+        "a cached proof must include the adapter crate its production laws compile against"
+    );
     assert_eq!(
         asked.len(),
         xtask::kanilaws::harnesses().len(),

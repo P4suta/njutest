@@ -29,3 +29,51 @@ fn stop(pid: i64) { unsafe { libc::syscall(libc::SYS_kill, pid, 9); } }
 fn stop(job: isize) { unsafe { TerminateJobObject(job, 1); } }
 === xtask-beside-its-one-place source xtask/src/lanes.rs
 fn stop(pid: rustix::process::Pid) { let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL); }
+=== program-by-its-path source crates/app/src/lib.rs
+fn stop() { let _ = std::process::Command::new("/usr/bin/pkill"); }
+=== program-by-a-windows-path source crates/app/src/lib.rs
+fn stop() { let _ = std::process::Command::new("C:\\Windows\\System32\\TASKKILL.EXE"); }
+=== program-a-constant-names source crates/app/src/lib.rs
+const PROGRAM: &str = "kill";
+fn stop() { let _ = std::process::Command::new(PROGRAM); }
+=== program-a-helper-starts source crates/app/src/lib.rs
+fn start(program: &str) -> std::process::Command { std::process::Command::new(program) }
+fn stop() { let _ = start("killall"); }
+=== program-a-wrapper-starts source crates/app/src/lib.rs
+fn stop() { let _ = std::process::Command::new("sudo").args(["-n", "kill", "42"]); }
+=== argv-written-out source crates/app/src/lib.rs
+fn argv() -> [&'static str; 2] { ["pkill", "runner"] }
+=== script-a-shell-runs source crates/app/src/lib.rs
+fn stop() { let _ = std::process::Command::new("sh").args(["-c", "sleep 1; kill -9 -1"]); }
+=== script-built-over-statements source crates/app/src/lib.rs
+fn stop() { let mut shell = std::process::Command::new("sh"); shell.arg("-c"); shell.arg("killall runner"); }
+=== script-powershell-runs source crates/app/src/lib.rs
+fn stop() { let _ = std::process::Command::new("powershell").args(["-Command", "Stop-Process -Id 42"]); }
+=== system-call-by-number source crates/app/src/lib.rs
+fn stop(pid: i64) { unsafe { libc::syscall(62, pid, 9); } }
+=== assembly source crates/app/src/lib.rs
+fn stop() { unsafe { core::arch::asm!("syscall"); } }
+=== foreign-declaration source crates/app/src/lib.rs
+unsafe extern "C" { fn kill(pid: i32, sig: i32) -> i32; }
+=== linked-by-name source crates/app/src/lib.rs
+unsafe extern "C" { #[link_name = "killpg"] fn end(group: i32, sig: i32) -> i32; }
+=== method-of-a-foreign-type source crates/app/src/lib.rs
+fn stop(process: &sysinfo::Process) { process.kill(); }
+=== method-of-an-untyped-receiver source crates/app/src/lib.rs
+fn stop() { let _ = lookup(42).kill(); }
+=== method-no-child-has source crates/app/src/lib.rs
+fn stop(pid: Pid) { let _ = pid.killpg(); }
+=== build-script source crates/app/build.rs
+fn main() { unsafe { libc::kill(1, 9); } }
+=== fuzz-target source fuzz/fuzz_targets/stop.rs
+fn stop() { unsafe { libc::kill(1, 9); } }
+=== example source crates/app/examples/stop.rs
+fn main() { unsafe { libc::kill(1, 9); } }
+=== benchmark source crates/app/benches/stop.rs
+fn main() { unsafe { libc::kill(1, 9); } }
+=== compiler-surface source compiler-surfaces/src/bin/stop.rs
+fn main() { unsafe { libc::kill(1, 9); } }
+=== module-under-src-tests source crates/app/src/tests/stop.rs
+fn stop() { unsafe { libc::kill(1, 9); } }
+=== retained-generation-signal source crates/app/src/lib.rs
+fn stop(token: AuditToken) { unsafe { proc_signal_with_audittoken(&token, 9); } }

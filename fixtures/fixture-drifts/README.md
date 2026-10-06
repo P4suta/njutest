@@ -22,6 +22,7 @@ the mutations of `return_visit` are `unreached` on its word, and those of `first
 That run reaches `return_visit`, whose value the test does not assert on, so both survive by an execution rather than being unreached on the word of a baseline the control contradicted.
 Nothing rests on the moved record any more, so the run raises no `unstable-baseline` and names the target in `reach-moved` instead.
 The engine alone raises nothing, because it never asks a control what it reached; its fates below are what that one baseline record decides.
+Sealed, `std::env::temp_dir` names the instance's own temporary directory, which lies in no run scratch, so every instance takes the first path, as the table's first and last rows say, and the fates are sealed verdicts.
 
 | Function | Baseline reaches it | Control reaches it | What a run says |
 | --- | --- | --- | --- |

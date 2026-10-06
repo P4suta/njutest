@@ -4,6 +4,8 @@
 //! Test support behind the `testkit` feature: fakes for the seams the engine exposes, and generators for its property tests.
 
 pub mod compile;
+pub mod evidence;
+pub mod loader;
 pub mod measuring;
 pub mod opening;
 pub mod source;

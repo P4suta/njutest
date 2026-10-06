@@ -1,0 +1,64 @@
+{
+  "schema": "njutest-reader-recording-v1",
+  "fixture": "fixture-simple",
+  "arguments": [
+    "run",
+    "--offline",
+    "--locked"
+  ],
+  "recording_arguments": [
+    "--trace"
+  ],
+  "command": [
+    "/Users/yasunobu/projects/github.com/P4suta/njutest-w18/target/debug/rust-mutants",
+    "run",
+    "--offline",
+    "--locked",
+    "--trace",
+    "--root",
+    "/Users/yasunobu/njutest-oc/evidence/batch/phase3/package-C/reader-recording-products/run-report-default/trees/fixture-simple"
+  ],
+  "source_root": "/Users/yasunobu/njutest-oc/evidence/batch/phase3/package-C/reader-recording-products/run-report-default/trees/fixture-simple",
+  "program": "/Users/yasunobu/projects/github.com/P4suta/njutest-w18/target/debug/rust-mutants",
+  "producer_revision": "e93ae5e0828e339e08c2f0ed2f7a7e2600ae8b75",
+  "exit_code": 1,
+  "sources": {
+    "Cargo.lock": "dfdad12c97a16673b591d188a3bffb2ad11104f6b01435c0798d22162bef6648",
+    "Cargo.toml": "b46a61b6aaa2e86d98bcf2fad36214ee74e7c25ac29c7aa4373b4028d4d0def1",
+    "README.md": "61cd77621458b19bb386b10958145115838a32031ac09120c304e35b1d6e6ff5",
+    "src/lib.rs": "e5c82cdb402211599158ceb4098e7411234f0c43a03f8dca8774d753b04880c6",
+    "src/testutil.rs": "f69eb1f4ed834eb1989f6c3f0dc96a01fb7378279086ca5fb55368d098cc3e37",
+    "tests/parity.rs": "9772dfdbc6ec9e8e76d252744c0764a6fa821ad4871a44010fccc3332992b08f"
+  },
+  "artifacts": {
+    "reports/mutation/.gitignore": "cdbcae15105d6b781e620813c79c7e868740d4e9cc53ce6f5fcbbc12387adf4b",
+    "reports/mutation/20261002t160420233z/carried-v1.json": "eaef98655bfbbf7920f7c78908d258f3d02536fb1d820caad9aab766f48dbe4f",
+    "reports/mutation/20261002t160420233z/catalog-v1.json": "ebccb3c18eaa20b5a2dbf843bc39d9b0c2c9fd77b70ae720479e1f13d18e787e",
+    "reports/mutation/20261002t160420233z/reached-v1.json": "d77c1d7db0f396354fd4d4452ebb966d883214ffd12e44f64c4da9727d66227f",
+    "reports/mutation/20261002t160420233z/run-report-v1.json": "dfc51ca3ae27e028158e14d27f8ce0cc7f5898d7551ed0493587ac33c98c4fee",
+    "reports/mutation/20261002t160420233z/skeletons-v1.json": "78a5d95d80dbc1374ab1be1a2fbf66654a627cbe9dd3569b94d0026c6000bb04",
+    "reports/mutation/20261002t160420233z/touched-v1.json": "9e56c7b998530cef736fb7b5c9245e408fdfd28f6fa71f51fc484ca1f996aaaa",
+    "reports/mutation/20261002t160420233z/trace/output/28.txt": "c75468ff5c8e61e6d9a4ca4884b84c00a8e6a46b5f7d4090c6bb271e74ea27a9",
+    "reports/mutation/20261002t160420233z/trace/output/43.txt": "e068a7ad76a2e972153e4821de573e5eb8df7cf3a5b46b80dcd1610452d3ac4e",
+    "reports/mutation/20261002t160420233z/trace/output/57.txt": "4101afb70485455fd13d7dbd4748120b06f5d12b93b01df5cff560e3f80fe568",
+    "reports/mutation/20261002t160420233z/trace/output/64.txt": "b7d6292cb48df45e45b3f5999cfc96757c682e2c094672a39d2f3c5a48ce036a",
+    "reports/mutation/20261002t160420233z/trace/output/67.txt": "a71973468d89fb69336ef433463e94f3ed5806e812b6e839acc8b97259280463",
+    "reports/mutation/20261002t160420233z/trace/output/70.txt": "10c0c667c7030b7433d3ec39ebe38f0e5c628fb57072173bd2dd8c1b95ec616c",
+    "reports/mutation/20261002t160420233z/trace/output/84.txt": "b1ee4ff6be710e62029630d745b310e90fe7b10ed31c9b5ac49800c143864e4f",
+    "reports/mutation/20261002t160420233z/trace/output/87.txt": "f07b498a509bfb2e78e3c7fe9e59e817450f0b33ca1848b92e224c7cf5b573aa",
+    "reports/mutation/20261002t160420233z/trace/trace.jsonl": "1883799cfeeab6cb23151d3f3ed5c40a938600ec7b9094c10f8d88c8fc541da0",
+    "reports/mutation/latest.json": "4f79714f56e9e4a80330aab04ac0f95447d808f538814ddbcf85a48aa9c79205"
+  },
+  "provenance": {
+    "producer-source.tar": "8f4c7e436aaa5d1952052a126d3b17dcad71ebced28501db239e47d66c640e65",
+    "producer.json": "1a492e5b031bc6b53c6efe2d4e357bd6a944cfa8e43e372634969a12b2b6c8b6",
+    "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stdout": "b1e551dabe6df19818f57e85d0269bce8a2166f9fc08d7a22c3574edc5ebc7ac"
+  },
+  "subjects": [
+    {
+      "report": "reports/mutation/20261002t160420233z/run-report-v1.json",
+      "trace": "reports/mutation/20261002t160420233z/trace/trace.jsonl"
+    }
+  ]
+}

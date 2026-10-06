@@ -1,5 +1,6 @@
 # Exact procedural-macro packages in each locked Cargo graph.
 # graph  package  version  source
+root async-trait 0.1.92 registry+https://github.com/rust-lang/crates.io-index
 root clap_derive 4.6.7 registry+https://github.com/rust-lang/crates.io-index
 root darling_macro 0.24.1 registry+https://github.com/rust-lang/crates.io-index
 root defmt-macros 1.1.1 registry+https://github.com/rust-lang/crates.io-index
@@ -13,6 +14,7 @@ root num-derive 0.4.2 registry+https://github.com/rust-lang/crates.io-index
 root palette_derive 0.7.7 registry+https://github.com/rust-lang/crates.io-index
 root pest_derive 2.9.1 registry+https://github.com/rust-lang/crates.io-index
 root phf_macros 0.11.3 registry+https://github.com/rust-lang/crates.io-index
+root pulley-macros 48.0.4 registry+https://github.com/rust-lang/crates.io-index
 root ref-cast-impl 1.0.27 registry+https://github.com/rust-lang/crates.io-index
 root rustversion 1.0.23 registry+https://github.com/rust-lang/crates.io-index
 root serde_derive 1.0.229 registry+https://github.com/rust-lang/crates.io-index
@@ -20,8 +22,10 @@ root strum_macros 0.28.0 registry+https://github.com/rust-lang/crates.io-index
 root thiserror-impl 1.0.69 registry+https://github.com/rust-lang/crates.io-index
 root thiserror-impl 2.0.20 registry+https://github.com/rust-lang/crates.io-index
 root wasm-bindgen-macro 0.2.127 registry+https://github.com/rust-lang/crates.io-index
+root wasmtime-internal-versioned-export-macros 48.0.4 registry+https://github.com/rust-lang/crates.io-index
 root wezterm-dynamic-derive 0.1.1 registry+https://github.com/rust-lang/crates.io-index
 root zerocopy-derive 0.8.56 registry+https://github.com/rust-lang/crates.io-index
+fuzz async-trait 0.1.92 registry+https://github.com/rust-lang/crates.io-index
 fuzz clap_derive 4.6.7 registry+https://github.com/rust-lang/crates.io-index
 fuzz darling_macro 0.24.1 registry+https://github.com/rust-lang/crates.io-index
 fuzz defmt-macros 1.1.1 registry+https://github.com/rust-lang/crates.io-index
@@ -36,10 +40,12 @@ fuzz num-derive 0.4.2 registry+https://github.com/rust-lang/crates.io-index
 fuzz palette_derive 0.7.7 registry+https://github.com/rust-lang/crates.io-index
 fuzz pest_derive 2.9.1 registry+https://github.com/rust-lang/crates.io-index
 fuzz phf_macros 0.11.3 registry+https://github.com/rust-lang/crates.io-index
+fuzz pulley-macros 48.0.4 registry+https://github.com/rust-lang/crates.io-index
 fuzz rustversion 1.0.23 registry+https://github.com/rust-lang/crates.io-index
 fuzz serde_derive 1.0.229 registry+https://github.com/rust-lang/crates.io-index
 fuzz strum_macros 0.28.0 registry+https://github.com/rust-lang/crates.io-index
 fuzz thiserror-impl 1.0.69 registry+https://github.com/rust-lang/crates.io-index
 fuzz thiserror-impl 2.0.20 registry+https://github.com/rust-lang/crates.io-index
 fuzz wasm-bindgen-macro 0.2.128 registry+https://github.com/rust-lang/crates.io-index
+fuzz wasmtime-internal-versioned-export-macros 48.0.4 registry+https://github.com/rust-lang/crates.io-index
 fuzz wezterm-dynamic-derive 0.1.1 registry+https://github.com/rust-lang/crates.io-index

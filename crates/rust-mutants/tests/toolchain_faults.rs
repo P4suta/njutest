@@ -13,8 +13,8 @@ use rust_mutants::testkit::opening::opening;
 use rust_mutants::workspace::Workspace;
 
 #[test]
-fn a_failed_call_is_noticed_where_a_test_checks_it_and_refused_where_nothing_can_be_made() {
-    let fixture = Fixture::copy("fixture-faulted");
+fn a_fault_is_carried_beside_the_deletion_of_the_question_it_answers() {
+    let fixture = Fixture::copy("fixture-faulted-ignore");
     let session = Workspace::open(
         fixture.root(),
         opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
@@ -23,13 +23,65 @@ fn a_failed_call_is_noticed_where_a_test_checks_it_and_refused_where_nothing_can
     .expect("open")
     .prepare(
         &PrepareOptions {
-            operators: vec!["inject-error".to_owned()],
+            operators: vec![
+                "inject-error".to_owned(),
+                "question-to-unwrap".to_owned(),
+                "ignore-question-statement".to_owned(),
+            ],
             touch: true,
-            ..PrepareOptions::default()
+            ..PrepareOptions::new(rust_mutants::rule::Tier::Balanced)
         },
         &Cancel::new(),
     )
     .expect("prepare");
+    let beside: Vec<(String, String)> = session
+        .catalog()
+        .mutants()
+        .iter()
+        .filter_map(|mutant| {
+            session.fault_beside(mutant).map(|fault| {
+                (
+                    mutant.candidate.rule.name.to_owned(),
+                    fault.index.to_string(),
+                )
+            })
+        })
+        .collect();
+    assert_eq!(
+        beside,
+        vec![
+            ("question-to-unwrap".to_owned(), "0".to_owned()),
+            ("ignore-question-statement".to_owned(), "0".to_owned()),
+        ],
+        "a fault nests inside both alternatives that ask about the call it fails: the unwrap \
+         that answers the failure, and the deletion of the question that swallows it, since a \
+         survivor that swallows the failure is exactly the one the fault can tell apart \
+         (ADR 0032 decision 6): {beside:?}"
+    );
+}
+
+#[test]
+fn a_failed_call_is_noticed_where_a_test_checks_it_and_refused_where_nothing_can_be_made() {
+    let fixture = Fixture::copy("fixture-faulted");
+    let events = fixture.temp().join("clock-events");
+    std::fs::create_dir_all(&events).expect("clock events");
+    let mut options = opening(&njutest_devkit::paths::cargo_binary(), fixture.temp());
+    options.env.set("NJUTEST_TEST_CLOCK", events.as_os_str());
+    let cancel = Cancel::new().with_clock(rust_mutants::runner::Clock::events(events));
+    let session = Workspace::open(fixture.root(), options, &cancel)
+        .expect("open")
+        .prepare(
+            &PrepareOptions {
+                operators: vec!["inject-error".to_owned()],
+                mutant_timeout: rust_mutants::session::Timeout::Fixed(
+                    std::time::Duration::from_secs(2),
+                ),
+                touch: true,
+                ..PrepareOptions::new(rust_mutants::rule::Tier::Balanced)
+            },
+            &cancel,
+        )
+        .expect("prepare");
     let rejected: Vec<&str> = session
         .rejections()
         .iter()
@@ -52,7 +104,7 @@ fn a_failed_call_is_noticed_where_a_test_checks_it_and_refused_where_nothing_can
             "not-put".to_owned()
         } else {
             let result = session
-                .exec(&Request::new(mutant.id.to_string()), &Cancel::new())
+                .exec(&Request::new(mutant.id.to_string()), &cancel)
                 .expect("the fault runs");
             match result.outcome() {
                 Outcome::Killed => "noticed".to_owned(),
@@ -74,6 +126,9 @@ fn a_failed_call_is_noticed_where_a_test_checks_it_and_refused_where_nothing_can
             ("measured".to_owned(), "unnoticed".to_owned()),
             ("ours".to_owned(), "not-put".to_owned()),
             ("maybe".to_owned(), "not-put".to_owned()),
+            ("spare".to_owned(), "not_run".to_owned()),
+            ("linger".to_owned(), "waited".to_owned()),
+            ("refused".to_owned(), "not_run".to_owned()),
         ]),
         "a read that fails is seen by the test that checks it and by nobody where the answer is \
          thrown away; an error type the engine cannot make, and an `Option`, are never guessed \
@@ -95,7 +150,7 @@ fn a_survivor_is_told_apart_only_with_the_fault_at_its_own_site_beside_it() {
         &PrepareOptions {
             operators: vec!["question-to-unwrap".to_owned(), "inject-error".to_owned()],
             touch: true,
-            ..PrepareOptions::default()
+            ..PrepareOptions::new(rust_mutants::rule::Tier::Balanced)
         },
         &Cancel::new(),
     )
@@ -171,7 +226,7 @@ fn a_fault_the_instrumentation_did_not_carry_into_a_branch_is_refused_beside_it(
         &PrepareOptions {
             operators: vec!["question-to-unwrap".to_owned(), "inject-error".to_owned()],
             touch: true,
-            ..PrepareOptions::default()
+            ..PrepareOptions::new(rust_mutants::rule::Tier::Balanced)
         },
         &Cancel::new(),
     )

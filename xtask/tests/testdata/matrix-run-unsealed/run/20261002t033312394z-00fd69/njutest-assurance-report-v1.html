@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Insufficient — fixture-simple</title>
+<style>body{font-family:system-ui,sans-serif;margin:2rem auto;max-width:60rem;line-height:1.5}h1{margin:0}h1.assured{color:#0a6}h1.not-assured{color:#a30}.identity{color:#666;margin-top:0}table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:.25rem .5rem;border-bottom:1px solid #ddd;vertical-align:top}code{font-family:ui-monospace,monospace}td.survived,td.failed,td.missing{color:#a30}td.killed,td.passed{color:#0a6}p.none{color:#666}</style>
+</head>
+<body>
+<h1 class="not-assured">Insufficient</h1>
+<p class="identity">fixture-simple · 20261002t033312394z-00fd69</p>
+<h2>Findings</h2>
+<table>
+<tr><th>Kind</th><th>Subject</th><th>Detail</th><th>At</th></tr>
+<tr><td>dimension-not-measured</td><td><code>mutation</code></td><td>10 thing(s) the mutation dimension put were not decided, so it is not established along it: 4f09b8f6515d886cf638: a native lead of killed no sealed execution established; 36f3786c607b20288246: a native lead of killed no sealed execution established; 97dcf2a134137b47d185: a native lead of killed no sealed execution established; 355723c8d204e44dac60: a native lead of killed no sealed execution established; f0d20edfda2959667ff1: a native lead of survived no sealed execution established; 29fa56091a8bb5622f20: a native lead of killed no sealed execution established; 7dade0daa6fdfca0540a: a native lead of killed no sealed execution established; c7df40a2d69eae0d983d: a native lead of killed no sealed execution established; 00e556aa9db45bd9d1d5: a native lead of killed no sealed execution established; 4cd205f7d6faa29392ae: a native lead of killed no sealed execution established</td><td></td></tr>
+<tr><td>dimension-not-measured</td><td><code>schedule</code></td><td>3 thing(s) the schedule dimension put were not decided, so it is not established along it: fixture-simple/doc/fixture_simple: its baseline did not pass, so no schedule of it could be held; fixture-simple/lib/fixture_simple: every delayed schedule passed, which is a sample of its schedules and never all of them; fixture-simple/test/parity: every delayed schedule passed, which is a sample of its schedules and never all of them</td><td></td></tr>
+<tr><td>unproven-mutant</td><td><code>4f09b8f6515d886cf638</code></td><td>no sealed execution established a verdict about return-default at src/lib.rs (nothing was sealed to put it to), so the native run&#39;s killed is a lead and not a verdict</td><td>11:5</td></tr>
+<tr><td>unproven-mutant</td><td><code>36f3786c607b20288246</code></td><td>no sealed execution established a verdict about negate-condition at src/lib.rs (nothing was sealed to put it to), so the native run&#39;s killed is a lead and not a verdict</td><td>11:8</td></tr>
+<tr><td>unproven-mutant</td><td><code>97dcf2a134137b47d185</code></td><td>no sealed execution established a verdict about condition-to-true at src/lib.rs (nothing was sealed to put it to), so the native run&#39;s killed is a lead and not a verdict</td><td>11:8</td></tr>
+<tr><td>unproven-mutant</td><td><code>355723c8d204e44dac60</code></td><td>no sealed execution established a verdict about condition-to-false at src/lib.rs (nothing was sealed to put it to), so the native run&#39;s killed is a lead and not a verdict</td><td>11:8</td></tr>
+<tr><td>unproven-mutant</td><td><code>f0d20edfda2959667ff1</code></td><td>no sealed execution established a verdict about gt-to-ge at src/lib.rs (nothing was sealed to put it to), so the native run&#39;s survived is a lead and not a verdict: no test could have noticed it natively, since every one of the 1 targets that reach it was removed without being run, by never-infected</td><td>11:10</td></tr>
+<tr><td>unproven-mutant</td><td><code>29fa56091a8bb5622f20</code></td><td>no sealed execution established a verdict about return-default at src/lib.rs (nothing was sealed to put it to), so the native run&#39;s killed is a lead and not a verdict</td><td>11:16</td></tr>
+<tr><td>unproven-mutant</td><td><code>7dade0daa6fdfca0540a</code></td><td>no sealed execution established a verdict about return-default at src/lib.rs (nothing was sealed to put it to), so the native run&#39;s killed is a lead and not a verdict</td><td>11:27</td></tr>
+<tr><td>unproven-mutant</td><td><code>c7df40a2d69eae0d983d</code></td><td>no sealed execution established a verdict about return-true at src/lib.rs (nothing was sealed to put it to), so the native run&#39;s killed is a lead and not a verdict</td><td>16:5</td></tr>
+<tr><td>unproven-mutant</td><td><code>00e556aa9db45bd9d1d5</code></td><td>no sealed execution established a verdict about rem-to-mul at src/lib.rs (nothing was sealed to put it to), so the native run&#39;s killed is a lead and not a verdict</td><td>16:7</td></tr>
+<tr><td>unproven-mutant</td><td><code>4cd205f7d6faa29392ae</code></td><td>no sealed execution established a verdict about eq-to-neq at src/lib.rs (nothing was sealed to put it to), so the native run&#39;s killed is a lead and not a verdict</td><td>16:11</td></tr>
+</table>
+<h2>Accounting</h2>
+<table>
+<tr><th>What</th><th>How many</th></tr>
+<tr><td>targets selected</td><td>2</td></tr>
+<tr><td>targets passed</td><td>2</td></tr>
+<tr><td>targets failed</td><td>0</td></tr>
+<tr><td>targets skipped</td><td>0</td></tr>
+<tr><td>targets missing</td><td>0</td></tr>
+<tr><td>mutants cataloged</td><td>10</td></tr>
+<tr><td>mutants rejected</td><td>0</td></tr>
+<tr><td>mutants executed</td><td>10</td></tr>
+<tr><td>mutants killed</td><td>9</td></tr>
+<tr><td>mutants survived</td><td>1</td></tr>
+<tr><td>mutants unreached</td><td>0</td></tr>
+<tr><td>mutants accepted</td><td>0</td></tr>
+</table>
+<h2>Targets</h2>
+<table>
+<tr><th>Status</th><th>Target</th><th>Took</th><th>Said</th></tr>
+<tr><td class="passed">passed</td><td><code>fixture-simple/lib/fixture_simple</code></td><td>230 ms</td><td></td></tr>
+<tr><td class="passed">passed</td><td><code>fixture-simple/test/parity</code></td><td>225 ms</td><td></td></tr>
+</table>
+<h2>Mutants</h2>
+<table>
+<tr><th>Outcome</th><th>Mutant</th><th>Where</th><th>Rule</th><th>Noticed by</th></tr>
+<tr><td class="unproven">unproven</td><td><code>4f09b8f6515d886cf638</code></td><td><code>src/lib.rs:11</code></td><td>return-default</td><td>default: fixture-simple/lib/fixture_simple</td></tr>
+<tr><td class="unproven">unproven</td><td><code>36f3786c607b20288246</code></td><td><code>src/lib.rs:11</code></td><td>negate-condition</td><td>default: fixture-simple/lib/fixture_simple</td></tr>
+<tr><td class="unproven">unproven</td><td><code>97dcf2a134137b47d185</code></td><td><code>src/lib.rs:11</code></td><td>condition-to-true</td><td>default: fixture-simple/lib/fixture_simple</td></tr>
+<tr><td class="unproven">unproven</td><td><code>355723c8d204e44dac60</code></td><td><code>src/lib.rs:11</code></td><td>condition-to-false</td><td>default: fixture-simple/lib/fixture_simple</td></tr>
+<tr><td class="unproven">unproven</td><td><code>f0d20edfda2959667ff1</code></td><td><code>src/lib.rs:11</code></td><td>gt-to-ge</td><td></td></tr>
+<tr><td class="unproven">unproven</td><td><code>29fa56091a8bb5622f20</code></td><td><code>src/lib.rs:11</code></td><td>return-default</td><td>default: fixture-simple/lib/fixture_simple</td></tr>
+<tr><td class="unproven">unproven</td><td><code>7dade0daa6fdfca0540a</code></td><td><code>src/lib.rs:11</code></td><td>return-default</td><td>default: fixture-simple/lib/fixture_simple</td></tr>
+<tr><td class="unproven">unproven</td><td><code>c7df40a2d69eae0d983d</code></td><td><code>src/lib.rs:16</code></td><td>return-true</td><td>default: fixture-simple/test/parity</td></tr>
+<tr><td class="unproven">unproven</td><td><code>00e556aa9db45bd9d1d5</code></td><td><code>src/lib.rs:16</code></td><td>rem-to-mul</td><td>default: fixture-simple/test/parity</td></tr>
+<tr><td class="unproven">unproven</td><td><code>4cd205f7d6faa29392ae</code></td><td><code>src/lib.rs:16</code></td><td>eq-to-neq</td><td>default: fixture-simple/test/parity</td></tr>
+</table>
+<h2>Evidence under a fault</h2>
+<p class="none">No survivor was told apart under a fault.</p>
+<h2>Limitations</h2>
+<table>
+<tr><th>Name</th><th>What is not claimed</th></tr>
+<tr><td><code>git-metadata-unavailable</code></td><td>git could not be asked, so the run cannot name the commit it verified</td></tr>
+<tr><td><code>touch-not-recorded</code></td><td>the target&#39;s guards recorded nothing this run can route by, so every test of it reaches every mutation in it and none of them is narrowed (fixture-simple/doc/fixture_simple)</td></tr>
+<tr><td><code>skipped-test-only-file</code></td><td>2 places were not mutated: test-only-file</td></tr>
+<tr><td><code>skipped-let-condition</code></td><td>1 place was not mutated: let-condition</td></tr>
+<tr><td><code>schedule-not-explored</code></td><td>1 test binary is not proven to run one thread and no schedule of it was explored, so what it does when its threads interleave otherwise is not known (fixture-simple/doc/fixture_simple)</td></tr>
+<tr><td><code>schedule-sampled</code></td><td>2 test binaries are passed every schedule a delayed guard made, which is a sample of the schedules and not all of them, so a race none of those delays exposed is not ruled out (fixture-simple/lib/fixture_simple, fixture-simple/test/parity)</td></tr>
+<tr><td><code>fault-no-site</code></td><td>no measured file has a `?`, so there was no call a fault could fail</td></tr>
+<tr><td><code>crash-no-site</code></td><td>no measured file calls anything that writes, so there was nothing to stop after</td></tr>
+</table>
+<h2>Identity</h2>
+<table>
+<tr><th>What</th><th>Value</th></tr>
+<tr><td>commit</td><td><code>unavailable</code></td></tr>
+<tr><td>branch</td><td><code>unavailable</code></td></tr>
+<tr><td>dirty</td><td><code>false</code></td></tr>
+<tr><td>started</td><td><code>2026-10-02T03:33:12.394514Z</code></td></tr>
+<tr><td>compute total</td><td><code>31171 ms</code></td></tr>
+<tr><td>configuration</td><td><code>5a89dd74e8ec1aa425c45badf56d3db55e3a58104fa0a9e33325f346c254c533</code></td></tr>
+<tr><td>build</td><td><code>default</code></td></tr>
+<tr><td>rustc</td><td><code>rustc 1.98.0 (88d9e12ae 2026-08-18)</code></td></tr>
+<tr><td>target</td><td><code>aarch64-apple-darwin</code></td></tr>
+</table>
+</body>
+</html>

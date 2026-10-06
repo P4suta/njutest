@@ -15,24 +15,25 @@ pub(crate) fn main() -> ExitCode {
         Ok(interruptible) => interruptible,
         Err(error) => {
             eprintln!("cargo-rust-mutants: cannot install the cancellation handlers: {error}");
-            return ExitCode::from(2);
+            return ExitCode::from(rust_mutants::run::EXIT_FAILED);
         }
     };
     let program = match std::env::current_exe() {
         Ok(program) => program,
         Err(error) => {
             eprintln!("cargo-rust-mutants: cannot identify the running executable: {error}");
-            return ExitCode::from(2);
+            return ExitCode::from(rust_mutants::run::EXIT_FAILED);
         }
     };
     let working_directory = match std::env::current_dir() {
         Ok(directory) => directory,
         Err(error) => {
             eprintln!("cargo-rust-mutants: cannot read the working directory: {error}");
-            return ExitCode::from(2);
+            return ExitCode::from(rust_mutants::run::EXIT_FAILED);
         }
     };
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         temp_directory: std::env::temp_dir(),
         program,
         cache_directory: Environment::cache_directory_of(&vars),

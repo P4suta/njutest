@@ -3,6 +3,9 @@
 
 //! The public entry point: a read-only source tree, copied.
 
+mod pool;
+
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -11,7 +14,7 @@ use crate::cargo::{Driver, LocateOptions, Metadata, MetadataOptions, Toolchain};
 use crate::error::{self, ErrorCode};
 use crate::glob::Pattern;
 use crate::runner::Cancel;
-use crate::session::{PrepareOptions, Session, prepare};
+use crate::session::{PrepareOptions, Session, discovered, prepare};
 use crate::snapshot::{self, DIR_PREFIX, Options as SnapshotOptions, Snapshot};
 use crate::tempowner::{self, SweepResult};
 use crate::trace::{OpenRecord, Recorder, SnapshotRecord, SweepRecord};
@@ -70,6 +73,17 @@ pub fn target_of(parent: &Path, root: &Path) -> PathBuf {
     parent.join(format!("{TARGET_DIR_PREFIX}{}", keyed(root)))
 }
 
+/// The sealed build cache beside the target directory `target`, named by the tree's content `digest`.
+fn sealed_target_of(target: &Path, digest: &str) -> std::io::Result<PathBuf> {
+    Ok(target.with_file_name(format!(
+        "{TARGET_DIR_PREFIX}sealed-{}",
+        crate::keyed::name(digest)?
+    )))
+}
+
+/// The directory inside a sealed build cache cargo is handed as its target directory.
+const SEALED_BUILD: &str = "sealed";
+
 /// The `at`th scratch directory under `parent`, where a run's test processes work.
 #[must_use]
 pub fn scratch_of(parent: &Path, at: u32) -> PathBuf {
@@ -115,6 +129,8 @@ fn claim_scratch(
 /// Configures [`Workspace::open`].
 #[derive(Debug, Clone, Default)]
 pub struct OpenOptions {
+    /// The explicit compiled-module owner retained across compatible preparation paths.
+    pub module_owner: crate::sealed::ModuleOwner,
     /// The cargo to use: a path, or a bare name to find on `search_path`.
     pub cargo: Option<PathBuf>,
     /// The `PATH` a bare cargo name is searched on.
@@ -229,6 +245,7 @@ const WATCHED_NAME: &str = "watched";
 /// A read-only source tree and the disposable copy of it this run works in.
 #[derive(Debug)]
 pub struct Workspace {
+    pub(crate) module_owner: crate::sealed::ModuleOwner,
     pub(crate) snapshot: Snapshot,
     /// The rules the snapshot was copied under, which a survey of the source must follow to say what a copy would hold.
     pub(crate) rules: SnapshotOptions,
@@ -250,6 +267,7 @@ pub struct Workspace {
     pub(crate) offline: bool,
     pub(crate) locked: bool,
     pub(crate) trace: Recorder,
+    build_owner: Option<std::sync::Arc<crate::sealed::BuildClaim>>,
 }
 
 /// Why the workspace layer could not do what it was asked.
@@ -382,6 +400,16 @@ pub enum SessionError {
         /// What changed.
         changes: Vec<crate::apparatus::Change>,
     },
+    /// An include of a Rust source of the tree could not be pointed at the source as it was copied, so the build would read what the run rewrites.
+    #[error(
+        "{}: an include of a Rust source could not be pointed at the source as it was copied: {source}",
+        error::INSTRUMENT_SOURCE_MISMATCH.code
+    )]
+    IncludeUnkept {
+        /// What stopped it.
+        #[source]
+        source: crate::verbatim::VerbatimError,
+    },
     /// The instrumented tree could not be written.
     #[error("{}: cannot write {path} into the snapshot: {source}", error::SESSION_WRITE_FAILED.code)]
     WriteFailed {
@@ -436,6 +464,41 @@ pub enum SessionError {
         /// The exact position invariant that failed.
         #[source]
         source: crate::syntax::PositionError,
+    },
+    /// A mutation of the catalog has no position in the text its session holds of its file, so nothing written about it could say where it is.
+    #[error(
+        "{}: {mutant} has no position in the text of {path} this session holds, so nothing \
+         written about it could say where it is",
+        error::INSTRUMENT_SOURCE_MISMATCH.code
+    )]
+    UnplacedMutation {
+        /// The mutation, as a person reads its identity.
+        mutant: String,
+        /// The workspace-relative path of its file.
+        path: String,
+    },
+    /// A mutation of the catalog is attributed to no package or no item, so nothing written about it could say whose it is.
+    #[error(
+        "{}: {mutant} is attributed to no {missing} in this session, so nothing written about \
+         it could say whose it is",
+        error::INSTRUMENT_UNKNOWN_MUTANT.code
+    )]
+    UnattributedMutation {
+        /// The mutation, as a person reads its identity.
+        mutant: String,
+        /// What it is attributed to none of: `package` or `item`.
+        missing: &'static str,
+    },
+    /// A judgement names a mutant the session's catalog does not hold, so no row about it could say what it is.
+    #[error(
+        "{}: mutant {index} ({id}) was judged, and the catalog holds no mutant at that index",
+        error::INSTRUMENT_UNKNOWN_MUTANT.code
+    )]
+    UncatalogedJudgement {
+        /// The catalog index the judgement names.
+        index: u32,
+        /// The identity the judgement names.
+        id: String,
     },
     /// A file used to bind retained build evidence was outside the copied tree.
     #[error(
@@ -794,6 +857,9 @@ impl SessionError {
             Self::PristineBroken { .. } => error::SESSION_PRISTINE_BROKEN,
             Self::VerifyFailed { .. } => error::SESSION_VERIFY_FAILED,
             Self::UnknownMutant { .. } => error::SESSION_UNKNOWN_MUTANT,
+            Self::UncatalogedJudgement { .. } | Self::UnattributedMutation { .. } => {
+                error::INSTRUMENT_UNKNOWN_MUTANT
+            }
             Self::NotBeside { .. } => error::SESSION_NOT_BESIDE,
             Self::CrashNonceUnavailable { .. } => error::SESSION_NONCE_UNAVAILABLE,
             Self::HomeUnbuilt { .. } | Self::IdentityUncopied { .. } => error::SESSION_HOME_UNBUILT,
@@ -834,9 +900,11 @@ impl SessionError {
             | Self::ScratchUnreadable { .. }
             | Self::WorkspacePathNotUtf8 { .. }
             | Self::CatalogTextNotUtf8 { .. } => error::SESSION_WRITE_FAILED,
-            Self::SelectionSourceMissing { .. }
+            Self::IncludeUnkept { .. }
+            | Self::SelectionSourceMissing { .. }
             | Self::SelectionSourceNotUtf8 { .. }
             | Self::SelectionPositionInvalid { .. }
+            | Self::UnplacedMutation { .. }
             | Self::EvidencePathOutside { .. }
             | Self::EvidencePathNotUtf8 { .. }
             | Self::EvidencePathInvalid { .. }
@@ -927,9 +995,16 @@ impl Workspace {
     /// The snapshot's refusals, and whatever stopped the toolchain from being located or `cargo metadata` from being read.
     pub fn open(
         root: &Path,
-        options: OpenOptions,
+        mut options: OpenOptions,
         cancel: &Cancel,
     ) -> Result<Self, crate::EngineError> {
+        options.trace = options.trace.costed(&options.env, root).map_err(|source| {
+            SessionError::WriteFailed {
+                path: "test cost diagnostic".to_owned(),
+                source,
+            }
+        })?;
+        crate::trace::unlabelled(&mut options.env);
         let phase = options.trace.phase("open");
         let root = match crate::canonical::canonical(root) {
             Ok(root) => root,
@@ -939,19 +1014,21 @@ impl Workspace {
         let now = jiff::Timestamp::now();
         let swept = swept(parent.path(), now);
 
-        let toolchain = Toolchain::locate(
-            &LocateOptions {
-                cargo: options.cargo.clone(),
-                search_path: options.search_path.clone(),
-                env: Some(options.env.clone()),
-            },
-            &root,
-            cancel,
-        )?;
+        let locating = crate::runner::Watched::new(cancel, &options.trace);
+        let toolchain = Self::located(&root, &options, &locating)?;
         let build_dir = Self::reachable(&root, &toolchain, &options, cancel)?;
 
         let rules = Self::rules_for(&root, build_dir, parent.path(), &options)?;
-        let snapshot = Self::copy(&root, &rules, &options, now)?;
+        let (snapshot, build_owner) = Self::shared(
+            &rules,
+            &options,
+            &Driver {
+                toolchain: &toolchain,
+                dir: &root,
+                cancel,
+                trace: &options.trace,
+            },
+        )?;
         let (watched, base_env) = Self::watching(&snapshot, &options.env)?;
         let (scratch_dir, scratch_owner) = claim_scratch(parent.path(), now)?;
         let base_env = tested(
@@ -960,19 +1037,9 @@ impl Workspace {
             (&snapshot, &scratch_dir, &options.trace),
             cancel,
         )?;
-        options.trace.open(OpenRecord {
-            root: root.display().to_string(),
-            snapshot_dir: snapshot.dir().display().to_string(),
-            stable_dir: snapshot.stable_dir(),
-            sweep: Some(SweepRecord {
-                parent: parent.path().display().to_string(),
-                removed: trace_count("removed temporary directories", swept.removed.len())?,
-                removed_bytes: swept.removed_bytes,
-                live: trace_count("live temporary directories", swept.live)?,
-                kept: trace_count("kept temporary directories", swept.kept)?,
-                failures: trace_count("temporary cleanup failures", swept.failures.len())?,
-            }),
-        });
+        options
+            .trace
+            .open(Self::opening(&root, &snapshot, (parent.path(), &swept))?);
         let metadata = Metadata::load(
             &Driver {
                 toolchain: &toolchain,
@@ -985,12 +1052,16 @@ impl Workspace {
                 offline: options.offline,
             },
         )?;
-        let target_dir = target_of(parent.path(), &root);
+        let target_dir = match &build_owner {
+            Some(owner) => Self::shared_target(owner.dir(), &snapshot, &metadata, &options.env)?,
+            None => target_of(parent.path(), &root),
+        };
         let target_owner = claim_target(&target_dir, now, &root);
         let scratch_owner = Some(scratch_owner);
         phase.end();
         Ok(Self {
             snapshot,
+            module_owner: options.module_owner,
             rules,
             watched,
             toolchain,
@@ -1005,6 +1076,111 @@ impl Workspace {
             offline: options.offline,
             locked: options.locked,
             trace: options.trace,
+            build_owner,
+        })
+    }
+
+    /// Locates the compiler with exactly the caller's explicit input environment.
+    fn located(
+        root: &Path,
+        options: &OpenOptions,
+        watch: &crate::runner::Watched<'_>,
+    ) -> Result<Toolchain, crate::cargo::CargoError> {
+        let mut exclusions = options.exclude.clone();
+        if let Some(output) = &options.report_directory {
+            let path = crate::id::normalize_path(output).map_err(|source| {
+                crate::cargo::CargoError::new(
+                    crate::cargo::CargoErrorKind::CommandFailed,
+                    "an invalid observation output path",
+                )
+                .with_source(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    source,
+                ))
+            })?;
+            exclusions.push(Pattern::compile(&path).map_err(|source| {
+                crate::cargo::CargoError::new(
+                    crate::cargo::CargoErrorKind::CommandFailed,
+                    "an invalid observation output pattern",
+                )
+                .with_source(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    source,
+                ))
+            })?);
+        }
+        Toolchain::locate_with_exclusions(
+            &LocateOptions {
+                cargo: options.cargo.clone(),
+                search_path: options.search_path.clone(),
+                env: Some(options.env.clone()),
+            },
+            root,
+            &exclusions,
+            watch,
+        )
+    }
+
+    /// The shared target identity, including every input of an opaque compilation graph.
+    fn shared_target(
+        slot: &Path,
+        snapshot: &Snapshot,
+        metadata: &Metadata,
+        vars: &crate::vars::Variables,
+    ) -> Result<PathBuf, SessionError> {
+        pool::target(slot, snapshot, metadata, vars).map_err(|source| SessionError::WriteFailed {
+            path: "shared fixture build inputs".to_owned(),
+            source,
+        })
+    }
+
+    /// Makes each editable copy from the one verified immutable source graph.
+    fn shared(
+        rules: &SnapshotOptions,
+        options: &OpenOptions,
+        driver: &Driver<'_>,
+    ) -> Result<(Snapshot, Option<std::sync::Arc<crate::sealed::BuildClaim>>), crate::EngineError>
+    {
+        let now = jiff::Timestamp::now();
+        if options.env.holds("NJUTEST_FIXTURE_BUILD_CACHE") {
+            let graph = pool::Graph::open(rules, options, now)?;
+            let owner = pool::claim(
+                graph.retained_root(),
+                &options.env,
+                (graph.key(), driver.toolchain),
+                now,
+            )
+            .map_err(pool::unavailable)?
+            .ok_or_else(|| {
+                pool::unavailable(std::io::Error::other(
+                    "a retained source graph needs an editable lease",
+                ))
+            })?;
+            let snapshot = graph.copy((driver.dir, owner.dir().to_path_buf()), options, now)?;
+            let owner = std::sync::Arc::new(crate::sealed::BuildClaim::new(owner, None));
+            return Ok((snapshot, Some(owner)));
+        }
+        Ok((Self::copy(driver.dir, rules, options, now)?, None))
+    }
+
+    /// The opening event, with the original temporary area's complete sweep counts.
+    fn opening(
+        root: &Path,
+        snapshot: &Snapshot,
+        (parent, swept): (&Path, &SweepResult),
+    ) -> Result<OpenRecord, SessionError> {
+        Ok(OpenRecord {
+            root: root.display().to_string(),
+            snapshot_dir: snapshot.dir().display().to_string(),
+            stable_dir: snapshot.stable_dir(),
+            sweep: Some(SweepRecord {
+                parent: parent.display().to_string(),
+                removed: trace_count("removed temporary directories", swept.removed.len())?,
+                removed_bytes: swept.removed_bytes,
+                live: trace_count("live temporary directories", swept.live)?,
+                kept: trace_count("kept temporary directories", swept.kept)?,
+                failures: trace_count("temporary cleanup failures", swept.failures.len())?,
+            }),
         })
     }
 
@@ -1116,14 +1292,10 @@ impl Workspace {
             Ok(root) => root,
             Err(_root_has_no_physical_spelling) => root.to_path_buf(),
         };
-        let toolchain = Toolchain::locate(
-            &LocateOptions {
-                cargo: options.cargo.clone(),
-                search_path: options.search_path.clone(),
-                env: Some(options.env.clone()),
-            },
+        let toolchain = Self::located(
             &root,
-            cancel,
+            options,
+            &crate::runner::Watched::new(cancel, &options.trace),
         )?;
         let build_dir = Self::reachable(&root, &toolchain, options, cancel)?;
         let rules = Self::rules_for(&root, build_dir, &options.temp_directory, options)?;
@@ -1153,6 +1325,61 @@ impl Workspace {
     /// Returns a snapshot walk or read failure rather than treating an unreadable tree as unchanged.
     pub fn changes(&self) -> Result<Vec<snapshot::Drift>, snapshot::SnapshotError> {
         self.snapshot.redigest()
+    }
+
+    /// Points every include of a Rust source of the tree in `units`' sources at that source as it was copied, records what that rewrote as the copy's own, and says each include in the trace.
+    ///
+    /// # Errors
+    /// What [`crate::verbatim::keep`] refuses, and a rewritten file the snapshot cannot record.
+    pub(crate) fn keep_includes_verbatim(
+        &mut self,
+        units: &[crate::cargo::Unit],
+    ) -> Result<Vec<crate::verbatim::Kept>, crate::EngineError> {
+        let root = self.snapshot.root().to_path_buf();
+        let relative = |path: &Path| match path.strip_prefix(&root) {
+            Ok(inside) => match crate::id::slashed(inside) {
+                Ok(named) => Some(named),
+                Err(_unnameable) => None,
+            },
+            Err(_outside) => None,
+        };
+        let packages: BTreeMap<&str, Option<String>> = self
+            .metadata
+            .packages
+            .iter()
+            .map(|package| (package.id.as_str(), relative(package.manifest_dir())))
+            .collect();
+        let mut sources: BTreeMap<String, Option<String>> = BTreeMap::new();
+        for unit in units {
+            let package = match packages.get(unit.package_id.as_str()) {
+                Some(directory) => directory.clone(),
+                None => None,
+            };
+            for source in &unit.sources {
+                if let Some(named) = relative(source) {
+                    sources.entry(named).or_insert_with(|| package.clone());
+                }
+            }
+        }
+        let kept = crate::verbatim::keep(&root, &sources)
+            .map_err(|source| SessionError::IncludeUnkept { source })?;
+        let rewritten: Vec<String> = kept
+            .iter()
+            .flat_map(|one| [one.reader.clone(), one.copy.clone()])
+            .collect::<BTreeSet<String>>()
+            .into_iter()
+            .collect();
+        self.snapshot.absorb(&rewritten)?;
+        for one in &kept {
+            self.trace.note(
+                crate::verbatim::NOTE,
+                &format!(
+                    "{}:{} reads {} as it was copied, from {}, not as the run rewrites it",
+                    one.reader, one.line, one.read, one.copy
+                ),
+            );
+        }
+        Ok(kept)
     }
 
     /// Makes the private tree as it stands now the baseline for later [`Self::changes`] checks.
@@ -1221,11 +1448,45 @@ impl Workspace {
             })
             .collect();
         crate::cargo::BuildDir::new(self.target_dir.clone(), members)
+            .rooted(self.snapshot.root().to_path_buf())
+            .with_graph(&self.metadata)
+    }
+
+    /// A sealed build cache named by the tree's content, with ownership held until its modules are dropped.
+    ///
+    /// # Errors
+    /// The tree's content digest names no directory.
+    pub(crate) fn sealed_build_dir(
+        &self,
+    ) -> Result<
+        (
+            crate::cargo::BuildDir,
+            Option<std::sync::Arc<crate::sealed::BuildClaim>>,
+        ),
+        SessionError,
+    > {
+        let path = sealed_target_of(&self.target_dir, self.snapshot.workspace_digest()).map_err(
+            |source| SessionError::WriteFailed {
+                path: "sealed build directory".to_owned(),
+                source,
+            },
+        )?;
+        let owner = claim_target(&path, jiff::Timestamp::now(), self.root()).map(|owner| {
+            std::sync::Arc::new(crate::sealed::BuildClaim::new(
+                owner,
+                self.build_owner.clone(),
+            ))
+        });
+        Ok((self.build_dir().at(path).nested(SEALED_BUILD), owner))
     }
 
     /// Ends every process this run started that is still running, having left every execution's process group, and says so in the trace.
     fn stop_escaped(&self) {
-        let found = match crate::escaped::working_under(&[self.snapshot.dir(), &self.scratch_dir]) {
+        let adoption = self.snapshot.adoption();
+        let found = match crate::escaped::working_under(
+            adoption,
+            &[self.snapshot.dir(), &self.scratch_dir],
+        ) {
             Ok(found) => found,
             Err(error) => {
                 self.trace.note(
@@ -1238,13 +1499,18 @@ impl Workspace {
         if found.is_empty() {
             return;
         }
-        let failed: Vec<String> = found
+        let mut failed: Vec<String> = found
             .iter()
             .filter_map(|pid| match crate::escaped::stop(*pid) {
                 Ok(()) => None,
                 Err(error) => Some(format!("{pid}: {error}")),
             })
             .collect();
+        if let Err(error) = crate::escaped::reap_adopted(adoption) {
+            failed.push(format!(
+                "the ended ones this process adopted could not be reaped: {error}"
+            ));
+        }
         self.trace.note(
             ESCAPED_PROCESSES,
             &format!(
@@ -1276,6 +1542,30 @@ impl Workspace {
         cancel: &Cancel,
     ) -> Result<Session, crate::EngineError> {
         prepare(self, options, cancel)
+    }
+
+    /// What discovery finds that `options` selects, behind the gate the tree has to pass, with nothing instrumented, built or run: what a preparation would put, known before it builds anything.
+    ///
+    /// # Errors
+    /// A tree that does not compile as it was copied, and the failures of discovery.
+    pub fn discover(
+        &self,
+        options: &PrepareOptions,
+        cancel: &Cancel,
+    ) -> Result<crate::catalog::Catalog, crate::EngineError> {
+        discovered(self, options, cancel)
+    }
+
+    /// Prepares as [`Workspace::prepare`] does, the sealed build included, starting no test natively and measuring no coverage, for nothing but running recorded sealed executions again ([`crate::session::Rerunnable`]).
+    ///
+    /// # Errors
+    /// Every failure of the phases it runs.
+    pub fn prepare_to_rerun(
+        self,
+        options: &PrepareOptions,
+        cancel: &Cancel,
+    ) -> Result<crate::session::Rerunnable, crate::EngineError> {
+        crate::session::Rerunnable::prepared(self, options, cancel)
     }
 
     /// Removes the snapshot, or preserves it when the workspace was opened with `keep_temp`, and reports what was preserved.
@@ -1345,7 +1635,10 @@ impl Workspace {
                 source,
             ),
         }
-        match (failure, self.snapshot.cleanup()) {
+        let cleaned = self.snapshot.cleanup();
+        let pool = self.build_owner.take();
+        drop(pool);
+        match (failure, cleaned) {
             (_, Err(source)) => Err(source.into()),
             (Some(failure), Ok(())) => Err(failure.into()),
             (None, Ok(())) => Ok(Vec::new()),

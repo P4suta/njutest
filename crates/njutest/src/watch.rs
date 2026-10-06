@@ -38,4 +38,8 @@ impl rust_mutants::runner::Watch for Watch<'_> {
         self.trace
             .exec_result(crate::trace::ExecRecord::of(spec, result));
     }
+
+    fn note(&self, kind: &str, detail: &str) {
+        self.trace.note(kind, detail);
+    }
 }

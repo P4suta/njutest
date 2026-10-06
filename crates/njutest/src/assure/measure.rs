@@ -75,7 +75,8 @@ impl MeasureError {
 #[must_use]
 pub fn opening(measuring: &Measuring<'_>) -> OpenOptions {
     OpenOptions {
-        allow_outside: Vec::new(),
+        module_owner: measuring.environment.module_owner.clone(),
+        allow_outside: measuring.config.project.outside(measuring.root),
         cargo: None,
         search_path: measuring
             .environment
@@ -84,7 +85,7 @@ pub fn opening(measuring: &Measuring<'_>) -> OpenOptions {
         env: measuring.environment.vars.clone(),
         temp_directory: measuring.environment.temp_directory.clone(),
         report_directory: Some(measuring.config.reports.directory.as_str().to_owned()),
-        exclude: Vec::new(),
+        exclude: super::run::runner_outputs(None, measuring.root),
         keep_temp: false,
         offline: measuring.cargo.offline,
         locked: measuring.cargo.locked,
@@ -177,7 +178,7 @@ pub fn measure(measuring: &Measuring<'_>, watch: Watch<'_>) -> Result<Measured, 
             build_timeout: config.execution.build_timeout,
             mutant_timeout: Timeout::Fixed(config.execution.timeout),
             mutant_steps: (config.execution.steps > 0).then_some(config.execution.steps),
-            ..crate::assure::engine::switches()
+            ..crate::assure::engine::switches(rust_mutants::sealed::Sealing::Off)
         },
         watch.cancel,
     )?;

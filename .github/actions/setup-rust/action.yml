@@ -57,6 +57,7 @@ runs:
       run: |
         echo "RUSTC_WRAPPER=" >> "${GITHUB_ENV}"
         echo "MISE_TASK_RUN_AUTO_INSTALL=false" >> "${GITHUB_ENV}"
+        python3 scripts/toolchain.py --env >> "${GITHUB_ENV}"
     - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
     # `mise.toml` pins two kinds of tool and the key says which: a `cargo:` prefix is a crate, and a bare name is a tool mise fetches itself.
     # install-action only knows the first kind, and it knows a crate by its crates.io name rather than the tool's own, which is why translating the bare ones into its vocabulary needed a rename table.

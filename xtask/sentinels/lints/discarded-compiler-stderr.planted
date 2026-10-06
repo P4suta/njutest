@@ -1,0 +1,13 @@
+=== direct-message-only source crates/app/src/lib.rs
+fn failed(messages: &[Message]) { crate::validate::first_error_of(messages); }
+=== renamed-message-only source crates/app/src/lib.rs
+use crate::validate::first_error_of as explain;
+fn failed(messages: &[Message]) { explain(messages); }
+=== macro-message-only source crates/app/src/lib.rs
+macro_rules! failed { ($messages:expr) => { crate::validate::first_error_of($messages) } }
+=== native-message-only source crates/app/src/lib.rs
+#[cfg(windows)] fn failed(messages: &[Message]) { crate::validate::first_error_of(messages); }
+=== invented-empty-capture source crates/app/src/lib.rs
+fn failed(messages: &[Message]) { crate::validate::first_error_with_stderr(messages, &[]); }
+=== macro-invented-empty-capture source crates/app/src/lib.rs
+macro_rules! failed { ($messages:expr) => { crate::validate::first_error_with_stderr($messages, &[]) } }

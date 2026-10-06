@@ -33,6 +33,7 @@ Options:
           - balanced: The operators worth running everywhere
           - strong:   Balanced, plus the bitwise and compound-assignment families
           - all:      Every operator, statement deletion included
+          - compiled: All operators, plus const item initializers compiled one mutant at a time
 
       --operator <RULE>
           Apply exactly these operators, by name. Repeatable
@@ -100,6 +101,10 @@ Options:
 
       --no-verify
           Skip the run of every target with nothing active
+
+      --no-seal
+          Build nothing for the sealed target, so that every answer is a native lead and the run is
+          unproven
 
       --coverage
           Measure once which target reached what, and run a mutant only against the targets that

@@ -21,12 +21,15 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 ## Decided in advance
 
-### Durable report authority is Unix-only today
+### Durable report authority is one capability directory
 
 Publishing or reopening evidence is an authority decision, not a display-path operation.
-njutest currently makes that decision only through its Unix handle-relative, no-follow backend, which retains the workspace and configured report-root identities through publication, index updates, reading, and retention.
-Windows and other non-Unix builds therefore refuse durable report publication and authority-bearing reads with `REPORT_NOT_KEPT`; they do not silently substitute a weaker pathname implementation.
-Pure computation that does not open or mutate a report store remains available.
+njutest makes that decision through one capability directory, `rust_mutants::capdir`, which retains the workspace and configured report-root identities through publication, index updates, reading, and retention: on Unix through the `openat` family, and on Windows through `NtCreateFile` relative to a held handle, never following a link ([ADR 0037](adr/0037-the-report-store-has-one-capability-directory.md)).
+On Windows a published rename is as durable as the NTFS journal after that flush: Windows documents no directory `fsync`, and `FlushFileBuffers` on the directory's handle commits the journal up to that point.
+A report is kept on Windows only on NTFS or ReFS with POSIX unlink and rename semantics; any other volume, FAT or exFAT or a share that does not say it has them, is refused with `NJ6004` naming its file system, rather than served with weaker semantics nobody asked for.
+Retention of a run somebody is reading may be refused on Windows while the reader holds it open; that is `NJ6004`, not a race.
+While a claim is held, Windows refuses to move or replace a directory beneath which the store holds a handle, so the replacement races the Unix laws stage cannot happen there at all.
+Tightening an existing store directory to its owner, the system and the administrators does not reach the entries it already holds, because Windows lets anyone pass through a directory they may not list; a store njutest made holds nothing else, since every entry it makes carries the same protected list.
 
 - Doctests are run as one target per library, switched off with `[execution] doctests = false` or `--no-doctests`, and mutations are routed to them at file granularity (`doctests-routed-by-file`): a documented example reaches every mutation in the files its library is made of and narrows none of them.
   A kill one finds names the library's documentation and not the example, because rustdoc merges a file's examples into one compilation whose harness cannot be asked for one of them.
@@ -51,6 +54,9 @@ Pure computation that does not open or mutate a report store remains available.
 - A target whose own tests do not pass with nothing active is dropped from the ones a mutation may be put to (`baseline-not-passing`), and every one of them is named.
   Every mutation put to such a target comes back killed and not one of those kills is about a mutation.
   The run still reports the table, because the moment a reader most needs it is the moment the answer is "all of them".
+- A libtest target passes only when its harness accounted for the run: one `running N tests` line opened its report, one `test result:` line closed it after that, the counts come to what it announced, the closing list of failures names as many tests as failed, and the exit status is the one libtest gives for what it said (`rust_mutants::libtest::account`).
+  A run that ended before its harness closed the report — a test that called `std::process::exit(0)`, or anything else that ended the process early — measured part of the target, so its baseline does not pass, and the refusal says which of those failed before it shows what the target printed.
+  A coverage run that did not end on its own with its harness accounting for it measures no reach for its target (`coverage-not-measured`), because a profile is written however a process exits.
 - A target that does not pass the first time is run once more before the session refuses, and one that passes the second time is measured against that second answer with `baseline-passed-on-retry` against its name.
 - A libtest target whose baseline was read as passing tests that do not come to the count its own summary gives carries `baseline-passed-unparsed`: a line the suite wrote past libtest's capture can read as a result, or split one, so which tests passed is the parser's answer and its reach is not compared with a control's.
   Three things a reader has to tell apart used to arrive as one refusal: a target that is broken, a target that lost a race with something outside the code, and a target that passed.
@@ -75,9 +81,12 @@ Pure computation that does not open or mutate a report store remains available.
   A target the fuzzer could not drive — no cargo-fuzz on a nightly toolchain, a fuzz crate that will not build, a sanitizer the toolchain has no runtime for — carries `cargo-fuzz-unavailable` and a `not-measured` finding instead, and is never counted among the targets that were driven.
   libFuzzer exits non-zero when it finds something, and something is an input it keeps, so a status with nothing kept is a target that never started.
   A run stopped by its own bound *was* driven, for less time than it was asked, and says that instead.
+  A run somebody stopped is an interrupted run, never a target nothing could drive.
 - `standard-v1` does not execute anything about `unsafe` code; it inventories it and says so (`soundness-not-executed`).
   `deep-v1` interprets the suite under Miri and refuses to run at all without it (`NJ7001`), and what Miri will not interpret is `miri-unsupported` rather than a pass.
   A sanitizer the configuration asks for and the toolchain will not run is `sanitizer-unavailable`; every sanitizer run also carries `sanitizer-standard-library-not-instrumented`.
+  The configuration names each sanitizer once from `address`, `leak`, `memory` and `thread`, so a misspelt one is refused before a run rather than handed to `-Zsanitizer=`, where the compiler's refusal would read as a test that fails under it.
+  A sanitizer's report is read only where the toolchain, the harness and the sanitizer's runtime speak, never inside a failing test's captured output, and a run under it that ran out of time or ended by a signal is `sanitizer-unavailable` too, since it answered nothing about the suite.
 - A question about a seam that hands the caller the bytes it was handed already is `proved` and never run.
   Cutting an answer with no body short keeps everything up to and including the blank line that ends the head, so what comes back is identical; asking for the status the upstream already gave,
   worded the way a run words it, writes the line that is already there.
@@ -138,6 +147,8 @@ Pure computation that does not open or mutate a report store remains available.
   A suite that took a different path this time and passed throughout was asked nothing, and reading that as nothing noticing would report a gap the tests could close where nobody was asked at all.
 - A seam the configuration names with `interpose` is recorded, and every fault the recording licenses is put back to the suite with nothing mutated.
   A run that recorded a seam and could not put its questions — the workspace did not build, or the run was cancelled — says `wire-fault-not-put` and counts none of them as survivors: a question nobody was asked establishes nothing, and reporting it as a gap would put something in the report no test could close.
+  If no target passed with no fault in place, `wire-baseline-not-green` says that the suite cannot judge any licensed question.
+  If a caller reached a seam but its baseline exchange did not complete, `wire-transport-incomplete` says that its failure is about the transport rather than the code.
 - Repository reads are not observed at run time.
   A package that names a directory-reading crate keys the whole snapshot for evidence reuse; nothing is excluded from testing.
   The names searched for are the paths those crates are reached through (`ignore::`, `glob::`) rather than their bare words,
@@ -150,6 +161,11 @@ Pure computation that does not open or mutate a report store remains available.
 - A `#![no_std]` crate is measured: the runtime borrows `std` under a name of its own.
   A crate the host cannot lend `std` to — one supplying a `#[panic_handler]`, a `#[global_allocator]`, or `#![no_main]`, or written in edition 2015 — is `no-std-crate`.
 - A file another file pastes in with `include!` where an expression goes is `included-expression`: it is a fragment rather than a program.
+- A Rust source of the tree that the build reads as text is read as it was copied, not as the run rewrites it.
+  Each `include_str!` or `include_bytes!` that names one, by a literal path or by `concat!(env!("CARGO_MANIFEST_DIR"), "…")`, is pointed at a copy of the source beside the file that reads it, a hidden file named `.0`, `.1` and so on, and the trace says so with a `verbatim` note for each.
+  The reading file keeps its length and its lines, so every position in it is the one the tree has.
+  A source the build only reads as text, that no guard is placed in, is itself left as it was copied: nothing the run executes is compiled from it, and rewriting it would hand every reader of the tree bytes no run committed to.
+  Three readings are not pointed: an include whose path is computed any other way, a program that reads its own source while it runs, and a directory listing, which sees the copies beside the file that reads them.
 - The equivalence layer is off by default and proves almost nothing on a project that leaves `[profile.test] opt-level` at cargo's default of zero,
   where two mutations the compiler would render identically at any optimisation level are still two different sets of instructions.
   It is a fact about the profile the tests run under rather than about the mutation,
@@ -191,7 +207,10 @@ Pure computation that does not open or mutate a report store remains available.
 - A library with no documented examples has a documentation target that answers nothing.
   It carries `doctests-none`, and no mutation is routed to it: paying a `cargo test --doc` for every mutation nothing else noticed, to be told each time that no test ran, is work nobody reads.
 - A target with `harness = false` says what it found by exiting, and neither `cargo metadata` nor the build's messages report the flag, so the engine reads it from the manifest.
+  It reads it from the table that declares the target: `[lib]` for the library or procedural macro whatever it is named, and the `[[bin]]`, `[[test]]` or `[[example]]` table of the target's name otherwise.
+  A manifest that is not there is refused: one nobody read says nothing about a harness, and reading that as libtest would take a custom harness's silence for a test result.
   How many of its tests ran is something only a harness could have said, and the target carries `custom-harness` to say so.
+- A target whose manifest says `test = false` is one `cargo test` does not run, so no run starts it or accepts it in `skip_targets`, although `cargo test --all-targets` builds it as a test binary all the same.
 - A target named in `[execution] skip_targets` is never started, and carries `target-skipped-by-configuration`.
   It is for a suite whose tests are about the text of what the compiler said, which instrumentation changes: leaving it out is a decision somebody made, and the report says so rather than reporting a failure nobody can read.
 - A run composes `LLVM_PROFILE_FILE` for every test process it starts, so an inherited one never reaches one and an instrumented binary never falls back to `default_*.profraw` in its working directory.
@@ -211,19 +230,6 @@ Pure computation that does not open or mutate a report store remains available.
   That tree is not the project's code: it is the project's code with a statement written in front of each condition, put there to ask the compiler one question about the types, and whether the project's own lints are satisfied is not that question.
   A caller who denies warnings for their own build — which is what a continuous integration job does — is therefore not asking for every proof of their tree to go unmade.
   The project's own `.cargo/config.toml` flags are still put back in front of the cap, because a tree that does not compile without them would not compile here either.
-
-## What a run cannot do on Windows
-
-A report is published through a capability rooted at the store's own directory, so that what a reader opens is the file this run wrote and not one a name was pointed at afterwards.
-That rooting is implemented with the POSIX directory-capability calls and has no Windows equivalent here, so `Store::keep` answers `NJ6004` on Windows rather than publishing:
-`this platform has no supported capability-rooted report publication backend`.
-
-A Windows run therefore measures, decides and prints, and cannot leave a durable report where the next run or a reader will find it.
-Everything downstream of publication — `njutest report`,
-`accept`, `bundle`, `why` against a stored run — has nothing to read.
-
-This is a deliberate refusal rather than a defect: the alternative is publishing through a path that can be replaced between the check and the write, which is the thing the capability exists to prevent.
-What it is not is documented anywhere a person would look before installing on Windows, which is why it is here.
 
 ## What a run says about itself
 
@@ -246,8 +252,13 @@ They are what the run says about its own footing, and each is stated fail-closed
 - The toolchain has no interpreter and the contract is `whole-v1` (`miri-unavailable`).
   `whole-v1` names each thing it could not establish rather than refusing the run, so the soundness nothing interpreted is a limitation beside a `not-measured` finding, and the run is not `ASSURED`.
   `deep-v1` promises interpretation, and there the same toolchain ends the run with `NJ7001`.
+  A toolchain has no interpreter only where nothing could be launched or it says the interpreter is not installed.
+  A run somebody stopped is an interrupted run, and a version probe that ran out of time, ended by a signal, or failed without saying so is a question nobody answered, so what the interpreter's own run said is what is read.
 - The interpreter ended without a test result (`miri-ran-no-test`): no `test result:` line said a test failed, or that every one passed.
   Its status is then about the interpreter — its setup could not start a test binary, or there was no test to run — so it is neither a failing test, which would blame the suite with a defect, nor a pass, which would claim soundness nobody interpreted; it is a `not-measured` finding beside this limitation.
+- A test failed under the interpreter, and the interpreter did not say it found undefined behaviour (`miri-failed-isolated`).
+  The interpreter isolates a test from what it is given natively: it withholds the environment variables cargo sets, such as `OUT_DIR`, and the files and clocks of the machine, so a test that reads its build directory at run time fails there and passes natively.
+  What the interpreter establishes is undefined behaviour, and it did not say it found any, so the failure is the interpreter's limit and not the suite's: it is neither a failing test, which would blame the suite with a defect, nor a pass, which would claim soundness nobody established; it is a `not-measured` finding beside this limitation.
 - A file the soundness inventory walked could not be read as Rust this release understands (`soundness-source-unreadable`), so what it holds is not in the count.
   A count taken over part of a tree and reported as a count over the tree is the one number a reader cannot check.
 
@@ -260,21 +271,29 @@ A run checks it by running every target again: the original-code control that co
 Three things follow and are not hidden.
 A target whose second run cannot be compared — it failed, passed other tests than its baseline, or could not record — is `drift-not-measured`, and every proof read off its baseline rests on one run.
 The comparison sees what the guards see, so a suite whose behaviour moves where no mutant sits moves without this noticing.
-And what rested on a moved target is run again against it with its reach recorded ([ADR 0036](adr/0036-what-rested-on-a-moved-reach-is-run-again.md)): a kill replaces the disposition, a pass replaces it only where the run's own record shows the site reached, and a pass that did not reach it leaves the disposition resting on the moved record, counted in `unstable-baseline`.
+And what rested on a moved target is run again against it ([ADR 0036](adr/0036-what-rested-on-a-moved-reach-is-run-again.md)): for a lead, a kill replaces the disposition, a pass replaces it only where the run's own record shows the site reached, and a pass that did not reach it leaves the disposition resting on the moved record, counted in `unstable-baseline`.
+A sealed verdict is put again on the sealed bench with the moved target counted among those reaching it natively, and the sealed build answers for a whole target by the tests whose sealed controls reached the mutation, so a test of it that reaches the mutation natively and not sealed is not told apart from one that reaches it neither way: the put stands on the sealed controls' reach, which is a function of the code, and not on the native reach that moved.
+A run again that could not record what its guards reached is run once more with nothing to record, as a control is, so its pass leaves the disposition where it was.
+A replaced disposition is routed to the target it was run against and kept for later runs as the run decided it.
+Only a lead is run again: a disposition sealed executions established that rests on a moved target stays counted in `unstable-baseline`.
 Where nothing rests on a moved target any more, `reach-moved` still names it: nothing the run concludes stands on the moved record, and the suite's reach is still not a function of the target.
+A report merged from shards names no `reach-moved`, because how many dispositions a part ran again is not in the part's record; what still rests is counted in `unstable-baseline` as in a run measured whole.
 
 ## What a run asks of a call that can fail
 
-Faults are opt-in, and a run that is not asked for them says nothing about failed calls ([ADR 0032](adr/0032-a-fault-is-a-failed-call-the-suite-is-asked-about.md)).
-A run that is asked pays a second instrumented build and baseline of the tree, and one execution for every `?` a test reaches.
+Faults are asked for by `[faults] inject`, by `--faults`, or by `whole-v1`, the default contract, and a run that is not asked for them says nothing about failed calls ([ADR 0032](adr/0032-a-fault-is-a-failed-call-the-suite-is-asked-about.md)).
+A run that is asked pays a second instrumented build and baseline of the tree, one execution for every `?` a test reaches, and one more on each target of a fault every reaching test passed.
 
 Three things are not claimed, and each is stated.
 A `?` whose error type is not one of the six the engine makes — `std::io::Error`, `Utf8Error`, `FromUtf8Error`, `ParseIntError`, `ParseFloatError`, `TryFromIntError` — or that propagates an `Option` is refused by the compiler under the fault and named in `fault-not-put`, one entry per compiler error class; a user's own error type is never injected, because guessing its constructor would inject something the program never returns.
 A fault a bound expired on, or whose failure did not reproduce, is a `not-measured` finding, so the run is not `ASSURED`.
-And a caller that swallows the injected error reads as `unnoticed`, which is what the suite could tell: where the error went is not recorded yet.
+And `absorbed` says the failure a fault made was dropped without anything formatting it, which is what the runtime can see of where it went: a caller that wraps the error in one of its own and shows only its own words has absorbed it by that measure, whatever its own message says, and a test that checks only that a call failed reads the same.
+Only an `std::io::Error` carries the record, so a caller that swallows any other error type still reads as `unnoticed`.
 
-A tree written while faults were put is raised for the phase, not for one site, because the faulted executions share one copy of the tree and run in parallel; which fault made the write is not established.
+A tree written while faults were put is tied to one fault where it can be: the faulted executions share one copy of the tree and run in parallel, so each path first written after the faults began is removed and one fault is run alone on a target that reached it, and a path it writes while that target passes and the target alone without it does not is `broken-under-fault`.
+A path no such run ties is a `not-measured` finding about `fault-write-unattributed`, raised for the phase and not for one site.
 Only a path first written after the faults began counts: a file a test writes on every run was written before any fault was put, and is not the fault's doing.
+A survivor of `question-to-unwrap` that a target tells apart only with the call at its own site failing is `observable-under-fault`, drawn on its `why` page: evidence it is no equivalence, in no kill count, since no test makes that call fail.
 A tree whose faulted build or baseline could not be measured raises a `not-measured` finding about `fault-baseline-not-measured` and puts nothing.
 A tree with no `?` in any measured file states `fault-no-site`: there was no call to fail, which is a finding about the tree and not a hole in the run.
 ## What a run asks of a suite that depends on where it runs
@@ -290,14 +309,20 @@ And the working directory and the order of the tests are not knobs: cargo's cont
 
 ## What a run asks of a suite that starts a process of its own
 
-On unix an execution is a process group, and stopping it ends every member; a process a test starts that calls `setsid` or `setpgid` leaves that group, as a daemon does, and outlives the execution.
+On Unix an execution owns an inherited process group, and a group signal reaches every member only when the kernel permits it.
+On macOS a protected descendant can make the group signal fail; the runner then signals the child it started, while `stop_group` classifies the result as `LeaderOnly` and cannot guarantee that the descendant ended.
+A process a test starts that calls `setsid` or `setpgid` leaves the group, as a daemon does, and outlives the execution.
 A run ends every such process when it closes: it lists the processes whose working directory lies in its copy of the tree or its scratch, which only a process the run started has once its executions have ended, ends them, and names them in the trace as `escaped-processes`.
 A run that refuses or is cancelled ends them too, as it removes its copy, since a copy is never removed while a process still works in it; that path writes no trace record of them.
 On Windows the execution's Job Object ends every descendant, so nothing escapes it.
+On Linux the run adopts every process it starts, so one whose parent ends is handed to the run rather than to init ([ADR 0050](adr/0050-a-run-adopts-every-process-it-starts.md)).
+A process whose working directory `/proc` will not say, as it will not for a non-dumpable one, may be working in the copy when its parents lead back to the run, so the copy is not removed and the run names the process; one whose parents do not, a login or a `sudo -u` beside the run, is no process the run started and is left alone.
+On macOS `lsof` leaves out a process of this user it may not inspect, so such a process is not found there, whoever started it.
 
-Three things follow and are not hidden.
+Four things follow and are not hidden.
 The sweep is at the run's end, not the execution's: executions of one copy share its package root as their working directory, so a process one execution left behind keeps running, and holding what it holds, while the next ones run.
 A process that changed its working directory out of the copy and the scratch, as a daemon that `chdir`s to `/` does, is not found, and outlives the run as it did before.
+A process the run adopted that leads its own process group in the run's session, or its own session, cannot be told from a process the run started, so once it ends it waits to be reaped until the run's process ends.
 And a process that keeps the test's output open keeps the execution from reading to its end, so after two seconds of waiting the execution is `errored` (`wait-failed`) and the run says so; `fixture-escapes` holds both cases.
 
 ## What a run asks of a suite that runs more than one thread
@@ -316,10 +341,20 @@ And a thread given exactly the name of a test that passed is read as that test's
 
 ## What a run asks of a program that keeps state
 
-Crashes are opt-in, and a run not asked for them says nothing about a stop between two writes ([ADR 0035](adr/0035-a-crash-is-a-stop-the-next-run-has-to-survive.md)).
+Crashes are asked for by `[durability] crash`, by `--crashes`, or by `whole-v1`, the default contract, and a run not asked for them says nothing about a stop between two writes ([ADR 0035](adr/0035-a-crash-is-a-stop-the-next-run-has-to-survive.md)).
 A crash stops the process just after a call that writes and runs the test that reached it again over what it left, so `restarted` says the next run passed over those files, not that it read them: a test that keeps its state under a name it picks afresh every run reads nothing its predecessor left.
 The stop is a process ending, so what it wrote is in the system's cache and on disk to every next run; a power failure that loses unflushed writes is not modelled.
+A native stop is not a bare one.
+After the call that writes returns, the runtime publishes its notice, in a file of the engine's own beside the scratch, writes its `rust-mutants-stop-v1` line to standard error, and ends the process with `std::process::exit(93)`, which the standard library has no safe way to skip.
+That exit still does four things before the process is gone: it flushes Rust's buffered standard output to the process's standard output; it runs every handler registered with the C runtime's `atexit`; the C runtime flushes its own `FILE` streams; and on glibc, whose `exit` runs them, it runs the destructors of the calling thread's thread-local values, as other C runtimes may or may not.
+Nothing else of Rust's runs: no destructor of a value on any stack, so no `BufWriter` flushes the bytes it holds, no unwinding, and no thread-local destructor of another thread.
+So state a program writes out from an `atexit` handler, a C library's stream, or a destructor of a thread-local of the thread that made the call reaches the disk after the write, where a crash would have lost it, and a native `restarted` is read with that in mind.
+A sealed stop has none of it: the host ends the instance in the call that publishes the notice, so what the next instance starts over is what the call wrote and nothing after it ([sealed execution](engine/sealed.md#crashes)), and every crash put to a test whose sealed control reached the call is a sealed one.
 A call a target reaches without the run knowing which of its tests reaches it is `undecided`, because stopping every test of the target at once would tear what the others were writing.
+A stop that left an entry whose name is not text, which Linux's filesystems keep and macOS's refuse, is `undecided`: what it left cannot be named to a next run or to a reader, and the recording carries the entry, spelled without loss, as `unnamed`.
+A target that passes only with the home the run was given runs with that home, where its reach is not measured, so every call it reaches is `undecided` on it, never `unshared`: what a stop there writes under the home is where the next run would read it, outside the scratch the run walks.
+A stop in a process a test started, rather than in the test's own, is `undecided` whatever the test did about it, because the next run's test did not make that process.
+A call whose value is a future has written nothing when it returns, so a stop after it would stop before the write: the runtime makes the compiler refuse that stop, and an asynchronous write is not put rather than read as `restarted`.
 The compiler refusing a crash is stated in `crash-not-put`, and a tree with no call that writes in `crash-no-site`.
 
 ## What a run asks of a suite that talks about time
@@ -405,7 +440,7 @@ The outcome is therefore unresolved and excluded from both score and cache.
 The guard can reach that boundary only where it is *inside* the part that keeps running.
 
 The guard is not only where the mutation is.
-Every mutable file is given control-flow checkpoints — function entries, loop bodies, async blocks, and closure invocations — including a file with no mutant of its own, and a checkpoint charges the allowance once the selected mutation has been reached.
+Every file of a member a test program compiles is given control-flow checkpoints — function entries, loop bodies, async blocks, and closure invocations — test code and a file with no mutant of its own included, and a checkpoint charges the allowance once the selected mutation has been reached ([what a step counts](assurance-contract.md#what-a-step-counts)).
 So a mutation *outside* a loop that makes the loop non-terminating is caught by the count as surely as one inside it:
 
 ```rust
@@ -450,6 +485,7 @@ It is not closed here, and a report that says `waited` is saying exactly what it
 Every place a rule targets gets a decision: a candidate, or a skip with the reason for it.
 A run reports its skips as one limitation per reason —
 `skipped-<reason>`, with how many places it covers — because a place nothing was put to is a place the suite was never asked about, and a tally of them is the difference between "the tests noticed every mutation" and "the tests noticed every mutation somebody proposed".
+The engine keeps one record per reason and file, which says how many places it stands for, and njutest tallies them with the engine's own `rust_mutants::syntax::census`, so its count is places, never records, as the engine's is.
 The engine's [architecture page](engine/architecture.md) says how each decision is reached; what follows is what the name in a report means.
 
 Five are about a whole file, decided from cargo's metadata rather than by reading it:
@@ -461,9 +497,10 @@ Five are about a whole file, decided from cargo's metadata rather than by readin
 - `skipped-generated-outside-workspace` — a build script wrote the file outside the tree, which the run does not hold and cannot rewrite.
 - `skipped-forbidden-lints` — the crate `forbid`s a lint the guards' own attribute turns off, which `forbid` does not let an `allow` override, so every mutant of it would be refused with nothing saying why.
 
-Eleven are about a place inside a file, decided by the walk:
+Ten are about a place inside a file, decided by the walk:
 
-- `skipped-const-context` and `skipped-const-fn-body` — the compiler may evaluate the code before the program runs, where a runtime guard cannot live.
+- `skipped-const-context` — the compiler evaluates the code before the program runs, where a runtime guard cannot live: a `const` or `static` initializer, a `const` block, an array length, an enum discriminant, wherever it is written.
+  The `compiled` tier selects expression sites in const item initializers for a build per mutant; the other constant contexts retain this skip ([ADR 0048](adr/0048-const-items-are-mutated-by-a-build-per-mutant.md)).
 - `skipped-macro-invocation` — the body is tokens the walker does not parse,
   counted once for the whole invocation.
 - `skipped-cfg-attribute` — the place is behind a `#[cfg(...)]`, so what the build compiles is not what the walk read.
@@ -475,11 +512,30 @@ Eleven are about a place inside a file, decided by the walk:
 - `skipped-unstated-return-type` — the syntax cannot say the return type has a default, so there is no value to return instead.
 - `skipped-loop-value` — the loop decides the jump's value by what it breaks with, so the other jump has no value to carry.
 
+Two keep a whole `const fn` unchanged, one decided by the compiler while validation runs and one by discovery before validation ([ADR 0047](adr/0047-a-const-fn-is-mutated-where-nothing-evaluates-it-early.md)):
+
+- `skipped-evaluated-before-run` — the compiler evaluates the function before the program runs, because a `const` or `static` initializer, a `const` block or an array length calls it, or a `const fn` that keeps its `const` for that reason does.
+  The body of a `const fn` is proposed like any other, and the instrumented tree writes a `const fn` holding a guard without its `const`, together with any `const fn` that calls it and is called only while the program runs.
+  Where the compiler refuses that tree with `E0015` at a call it evaluates, the callee gets its `const` back and every candidate in it is counted here, one place per candidate, and listed with the rejections for its identity and the compiler's words.
+  It is not a refusal: the edit may well compile, and a test may notice it through what the compiler computed, but no guard can live where it is.
+  Each round gives back at least one function's `const` or learns one call, so however long the chain, the build is never refused.
+
+- `skipped-unvalidated-const-use` — discovery cannot prove how a doctest, conditional early use or opaque expansion evaluates a linked const function.
+  A documentation code block, opaque documentation or expansion, a standard macro that may be replaced or whose arguments carry attributes, conditional early evaluation, an unavailable conditional module, or source outside the snapshot or unreadable as a file keeps the const bodies of its package and dependency closure unchanged.
+  The gate reads test-only, excluded and entered-only files too, follows package dependencies rather than guessed function names, and records the responsible source paths in each skipped candidate's trace decision.
+  This is conservative: const functions no example actually calls may be skipped too, while ordinary runtime bodies remain mutable.
+  Native all-target validation compiles `#[cfg(test)]`, so that condition alone does not trigger this gate.
+
+A site in a `const fn` carries no branch proof, no comparison and no probe, since the witness tree that vouches for them is checked before validation says which functions go without their `const`: such a mutant is run against every test that reaches it.
+
 Two are what a person wrote, and are the two to read first:
 
 - `skipped-annotated` — a `rust-mutants: skip <reason>` marker in the source.
 - `skipped-configured` — a `[[mutation.skip]]` entry in the engine's configuration.
   A marker or an entry that hid nothing is an `unmatched-skip` finding rather than a line nobody notices.
+
+One file is not passed over but refused: one whose groups nest past 1,000, or one of whose trees chains past 12,288 tokens, is `RM0020` by name rather than read.
+Every group and every link of such a chain is a frame of the parser, the walks and the drop, and past what a reading thread's 64 MiB stack holds the process would abort without saying which file did it; `[project] exclude` passes the file over.
 
 ## Survivors a suite cannot close
 

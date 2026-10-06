@@ -1,0 +1,98 @@
+{
+  "schema": "njutest-mutation-receipt-v1",
+  "decision": "execution-confinement",
+  "package": "rust-mutants-decision",
+  "module": "crates/rust-mutants-decision/src/confinement.rs",
+  "source_sha256": "63abd03b7138c8a7392cd341dad6baece2550fc0294f25cff9fa7fa25d21f8fa",
+  "mutants": [
+    {
+      "display_id": "c7f9b89b60e606c43346",
+      "position": "52:12",
+      "rule": "negate-condition",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "confinement::tests::a_home_that_escaped_its_execution_under_any_one_name_is_named",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "ab8b7c02b9ea398f5ddb",
+      "position": "52:12",
+      "rule": "condition-to-true",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "confinement::tests::a_home_that_escaped_its_execution_under_any_one_name_is_named",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "b68dfae48e95e5ac0da5",
+      "position": "52:12",
+      "rule": "condition-to-false",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "confinement::tests::a_home_that_escaped_its_execution_under_any_one_name_is_named",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "82cf4e8260348933d144",
+      "position": "52:27",
+      "rule": "neq-to-eq",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "confinement::tests::a_home_that_escaped_its_execution_under_any_one_name_is_named",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "21901e8311a5d83c12c7",
+      "position": "53:20",
+      "rule": "return-default",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "confinement::tests::a_home_that_escaped_its_execution_under_any_one_name_is_named",
+          "came_to": "panicked"
+        }
+      ]
+    },
+    {
+      "display_id": "4f2a6926bdc30a750a70",
+      "position": "56:5",
+      "rule": "return-default",
+      "outcome": "killed",
+      "accepted": false,
+      "executions": [
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "confinement::tests::an_environment_naming_the_home_under_every_name_confines_the_process",
+          "came_to": "passed"
+        },
+        {
+          "target": "rust-mutants-decision/lib/rust_mutants_decision",
+          "test": "confinement::tests::the_given_global_git_configuration_named_again_is_an_escape",
+          "came_to": "panicked"
+        }
+      ]
+    }
+  ]
+}

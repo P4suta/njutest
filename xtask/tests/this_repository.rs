@@ -10,7 +10,6 @@
 
 use std::collections::BTreeSet;
 use std::path::Path;
-use std::process::Command;
 
 use xtask::gates;
 
@@ -48,12 +47,10 @@ fn require(condition: bool, message: impl Into<String>) -> Result<(), TestError>
 
 /// Runs git in `root` with nothing in the environment pointing it at another repository.
 fn git(root: &Path, arguments: &[&str]) -> std::process::Output {
-    let mut command = Command::new("git");
-    command.arg("-C").arg(root).args(arguments);
-    for variable in gates::REDIRECTING_GIT {
-        command.env_remove(variable);
-    }
-    command.output().expect("git runs")
+    xtask::repository::git(root)
+        .args(arguments)
+        .output()
+        .expect("git runs")
 }
 
 #[test]
@@ -209,4 +206,38 @@ fn this_repository_commits_no_build_output_and_ignores_every_target_directory() 
          stages what trybuild or a crate-local build wrote: exit {:?}",
         ignored.status.code()
     );
+}
+
+#[test]
+fn the_package_task_assembles_exactly_the_publishable_members() -> Result<(), TestError> {
+    let root = gates::workspace_root();
+    let tasks = std::fs::read_to_string(root.join("mise.toml"))
+        .map_err(|source| TestError::Contract(format!("mise.toml: {source}")))?;
+    let command = tasks
+        .lines()
+        .find(|line| line.starts_with("cargo package "))
+        .ok_or_else(|| TestError::Contract("the tasks package nothing".to_owned()))?;
+    let words: Vec<&str> = command.split_whitespace().collect();
+    let excluded: BTreeSet<String> = words
+        .windows(2)
+        .filter(|pair| pair.first() == Some(&"--exclude"))
+        .filter_map(|pair| pair.get(1).map(|name| (*name).to_owned()))
+        .collect();
+    let metadata = cargo_metadata::MetadataCommand::new()
+        .current_dir(&root)
+        .no_deps()
+        .exec()
+        .map_err(|source| TestError::Contract(format!("cargo metadata: {source}")))?;
+    let unpublished: BTreeSet<String> = metadata
+        .workspace_packages()
+        .into_iter()
+        .filter(|package| package.publish.as_ref().is_some_and(Vec::is_empty))
+        .map(|package| package.name.to_string())
+        .collect();
+    require(
+        excluded == unpublished,
+        format!(
+            "the package task excludes {excluded:?}, and the members that never publish are {unpublished:?}"
+        ),
+    )
 }

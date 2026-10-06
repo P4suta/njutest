@@ -20,12 +20,15 @@ pub const CATALOG_ENV: &str = "RUST_MUTANTS_CATALOG";
 /// The catalog identity embedded into binaries compiled from an instrumented tree.
 pub const COMPILED_CATALOG_ENV: &str = "RUST_MUTANTS_COMPILED_CATALOG";
 
+/// The dense index baked into a compile-time mutant's build, or `none` for the original control.
+pub const COMPILED_ACTIVE_ENV: &str = "RUST_MUTANTS_COMPILED_ACTIVE";
+
 /// The exit status of a test process whose tree was built from a different catalog than the one activating it.
 pub const STALE_CATALOG_EXIT: i32 = 97;
 
-/// Names the number of times the active mutant's guard may be taken before the process is stopped.
+/// Names how many boundaries of the instrumented workspace, test code included, an execution may pass once the active mutant's guard has been taken, before the process is stopped.
 ///
-/// The per-process allowance for takes of the selected mutant's guard.
+/// The allowance every process of the execution spends together once the selected mutant's guard has activated.
 /// It is an execution bound, not a proof that the program would not terminate.
 /// Unset, or `0`, spends nothing and counts nothing.
 pub const STEPS_ENV: &str = "RUST_MUTANTS_STEPS";
@@ -39,6 +42,17 @@ pub const STEP_NONCE_ENV: &str = "RUST_MUTANTS_STEP_NONCE";
 /// Names the fresh execution-private state shared by every generated module.
 pub const STEP_STATE_ENV: &str = "RUST_MUTANTS_STEP_STATE";
 
+/// What follows the step state's path to name the file every process of an execution locks to take from the state, which is never the state itself.
+pub const STEP_LOCK_SUFFIX: &str = ".lock";
+
+/// The file every process of an execution locks to take from the step state at `state`.
+#[must_use]
+pub fn step_lock_path(state: &std::path::Path) -> std::path::PathBuf {
+    let mut named = state.as_os_str().to_owned();
+    named.push(STEP_LOCK_SUFFIX);
+    std::path::PathBuf::from(named)
+}
+
 /// Names how often and where a process spending a reservation of its allowance says it is still moving, as `<milliseconds>@<path>`.
 pub const STEP_BEAT_ENV: &str = "RUST_MUTANTS_STEP_BEAT";
 
@@ -51,8 +65,7 @@ pub const STEP_NOTICE_SCHEMA: &str = "rust-mutants-step-notice-v1";
 /// The exit status of a bounded test process whose generated runtime could not publish its nonce-correlated step notice.
 pub const STEP_PROTOCOL_EXIT: i32 = 94;
 
-/// The first field of the line the runtime writes to standard error before it ends a process, followed by the status, the check that failed, and the operating system's code, `0` where no call is what failed.
-pub const STOP_SCHEMA: &str = "rust-mutants-stop-v1";
+pub use rust_mutants_decision::said::STOP_SCHEMA;
 
 /// Names the file the guards append to, saying which of the process's threads reached them.
 pub const TOUCH_ENV: &str = "RUST_MUTANTS_TOUCH";
@@ -92,6 +105,12 @@ pub const CRASH_EXIT: i32 = 93;
 /// Names the fresh file through which the runtime says a crash stopped the process at the active call.
 pub const CRASH_NOTICE_ENV: &str = "RUST_MUTANTS_CRASH_NOTICE";
 
+/// Names the file the runtime appends what became of each failure a fault made to: made, read by whatever formatted it, dropped.
+pub const FAULT_FATE_ENV: &str = "RUST_MUTANTS_FAULT_FATE";
+
+/// The first field of every line of a fault's fate, followed by the catalog and the event.
+pub const FAULT_FATE_SCHEMA: &str = "rust-mutants-fate-v1";
+
 /// Ties one crash notice to exactly one supervised execution.
 pub const CRASH_NONCE_ENV: &str = "RUST_MUTANTS_CRASH_NONCE";
 
@@ -108,8 +127,12 @@ pub(super) const FIRST_UNREPRESENTABLE_INDEX: u32 = u32::MAX;
 #[derive(Debug, thiserror::Error)]
 pub enum ModuleNameError {
     /// The source was not a Rust token stream, or could not be read at all.
-    #[error("the source is not a Rust token stream: {0}")]
-    Tokens(#[from] crate::parsing::ReadingError),
+    #[error("the source is not a Rust token stream: {source}")]
+    Tokens {
+        /// Why the reading failed.
+        #[from]
+        source: crate::parsing::ReadingError,
+    },
     /// The finite suffix namespace could not be searched without overflowing its representation.
     #[error("the generated runtime module suffix namespace is exhausted")]
     SuffixesExhausted,
@@ -161,7 +184,8 @@ pub(super) fn module_named(
     let tokens = parsing.tokens(text)?;
     let mut taken = BTreeSet::new();
     collect_identifiers(tokens, &mut taken);
-    if !taken.contains(stem) {
+    let available = |name: &str| !taken.contains(name) && !taken.contains(&format!("{name}_value"));
+    if available(stem) {
         return Ok(stem.to_owned());
     }
     let candidates = taken
@@ -172,7 +196,7 @@ pub(super) fn module_named(
         u32::try_from(candidates).map_err(|_overflow| ModuleNameError::SuffixesExhausted)?;
     for suffix in 1..=limit {
         let candidate = format!("{stem}{suffix}");
-        if !taken.contains(&candidate) {
+        if available(&candidate) {
             return Ok(candidate);
         }
     }
@@ -180,10 +204,11 @@ pub(super) fn module_named(
 }
 
 fn collect_identifiers(tokens: proc_macro2::TokenStream, names: &mut BTreeSet<String>) {
+    use syn::ext::IdentExt as _;
     for tree in tokens {
         match tree {
             proc_macro2::TokenTree::Ident(ident) => {
-                names.extend(std::iter::once(ident.to_string()));
+                names.extend(std::iter::once(ident.unraw().to_string()));
             }
             proc_macro2::TokenTree::Group(group) => collect_identifiers(group.stream(), names),
             proc_macro2::TokenTree::Punct(_) | proc_macro2::TokenTree::Literal(_) => {}
@@ -191,128 +216,19 @@ fn collect_identifiers(tokens: proc_macro2::TokenStream, names: &mut BTreeSet<St
     }
 }
 
-/// Defines the transition once for both the engine's test/Kani surface and every generated runtime.
-/// Adding a state or action makes the compiler reject both consumers until their exhaustive matches account for it.
-macro_rules! step_machine {
-    ($consumer:ident) => {
-        $consumer! {
-            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-            enum StepAction {
-                Activate,
-                Checkpoint,
-            }
-            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-            enum StepPhase {
-                Dormant,
-                Counting(usize),
-                Active(usize),
-                Stopping(usize),
-            }
-            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-            enum StepAdvance {
-                Continue,
-                Park,
-                Reached { allowed: usize, observed: usize },
-            }
-            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-            enum StepMachineError {
-                Limit,
-                Count,
-            }
-            const fn step_transition(
-                phase: StepPhase,
-                action: StepAction,
-                allowed: usize,
-            ) -> Result<(StepPhase, StepAdvance), StepMachineError> {
-                if allowed == 0 || allowed == usize::MAX {
-                    return Err(StepMachineError::Limit);
-                }
-                match (phase, action) {
-                    (StepPhase::Dormant, StepAction::Activate) => {
-                        Ok((StepPhase::Active(1), StepAdvance::Continue))
-                    }
-                    (StepPhase::Dormant, StepAction::Checkpoint) => {
-                        Ok((StepPhase::Dormant, StepAdvance::Continue))
-                    }
-                    (StepPhase::Counting(seen), StepAction::Checkpoint) => {
-                        match seen.checked_add(1) {
-                            Some(next) => Ok((StepPhase::Counting(next), StepAdvance::Continue)),
-                            None => Err(StepMachineError::Count),
-                        }
-                    }
-                    (StepPhase::Counting(seen), StepAction::Activate) => {
-                        Ok((StepPhase::Counting(seen), StepAdvance::Continue))
-                    }
-                    (StepPhase::Active(spent), StepAction::Activate)
-                        if spent > 0 && spent <= allowed =>
-                    {
-                        Ok((StepPhase::Active(spent), StepAdvance::Continue))
-                    }
-                    (StepPhase::Active(spent), StepAction::Checkpoint)
-                        if spent > 0 && spent < allowed =>
-                    {
-                        match spent.checked_add(1) {
-                            Some(next) => Ok((StepPhase::Active(next), StepAdvance::Continue)),
-                            None => Err(StepMachineError::Count),
-                        }
-                    }
-                    (StepPhase::Active(spent), StepAction::Checkpoint) if spent == allowed => {
-                        match allowed.checked_add(1) {
-                            Some(observed) => Ok((
-                                StepPhase::Stopping(observed),
-                                StepAdvance::Reached { allowed, observed },
-                            )),
-                            None => Err(StepMachineError::Count),
-                        }
-                    }
-                    (StepPhase::Stopping(spent), _) => match allowed.checked_add(1) {
-                        Some(observed) if spent == observed => {
-                            Ok((StepPhase::Stopping(spent), StepAdvance::Park))
-                        }
-                        Some(_) | None => Err(StepMachineError::Count),
-                    },
-                    (StepPhase::Active(_), _) => Err(StepMachineError::Count),
-                }
-            }
-        }
-    };
+/// The private expression boundary preserves its argument without changing its scope or inference.
+const VALUE_MACRO: &str = "macro_rules! {{MODULE}}_value { ($value:expr) => { $value }; } ";
+
+/// The single private declaration placed before the file's actual expression guards.
+pub(super) fn expression_macro(module: &str) -> String {
+    VALUE_MACRO.replace("{{MODULE}}", module)
 }
-
-#[cfg(any(test, kani))]
-macro_rules! compile_step_machine {
-    ($($tokens:tt)*) => {
-        $($tokens)*
-    };
-}
-
-#[cfg(any(test, kani))]
-step_machine!(compile_step_machine);
-
-macro_rules! stringify_step_machine {
-    ($($tokens:tt)*) => {
-        stringify!($($tokens)*)
-    };
-}
-
-const STEP_MACHINE_SOURCE: &str = step_machine!(stringify_step_machine);
-
-/// The expression-grouping macro, emitted only into files whose guards call it.
-/// A statement-only file has no unused generated macro to excuse.
-const VALUE_MACRO: &str = r"    // The invocation is an expression boundary before expansion, while the
-    // expansion is exactly the user's expression. That groups generated
-    // boolean chains without adding lint-producing parentheses, a temporary
-    // scope, a call boundary, or a new generic type-inference boundary.
-    macro_rules! value {
-        ($value:expr) => { $value };
-    }
-    pub(crate) use value;
-
-";
 
 /// The invariant text of the runtime, with the per-file parts as placeholders.
 /// Written as one literal so a reader sees the generated module exactly as it will appear in the snapshot.
 const TEMPLATE: &str = r#"#[doc(hidden)]
 {{GENERATED_MODULE_ALLOW}}
+#[cfg(not(target_os = "wasi"))]
 mod {{MODULE}} {
     // {{MARKER}} - generated by rust-mutants; DO NOT EDIT.
     extern crate std as __rm_std;
@@ -371,7 +287,11 @@ mod {{MODULE}} {
             }
         }
     }
-{{STEP_MACHINE}}
+    // The step machine, as rust-mutants-decision compiles and tests it,
+    // with what that crate exports kept to this one.
+    mod step {
+{{STEP_MACHINE}}    }
+    use self::step::{StepAction, StepAdvance, StepPhase, step_transition};
     // Which check of the step protocol failed, and the operating system's
     // code where a call it made is what failed: the process says both
     // before it stops, so a run names the check rather than only a status.
@@ -450,15 +370,19 @@ mod {{MODULE}} {
     // name at every boundary paid an open and a close per function entry and
     // loop turn. A child made by fork without exec shares the parent's open
     // file description and so its lock, which is why the process is recorded.
+    // The lock is taken on a file of its own and never on the state: Windows
+    // makes a lock mandatory, and one over the state would refuse the
+    // runner's read of it whenever that read landed inside a take.
     struct BoundStepState {
         pid: u32,
         file: __rm_std::fs::File,
+        lock: __rm_std::fs::File,
     }
     static STEP_STATE: __rm_std::sync::OnceLock<
         __rm_std::sync::Mutex<__rm_std::option::Option<BoundStepState>>,
     > = __rm_std::sync::OnceLock::new();
 
-{{VALUE_MACRO}}
+
     // The failures a fault can make without guessing: an error type the
     // standard library defines and a caller already has to be ready for.
     // A `?` whose error is anything else does not compile under a fault,
@@ -468,7 +392,48 @@ mod {{MODULE}} {
     }
     impl Injectable for __rm_std::io::Error {
         fn injected() -> Self {
-            __rm_std::io::Error::other("a failure rust-mutants injected")
+            fated("made");
+            __rm_std::io::Error::other(Injected)
+        }
+    }
+    // The failure an io::Error a fault makes carries, which says what became
+    // of it: read by whatever formatted it, and dropped. A failure dropped
+    // unread went nowhere a person or a test could read it (ADR 0032).
+    struct Injected;
+    impl __rm_std::fmt::Display for Injected {
+        fn fmt(&self, formatter: &mut __rm_std::fmt::Formatter<'_>) -> __rm_std::fmt::Result {
+            fated("read");
+            formatter.write_str("a failure rust-mutants injected")
+        }
+    }
+    impl __rm_std::fmt::Debug for Injected {
+        fn fmt(&self, formatter: &mut __rm_std::fmt::Formatter<'_>) -> __rm_std::fmt::Result {
+            fated("read");
+            formatter.write_str("a failure rust-mutants injected")
+        }
+    }
+    impl __rm_std::error::Error for Injected {}
+    impl __rm_std::ops::Drop for Injected {
+        fn drop(&mut self) {
+            fated("dropped");
+        }
+    }
+    // One line per event, where a run asked for them. A line that cannot be
+    // written stops the process, so no run is read as one whose failure
+    // nothing read because the record of the reading was lost.
+    fn fated(event: &str) {
+        let path = match __rm_std::env::var_os("{{FAULT_FATE_ENV}}") {
+            __rm_std::option::Option::Some(path) if !path.is_empty() => path,
+            _ => return,
+        };
+        let line = __rm_std::format!("{{FAULT_FATE_SCHEMA}}\t{}\t{}\n", CATALOG, event);
+        let written = __rm_std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .and_then(|mut file| __rm_std::io::Write::write_all(&mut file, line.as_bytes()));
+        if let __rm_std::result::Result::Err(error) = written {
+            protocol_failed(Why::os("fate: write", &error));
         }
     }
     impl Injectable for __rm_std::str::Utf8Error {
@@ -517,7 +482,14 @@ mod {{MODULE}} {
     // A crash lets the call that writes finish and then stops the process
     // with nothing after it: no destructor, flush or unwinding, so what the
     // call wrote is on disk and nothing later is.
-    pub(crate) fn crashed_after<T>(_written: T) -> T {
+    // A call whose value is a future has written nothing when it returns,
+    // so a stop after it would stop before the write. Every value is
+    // `Written<()>` and a future is `Written<u8>` as well, so for a future
+    // the compiler cannot choose, refuses the stop, and the crash is not put.
+    pub(crate) trait Written<Which> {}
+    impl<T> Written<()> for T {}
+    impl<F: __rm_std::future::Future> Written<u8> for F {}
+    pub(crate) fn crashed_after<T: Written<Which>, Which>(_written: T) -> T {
         let _published = publish_crash_notice();
         stop({{CRASH_EXIT}}, Why::said("crash"))
     }
@@ -548,7 +520,7 @@ mod {{MODULE}} {
         __rm_std::fs::rename(partial, path).ok()
     }
 
-    #[inline(always)]
+{{COMPILED_SELECTOR}}    #[inline(always)]
     pub(crate) fn active(index: u32) -> bool {
         watched();
         touch(index);
@@ -760,20 +732,23 @@ mod {{MODULE}} {
             __rm_std::option::Option::None => true,
         };
         if reopen {
-            let opened = open_step_state(path)?;
-            let metadata = opened.metadata().map_err(|error| Why::os("metadata", &error))?;
-            if !metadata.file_type().is_file() {
-                return __rm_std::result::Result::Err(Why::said("not a regular file"));
-            }
-            *bound = __rm_std::option::Option::Some(BoundStepState { pid, file: opened });
+            let file = bound_step_file(path, "open", "metadata", "not a regular file")?;
+            let lock_path = __rm_std::format!("{}{{STEP_LOCK_SUFFIX}}", path);
+            let lock = bound_step_file(
+                &lock_path,
+                "lock: open",
+                "lock: metadata",
+                "lock: not a regular file",
+            )?;
+            *bound = __rm_std::option::Option::Some(BoundStepState { pid, file, lock });
         }
-        let file = match &mut *bound {
-            __rm_std::option::Option::Some(state) => &mut state.file,
+        let (file, lock) = match &mut *bound {
+            __rm_std::option::Option::Some(BoundStepState { file, lock, .. }) => (file, &*lock),
             __rm_std::option::Option::None => {
                 return __rm_std::result::Result::Err(Why::said("open"));
             }
         };
-        file.lock().map_err(|error| Why::os("lock", &error))?;
+        lock.lock().map_err(|error| Why::os("lock", &error))?;
         let transitioned = (|| {
             let phase = read_step_state(file, nonce, mutant, limit)?;
             let (mut next, advanced) = step_transition(phase, action, limit.value())
@@ -811,7 +786,7 @@ mod {{MODULE}} {
             }
             __rm_std::result::Result::Ok(advanced)
         })();
-        let unlocked = file.unlock().map_err(|error| Why::os("unlock", &error));
+        let unlocked = lock.unlock().map_err(|error| Why::os("unlock", &error));
         match (transitioned, unlocked) {
             (__rm_std::result::Result::Err(error), _) => {
                 __rm_std::result::Result::Err(error)
@@ -825,36 +800,54 @@ mod {{MODULE}} {
         }
     }
 
+    // One file of the step protocol, opened without following a link and
+    // refused unless it is a regular file, each refusal in its own words.
+    fn bound_step_file(
+        path: &str,
+        open: &'static str,
+        metadata: &'static str,
+        irregular: &'static str,
+    ) -> __rm_std::result::Result<__rm_std::fs::File, Why> {
+        let opened = open_step_state(path, open)?;
+        let read = opened.metadata().map_err(|error| Why::os(metadata, &error))?;
+        if !read.file_type().is_file() {
+            return __rm_std::result::Result::Err(Why::said(irregular));
+        }
+        __rm_std::result::Result::Ok(opened)
+    }
+
     #[cfg(unix)]
     fn open_step_state(
         path: &str,
+        check: &'static str,
     ) -> __rm_std::result::Result<__rm_std::fs::File, Why> {
-        use __rm_std::os::unix::fs::OpenOptionsExt as _;
+        use self::__rm_std::os::unix::fs::OpenOptionsExt as _;
 
         __rm_std::fs::OpenOptions::new()
             .read(true)
             .write(true)
             .custom_flags(no_follow_flag())
             .open(path)
-            .map_err(|error| Why::os("open", &error))
+            .map_err(|error| Why::os(check, &error))
     }
 
     #[cfg(windows)]
     fn open_step_state(
         path: &str,
+        check: &'static str,
     ) -> __rm_std::result::Result<__rm_std::fs::File, Why> {
-        use __rm_std::os::windows::fs::OpenOptionsExt as _;
+        use self::__rm_std::os::windows::fs::OpenOptionsExt as _;
 
         // FILE_FLAG_OPEN_REPARSE_POINT makes the final component itself the
-        // opened object. The regular-file check below then rejects links and
-        // junctions instead of following them.
+        // opened object. The regular-file check of bound_step_file then
+        // rejects links and junctions instead of following them.
         const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
         __rm_std::fs::OpenOptions::new()
             .read(true)
             .write(true)
             .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
             .open(path)
-            .map_err(|error| Why::os("open", &error))
+            .map_err(|error| Why::os(check, &error))
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -1167,10 +1160,6 @@ mod {{MODULE}} {
         stop({{STEP_PROTOCOL_EXIT}}, error)
     }
 
-    // The one way this module ends the process: it says why first, as one
-    // line whose first field is the schema, then the status, the check that
-    // failed and the operating system's code, so a run that reads the
-    // status alone is never all there is.
     #[cold]
     fn stop(status: i32, error: Why) -> ! {
         let said = __rm_std::format!("{{STOP_SCHEMA}}\t{}\t{}\t{}\n", status, error.check, error.os);
@@ -1654,6 +1643,481 @@ mod {{MODULE}} {
 }
 "#;
 
+/// Marks the module a sealed host runs, for a person reading the snapshot.
+const SEALED_MARKER: &str = "rust-mutants-sealed-runtime-v1";
+
+/// The module a sealed host runs in place of the one of [`TEMPLATE`], rendered after it from the same per-file parts and compiled only for `target_os = "wasi"`.
+const SEALED_TEMPLATE: &str = r#"#[doc(hidden)]
+{{GENERATED_MODULE_ALLOW}}
+#[cfg(target_os = "wasi")]
+mod {{MODULE}} {
+    // {{SEALED_MARKER}} - generated by rust-mutants; DO NOT EDIT.
+    // What a sealed host runs in place of the module above. The host meters
+    // the fuel that bounds an instance, nothing an instance runs can start a
+    // process that loses the environment, and one thread has no schedule to
+    // delay, so nothing here spends a step, beats, watches or pauses. The
+    // host names the one test an instance ran, so a record names no thread,
+    // and each is written whole the first time its index is seen.
+    extern crate std as __rm_std;
+    const CATALOG: &str = "{{CATALOG}}";
+    const IDS: &[(&str, u32)] = &[
+{{IDS}}    ];
+    const TOUCH_BASE: u32 = {{BASE}};
+    const TOUCH_SPAN: u32 = {{SPAN}};
+    const ITEM_BASE: u32 = {{ITEM_BASE}};
+    const ITEM_SPAN: u32 = {{ITEM_SPAN}};
+    #[derive(Clone, Copy)]
+    enum Selection {
+        None,
+        Index(u32),
+        Beside(u32, u32),
+    }
+    // Which check failed, and the operating system's code where a call it
+    // made is what failed: the process says both before it stops, so a run
+    // names the check rather than only a status.
+    #[derive(Clone, Copy)]
+    struct Why {
+        check: &'static str,
+        os: i32,
+    }
+    impl Why {
+        const fn said(check: &'static str) -> Self {
+            Self { check, os: 0 }
+        }
+        fn os(check: &'static str, error: &__rm_std::io::Error) -> Self {
+            let os = match error.raw_os_error() {
+                __rm_std::option::Option::Some(code) => code,
+                __rm_std::option::Option::None => 0,
+            };
+            Self { check, os }
+        }
+    }
+    #[derive(Clone, Copy)]
+    enum TouchMode {
+        Off,
+        On,
+        ItemsOnly,
+    }
+    static ACTIVE: __rm_std::sync::OnceLock<Selection> = __rm_std::sync::OnceLock::new();
+    static TOUCHING: __rm_std::sync::OnceLock<TouchMode> = __rm_std::sync::OnceLock::new();
+    static TOUCH_SINK: __rm_std::sync::OnceLock<__rm_std::fs::File> = __rm_std::sync::OnceLock::new();
+    static SEALED: __rm_std::sync::OnceLock<()> = __rm_std::sync::OnceLock::new();
+    // One flag for each index this file's guards and markers can name, set
+    // the first time the index is seen: that sighting writes the record, and
+    // every later one costs the flag and nothing else.
+    static SEEN_SITES: [__rm_std::sync::atomic::AtomicBool; TOUCH_SPAN as usize] =
+        [const { __rm_std::sync::atomic::AtomicBool::new(false) }; TOUCH_SPAN as usize];
+    static SEEN_BODIES: [__rm_std::sync::atomic::AtomicBool; TOUCH_SPAN as usize] =
+        [const { __rm_std::sync::atomic::AtomicBool::new(false) }; TOUCH_SPAN as usize];
+    static SEEN_DIFFERENCES: [__rm_std::sync::atomic::AtomicBool; TOUCH_SPAN as usize] =
+        [const { __rm_std::sync::atomic::AtomicBool::new(false) }; TOUCH_SPAN as usize];
+    static SEEN_ITEMS: [__rm_std::sync::atomic::AtomicBool; ITEM_SPAN as usize] =
+        [const { __rm_std::sync::atomic::AtomicBool::new(false) }; ITEM_SPAN as usize];
+
+
+    // The failures a fault can make without guessing: an error type the
+    // standard library defines and a caller already has to be ready for.
+    // A `?` whose error is anything else does not compile under a fault,
+    // and the compiler's refusal is what says the fault was not put.
+    pub(crate) trait Injectable {
+        fn injected() -> Self;
+    }
+    impl Injectable for __rm_std::io::Error {
+        fn injected() -> Self {
+            __rm_std::io::Error::other("a failure rust-mutants injected")
+        }
+    }
+    impl Injectable for __rm_std::str::Utf8Error {
+        fn injected() -> Self {
+            match __rm_std::str::from_utf8(__rm_std::hint::black_box(&[0xff_u8])) {
+                __rm_std::result::Result::Err(error) => error,
+                __rm_std::result::Result::Ok(_) => __rm_std::unreachable!(),
+            }
+        }
+    }
+    impl Injectable for __rm_std::string::FromUtf8Error {
+        fn injected() -> Self {
+            match __rm_std::string::String::from_utf8(__rm_std::hint::black_box(__rm_std::vec![0xff_u8])) {
+                __rm_std::result::Result::Err(error) => error,
+                __rm_std::result::Result::Ok(_) => __rm_std::unreachable!(),
+            }
+        }
+    }
+    impl Injectable for __rm_std::num::ParseIntError {
+        fn injected() -> Self {
+            match <u8 as __rm_std::str::FromStr>::from_str(__rm_std::hint::black_box("")) {
+                __rm_std::result::Result::Err(error) => error,
+                __rm_std::result::Result::Ok(_) => __rm_std::unreachable!(),
+            }
+        }
+    }
+    impl Injectable for __rm_std::num::ParseFloatError {
+        fn injected() -> Self {
+            match <f64 as __rm_std::str::FromStr>::from_str(__rm_std::hint::black_box("")) {
+                __rm_std::result::Result::Err(error) => error,
+                __rm_std::result::Result::Ok(_) => __rm_std::unreachable!(),
+            }
+        }
+    }
+    impl Injectable for __rm_std::num::TryFromIntError {
+        fn injected() -> Self {
+            match <u8 as __rm_std::convert::TryFrom<u16>>::try_from(__rm_std::hint::black_box(256_u16)) {
+                __rm_std::result::Result::Err(error) => error,
+                __rm_std::result::Result::Ok(_) => __rm_std::unreachable!(),
+            }
+        }
+    }
+    pub(crate) fn injected<E: Injectable>() -> E {
+        E::injected()
+    }
+    // A crash lets the call that writes finish and then stops the process
+    // with nothing after it: no destructor, flush or unwinding, so what the
+    // call wrote is on disk and nothing later is.
+    // A call whose value is a future has written nothing when it returns,
+    // so a stop after it would stop before the write. Every value is
+    // `Written<()>` and a future is `Written<u8>` as well, so for a future
+    // the compiler cannot choose, refuses the stop, and the crash is not put.
+    pub(crate) trait Written<Which> {}
+    impl<T> Written<()> for T {}
+    impl<F: __rm_std::future::Future> Written<u8> for F {}
+    pub(crate) fn crashed_after<T: Written<Which>, Which>(_written: T) -> T {
+        let _published = publish_crash_notice();
+        stop({{CRASH_EXIT}}, Why::said("crash"))
+    }
+
+    // The notice is what tells the supervisor this status is a stop the
+    // runtime made rather than one a test chose. A notice that cannot be
+    // published still stops the process, so the state is torn all the
+    // same; the status alone then decides nothing, and the crash is left
+    // undecided rather than read as a stop nobody confirmed.
+    fn publish_crash_notice() -> __rm_std::option::Option<()> {
+        let path = __rm_std::env::var("{{CRASH_NOTICE_ENV}}").ok()?;
+        let nonce = __rm_std::env::var("{{CRASH_NONCE_ENV}}").ok()?;
+        let wanted = __rm_std::env::var("{{ACTIVE_ENV}}").ok()?;
+        let partial = __rm_std::format!("{}.partial", path);
+        {
+            let mut file = __rm_std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&partial)
+                .ok()?;
+            let notice = __rm_std::format!(
+                "{{CRASH_NOTICE_SCHEMA}}\t{}\t{}\t{}\n",
+                nonce, CATALOG, wanted
+            );
+            __rm_std::io::Write::write_all(&mut file, notice.as_bytes()).ok()?;
+            file.sync_data().ok()?;
+        }
+        __rm_std::fs::rename(partial, path).ok()
+    }
+
+{{COMPILED_SELECTOR}}    #[inline(always)]
+    pub(crate) fn active(index: u32) -> bool {
+        sealed();
+        touch(index);
+        match *ACTIVE.get_or_init(resolve) {
+            Selection::None => false,
+            Selection::Index(selected) | Selection::Beside(selected, _) if selected == index => true,
+            Selection::Beside(_, fault) if fault == index => true,
+            Selection::Index(_) | Selection::Beside(..) => false,
+        }
+    }
+
+    // A boundary spends nothing here, since the fuel the host meters is the
+    // bound; it only stops a process that was asked to count one.
+    #[inline(always)]
+    pub(crate) fn checkpoint() {
+        sealed();
+    }
+
+    // The module above keeps an allowance, a beat and a delay for whoever
+    // starts the process; a sealed host keeps none of them, because its fuel
+    // is the bound and one thread has nothing to delay. A process asked for
+    // one anyway was started by something that thinks it is being kept, so
+    // it stops and says which rather than run as though it were.
+    #[inline(always)]
+    fn sealed() {
+        let () = *SEALED.get_or_init(unkept);
+    }
+
+    #[cold]
+    fn unkept() {
+        let counted = match __rm_std::env::var_os("{{STEPS_ENV}}") {
+            __rm_std::option::Option::Some(steps) => steps.to_str() != __rm_std::option::Option::Some("0"),
+            __rm_std::option::Option::None => false,
+        };
+        if counted {
+            protocol_failed(Why::said("sealed: an allowance"));
+        }
+        if __rm_std::env::var_os("{{STEP_BEAT_ENV}}").is_some() {
+            protocol_failed(Why::said("sealed: a beat"));
+        }
+        let delayed = match __rm_std::env::var_os("{{DELAY_ENV}}") {
+            __rm_std::option::Option::Some(delay) => !delay.is_empty(),
+            __rm_std::option::Option::None => false,
+        };
+        if delayed {
+            protocol_failed(Why::said("sealed: a delay"));
+        }
+    }
+
+    #[cold]
+    fn protocol_failure() -> ! {
+        protocol_failed(Why::said("unstated"))
+    }
+
+    #[cold]
+    fn protocol_failed(error: Why) -> ! {
+        stop({{STEP_PROTOCOL_EXIT}}, error)
+    }
+
+    #[cold]
+    fn stop(status: i32, error: Why) -> ! {
+        let said = __rm_std::format!("{{STOP_SCHEMA}}\t{}\t{}\t{}\n", status, error.check, error.os);
+        let _whether_anyone_reads_it = __rm_std::io::Write::write_all(&mut __rm_std::io::stderr(), said.as_bytes());
+        __rm_std::process::exit(status)
+    }
+
+    fn offset(index: u32, base: u32) -> usize {
+        let relative = match index.checked_sub(base) {
+            __rm_std::option::Option::Some(relative) => relative,
+            __rm_std::option::Option::None => touch_failure(),
+        };
+        match <usize as __rm_std::convert::TryFrom<u32>>::try_from(relative) {
+            __rm_std::result::Result::Ok(offset) => offset,
+            __rm_std::result::Result::Err(_) => touch_failure(),
+        }
+    }
+
+    #[inline(never)]
+    fn touch(index: u32) {
+        if !touching() {
+            return;
+        }
+        recorded(&SEEN_SITES, offset(index, TOUCH_BASE), "{{SITES}}", index);
+    }
+
+    #[inline(always)]
+    pub(crate) fn body(index: u32) {
+        entered(index);
+    }
+
+    #[inline(always)]
+    pub(crate) fn differing<F: __rm_std::ops::FnOnce() -> bool>(index: u32, original: bool, alternative: F) -> bool {
+        if touching() && original != alternative() {
+            difference(index);
+        }
+        original
+    }
+
+{{OBSERVABLE}}
+
+    #[inline(always)]
+    pub(crate) fn undefaulted<T: {{PROBE_BOUND}}>(index: u32, value: T) -> T {
+        if touching() && value != <T as __rm_std::default::Default>::default() {
+            difference(index);
+        }
+        value
+    }
+
+    #[inline(always)]
+    pub(crate) fn untrue(index: u32, value: bool) -> bool {
+        if touching() && !value {
+            difference(index);
+        }
+        value
+    }
+
+    #[inline(always)]
+    pub(crate) fn unokdefault<T: {{PROBE_BOUND}}, E>(index: u32, value: __rm_std::result::Result<T, E>) -> __rm_std::result::Result<T, E> {
+        if touching() {
+            let parted = match &value {
+                __rm_std::result::Result::Ok(held) => *held != <T as __rm_std::default::Default>::default(),
+                __rm_std::result::Result::Err(_) => true,
+            };
+            if parted {
+                difference(index);
+            }
+        }
+        value
+    }
+
+    #[inline(always)]
+    pub(crate) fn unsomedefault<T: {{PROBE_BOUND}}>(index: u32, value: __rm_std::option::Option<T>) -> __rm_std::option::Option<T> {
+        if touching() {
+            let parted = match &value {
+                __rm_std::option::Option::Some(held) => *held != <T as __rm_std::default::Default>::default(),
+                __rm_std::option::Option::None => true,
+            };
+            if parted {
+                difference(index);
+            }
+        }
+        value
+    }
+
+    #[inline(never)]
+    fn difference(index: u32) {
+        recorded(&SEEN_DIFFERENCES, offset(index, TOUCH_BASE), "{{INFECTED}}", index);
+    }
+
+    #[inline(always)]
+    pub(crate) fn item(index: u32) {
+        sealed();
+        if touching_items() {
+            entered_item(index);
+        }
+    }
+
+    #[inline(never)]
+    fn entered_item(index: u32) {
+        recorded(&SEEN_ITEMS, offset(index, ITEM_BASE), "{{ENTERED}}", index);
+    }
+
+    #[inline(never)]
+    fn entered(index: u32) {
+        if !touching() {
+            return;
+        }
+        recorded(&SEEN_BODIES, offset(index, TOUCH_BASE), "{{BODIES}}", index);
+    }
+
+    // A record is written the first time its index is seen, whole and in
+    // one write, and nothing is held back for later: an instance the host
+    // stops between two writes leaves each line it wrote whole and the rest
+    // absent, and no record waits on a destructor a sealed instance never
+    // runs.
+    fn recorded(seen: &[__rm_std::sync::atomic::AtomicBool], at: usize, kind: &str, index: u32) {
+        let first = match seen.get(at) {
+            __rm_std::option::Option::Some(flag) => !flag.swap(true, __rm_std::sync::atomic::Ordering::SeqCst),
+            __rm_std::option::Option::None => touch_failure(),
+        };
+        if first {
+            append(&__rm_std::format!("{}\t{{UNATTRIBUTED}}\t{}\n", kind, index));
+        }
+    }
+
+    fn touching() -> bool {
+        matches!(*TOUCHING.get_or_init(configured_touch), TouchMode::On)
+    }
+
+    fn touching_items() -> bool {
+        matches!(
+            *TOUCHING.get_or_init(configured_touch),
+            TouchMode::On | TouchMode::ItemsOnly
+        )
+    }
+
+    fn configured_touch() -> TouchMode {
+        let asked = match __rm_std::env::var("{{TOUCH_ENV}}") {
+            __rm_std::result::Result::Ok(value) => !value.is_empty(),
+            __rm_std::result::Result::Err(_) => false,
+        };
+        let ours = match __rm_std::env::var("{{CATALOG_ENV}}") {
+            __rm_std::result::Result::Ok(value) => value == CATALOG,
+            __rm_std::result::Result::Err(_) => false,
+        };
+        let items_only = match __rm_std::env::var("{{TOUCH_ITEMS_ENV}}") {
+            __rm_std::result::Result::Ok(value) => value == "1",
+            __rm_std::result::Result::Err(_) => false,
+        };
+        match (asked && ours, items_only) {
+            (true, true) => TouchMode::ItemsOnly,
+            (true, false) => TouchMode::On,
+            (false, _) => TouchMode::Off,
+        }
+    }
+
+    #[cold]
+    fn touch_failure() -> ! {
+        stop({{TOUCH_EXIT}}, Why::said("touch: poisoned"))
+    }
+
+    fn append(line: &str) {
+        whole(TOUCH_SINK.get_or_init(opened), line, "touch: append");
+    }
+
+    #[cold]
+    fn opened() -> __rm_std::fs::File {
+        let path = match __rm_std::env::var("{{TOUCH_ENV}}") {
+            __rm_std::result::Result::Ok(value) => value,
+            __rm_std::result::Result::Err(_) => stop({{TOUCH_EXIT}}, Why::said("touch: no path")),
+        };
+        let opened = __rm_std::fs::OpenOptions::new().create(true).append(true).open(&path);
+        let file = match opened {
+            __rm_std::result::Result::Ok(file) => file,
+            __rm_std::result::Result::Err(error) => stop({{TOUCH_EXIT}}, Why::os("touch: open", &error)),
+        };
+        let header = __rm_std::format!("{{TOUCH_SCHEMA}} {}\n", CATALOG);
+        whole(&file, &header, "touch: header");
+        file
+    }
+
+    // One write of the whole line, or a stop: the host reads a line only
+    // with its end, so a write it took part of is never followed by the
+    // rest, which would read as a record nobody wrote.
+    fn whole(file: &__rm_std::fs::File, line: &str, check: &'static str) {
+        let mut sink = file;
+        match __rm_std::io::Write::write(&mut sink, line.as_bytes()) {
+            __rm_std::result::Result::Ok(written) if written == line.len() => {}
+            __rm_std::result::Result::Ok(_) => stop({{TOUCH_EXIT}}, Why::said("touch: part of a line")),
+            __rm_std::result::Result::Err(error) => stop({{TOUCH_EXIT}}, Why::os(check, &error)),
+        }
+    }
+
+    #[cold]
+    fn resolve() -> Selection {
+        let wanted = match __rm_std::env::var("{{ACTIVE_ENV}}") {
+            __rm_std::result::Result::Ok(value) => value,
+            __rm_std::result::Result::Err(_) => return Selection::None,
+        };
+        if wanted.is_empty() {
+            return Selection::None;
+        }
+        let catalog = match __rm_std::env::var("{{CATALOG_ENV}}") {
+            __rm_std::result::Result::Ok(value) => value,
+            __rm_std::result::Result::Err(_) => stale_catalog("<unset>"),
+        };
+        if catalog != CATALOG {
+            stale_catalog(&catalog);
+        }
+        let selected = match indexed(&wanted) {
+            __rm_std::option::Option::Some(index) => index,
+            __rm_std::option::Option::None => return Selection::None,
+        };
+        match __rm_std::env::var("{{FAULT_ENV}}") {
+            __rm_std::result::Result::Ok(fault) if !fault.is_empty() => match indexed(&fault) {
+                __rm_std::option::Option::Some(beside) => Selection::Beside(selected, beside),
+                __rm_std::option::Option::None => protocol_failure(),
+            },
+            __rm_std::result::Result::Ok(_) | __rm_std::result::Result::Err(_) => {
+                Selection::Index(selected)
+            }
+        }
+    }
+
+    fn indexed(wanted: &str) -> __rm_std::option::Option<u32> {
+        for &(id, index) in IDS {
+            if id == wanted {
+                return __rm_std::option::Option::Some(index);
+            }
+        }
+        __rm_std::option::Option::None
+    }
+
+    #[cold]
+    fn stale_catalog(active: &str) -> ! {
+        let said = __rm_std::format!(
+            "rust-mutants: this binary was built from catalog {} but {} is active\n",
+            CATALOG,
+            active,
+        );
+        let _whether_anyone_reads_it = __rm_std::io::Write::write_all(&mut __rm_std::io::stderr(), said.as_bytes());
+        stop({{EXIT}}, Why::said("stale catalog"))
+    }
+}
+"#;
+
 /// `text` with every name the runtime and the engine agree on filled in: the variables it reads, the records it writes, and the codes it exits with.
 fn with_protocol(text: &str) -> String {
     text.replace("{{ACTIVE_ENV}}", ACTIVE_ENV)
@@ -1672,6 +2136,7 @@ fn with_protocol(text: &str) -> String {
         .replace("{{STEP_NOTICE_ENV}}", STEP_NOTICE_ENV)
         .replace("{{STEP_NONCE_ENV}}", STEP_NONCE_ENV)
         .replace("{{STEP_STATE_ENV}}", STEP_STATE_ENV)
+        .replace("{{STEP_LOCK_SUFFIX}}", STEP_LOCK_SUFFIX)
         .replace("{{STEP_BEAT_ENV}}", STEP_BEAT_ENV)
         .replace("{{STEP_STATE_SCHEMA}}", STEP_STATE_SCHEMA)
         .replace("{{STEP_NOTICE_SCHEMA}}", STEP_NOTICE_SCHEMA)
@@ -1684,15 +2149,38 @@ fn with_protocol(text: &str) -> String {
         .replace("{{CRASH_NOTICE_ENV}}", CRASH_NOTICE_ENV)
         .replace("{{CRASH_NONCE_ENV}}", CRASH_NONCE_ENV)
         .replace("{{CRASH_NOTICE_SCHEMA}}", CRASH_NOTICE_SCHEMA)
+        .replace("{{FAULT_FATE_ENV}}", FAULT_FATE_ENV)
+        .replace("{{FAULT_FATE_SCHEMA}}", FAULT_FATE_SCHEMA)
         .replace("{{DELAY_ENV}}", DELAY_ENV)
 }
 
-/// Renders the runtime module for one file.
+/// Renders the runtime modules for one file: the one every other target compiles, then the one a sealed host runs.
 ///
 /// # Errors
 ///
 /// Returns [`RuntimeRenderError`] when the inclusive catalog-index window cannot be represented without overflow.
 pub fn render(rendering: &Rendering<'_>) -> Result<String, RuntimeRenderError> {
+    let mut text = String::new();
+    if rendering
+        .placements
+        .iter()
+        .any(|placement| match placement.hint.form {
+            crate::syntax::Form::C
+            | crate::syntax::Form::E
+            | crate::syntax::Form::M
+            | crate::syntax::Form::B => true,
+            crate::syntax::Form::S => false,
+        })
+    {
+        text.push_str(&expression_macro(rendering.module));
+        text.push_str(rendering.newline);
+    }
+    text.push_str(&render_modules(rendering)?);
+    Ok(text)
+}
+
+/// Renders both target alternatives independently of the file's single lexical macro owner.
+pub(super) fn render_modules(rendering: &Rendering<'_>) -> Result<String, RuntimeRenderError> {
     let Rendering {
         module,
         catalog_digest,
@@ -1713,49 +2201,79 @@ pub fn render(rendering: &Rendering<'_>) -> Result<String, RuntimeRenderError> {
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
     }
     let reach = touched(placements, markers)?;
-    let value_macro = if placements
+    let step_machine = rust_mutants_decision::STEP_SOURCE.replace("pub ", "pub(crate) ");
+
+    let selector = if placements
         .iter()
-        .any(|placement| placement.hint.form != crate::syntax::Form::S)
+        .any(|placement| placement.hint.form == crate::syntax::Form::B)
     {
-        VALUE_MACRO
+        format!("    {COMPILED_SELECTOR}\n")
     } else {
-        ""
+        String::new()
     };
 
-    let text = TEMPLATE
-        .replace(
-            "{{GENERATED_MODULE_ALLOW}}",
-            super::GENERATED_MODULE_ALLOW_ATTRIBUTE,
-        )
-        .replace("{{VALUE_MACRO}}", value_macro)
-        .replace("{{MODULE}}", module)
-        .replace("{{MARKER}}", RUNTIME_MARKER)
-        .replace("{{CATALOG}}", catalog_digest)
-        .replace("{{IDS}}", &table)
-        .replace("{{BASE}}", &reach.base.to_string())
-        .replace("{{SPAN}}", &reach.span.to_string())
-        .replace("{{ITEM_BASE}}", &first_item.to_string())
-        .replace("{{ITEM_SPAN}}", &item_count.to_string())
-        .replace("{{STEP_MACHINE}}", STEP_MACHINE_SOURCE)
-        .replace(
-            "{{OBSERVABLE}}",
-            &format!(
-                "    {}",
-                super::observable::declaration(OBSERVABLE, "__rm_std")
-            ),
-        )
-        .replace(
-            "{{PROBE_BOUND}}",
-            &super::observable::bound(OBSERVABLE, "__rm_std"),
-        )
-        .replace("{{WATCHED}}", &format!("{watched:?}"));
-    let text = with_protocol(&text);
+    let filled = |template: &str| {
+        template
+            .replace(
+                "{{GENERATED_MODULE_ALLOW}}",
+                super::GENERATED_MODULE_ALLOW_ATTRIBUTE,
+            )
+            .replace("{{MODULE}}", module)
+            .replace("{{MARKER}}", RUNTIME_MARKER)
+            .replace("{{SEALED_MARKER}}", SEALED_MARKER)
+            .replace("{{CATALOG}}", catalog_digest)
+            .replace("{{IDS}}", &table)
+            .replace("{{BASE}}", &reach.base.to_string())
+            .replace("{{SPAN}}", &reach.span.to_string())
+            .replace("{{ITEM_BASE}}", &first_item.to_string())
+            .replace("{{ITEM_SPAN}}", &item_count.to_string())
+            .replace("{{STEP_MACHINE}}", &step_machine)
+            .replace("{{COMPILED_SELECTOR}}", &selector)
+            .replace(
+                "{{OBSERVABLE}}",
+                &format!(
+                    "    {}",
+                    super::observable::declaration(OBSERVABLE, "__rm_std")
+                ),
+            )
+            .replace(
+                "{{PROBE_BOUND}}",
+                &super::observable::bound(OBSERVABLE, "__rm_std"),
+            )
+            .replace("{{WATCHED}}", &format!("{watched:?}"))
+    };
+    let text = with_protocol(&[filled(TEMPLATE), filled(SEALED_TEMPLATE)].concat());
     if newline == "\n" {
         Ok(text)
     } else {
         Ok(text.replace('\n', newline))
     }
 }
+
+/// The same constant selector in both runtimes, read at compilation rather than execution.
+const COMPILED_SELECTOR: &str = r#"pub(crate) const fn baked(index: u32) -> bool {
+        let bytes = match option_env!("RUST_MUTANTS_COMPILED_ACTIVE") {
+            Some(text) => text.as_bytes(),
+            None => return false,
+        };
+        if bytes.is_empty() { return false; }
+        let mut at = 0;
+        let mut number = 0u32;
+        while at < bytes.len() {
+            let byte = bytes[at];
+            if byte < b'0' || byte > b'9' { return false; }
+            number = match number.checked_mul(10) {
+                Some(value) => value,
+                None => return false,
+            };
+            number = match number.checked_add((byte - b'0') as u32) {
+                Some(value) => value,
+                None => return false,
+            };
+            at += 1;
+        }
+        number == index
+    }"#;
 
 /// What one file's runtime module is generated from.
 #[derive(Debug, Clone, Copy)]
@@ -1814,25 +2332,505 @@ struct Window {
 
 #[cfg(test)]
 mod tests {
-    use super::{StepAction, StepAdvance, StepMachineError, StepPhase, TEMPLATE, step_transition};
+    use std::path::Path;
+    use std::process::Command;
+    use std::time::Duration;
+
+    use super::{
+        ACTIVE_ENV, CATALOG_ENV, DELAY_ENV, FAULT_ENV, Rendering, SEALED_TEMPLATE, STEP_NONCE_ENV,
+        STEP_NOTICE_ENV, STEP_NOTICE_SCHEMA, STEP_STATE_ENV, STEP_STATE_SCHEMA, STEPS_ENV,
+        TEMPLATE, TOUCH_ENV, VALUE_MACRO, WATCHED_ENV, render,
+    };
+    use crate::instrument::Placement;
+    use crate::rule::Tier;
+    use crate::runner::{Bound, Cancel, RunResult, Spec, Termination, run};
+    use crate::testkit::compile::ScriptedCompile;
+    use crate::vars::Variables;
+    use rust_mutants_decision::step::{
+        StepAction, StepAdvance, StepMachineError, StepPhase, step_transition,
+    };
+
+    const PLANT_CATALOG: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const PLANT_NONCE: &str = "0123456789abcdef0123456789abcdef";
+    const PLANT_WATCHED: &str = "/unwatched-step-transition-plant";
+
+    struct StepCase {
+        result: RunResult,
+        state: String,
+        notice: Option<String>,
+        completed: Option<Vec<u8>>,
+    }
+
+    fn run_step_case(root: &Path, name: &str, module: &str, selected: &Placement) -> StepCase {
+        let directory = root.join(name);
+        std::fs::create_dir_all(&directory).expect("case directory");
+        let source = directory.join("step.rs");
+        let state = directory.join("step.state");
+        let notice = directory.join("step.notice");
+        let completed = directory.join("completed");
+        std::fs::write(
+            &state,
+            format!(
+                "{STEP_STATE_SCHEMA}\t{PLANT_NONCE}\t{PLANT_CATALOG}\t{}\t2\tdormant\t0\n",
+                selected.id
+            ),
+        )
+        .expect("initial state");
+        std::fs::write(super::step_lock_path(&state), b"").expect("the step lock");
+        std::fs::write(
+            &source,
+            format!(
+                "{module}\nfn main() {{ assert!(__rm::active({})); __rm::checkpoint(); std::fs::write({completed:?}, b\"completed\").expect(\"completed\"); }}\n",
+                selected.index
+            ),
+        )
+        .expect("generated source");
+        let built = Command::new("rustc")
+            .args(["--edition", "2024", "--crate-type", "bin"])
+            .arg("--out-dir")
+            .arg(&directory)
+            .arg(&source)
+            .output()
+            .expect("rustc runs");
+        assert!(built.status.success(), "{:?}", built.stderr);
+        let executable = directory.join(format!("step{}", std::env::consts::EXE_SUFFIX));
+        let mut spec = Spec::new(
+            [executable.into_os_string()],
+            Bound::After(Duration::from_secs(10)),
+        );
+        spec.stop_file = Some(notice.clone());
+        let mut env = Variables::of(std::env::vars_os());
+        for name in [DELAY_ENV, FAULT_ENV, TOUCH_ENV] {
+            env.remove(name);
+        }
+        env.set(ACTIVE_ENV, selected.id.as_str());
+        env.set(CATALOG_ENV, PLANT_CATALOG);
+        env.set(WATCHED_ENV, PLANT_WATCHED);
+        env.set(STEPS_ENV, "2");
+        env.set(STEP_NONCE_ENV, PLANT_NONCE);
+        env.set(STEP_NOTICE_ENV, notice.as_os_str().to_owned());
+        env.set(STEP_STATE_ENV, state.as_os_str().to_owned());
+        spec.env = Some(env);
+        let result = run(&spec, &Cancel::new());
+        StepCase {
+            result,
+            state: std::fs::read_to_string(state).expect("final state"),
+            notice: match std::fs::read_to_string(notice) {
+                Ok(text) => Some(text),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => panic!("notice: {error}"),
+            },
+            completed: match std::fs::read(completed) {
+                Ok(bytes) => Some(bytes),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => panic!("completed: {error}"),
+            },
+        }
+    }
+
+    #[test]
+    fn a_planted_activation_that_spends_two_steps_is_rejected() {
+        let temporary = tempfile::tempdir().expect("case root");
+        let scripted = ScriptedCompile::from_source(
+            "src/lib.rs",
+            "pub fn step(value: i32) -> i32 { value + 1 }\n",
+            Tier::All,
+        );
+        let selected = scripted.placements().first().expect("one mutation");
+        let module = render(&Rendering {
+            module: "__rm",
+            catalog_digest: PLANT_CATALOG,
+            placements: scripted.placements(),
+            markers: &[],
+            first_item: 0,
+            item_count: 0,
+            newline: "\n",
+            watched: PLANT_WATCHED,
+        })
+        .expect("generated runtime");
+        let before = "StepPhase::Active(1), StepAdvance::Continue";
+        assert_eq!(module.matches(before).count(), 1);
+        let planted = module.replacen(before, "StepPhase::Active(2), StepAdvance::Continue", 1);
+        let clean = run_step_case(temporary.path(), "clean", &module, selected);
+        assert!(clean.result.succeeded(), "{:?}", clean.result.termination);
+        assert_eq!(clean.completed, Some(b"completed".to_vec()));
+        assert_eq!(clean.notice, None);
+        assert_eq!(
+            clean.state,
+            format!(
+                "{STEP_STATE_SCHEMA}\t{PLANT_NONCE}\t{PLANT_CATALOG}\t{}\t2\tactive\t2\n",
+                selected.id
+            )
+        );
+        let altered = run_step_case(temporary.path(), "planted", &planted, selected);
+        assert!(matches!(
+            altered.result.termination,
+            Termination::StoppedByMonitor
+        ));
+        assert_eq!(altered.completed, None);
+        assert_eq!(
+            altered.notice,
+            Some(format!(
+                "{STEP_NOTICE_SCHEMA}\t{PLANT_NONCE}\t{PLANT_CATALOG}\t{}\t2\t3\n",
+                selected.id
+            ))
+        );
+    }
 
     #[test]
     fn the_runtime_ends_a_process_in_one_place_and_says_why_there_first() {
-        let exits: Vec<usize> = TEMPLATE
-            .match_indices("process::exit(")
-            .map(|(at, _)| at)
-            .collect();
-        let stop = TEMPLATE.find("fn stop(status: i32");
-        let said = TEMPLATE.find("{{STOP_SCHEMA}}");
+        for template in [TEMPLATE, SEALED_TEMPLATE] {
+            let exits: Vec<usize> = template
+                .match_indices("process::exit(")
+                .map(|(at, _)| at)
+                .collect();
+            let stop = template.find("fn stop(status: i32");
+            let said = template.find("{{STOP_SCHEMA}}");
+            assert!(
+                matches!(
+                    (exits.as_slice(), stop, said),
+                    ([exit], Some(stop), Some(said)) if stop < said && said < *exit
+                        && !template.get(stop..*exit).is_some_and(|between| between.contains("\n    fn "))
+                ),
+                "a process the runtime ends has to say which check stopped it before it goes, so \
+                 the one call that ends it is inside `stop`, after the line it writes, in either \
+                 module: exits at {exits:?}, `stop` at {stop:?}, the line at {said:?}"
+            );
+        }
+    }
+
+    /// The runtime and its single private macro rendered for a file whose guards group a value.
+    fn rendered() -> String {
+        let scripted = ScriptedCompile::from_source(
+            "src/lib.rs",
+            "pub fn step(value: i32) -> i32 { value + 1 }\n",
+            Tier::All,
+        );
+        let text = render(&Rendering {
+            module: "__rm",
+            catalog_digest: PLANT_CATALOG,
+            placements: scripted.placements(),
+            markers: &[],
+            first_item: 0,
+            item_count: 1,
+            newline: "\n",
+            watched: PLANT_WATCHED,
+        })
+        .expect("generated runtime");
         assert!(
-            matches!(
-                (exits.as_slice(), stop, said),
-                ([exit], Some(stop), Some(said)) if stop < said && said < *exit
-                    && !TEMPLATE.get(stop..*exit).is_some_and(|between| between.contains("\n    fn "))
+            text.contains("macro_rules! __rm_value"),
+            "the file's guards group a value through their single private macro"
+        );
+        text
+    }
+
+    /// What `inspect` finds in the two modules of a rendered `text`, read on a thread of their own: the one every other target compiles, then the one a sealed host runs.
+    fn read_modules<T: Send>(
+        text: &str,
+        inspect: impl FnOnce(&syn::ItemMod, &syn::ItemMod) -> T + Send,
+    ) -> T {
+        crate::parsing::apart(|parsing| {
+            let file = parsing
+                .file(text)
+                .expect("the rendered runtime reads as Rust");
+            match file.items.as_slice() {
+                [
+                    syn::Item::Macro(grouping),
+                    syn::Item::Mod(native),
+                    syn::Item::Mod(sealed),
+                ] => {
+                    assert!(
+                        grouping.attrs.is_empty(),
+                        "the actual grouping macro is private"
+                    );
+                    assert_eq!(
+                        spelled(grouping, text),
+                        super::expression_macro("__rm").trim()
+                    );
+                    inspect(native, sealed)
+                }
+                [syn::Item::Mod(native), syn::Item::Mod(sealed)] => inspect(native, sealed),
+                items => panic!(
+                    "the rendered runtime is two modules, and it holds {} items",
+                    items.len()
+                ),
+            }
+        })
+        .expect("a thread to read on")
+    }
+
+    /// The items of an inline module.
+    fn content(module: &syn::ItemMod) -> &[syn::Item] {
+        match &module.content {
+            Some((_, items)) => items,
+            None => panic!("the runtime module {} is written inline", module.ident),
+        }
+    }
+
+    /// The bytes of `text` that `node` was read from.
+    fn spelled(node: &impl syn::spanned::Spanned, text: &str) -> String {
+        text.get(node.span().byte_range())
+            .expect("a span of the text it was read from")
+            .to_owned()
+    }
+
+    /// The name an item goes by among the items of its module, which is one name for one item in either runtime.
+    fn named(item: &syn::Item, text: &str) -> String {
+        match item {
+            syn::Item::Const(one) => format!("const {}", one.ident),
+            syn::Item::Enum(one) => format!("enum {}", one.ident),
+            syn::Item::ExternCrate(one) => format!("extern crate {}", one.ident),
+            syn::Item::Fn(one) => format!("fn {}", one.sig.ident),
+            syn::Item::Macro(one) => match &one.ident {
+                Some(ident) => format!("macro {ident}"),
+                None => format!("macro {}", spelled(item, text)),
+            },
+            syn::Item::Static(one) => format!("static {}", one.ident),
+            syn::Item::Struct(one) => format!("struct {}", one.ident),
+            syn::Item::Trait(one) => format!("trait {}", one.ident),
+            syn::Item::Type(one) => format!("type {}", one.ident),
+            syn::Item::Impl(one) => match &one.trait_ {
+                Some((path, _)) => format!(
+                    "impl {} for {}",
+                    spelled(path, text),
+                    spelled(&*one.self_ty, text)
+                ),
+                None => format!("impl {}", spelled(&*one.self_ty, text)),
+            },
+            other => spelled(other, text),
+        }
+    }
+
+    /// Whether code outside the module can name `item`, which is what a guard or a probe of the file calls.
+    fn reachable(item: &syn::Item) -> bool {
+        let visibility = match item {
+            syn::Item::Const(one) => &one.vis,
+            syn::Item::Enum(one) => &one.vis,
+            syn::Item::Fn(one) => &one.vis,
+            syn::Item::Static(one) => &one.vis,
+            syn::Item::Struct(one) => &one.vis,
+            syn::Item::Trait(one) => &one.vis,
+            syn::Item::Type(one) => &one.vis,
+            syn::Item::Use(one) => &one.vis,
+            syn::Item::Macro(one) => return one.ident.is_some(),
+            _ => return false,
+        };
+        !matches!(visibility, syn::Visibility::Inherited)
+    }
+
+    /// The items the sealed runtime answers for itself, by the name both runtimes give them: the entries a guard calls first, and the recording behind them.
+    const ANSWERED_BY_THE_SEALED_RUNTIME: [&str; 11] = [
+        "fn active",
+        "fn append",
+        "fn checkpoint",
+        "fn difference",
+        "fn entered",
+        "fn entered_item",
+        "fn item",
+        "fn opened",
+        "fn touch",
+        "impl Injectable for __rm_std::io::Error",
+        "static TOUCH_SINK",
+    ];
+
+    #[test]
+    fn exactly_one_of_the_two_runtimes_is_compiled_for_any_target() {
+        let text = rendered();
+        let (same_name, conditions, same_otherwise) = read_modules(&text, |native, sealed| {
+            let condition = |module: &syn::ItemMod| -> Vec<String> {
+                module
+                    .attrs
+                    .iter()
+                    .filter(|attribute| attribute.path().is_ident("cfg"))
+                    .map(|attribute| spelled(attribute, &text))
+                    .collect()
+            };
+            let unconditional = |module: &syn::ItemMod| -> Vec<syn::Attribute> {
+                module
+                    .attrs
+                    .iter()
+                    .filter(|attribute| !attribute.path().is_ident("cfg"))
+                    .cloned()
+                    .collect()
+            };
+            (
+                native.ident == sealed.ident,
+                (condition(native), condition(sealed)),
+                unconditional(native) == unconditional(sealed),
+            )
+        });
+        assert!(
+            same_name && same_otherwise,
+            "the two runtimes are one module under one name and one set of attributes, so a guard \
+             reaches whichever of them was compiled by the same path"
+        );
+        assert_eq!(
+            conditions,
+            (
+                vec![r#"#[cfg(not(target_os = "wasi"))]"#.to_owned()],
+                vec![r#"#[cfg(target_os = "wasi")]"#.to_owned()]
             ),
-            "a process the runtime ends has to say which check stopped it before it goes, so the \
-             one call that ends it is inside `stop`, after the line it writes: exits at \
-             {exits:?}, `stop` at {stop:?}, the line at {said:?}"
+            "one condition and its negation: every target compiles exactly one of the runtimes"
+        );
+    }
+
+    #[test]
+    fn every_item_both_runtimes_name_is_the_same_item_but_the_ones_a_sealed_host_answers_itself() {
+        let text = rendered();
+        let (wrong, unanswered) = read_modules(&text, |native, sealed| {
+            let natives: std::collections::BTreeMap<String, &syn::Item> = content(native)
+                .iter()
+                .map(|item| (named(item, &text), item))
+                .collect();
+            let mut wrong = Vec::new();
+            let mut answered = std::collections::BTreeSet::new();
+            for item in content(sealed) {
+                let name = named(item, &text);
+                let Some(native) = natives.get(&name) else {
+                    continue;
+                };
+                let own = ANSWERED_BY_THE_SEALED_RUNTIME.contains(&name.as_str());
+                if own {
+                    answered.insert(name.clone());
+                }
+                match (own, *native == item) {
+                    (false, false) => {
+                        wrong.push(format!("{name} is not the item the other runtime holds"));
+                    }
+                    (true, true) => wrong.push(format!(
+                        "{name} is the item the other runtime holds, so it is not one the sealed \
+                         runtime answers itself"
+                    )),
+                    (false, true) | (true, false) => {}
+                }
+            }
+            let unanswered: Vec<&str> = ANSWERED_BY_THE_SEALED_RUNTIME
+                .into_iter()
+                .filter(|name| !answered.contains(*name))
+                .collect();
+            (wrong, unanswered)
+        });
+        assert!(
+            wrong.is_empty(),
+            "the items the runtimes share are the contract with the engine — the variables, the \
+             records, the statuses, the probes — so a change to one is a change to both: {wrong:#?}"
+        );
+        assert!(
+            unanswered.is_empty(),
+            "an item the sealed runtime answers itself is one both runtimes hold: {unanswered:?}"
+        );
+    }
+
+    #[test]
+    fn a_guard_finds_every_name_it_calls_in_either_runtime() {
+        let text = rendered();
+        let (native, sealed) = read_modules(&text, |native, sealed| {
+            let reached = |module: &syn::ItemMod| -> std::collections::BTreeSet<String> {
+                content(module)
+                    .iter()
+                    .filter(|item| reachable(item))
+                    .map(|item| named(item, &text))
+                    .collect()
+            };
+            (reached(native), reached(sealed))
+        });
+        assert_eq!(
+            native, sealed,
+            "the instrumented file calls the runtime by name, and a build for a sealed host is the \
+             same file, so each runtime offers exactly the names the other does"
+        );
+    }
+
+    /// What no item of the sealed runtime may name: a sealed instance has one thread, no process id, no lock worth taking, no clock it may read, and no destructor that runs at its end, and nothing in it may panic.
+    const UNSEALABLE: [&str; 25] = [
+        "Barrier",
+        "Condvar",
+        "Drop",
+        "Instant",
+        "Mutex",
+        "RwLock",
+        "SystemTime",
+        "assert",
+        "assert_eq",
+        "assert_ne",
+        "debug_assert",
+        "expect",
+        "lock",
+        "panic",
+        "parent_id",
+        "park",
+        "sleep",
+        "spawn",
+        "thread",
+        "thread_local",
+        "todo",
+        "try_lock",
+        "unimplemented",
+        "unlock",
+        "unwrap",
+    ];
+
+    /// Every name `tokens` spells, in order, down through every group.
+    fn names(tokens: proc_macro2::TokenStream, into: &mut Vec<String>) {
+        for tree in tokens {
+            match tree {
+                proc_macro2::TokenTree::Ident(ident) => into.push(ident.to_string()),
+                proc_macro2::TokenTree::Group(group) => names(group.stream(), into),
+                proc_macro2::TokenTree::Punct(_) | proc_macro2::TokenTree::Literal(_) => {}
+            }
+        }
+    }
+
+    #[test]
+    fn the_sealed_runtime_names_nothing_that_panics_waits_or_needs_a_destructor() {
+        let text = rendered();
+        let sealed = read_modules(&text, |_, sealed| spelled(sealed, &text));
+        let spelt = crate::parsing::apart(|parsing| {
+            let mut spelt = Vec::new();
+            names(
+                parsing
+                    .tokens(&sealed)
+                    .expect("the sealed runtime is Rust tokens"),
+                &mut spelt,
+            );
+            spelt
+        })
+        .expect("a thread to read on");
+        let unsealable: Vec<&String> = spelt
+            .iter()
+            .filter(|name| UNSEALABLE.contains(&name.as_str()))
+            .collect();
+        let asks_its_id = spelt
+            .windows(2)
+            .any(|pair| matches!(pair, [process, id] if process == "process" && id == "id"));
+        assert!(
+            spelt.len() > 100 && unsealable.is_empty() && !asks_its_id,
+            "the sealed runtime is what a sealed host runs and so what it may stop in: {} names, \
+             of which {unsealable:?} cannot be kept there, and `process::id` asked for: \
+             {asks_its_id}",
+            spelt.len()
+        );
+    }
+
+    #[test]
+    fn a_rendered_runtime_leaves_no_placeholder_unfilled() {
+        let text = rendered();
+        assert!(
+            !text.contains("{{") && !text.contains("}}"),
+            "a placeholder nothing filled is a brace in a format string, which prints itself \
+             rather than failing to compile: {text}"
+        );
+    }
+
+    #[test]
+    fn the_runtime_holds_the_step_machine_as_the_decision_crate_writes_it() {
+        let text = rendered();
+        let machine = rust_mutants_decision::STEP_SOURCE.replace("pub ", "pub(crate) ");
+        assert!(
+            text.contains(&format!("mod step {{\n{machine}")),
+            "the machine an execution spends its allowance by is the one \
+             rust-mutants-decision compiles and tests, held as that module whole and never \
+             written a second time"
         );
     }
 
@@ -1929,142 +2927,139 @@ mod tests {
             Err(StepMachineError::Limit)
         );
     }
-}
-
-#[cfg(kani)]
-mod kani_laws {
-    use super::{StepAction, StepAdvance, StepPhase, step_transition};
-
-    fn valid_limit() -> usize {
-        let allowed = kani::any::<usize>();
-        kani::assume(allowed > 0 && allowed < usize::MAX);
-        allowed
+    /// Every line of `text` that spells a `use` item, plain or behind a visibility, with comments passed over.
+    fn use_declarations(text: &str) -> Vec<String> {
+        let mut found = Vec::new();
+        for line in text.lines() {
+            let line = line.trim_start();
+            if line.starts_with("//") {
+                continue;
+            }
+            if let Some((_visibility, declaration)) = line.split_once(" use ") {
+                found.push(format!("use {declaration}"));
+            } else if line.starts_with("use ") {
+                found.push(line.to_owned());
+            }
+        }
+        found
     }
 
-    #[kani::proof]
-    fn activation_is_idempotent() {
-        let allowed = valid_limit();
-        let spent = kani::any::<usize>();
-        kani::assume(spent > 0 && spent <= allowed);
-        kani::assert(
-            step_transition(StepPhase::Active(spent), StepAction::Activate, allowed)
-                == Ok((StepPhase::Active(spent), StepAdvance::Continue)),
-            "njutest-law-assertion:activation-idempotent",
-        );
-        kani::cover!(true, "njutest-law-reached");
+    /// The path `declaration` imports, trimmed of its `use`, its visibility and its semicolon.
+    fn imported_path(declaration: &str) -> &str {
+        declaration
+            .strip_prefix("use ")
+            .unwrap_or(declaration)
+            .trim_end()
+            .trim_end_matches(';')
     }
 
-    #[kani::proof]
-    fn a_dormant_checkpoint_cannot_spend() {
-        let allowed = valid_limit();
-        kani::assert(
-            step_transition(StepPhase::Dormant, StepAction::Checkpoint, allowed)
-                == Ok((StepPhase::Dormant, StepAdvance::Continue)),
-            "njutest-law-assertion:dormant-inert",
-        );
-        kani::cover!(true, "njutest-law-reached");
+    #[test]
+    fn every_generated_use_is_scope_anchored_so_every_edition_resolves_it() {
+        for template in [TEMPLATE, SEALED_TEMPLATE, VALUE_MACRO] {
+            for declaration in use_declarations(template) {
+                let path = imported_path(&declaration);
+                let head = path.split('{').next().unwrap_or_default().trim();
+                let first = head.split("::").next().unwrap_or_default();
+                assert!(
+                    ["self", "super", "crate", ""].contains(&first),
+                    "the generated runtime spells `{declaration}` without anchoring its \
+                     scope: under Rust 2015 a `use` path resolves at the crate root, where \
+                     the runtime's aliases do not live, so the instrumented tree of an \
+                     edition-2015 crate does not compile",
+                );
+            }
+        }
     }
 
-    #[kani::proof]
-    fn a_counting_checkpoint_counts() {
-        let allowed = valid_limit();
-        let seen = kani::any::<usize>();
-        kani::assume(seen < usize::MAX);
-        kani::assert(
-            step_transition(StepPhase::Counting(seen), StepAction::Checkpoint, allowed)
-                == Ok((StepPhase::Counting(seen + 1), StepAdvance::Continue)),
-            "njutest-law-assertion:counting-counts",
-        );
-        kani::cover!(true, "njutest-law-reached");
-    }
-
-    #[kani::proof]
-    fn a_counting_checkpoint_never_stops() {
-        let allowed = valid_limit();
-        let seen = kani::any::<usize>();
-        kani::assume(seen < usize::MAX);
-        kani::assert(
-            !matches!(
-                step_transition(StepPhase::Counting(seen), StepAction::Checkpoint, allowed),
-                Ok((_, StepAdvance::Park)) | Ok((_, StepAdvance::Reached { .. }))
+    #[test]
+    fn the_generated_module_compiles_under_rust_2015_where_its_aliases_live() {
+        let temporary = tempfile::tempdir().expect("an owned root");
+        let scripted =
+            ScriptedCompile::from_source("src/lib.rs", "pub fn step() -> i32 { 7 }\n", Tier::All);
+        let module = render(&Rendering {
+            module: "__rm",
+            catalog_digest: PLANT_CATALOG,
+            placements: scripted.placements(),
+            markers: &[],
+            first_item: 0,
+            item_count: 0,
+            newline: "\n",
+            watched: PLANT_WATCHED,
+        })
+        .expect("generated runtime");
+        let source = temporary.path().join("edition-2015.rs");
+        std::fs::write(
+            &source,
+            format!(
+                "{module}\npub fn anchored() -> i32 {{ {}!(7) }}\n",
+                rust_mutants_adapt::guard::named("__rm", 0, "value")
             ),
-            "njutest-law-assertion:counting-never-stops",
-        );
-        kani::cover!(true, "njutest-law-reached");
-    }
-
-    #[kani::proof]
-    fn counting_is_not_reachable_from_dormant_or_active() {
-        let allowed = valid_limit();
-        let spent = kani::any::<usize>();
-        let action = if kani::any::<bool>() {
-            StepAction::Activate
-        } else {
-            StepAction::Checkpoint
-        };
-        for phase in [StepPhase::Dormant, StepPhase::Active(spent)] {
-            kani::assert(
-                !matches!(
-                    step_transition(phase, action, allowed),
-                    Ok((StepPhase::Counting(_), _))
-                ),
-                "njutest-law-assertion:counting-only-from-the-state-file",
-            );
+        )
+        .expect("the generated source");
+        for edition in ["2015", "2018", "2021", "2024"] {
+            for target in ["native", "wasm32-wasip1"] {
+                let mut compiler = Command::new("rustc");
+                compiler.args(["--edition", edition, "--crate-type", "lib"]);
+                if target != "native" {
+                    compiler.args(["--target", target]);
+                }
+                let built = compiler
+                    .arg("--out-dir")
+                    .arg(temporary.path())
+                    .arg(&source)
+                    .output()
+                    .expect("rustc runs");
+                assert!(
+                    built.status.success(),
+                    "edition {edition}, target {target}: the runtime and its macro resolve \
+                     in their actual scope: {:?}",
+                    std::str::from_utf8(&built.stderr)
+                );
+            }
         }
-        kani::cover!(true, "njutest-law-reached");
     }
 
-    #[kani::proof]
-    fn an_active_checkpoint_advances_or_reaches_the_exact_boundary() {
-        let allowed = valid_limit();
-        let spent = kani::any::<usize>();
-        kani::assume(spent > 0 && spent <= allowed);
-        let result = step_transition(StepPhase::Active(spent), StepAction::Checkpoint, allowed);
-        if spent < allowed {
-            kani::assert(
-                result == Ok((StepPhase::Active(spent + 1), StepAdvance::Continue)),
-                "njutest-law-assertion:active-advance",
-            );
-            kani::cover!(true, "njutest-law-branch:advance");
-        } else {
-            kani::assert(
-                result
-                    == Ok((
-                        StepPhase::Stopping(allowed + 1),
-                        StepAdvance::Reached {
-                            allowed,
-                            observed: allowed + 1,
-                        },
-                    )),
-                "njutest-law-assertion:active-boundary",
-            );
-            kani::cover!(true, "njutest-law-branch:boundary");
+    #[test]
+    fn private_expression_guards_compile_in_proc_macro_crates_under_every_edition() {
+        let source = "#![deny(warnings)]\nextern crate proc_macro;\n#[proc_macro]\npub fn answer(input: proc_macro::TokenStream) -> proc_macro::TokenStream { input }\n";
+        let scripted = ScriptedCompile::from_source("src/lib.rs", source, Tier::All);
+        assert!(!scripted.placements().is_empty());
+        let file = crate::instrument::instrument_file(&crate::instrument::Instrumenting {
+            path: "src/lib.rs",
+            source: source.as_bytes(),
+            placements: scripted.placements(),
+            carriers: &[],
+            markers: &[],
+            comparable: &std::collections::BTreeSet::new(),
+            probed: &std::collections::BTreeMap::new(),
+            catalog_digest: PLANT_CATALOG,
+            first_item: 0,
+            watched: PLANT_WATCHED,
+        })
+        .expect("the actual complete file is instrumented");
+        let temporary = tempfile::tempdir().expect("an owned compiler root");
+        let path = temporary.path().join("procedural.rs");
+        std::fs::write(&path, file.text).expect("the complete generated file");
+        let mut refused = Vec::new();
+        for edition in ["2015", "2018", "2021", "2024"] {
+            let built = Command::new("rustc")
+                .args(["--edition", edition, "--crate-type", "proc-macro"])
+                .arg("--out-dir")
+                .arg(temporary.path())
+                .arg(&path)
+                .output()
+                .expect("the actual native compiler runs");
+            if !built.status.success() {
+                eprintln!(
+                    "edition {edition}: {}",
+                    std::str::from_utf8(&built.stderr).expect("the exact compiler diagnostic")
+                );
+                refused.push(edition);
+            }
         }
-        kani::cover!(true, "njutest-law-reached");
-    }
-
-    #[kani::proof]
-    fn stopping_is_absorbing() {
-        let allowed = valid_limit();
-        let observed = allowed + 1;
-        let action = if kani::any::<bool>() {
-            StepAction::Activate
-        } else {
-            StepAction::Checkpoint
-        };
-        kani::assert(
-            step_transition(StepPhase::Stopping(observed), action, allowed)
-                == Ok((StepPhase::Stopping(observed), StepAdvance::Park)),
-            "njutest-law-assertion:stopping-absorbing",
+        assert!(
+            refused.is_empty(),
+            "generated private expression guards must compile in every proc-macro edition: {refused:?}"
         );
-        kani::cover!(
-            matches!(action, StepAction::Activate),
-            "njutest-law-branch:activate"
-        );
-        kani::cover!(
-            matches!(action, StepAction::Checkpoint),
-            "njutest-law-branch:checkpoint"
-        );
-        kani::cover!(true, "njutest-law-reached");
     }
 }

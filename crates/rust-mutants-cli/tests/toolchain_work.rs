@@ -54,7 +54,19 @@ fn ceilings() -> Vec<Ceiling> {
         .collect()
 }
 
-fn measured(name: &str) -> Work {
+/// A run's work, with its test counts, which a run whose every baseline ran counts.
+fn measured(name: &str) -> (Work, u64, u64) {
+    let work = ledger(name);
+    let tests_whole = work
+        .tests_whole
+        .expect("every baseline ran, so a whole run's tests are counted");
+    let tests_started = work
+        .tests_started
+        .expect("every baseline ran, so the tests a run started are counted");
+    (work, tests_whole, tests_started)
+}
+
+fn ledger(name: &str) -> Work {
     let fixture = Fixture::copy(name);
     let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
     let (mut out, mut err) = (Vec::new(), Vec::new());
@@ -73,7 +85,10 @@ fn measured(name: &str) -> Work {
     );
     let output = njutest_devkit::process::answered(code, out, err);
     assert!(
-        output.status.code().is_some_and(|code| code <= 1),
+        output
+            .status
+            .code()
+            .is_some_and(|code| code < i32::from(rust_mutants::run::EXIT_FAILED)),
         "{name}: {output:?}"
     );
     let directory = njutest_devkit::fixture::newest_run(
@@ -92,7 +107,7 @@ fn no_fixture_starts_more_processes_than_the_ceiling_allows() {
     let mut asked = Vec::new();
     let mut measurements = Vec::new();
     for ceiling in ceilings() {
-        let work = measured(&ceiling.fixture);
+        let (work, tests_whole, tests_started) = measured(&ceiling.fixture);
         assert!(
             work.balances().expect("exact balance arithmetic"),
             "{}: a pair nothing accounts for is work nobody can explain: {work:?}",
@@ -100,14 +115,14 @@ fn no_fixture_starts_more_processes_than_the_ceiling_allows() {
         );
         measurements.push(format!(
             "{:<20} {:>5} {:>8} {:>6} {:>14}",
-            ceiling.fixture, work.whole, work.started, work.tests_whole, work.tests_started
+            ceiling.fixture, work.whole, work.started, tests_whole, tests_started
         ));
-        if (work.whole, work.tests_whole) != (ceiling.whole, ceiling.tests_whole) {
+        if (work.whole, tests_whole) != (ceiling.whole, ceiling.tests_whole) {
             asked.push(ceiling.fixture.clone());
         }
         for (unit, started, allowed) in [
             ("pairs", work.started, ceiling.started),
-            ("tests", work.tests_started, ceiling.tests_started),
+            ("tests", tests_started, ceiling.tests_started),
         ] {
             let said = format!(
                 "{}: {started} {unit} started, {allowed} allowed",
@@ -144,7 +159,7 @@ fn no_fixture_starts_more_processes_than_the_ceiling_allows() {
 
 #[test]
 fn every_removal_a_whole_run_still_answers_for_is_a_proof_a_reader_can_name() {
-    let work = measured("fixture-unreached");
+    let work = ledger("fixture-unreached");
     assert!(
         work.answers_for_the_whole(),
         "nothing here was filtered, so this run answers for the whole catalog: {work:?}"
@@ -162,11 +177,11 @@ fn every_removal_a_whole_run_still_answers_for_is_a_proof_a_reader_can_name() {
     }
 }
 
-/// How many times a run may start cargo before somebody has to say why.
-const CARGO_CEILING: u64 = 6;
+/// How many times a run of a tree no pool has built may start cargo on it before somebody has to say why: six for the native tree, one that builds the same tree for the sealed target, and one that builds its library's doctests for it (ADR 0046).
+const CARGO_CEILING: u64 = 8;
 
-/// How many times a run started each program, read back from its own recording.
-fn programs(name: &str, extra: &[&str]) -> std::collections::BTreeMap<String, u64> {
+/// How many times a run of a fresh copy of `name` started each program, and how many of its cargo starts named a command, read back from its own recording of a run in a build pool of its own, where nothing is built yet and no other test claims a slot.
+fn programs(name: &str, extra: &[&str]) -> (std::collections::BTreeMap<String, u64>, u64) {
     let fixture = Fixture::copy(name);
     let root = njutest_devkit::paths::utf8(fixture.root()).to_owned();
     let (mut out, mut err) = (Vec::new(), Vec::new());
@@ -177,7 +192,7 @@ fn programs(name: &str, extra: &[&str]) -> std::collections::BTreeMap<String, u6
             .chain(extra.iter().copied())
             .chain(["--root", root.as_str()])
             .map(OsString::from),
-        &environment(&fixture),
+        &alone(&fixture),
         &Cancel::new(),
         Streams {
             out: &mut out,
@@ -200,29 +215,46 @@ fn programs(name: &str, extra: &[&str]) -> std::collections::BTreeMap<String, u6
     let text = std::fs::read_to_string(directory.join("trace").join("trace.jsonl"))
         .expect("the recording");
     let events = rust_mutants::trace::read_events(text.as_bytes()).expect("it reads back");
+    let commands = events
+        .iter()
+        .filter(|event| {
+            matches!(
+                &event.payload,
+                rust_mutants::trace::Payload::Exec { exec } if on_the_tree(&exec.argv)
+            )
+        })
+        .count();
     match rust_mutants::trace::summary::summarize(&events, 1) {
-        Ok(summary) => summary.invocations,
+        Ok(summary) => (
+            summary.invocations,
+            u64::try_from(commands).expect("a count of starts"),
+        ),
         Err(error) => panic!("the fixture trace must summarize exactly: {error}"),
     }
 }
 
+/// Whether `argv` starts cargo on a command, which compiles or describes the tree; one that names none asks cargo about itself, as locating a toolchain asks the `cargo -vV` of a rustup proxy and then of the toolchain's own cargo, which is what the machine's install costs rather than what the tree does.
+fn on_the_tree(argv: &[String]) -> bool {
+    argv.first().is_some_and(|program| {
+        std::path::Path::new(program).file_stem() == Some(std::ffi::OsStr::new("cargo"))
+    }) && argv.get(1).is_some_and(|command| !command.starts_with('-'))
+}
+
 #[test]
 fn a_run_starts_no_more_compilers_than_the_ceiling_allows() {
-    let started = programs("fixture-simple", &[]);
-    let cargo = started.get("cargo").copied().unwrap_or_default();
+    let (started, cargo) = programs("fixture-simple", &[]);
     assert!(
         cargo <= CARGO_CEILING,
-        "a run started cargo {cargo} times and {CARGO_CEILING} is what it used to take. Each one \
-         is a compilation of the tree; if the extra one is worth it, raise the ceiling and say \
-         why: {started:?}"
+        "a run started cargo on the tree {cargo} times and {CARGO_CEILING} is what it used to \
+         take. Each one is a compilation of the tree; if the extra one is worth it, raise the \
+         ceiling and say why: {started:?}"
     );
     assert!(cargo >= 2, "a run has to ask cargo something: {started:?}");
 }
 
 #[test]
 fn a_second_run_of_a_tree_nothing_changed_measures_it_again_no_harder_than_the_first() {
-    let first = programs("fixture-coverage", &[]);
-    let cargo = first.get("cargo").copied().unwrap_or_default();
+    let (first, cargo) = programs("fixture-coverage", &[]);
     assert!(
         cargo <= CARGO_CEILING.saturating_add(1),
         "measuring coverage costs one compilation more than not measuring it: {first:?}"
@@ -248,7 +280,7 @@ fn a_second_run_of_a_tree_nothing_changed_measures_nothing_again() {
                 .chain(["--jobs", "1", "--ui", "quiet", "--trace"])
                 .chain(["--root", root.as_str()])
                 .map(OsString::from),
-            &environment(fixture),
+            &alone(fixture),
             &Cancel::new(),
             Streams {
                 out: &mut out,
@@ -312,7 +344,7 @@ fn a_tree_that_changed_is_measured_again_rather_than_remembered() {
                 .chain(["--jobs", "1", "--ui", "quiet", "--trace"])
                 .chain(["--root", root.as_str()])
                 .map(OsString::from),
-            &environment(fixture),
+            &alone(fixture),
             &Cancel::new(),
             Streams {
                 out: &mut out,
@@ -363,8 +395,18 @@ fn a_tree_that_changed_is_measured_again_rather_than_remembered() {
     );
 }
 
+/// The environment of a run whose fixture build pool no other test claims, so each run of one tree takes the slot the run before it released rather than whichever slot another test left free.
+fn alone(fixture: &Fixture) -> Environment {
+    let mut environment = environment(fixture);
+    environment
+        .vars
+        .set("NJUTEST_FIXTURE_BUILD_CACHE", fixture.temp().join("builds"));
+    environment
+}
+
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: njutest_devkit::paths::environment_for_a_run()
             .into_iter()
             .collect(),

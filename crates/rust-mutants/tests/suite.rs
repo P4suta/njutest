@@ -33,6 +33,8 @@ mod count;
 mod coverage;
 #[path = "decline.rs"]
 mod decline;
+#[path = "depth.rs"]
+mod depth;
 #[path = "devkit_environment.rs"]
 mod devkit_environment;
 #[path = "docs_ledger.rs"]
@@ -113,6 +115,8 @@ mod snapshot;
 mod snapshot_layout;
 #[path = "span.rs"]
 mod span;
+#[path = "spelling.rs"]
+mod spelling;
 #[path = "splice.rs"]
 mod splice;
 #[path = "syntax.rs"]
@@ -131,6 +135,8 @@ mod userdirs;
 mod validate;
 #[path = "vars.rs"]
 mod vars;
+#[path = "wasi_testsuite.rs"]
+mod wasi_testsuite;
 #[path = "wire_names.rs"]
 mod wire_names;
 #[path = "witness.rs"]

@@ -9,6 +9,7 @@
     "document_type",
     "schema_version",
     "items",
+    "files",
     "units"
   ],
   "properties": {
@@ -16,13 +17,20 @@
       "const": "rust-mutants/skeletons"
     },
     "schema_version": {
-      "const": 2
+      "const": 4
     },
     "items": {
       "description": "Every cataloged item, by the item index touched-v1.json names it by.",
       "type": "array",
       "items": {
         "$ref": "#/$defs/item"
+      }
+    },
+    "files": {
+      "description": "Every file an item of the catalog is in that a unit read, by its workspace-relative path, with the SHA-256 of its bytes: what proves a file an audit reads again is the file the run measured.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/digest"
       }
     },
     "units": {
@@ -85,8 +93,15 @@
           "type": "string"
         },
         "body_digest": {
-          "description": "The SHA-256 of its body's bytes, braces included.",
-          "$ref": "#/$defs/digest"
+          "description": "The SHA-256 of its body's bytes, braces included, or null where no unit read its file or its body could not be located in what a unit read.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "sealed": {
           "description": "Whether everything the body contributes to the program is its own execution.",
@@ -132,7 +147,8 @@
                 "opaque-type",
                 "const-block",
                 "unlocated",
-                "unread"
+                "unread",
+                "unit-file-unread"
               ]
             }
           }

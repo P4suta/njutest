@@ -47,7 +47,7 @@ fn counted(rows: &[MutantRecord]) -> MutantAccounting {
         let outcome = row.outcome.outcome();
         counts
             .observers
-            .counted(outcome.decision())
+            .counted(row.decision())
             .expect("a fixture's rows are countable");
         if row.accepted {
             counts.accepted += 1;
@@ -98,7 +98,7 @@ fn report(run: &str, outcomes: &[(&str, &str)]) -> BuildReport {
     report.timing.finished = "2026-09-08T00:00:00Z".to_owned();
     report.timing.duration_ms = 1;
     report.limitations.push(Limitation::new(
-        "git-metadata-unavailable",
+        njutest::limitation::Limitation::GitMetadataUnavailable,
         "this synthetic fixture has no repository process",
     ));
     report.targets.push(TargetRecord {
@@ -131,6 +131,11 @@ fn report(run: &str, outcomes: &[(&str, &str)]) -> BuildReport {
                 item: "sign".to_owned(),
                 original: ">".to_owned(),
                 replacement: ">=".to_owned(),
+                evidence: njutest::testkit::reports::sealed_as(
+                    &Decided::of(outcome, Some("pkg/lib/pkg".to_owned()), boundary)
+                        .or_else(|| Decided::of(outcome, None, boundary))
+                        .unwrap_or(Decided::Survived),
+                ),
                 outcome: Decided::of(outcome, Some("pkg/lib/pkg".to_owned()), boundary)
                     .or_else(|| Decided::of(outcome, None, boundary))
                     .unwrap_or(Decided::Survived),
@@ -147,9 +152,8 @@ fn report(run: &str, outcomes: &[(&str, &str)]) -> BuildReport {
         .iter()
         .filter_map(|mutant| {
             mutant
-                .outcome
-                .outcome()
-                .required_finding(mutant.accepted)
+                .verdict()
+                .required_finding()
                 .map(|kind| Finding::new(kind, &mutant.display_id, "synthetic mutation finding"))
         })
         .collect();
@@ -178,6 +182,58 @@ fn completed(run: &str, measured: Vec<(String, BuildSelection, BuildReport)>) ->
     whole
         .complete_without_models()
         .expect("standard-v1 needs no model completion")
+}
+
+fn asking_every_dimension(mut report: BuildReport) -> BuildReport {
+    report.contract = njutest::config::Contract::WholeV1;
+    let rows = njutest::report::matrix::rows(&njutest::report::matrix::Evidence::of(&report));
+    report
+        .findings
+        .extend(njutest::report::matrix::holes(&rows));
+    report.verdict = report.concluded();
+    report
+}
+
+#[test]
+fn a_dimension_several_builds_leave_open_is_one_finding_of_the_run() {
+    let whole = completed(
+        "the-run",
+        vec![
+            (
+                "default".to_owned(),
+                build(),
+                asking_every_dimension(for_builds(
+                    report("r", &[("a", "killed")]),
+                    &["default", "release"],
+                )),
+            ),
+            (
+                "release".to_owned(),
+                build(),
+                asking_every_dimension(for_builds(
+                    report("r-1", &[("a", "killed")]),
+                    &["default", "release"],
+                )),
+            ),
+        ],
+    );
+    let conclusion = whole
+        .conclusion()
+        .expect("the checked whole has a representable conclusion");
+    let named: Vec<&str> = conclusion
+        .findings
+        .iter()
+        .filter(|finding| finding.kind == njutest::report::FindingKind::DimensionNotMeasured)
+        .map(|finding| finding.subject.as_str())
+        .collect();
+    let mut once = named.clone();
+    once.sort_unstable();
+    once.dedup();
+    assert!(
+        !named.is_empty() && named.len() == once.len(),
+        "a column is one column however many builds fill it, so each dimension it leaves open \
+         is one finding: {named:?}"
+    );
 }
 
 #[test]

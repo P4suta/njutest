@@ -87,7 +87,14 @@ fn answers(
     let mut spec = Spec::new(argv, Bound::After(rust_mutants::runner::PROBE));
     spec.env = Some(vars.clone());
     let ran = rust_mutants::runner::run(&spec, cancel);
-    ran.succeeded().then_some(ran.output)
+    match super::ended::ProcessEnd::of(&ran.termination) {
+        super::ended::ProcessEnd::Passed => Some(ran.output),
+        super::ended::ProcessEnd::Failed
+        | super::ended::ProcessEnd::Unlaunched { .. }
+        | super::ended::ProcessEnd::Interrupted
+        | super::ended::ProcessEnd::TimedOut
+        | super::ended::ProcessEnd::Unanswered { .. } => None,
+    }
 }
 
 /// Whether the time zone database knows the zone, which it shows by printing one of the zone's own offsets rather than UTC's.
@@ -246,7 +253,7 @@ pub fn measured(
         for target in session
             .targets()
             .iter()
-            .filter(|target| passed.contains(&target.id))
+            .filter(|target| passed.contains(target.id()))
         {
             if watch.cancel.is_cancelled() {
                 return Err(RunnerError::Interrupted);
@@ -255,18 +262,18 @@ pub fn measured(
                 Err(why) => Standing::NotPut { why },
                 Ok(put) => {
                     let controlled = session.control_perturbed(
-                        &Request::new(String::new()).with_target(target.id.as_str()),
+                        &Request::new(String::new()).with_target(target.id()),
                         Conditions {
                             observing: Observing::Reach,
                             perturbation: &put,
                         },
                         watch.cancel,
                     )?;
-                    standing(&controlled, &target.id)
+                    standing(&controlled, target.id())
                 }
             };
             let record = KnobRecord {
-                target: target.id.clone(),
+                target: target.id().to_owned(),
                 knob,
                 standing,
             };

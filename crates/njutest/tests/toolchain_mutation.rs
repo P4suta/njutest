@@ -72,6 +72,7 @@ fn environment(root: &Path, cache: &Path, named: &[(&str, &str)]) -> Environment
         vars.set(*name, *value);
     }
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: cache.to_path_buf(),
         working_directory: root.to_path_buf(),
         temp_directory: njutest_devkit::paths::temp_beside(root).expect("a temporary directory"),
@@ -150,6 +151,133 @@ fn a_suite_that_notices_every_change_is_assured() {
     }
 }
 
+/// The target of the first sealed execution of `row` that detected the mutation, where one did.
+#[cfg(unix)]
+fn first_detected(row: &serde_json::Value) -> Option<&str> {
+    row["evidence"]["executions"]
+        .as_array()?
+        .iter()
+        .find(|run| {
+            matches!(
+                run["came_to"].as_str(),
+                Some("panicked" | "failed" | "trapped" | "fuel-exceeded" | "memory-exceeded")
+            )
+        })
+        .and_then(|run| run["target"].as_str())
+}
+
+#[cfg(unix)]
+#[test]
+fn every_verdict_on_a_tree_whose_tests_seal_rests_on_its_sealed_executions() {
+    let fixture = fixture("fixture-assured");
+    let output = verify(&fixture, &[]);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    assert_eq!(verdict(&fixture), "ASSURED");
+    let report = part(&fixture);
+    let rows = report["mutants"].as_array().expect("mutants");
+    assert!(!rows.is_empty(), "{report}");
+    for row in rows {
+        assert_eq!(
+            row["evidence"]["kind"], "sealed",
+            "every test of this tree seals, so every kill is one a sealed execution \
+             observed rather than one a process reported of itself (ADR 0046): {row}"
+        );
+        assert_eq!(
+            row["decision"]["killed_by"].as_str(),
+            first_detected(row),
+            "and the kill names the target whose sealed execution detected it first: {row}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_run_that_seals_nothing_leaves_every_answer_a_lead_and_concludes_insufficient() {
+    let fixture = fixture("fixture-assured");
+    let output = verify(&fixture, &["--no-seal"]);
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(njutest::cli::EXIT_INSUFFICIENT)),
+        "a run that sealed nothing established no verdict, whatever its native runs said: {}",
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    assert_eq!(verdict(&fixture), "INSUFFICIENT");
+    let report = part(&fixture);
+    let findings = report["findings"].as_array().expect("findings");
+    for row in report["mutants"].as_array().expect("mutants") {
+        assert_eq!(
+            row["evidence"],
+            serde_json::json!({ "kind": "unproven", "reasons": ["not-sealed"] }),
+            "{row}"
+        );
+        let named: Vec<&serde_json::Value> = findings
+            .iter()
+            .filter(|finding| finding["subject"] == row["display_id"])
+            .map(|finding| &finding["kind"])
+            .collect();
+        assert_eq!(
+            named,
+            [&serde_json::json!("unproven-mutant")],
+            "the native kill is a lead, which the report names as unproven rather than \
+             counting it as noticed: {row}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_mutation_only_a_thread_of_its_test_reaches_is_unproven_and_the_run_insufficient() {
+    let fixture = fixture("fixture-threaded");
+    let output = verify(&fixture, &[]);
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(njutest::cli::EXIT_INSUFFICIENT)),
+        "{}",
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    let report = part(&fixture);
+    let rows = report["mutants"].as_array().expect("mutants");
+    let (sealed, unproven): (Vec<&serde_json::Value>, Vec<&serde_json::Value>) = rows
+        .iter()
+        .filter(|row| row["decision"]["outcome"] != "compile-rejected")
+        .partition(|row| row["evidence"]["kind"] == "sealed");
+    assert!(
+        !unproven.is_empty(),
+        "a thread a test starts does not seal, so what only that thread reaches has no \
+         sealed execution to rest on: {report}"
+    );
+    assert!(
+        !sealed.is_empty(),
+        "while what the test reaches on its own thread seals as it would anywhere: {report}"
+    );
+    let findings = report["findings"].as_array().expect("findings");
+    for row in unproven {
+        assert!(
+            row["evidence"]["reasons"]
+                .as_array()
+                .is_some_and(|reasons| !reasons.is_empty()),
+            "an unproven row says every reason it is: {row}"
+        );
+        if matches!(
+            row["decision"]["outcome"].as_str(),
+            Some("killed" | "survived" | "unreached" | "equivalent")
+        ) {
+            assert!(
+                findings
+                    .iter()
+                    .any(|finding| finding["kind"] == "unproven-mutant"
+                        && finding["subject"] == row["display_id"]),
+                "and its finding says it is unproven: {row}"
+            );
+        }
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn a_gap_the_suite_cannot_see_is_insufficient_and_named() {
@@ -169,8 +297,12 @@ fn a_gap_the_suite_cannot_see_is_insufficient_and_named() {
     assert_eq!(mutants["killed"], 10);
     assert_eq!(
         mutants["survived"], 3,
-        "what the ignored test would have caught, said three ways: both boundaries, and \
-         the whole third branch nothing ever reaches while `sign(0)` is not asked for"
+        "what the ignored test would have caught: both boundaries, and the condition only \
+         `sign(0)` tells from `true`"
+    );
+    assert_eq!(
+        mutants["unreached"], 1,
+        "and the whole third branch nothing ever reaches while `sign(0)` is not asked for"
     );
 
     let held = document(&fixture);
@@ -178,21 +310,36 @@ fn a_gap_the_suite_cannot_see_is_insufficient_and_named() {
         .as_array()
         .expect("findings");
     assert_eq!(findings.len(), 4);
-    let rules: Vec<&str> = report["mutants"]
-        .as_array()
-        .expect("mutants")
-        .iter()
-        .filter(|mutant| mutant["decision"]["outcome"] == "survived")
-        .filter_map(|mutant| mutant["rule"].as_str())
-        .collect();
+    let rules = |kind: &str| -> Vec<&str> {
+        report["mutants"]
+            .as_array()
+            .expect("mutants")
+            .iter()
+            .filter(|mutant| mutant["decision"]["outcome"] == "survived")
+            .filter(|mutant| mutant["evidence"]["kind"] == kind)
+            .filter_map(|mutant| mutant["rule"].as_str())
+            .collect()
+    };
     assert_eq!(
-        rules,
+        rules("sealed"),
         ["gt-to-ge", "condition-to-true", "lt-to-le"],
-        "the two sides of the zero nobody tests, and the branch on the far side of them \
-         that nothing reaches at all while it goes untested"
+        "the two sides of the zero nobody tests and the branch beyond them, which every test \
+         the suite runs passed on sealed: the ignored test is no test the suite runs, so it is \
+         not one a sealed run has to answer for"
+    );
+    assert!(
+        rules("unproven").is_empty(),
+        "nothing the suite runs is beyond what the sealed build holds"
+    );
+    let kinds: Vec<&str> = findings
+        .iter()
+        .filter_map(|finding| finding["kind"].as_str())
+        .collect();
+    assert!(
+        kinds.iter().all(|kind| *kind == "surviving-mutant"),
+        "{findings:?}"
     );
     for finding in findings {
-        assert_eq!(finding["kind"], "surviving-mutant");
         assert!(
             finding["position"]["line"].as_u64().unwrap_or_default() > 0,
             "a finding names where to look: {finding}"
@@ -215,7 +362,12 @@ fn a_mutant_a_reviewer_accepted_stops_being_a_finding() {
         })
         .filter_map(|mutant| mutant["id"].as_str().map(ToOwned::to_owned))
         .collect();
-    assert_eq!(survivors.len(), 4);
+    assert_eq!(
+        survivors.len(),
+        4,
+        "four a sealed run established: both boundaries, the condition only `sign(0)` tells \
+         from `true`, and the branch nothing reaches"
+    );
 
     let mut configuration = String::from("version = 1\ncontract = \"standard-v1\"\n");
     for id in &survivors {
@@ -229,18 +381,21 @@ fn a_mutant_a_reviewer_accepted_stops_being_a_finding() {
     let output = verify(&fixture, &[]);
     assert_eq!(
         output.status.code(),
-        Some(0),
-        "an accepted survivor is a decision somebody made, not a gap: {}",
+        Some(i32::from(njutest::cli::EXIT_ASSURED)),
+        "{}",
         njutest_devkit::process::strict_utf8(&output.stderr)
     );
     let report = part(&fixture);
     assert_eq!(verdict(&fixture), "ASSURED");
-    assert_eq!(report["accounting"]["mutants"]["accepted"], 4);
+    assert_eq!(
+        report["accounting"]["mutants"]["accepted"], 4,
+        "an accepted survivor a sealed run established is a decision somebody made, not a gap"
+    );
     assert_eq!(
         report["accounting"]["mutants"]["survived"], 3,
         "an acceptance does not rewrite what was measured"
     );
-    assert_eq!(report["findings"].as_array().expect("findings").len(), 0);
+    assert_eq!(report["findings"], serde_json::json!([]), "{report}");
 }
 
 #[cfg(unix)]
@@ -279,10 +434,12 @@ fn an_acceptance_that_names_no_single_catalog_entry_suppresses_nothing() {
             .as_array()
             .expect("part findings")
             .iter()
-            .filter(|finding| finding["kind"] == "surviving-mutant")
+            .filter(|finding| {
+                finding["kind"] == "surviving-mutant" || finding["kind"] == "unproven-mutant"
+            })
             .count(),
         4,
-        "every survivor remains visible: {held:?}"
+        "every survivor and every lead remains visible: {held:?}"
     );
 }
 
@@ -351,6 +508,7 @@ fn named(fixture: &Fixture, outcomes: &[&str]) -> Vec<String> {
             outcomes
                 .iter()
                 .any(|outcome| mutant["decision"]["outcome"] == *outcome)
+                && mutant["evidence"]["kind"] == "sealed"
         })
         .filter_map(|mutant| mutant["display_id"].as_str().map(ToOwned::to_owned))
         .collect()
@@ -390,12 +548,51 @@ fn explain_refuses_a_prefix_that_names_more_than_one() {
 
 #[cfg(unix)]
 #[test]
+fn accept_refuses_a_lead_since_it_says_nothing_the_tests_were_asked() {
+    let fixture = fixture("fixture-environment");
+    verify(&fixture, &[]);
+    let leads: Vec<String> = part(&fixture)["mutants"]
+        .as_array()
+        .expect("mutants")
+        .iter()
+        .filter(|mutant| mutant["evidence"]["kind"] == "unproven")
+        .filter_map(|mutant| mutant["display_id"].as_str().map(ToOwned::to_owned))
+        .collect();
+    let Some(lead) = leads.first() else {
+        panic!("the fixture's tests that depend on the machine leave a lead: {leads:?}");
+    };
+    let refused = njutest(
+        &fixture,
+        &[
+            "accept",
+            lead,
+            "--reason",
+            "a test that depends on the machine covers this",
+        ],
+    );
+    assert_eq!(
+        refused.status.code(),
+        Some(3),
+        "an acceptance answers what the tests were asked, and a lead says nothing they were"
+    );
+    assert!(
+        njutest_devkit::process::strict_utf8(&refused.stderr).contains("is unproven"),
+        "{}",
+        njutest_devkit::process::strict_utf8(&refused.stderr)
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn accept_records_the_decision_where_the_next_run_will_read_it() {
     let fixture = fixture("fixture-baseline");
     verify(&fixture, &[]);
     let names = unanswered(&fixture);
-    assert_eq!(names.len(), 4);
-
+    assert_eq!(
+        names.len(),
+        4,
+        "the survivors a sealed run established, every one of them"
+    );
     for name in &names {
         let output = njutest(
             &fixture,
@@ -423,9 +620,15 @@ fn accept_records_the_decision_where_the_next_run_will_read_it() {
 
     assert_eq!(
         verify(&fixture, &[]).status.code(),
-        Some(0),
-        "the decision the reviewer recorded is the one the next run reads"
+        Some(i32::from(njutest::cli::EXIT_ASSURED)),
+        "every gap a sealed run established has a decision somebody made"
     );
+    let report = part(&fixture);
+    assert_eq!(
+        report["accounting"]["mutants"]["accepted"], 4,
+        "the decision the reviewer recorded is the one the next run reads: {report}"
+    );
+    assert_eq!(report["findings"], serde_json::json!([]), "{report}");
 }
 
 #[cfg(unix)]
@@ -810,6 +1013,43 @@ fn a_file_the_configuration_excludes_is_not_mutated_and_is_still_built_and_run()
         stated.contains(&"skipped-excluded"),
         "and the report says how many places went unasked and why, because a place \
          nothing was put to is not a place the tests noticed everything about: {stated:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_const_fn_only_the_program_calls_is_mutated_and_one_the_compiler_evaluates_is_passed_over() {
+    let fixture = fixture("fixture-const-fn");
+    let output = verify(&fixture, &[]);
+    let report = part(&fixture);
+    let rows = report["mutants"].as_array().expect("mutants");
+    let items: std::collections::BTreeSet<&str> =
+        rows.iter().filter_map(|row| row["item"].as_str()).collect();
+    assert_eq!(
+        items,
+        std::collections::BTreeSet::from(["below_ten"]),
+        "the const fn only a test calls is mutated like any function, and none the compiler \
+         evaluates before the program runs has a row, since no guard can live in it (ADR \
+         0047): {rows:#?} (exit {:?}, {})",
+        output.status.code(),
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+    assert!(
+        rows.iter()
+            .all(|row| row["decision"]["outcome"] != "compile-rejected"),
+        "a function the compiler evaluates is not a mutation the compiler refused, and a row \
+         that said so would send a reader to the edit rather than to the function: {rows:#?}"
+    );
+    let stated: Vec<&str> = report["limitations"]
+        .as_array()
+        .expect("limitations")
+        .iter()
+        .filter_map(|limitation| limitation["name"].as_str())
+        .collect();
+    assert!(
+        stated.contains(&"skipped-evaluated-before-run"),
+        "the report says the places it passed over for that, as it says every place nothing \
+         was put to: {stated:?}"
     );
 }
 

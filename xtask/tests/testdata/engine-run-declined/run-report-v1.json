@@ -1,12 +1,12 @@
 {
   "document_type": "rust-mutants/run-report",
-  "schema_version": 3,
+  "schema_version": 5,
   "tool_version": "0.1.0",
   "run": {
-    "id": "20260926t132053323z",
-    "started_at": "2026-09-26T13:20:53.323057Z",
-    "finished_at": "2026-09-26T13:20:59.206802Z",
-    "duration_ms": 1145,
+    "id": "20261002t125536099z",
+    "started_at": "2026-10-02T12:55:36.099292Z",
+    "finished_at": "2026-10-02T12:55:38.666685Z",
+    "duration_ms": 775,
     "interrupted": false,
     "exit_code": 1,
     "shard": null,
@@ -17,8 +17,8 @@
   },
   "workspace": {
     "root_name": "fixture-declines",
-    "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
-    "workspace_digest": "f6feb56f23a5af01878fe5f12a1d5b493dd5aa22fb6967a9f5866600b1474e04",
+    "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+    "workspace_digest": "4ed49f58baf72291765eda19c8dbe967e63f1fb1935abbaf18c60e1ec138ddcf",
     "catalog_digest": "f91d0075316f556332ce70a1567c14e96df7e6d652f986acc99893aae8540149",
     "platform": {
       "os": "darwin",
@@ -39,23 +39,27 @@
     "cataloged": 29,
     "refused": 0,
     "skipped": 51,
-    "executed": 19,
+    "executed": 20,
     "killed": 7,
-    "survived": 12,
+    "survived": 13,
+    "unproven": 0,
     "step_limit_reached": 0,
     "waited": 0,
     "inconclusive": 0,
     "errored": 0,
-    "not_run": 10,
+    "not_run": 9,
     "unreached": 0,
-    "discharged": 1,
     "declined": 9,
-    "expected": 0
+    "expected": 0,
+    "unproven_killed": 0,
+    "unproven_survived": 0,
+    "unproven_unreached": 0,
+    "unproven_discharged": 0
   },
   "score": {
     "detected": 7,
-    "decided": 19,
-    "value": 0.3684210526315789
+    "decided": 20,
+    "value": 0.35
   },
   "targets": [
     {
@@ -63,27 +67,42 @@
       "kind": "lib",
       "harness": true,
       "tests": 5,
-      "limitations": []
+      "limitations": [],
+      "sealed": {
+        "state": "sealed",
+        "remedy": null,
+        "uncontrolled": []
+      }
     },
     {
       "id": "fixture-declines/test/elsewhere",
       "kind": "test",
       "harness": true,
       "tests": 1,
-      "limitations": []
+      "limitations": [],
+      "sealed": {
+        "state": "sealed",
+        "remedy": null,
+        "uncontrolled": []
+      }
     },
     {
       "id": "fixture-declines/doc/fixture_declines",
       "kind": "doc",
       "harness": true,
-      "tests": 1,
+      "tests": 0,
       "limitations": [
         "doctests-routed-by-file",
         "doctests-none"
-      ]
+      ],
+      "sealed": {
+        "state": "sealed",
+        "remedy": null,
+        "uncontrolled": []
+      }
     }
   ],
-  "established_tests": 8,
+  "established_tests": 4,
   "mutants": [
     {
       "index": 0,
@@ -106,7 +125,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 29,
+      "duration_ms": 27,
       "tests_run": 3,
       "killed_by": [],
       "signal": null,
@@ -148,7 +167,14 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "unproven",
+        "reasons": [
+          "declined"
+        ]
+      }
     },
     {
       "index": 1,
@@ -171,7 +197,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 29,
+      "duration_ms": 35,
       "tests_run": 3,
       "killed_by": [],
       "signal": null,
@@ -213,7 +239,14 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "unproven",
+        "reasons": [
+          "declined"
+        ]
+      }
     },
     {
       "index": 2,
@@ -234,9 +267,9 @@
       "replacement": "true",
       "outcome": "survived",
       "step_notice": null,
-      "target": "fixture-declines/lib/fixture_declines",
-      "exit_code": 0,
-      "duration_ms": 28,
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 13,
       "tests_run": 3,
       "killed_by": [],
       "signal": null,
@@ -251,9 +284,7 @@
           "fixture-declines/lib/fixture_declines"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-declines/lib/fixture_declines"
-        ],
+        "executed": [],
         "tests": {
           "fixture-declines/lib/fixture_declines": [
             "tests::counts_what_it_shares",
@@ -265,7 +296,28 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::counts_what_it_shares",
+            "came_to": "passed"
+          },
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::doubles_what_it_shares",
+            "came_to": "passed"
+          },
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::halves_what_it_shares",
+            "came_to": "passed"
+          }
+        ]
+      }
     },
     {
       "index": 3,
@@ -288,7 +340,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 30,
+      "duration_ms": 35,
       "tests_run": 3,
       "killed_by": [],
       "signal": null,
@@ -330,7 +382,14 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "unproven",
+        "reasons": [
+          "declined"
+        ]
+      }
     },
     {
       "index": 4,
@@ -353,7 +412,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 30,
+      "duration_ms": 32,
       "tests_run": 3,
       "killed_by": [],
       "signal": null,
@@ -395,7 +454,14 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "unproven",
+        "reasons": [
+          "declined"
+        ]
+      }
     },
     {
       "index": 5,
@@ -418,7 +484,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 27,
+      "duration_ms": 35,
       "tests_run": 3,
       "killed_by": [],
       "signal": null,
@@ -460,7 +526,14 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "unproven",
+        "reasons": [
+          "declined"
+        ]
+      }
     },
     {
       "index": 6,
@@ -481,9 +554,9 @@
       "replacement": "3",
       "outcome": "survived",
       "step_notice": null,
-      "target": "fixture-declines/lib/fixture_declines",
-      "exit_code": 0,
-      "duration_ms": 27,
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 24,
       "tests_run": 1,
       "killed_by": [],
       "signal": null,
@@ -498,9 +571,7 @@
           "fixture-declines/lib/fixture_declines"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-declines/lib/fixture_declines"
-        ],
+        "executed": [],
         "tests": {
           "fixture-declines/lib/fixture_declines": [
             "tests::adds_ten"
@@ -510,7 +581,18 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::adds_ten",
+            "came_to": "passed"
+          }
+        ]
+      }
     },
     {
       "index": 7,
@@ -532,8 +614,8 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
-      "exit_code": 0,
-      "duration_ms": 27,
+      "exit_code": -1,
+      "duration_ms": 14,
       "tests_run": 1,
       "killed_by": [
         "tests::adds_ten"
@@ -542,12 +624,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
-      "declined": [
-        {
-          "test": "tests::adds_ten",
-          "why": "this machine cannot add"
-        }
-      ],
+      "declined": [],
       "route": {
         "granularity": "test",
         "fallback": null,
@@ -555,9 +632,7 @@
           "fixture-declines/lib/fixture_declines"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-declines/lib/fixture_declines"
-        ],
+        "executed": [],
         "tests": {
           "fixture-declines/lib/fixture_declines": [
             "tests::adds_ten"
@@ -567,7 +642,18 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::adds_ten",
+            "came_to": "declined"
+          }
+        ]
+      }
     },
     {
       "index": 8,
@@ -586,17 +672,17 @@
       "source_digest": "42342b3e64fbd6df99f7e6537ed0c66a12457413e85c494bb7dced2ef9bd3f71",
       "original": "2 > 1",
       "replacement": "true",
-      "outcome": "not_run",
+      "outcome": "survived",
       "step_notice": null,
       "target": "",
       "exit_code": -1,
-      "duration_ms": 0,
-      "tests_run": null,
+      "duration_ms": 20,
+      "tests_run": 1,
       "killed_by": [],
       "signal": null,
       "retried": false,
       "lingered": false,
-      "not_run_reason": "discharged",
+      "not_run_reason": null,
       "declined": [],
       "route": {
         "granularity": "discharged",
@@ -614,7 +700,18 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::adds_ten",
+            "came_to": "passed"
+          }
+        ]
+      }
     },
     {
       "index": 9,
@@ -635,9 +732,9 @@
       "replacement": ">=",
       "outcome": "survived",
       "step_notice": null,
-      "target": "fixture-declines/lib/fixture_declines",
-      "exit_code": 0,
-      "duration_ms": 30,
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 48,
       "tests_run": 1,
       "killed_by": [],
       "signal": null,
@@ -652,9 +749,7 @@
           "fixture-declines/lib/fixture_declines"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-declines/lib/fixture_declines"
-        ],
+        "executed": [],
         "tests": {
           "fixture-declines/lib/fixture_declines": [
             "tests::adds_ten"
@@ -664,7 +759,18 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::adds_ten",
+            "came_to": "passed"
+          }
+        ]
+      }
     },
     {
       "index": 10,
@@ -686,8 +792,8 @@
       "outcome": "killed",
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
-      "exit_code": 0,
-      "duration_ms": 30,
+      "exit_code": -1,
+      "duration_ms": 56,
       "tests_run": 1,
       "killed_by": [
         "tests::adds_ten"
@@ -696,12 +802,7 @@
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
-      "declined": [
-        {
-          "test": "tests::adds_ten",
-          "why": "this machine cannot add"
-        }
-      ],
+      "declined": [],
       "route": {
         "granularity": "test",
         "fallback": null,
@@ -709,9 +810,7 @@
           "fixture-declines/lib/fixture_declines"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-declines/lib/fixture_declines"
-        ],
+        "executed": [],
         "tests": {
           "fixture-declines/lib/fixture_declines": [
             "tests::adds_ten"
@@ -721,7 +820,18 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::adds_ten",
+            "came_to": "declined"
+          }
+        ]
+      }
     },
     {
       "index": 11,
@@ -742,9 +852,9 @@
       "replacement": "0",
       "outcome": "survived",
       "step_notice": null,
-      "target": "fixture-declines/lib/fixture_declines",
-      "exit_code": 0,
-      "duration_ms": 30,
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 53,
       "tests_run": 1,
       "killed_by": [],
       "signal": null,
@@ -759,9 +869,7 @@
           "fixture-declines/lib/fixture_declines"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-declines/lib/fixture_declines"
-        ],
+        "executed": [],
         "tests": {
           "fixture-declines/lib/fixture_declines": [
             "tests::adds_ten"
@@ -771,7 +879,18 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::adds_ten",
+            "came_to": "passed"
+          }
+        ]
+      }
     },
     {
       "index": 12,
@@ -794,7 +913,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 30,
+      "duration_ms": 35,
       "tests_run": 1,
       "killed_by": [],
       "signal": null,
@@ -826,7 +945,14 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "unproven",
+        "reasons": [
+          "declined"
+        ]
+      }
     },
     {
       "index": 13,
@@ -849,7 +975,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": -1,
-      "duration_ms": 30,
+      "duration_ms": 22,
       "tests_run": 1,
       "killed_by": [
         "tests::doubles_what_it_shares"
@@ -866,9 +992,7 @@
           "fixture-declines/lib/fixture_declines"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-declines/lib/fixture_declines"
-        ],
+        "executed": [],
         "tests": {
           "fixture-declines/lib/fixture_declines": [
             "tests::doubles_what_it_shares"
@@ -878,7 +1002,18 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::doubles_what_it_shares",
+            "came_to": "panicked"
+          }
+        ]
+      }
     },
     {
       "index": 14,
@@ -901,7 +1036,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 29,
+      "duration_ms": 32,
       "tests_run": 1,
       "killed_by": [],
       "signal": null,
@@ -933,7 +1068,14 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "unproven",
+        "reasons": [
+          "declined"
+        ]
+      }
     },
     {
       "index": 15,
@@ -988,7 +1130,14 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "unproven",
+        "reasons": [
+          "declined"
+        ]
+      }
     },
     {
       "index": 16,
@@ -1011,7 +1160,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": 0,
-      "duration_ms": 26,
+      "duration_ms": 34,
       "tests_run": 1,
       "killed_by": [],
       "signal": null,
@@ -1043,7 +1192,14 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "unproven",
+        "reasons": [
+          "declined"
+        ]
+      }
     },
     {
       "index": 17,
@@ -1064,21 +1220,16 @@
       "replacement": "Default::default()",
       "outcome": "survived",
       "step_notice": null,
-      "target": "fixture-declines/lib/fixture_declines",
-      "exit_code": 0,
-      "duration_ms": 26,
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 22,
       "tests_run": 2,
       "killed_by": [],
       "signal": null,
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
-      "declined": [
-        {
-          "test": "tests::counts_what_it_shares",
-          "why": "this machine cannot share blocks"
-        }
-      ],
+      "declined": [],
       "route": {
         "granularity": "test",
         "fallback": null,
@@ -1086,9 +1237,7 @@
           "fixture-declines/lib/fixture_declines"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-declines/lib/fixture_declines"
-        ],
+        "executed": [],
         "tests": {
           "fixture-declines/lib/fixture_declines": [
             "tests::counts_what_it_shares",
@@ -1099,7 +1248,23 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::counts_what_it_shares",
+            "came_to": "set-aside"
+          },
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::counts_without_looking",
+            "came_to": "passed"
+          }
+        ]
+      }
     },
     {
       "index": 18,
@@ -1120,21 +1285,16 @@
       "replacement": "-",
       "outcome": "survived",
       "step_notice": null,
-      "target": "fixture-declines/lib/fixture_declines",
-      "exit_code": 0,
-      "duration_ms": 30,
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 32,
       "tests_run": 2,
       "killed_by": [],
       "signal": null,
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
-      "declined": [
-        {
-          "test": "tests::counts_what_it_shares",
-          "why": "this machine cannot share blocks"
-        }
-      ],
+      "declined": [],
       "route": {
         "granularity": "test",
         "fallback": null,
@@ -1142,9 +1302,7 @@
           "fixture-declines/lib/fixture_declines"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-declines/lib/fixture_declines"
-        ],
+        "executed": [],
         "tests": {
           "fixture-declines/lib/fixture_declines": [
             "tests::counts_what_it_shares",
@@ -1155,7 +1313,23 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::counts_what_it_shares",
+            "came_to": "set-aside"
+          },
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::counts_without_looking",
+            "came_to": "passed"
+          }
+        ]
+      }
     },
     {
       "index": 19,
@@ -1176,21 +1350,16 @@
       "replacement": "2",
       "outcome": "survived",
       "step_notice": null,
-      "target": "fixture-declines/lib/fixture_declines",
-      "exit_code": 0,
-      "duration_ms": 28,
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 20,
       "tests_run": 2,
       "killed_by": [],
       "signal": null,
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
-      "declined": [
-        {
-          "test": "tests::counts_what_it_shares",
-          "why": "this machine cannot share blocks"
-        }
-      ],
+      "declined": [],
       "route": {
         "granularity": "test",
         "fallback": null,
@@ -1198,9 +1367,7 @@
           "fixture-declines/lib/fixture_declines"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-declines/lib/fixture_declines"
-        ],
+        "executed": [],
         "tests": {
           "fixture-declines/lib/fixture_declines": [
             "tests::counts_what_it_shares",
@@ -1211,7 +1378,23 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::counts_what_it_shares",
+            "came_to": "set-aside"
+          },
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::counts_without_looking",
+            "came_to": "passed"
+          }
+        ]
+      }
     },
     {
       "index": 20,
@@ -1232,21 +1415,16 @@
       "replacement": "0",
       "outcome": "survived",
       "step_notice": null,
-      "target": "fixture-declines/lib/fixture_declines",
-      "exit_code": 0,
-      "duration_ms": 30,
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 42,
       "tests_run": 2,
       "killed_by": [],
       "signal": null,
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
-      "declined": [
-        {
-          "test": "tests::counts_what_it_shares",
-          "why": "this machine cannot share blocks"
-        }
-      ],
+      "declined": [],
       "route": {
         "granularity": "test",
         "fallback": null,
@@ -1254,9 +1432,7 @@
           "fixture-declines/lib/fixture_declines"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-declines/lib/fixture_declines"
-        ],
+        "executed": [],
         "tests": {
           "fixture-declines/lib/fixture_declines": [
             "tests::counts_what_it_shares",
@@ -1267,7 +1443,23 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::counts_what_it_shares",
+            "came_to": "set-aside"
+          },
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::counts_without_looking",
+            "came_to": "passed"
+          }
+        ]
+      }
     },
     {
       "index": 21,
@@ -1290,7 +1482,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": -1,
-      "duration_ms": 26,
+      "duration_ms": 31,
       "tests_run": 1,
       "killed_by": [
         "tests::adds_ten"
@@ -1307,9 +1499,7 @@
           "fixture-declines/lib/fixture_declines"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-declines/lib/fixture_declines"
-        ],
+        "executed": [],
         "tests": {
           "fixture-declines/lib/fixture_declines": [
             "tests::adds_ten"
@@ -1319,7 +1509,18 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::adds_ten",
+            "came_to": "panicked"
+          }
+        ]
+      }
     },
     {
       "index": 22,
@@ -1342,7 +1543,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": -1,
-      "duration_ms": 28,
+      "duration_ms": 19,
       "tests_run": 1,
       "killed_by": [
         "tests::adds_ten"
@@ -1359,9 +1560,7 @@
           "fixture-declines/lib/fixture_declines"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-declines/lib/fixture_declines"
-        ],
+        "executed": [],
         "tests": {
           "fixture-declines/lib/fixture_declines": [
             "tests::adds_ten"
@@ -1371,7 +1570,18 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::adds_ten",
+            "came_to": "panicked"
+          }
+        ]
+      }
     },
     {
       "index": 23,
@@ -1394,7 +1604,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": -1,
-      "duration_ms": 30,
+      "duration_ms": 18,
       "tests_run": 1,
       "killed_by": [
         "tests::adds_ten"
@@ -1411,9 +1621,7 @@
           "fixture-declines/lib/fixture_declines"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-declines/lib/fixture_declines"
-        ],
+        "executed": [],
         "tests": {
           "fixture-declines/lib/fixture_declines": [
             "tests::adds_ten"
@@ -1423,7 +1631,18 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::adds_ten",
+            "came_to": "panicked"
+          }
+        ]
+      }
     },
     {
       "index": 24,
@@ -1446,7 +1665,7 @@
       "step_notice": null,
       "target": "fixture-declines/lib/fixture_declines",
       "exit_code": -1,
-      "duration_ms": 26,
+      "duration_ms": 24,
       "tests_run": 1,
       "killed_by": [
         "tests::adds_ten"
@@ -1463,9 +1682,7 @@
           "fixture-declines/lib/fixture_declines"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-declines/lib/fixture_declines"
-        ],
+        "executed": [],
         "tests": {
           "fixture-declines/lib/fixture_declines": [
             "tests::adds_ten"
@@ -1475,7 +1692,18 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::adds_ten",
+            "came_to": "panicked"
+          }
+        ]
+      }
     },
     {
       "index": 25,
@@ -1496,21 +1724,16 @@
       "replacement": "Default::default()",
       "outcome": "survived",
       "step_notice": null,
-      "target": "fixture-declines/test/elsewhere",
-      "exit_code": 0,
-      "duration_ms": 26,
-      "tests_run": 1,
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 29,
+      "tests_run": 2,
       "killed_by": [],
       "signal": null,
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
-      "declined": [
-        {
-          "test": "tests::halves_what_it_shares",
-          "why": "this machine cannot share blocks"
-        }
-      ],
+      "declined": [],
       "route": {
         "granularity": "test",
         "fallback": null,
@@ -1519,10 +1742,7 @@
           "fixture-declines/test/elsewhere"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-declines/lib/fixture_declines",
-          "fixture-declines/test/elsewhere"
-        ],
+        "executed": [],
         "tests": {
           "fixture-declines/lib/fixture_declines": [
             "tests::halves_what_it_shares"
@@ -1532,7 +1752,23 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::halves_what_it_shares",
+            "came_to": "set-aside"
+          },
+          {
+            "target": "fixture-declines/test/elsewhere",
+            "test": "halves_without_looking",
+            "came_to": "passed"
+          }
+        ]
+      }
     },
     {
       "index": 26,
@@ -1553,21 +1789,16 @@
       "replacement": "*",
       "outcome": "survived",
       "step_notice": null,
-      "target": "fixture-declines/test/elsewhere",
-      "exit_code": 0,
-      "duration_ms": 29,
-      "tests_run": 1,
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 26,
+      "tests_run": 2,
       "killed_by": [],
       "signal": null,
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
-      "declined": [
-        {
-          "test": "tests::halves_what_it_shares",
-          "why": "this machine cannot share blocks"
-        }
-      ],
+      "declined": [],
       "route": {
         "granularity": "test",
         "fallback": null,
@@ -1576,10 +1807,7 @@
           "fixture-declines/test/elsewhere"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-declines/lib/fixture_declines",
-          "fixture-declines/test/elsewhere"
-        ],
+        "executed": [],
         "tests": {
           "fixture-declines/lib/fixture_declines": [
             "tests::halves_what_it_shares"
@@ -1589,7 +1817,23 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::halves_what_it_shares",
+            "came_to": "set-aside"
+          },
+          {
+            "target": "fixture-declines/test/elsewhere",
+            "test": "halves_without_looking",
+            "came_to": "passed"
+          }
+        ]
+      }
     },
     {
       "index": 27,
@@ -1610,21 +1854,16 @@
       "replacement": "3",
       "outcome": "survived",
       "step_notice": null,
-      "target": "fixture-declines/test/elsewhere",
-      "exit_code": 0,
-      "duration_ms": 28,
-      "tests_run": 1,
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 26,
+      "tests_run": 2,
       "killed_by": [],
       "signal": null,
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
-      "declined": [
-        {
-          "test": "tests::halves_what_it_shares",
-          "why": "this machine cannot share blocks"
-        }
-      ],
+      "declined": [],
       "route": {
         "granularity": "test",
         "fallback": null,
@@ -1633,10 +1872,7 @@
           "fixture-declines/test/elsewhere"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-declines/lib/fixture_declines",
-          "fixture-declines/test/elsewhere"
-        ],
+        "executed": [],
         "tests": {
           "fixture-declines/lib/fixture_declines": [
             "tests::halves_what_it_shares"
@@ -1646,7 +1882,23 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::halves_what_it_shares",
+            "came_to": "set-aside"
+          },
+          {
+            "target": "fixture-declines/test/elsewhere",
+            "test": "halves_without_looking",
+            "came_to": "passed"
+          }
+        ]
+      }
     },
     {
       "index": 28,
@@ -1667,21 +1919,16 @@
       "replacement": "1",
       "outcome": "survived",
       "step_notice": null,
-      "target": "fixture-declines/test/elsewhere",
-      "exit_code": 0,
-      "duration_ms": 30,
-      "tests_run": 1,
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 12,
+      "tests_run": 2,
       "killed_by": [],
       "signal": null,
       "retried": false,
       "lingered": false,
       "not_run_reason": null,
-      "declined": [
-        {
-          "test": "tests::halves_what_it_shares",
-          "why": "this machine cannot share blocks"
-        }
-      ],
+      "declined": [],
       "route": {
         "granularity": "test",
         "fallback": null,
@@ -1690,10 +1937,7 @@
           "fixture-declines/test/elsewhere"
         ],
         "discharged": [],
-        "executed": [
-          "fixture-declines/lib/fixture_declines",
-          "fixture-declines/test/elsewhere"
-        ],
+        "executed": [],
         "tests": {
           "fixture-declines/lib/fixture_declines": [
             "tests::halves_what_it_shares"
@@ -1703,7 +1947,23 @@
       "identical": "not-measured",
       "expected": false,
       "unreached": false,
-      "source_run_id": null
+      "source_run_id": null,
+      "part_run_id": null,
+      "evidence": {
+        "kind": "sealed",
+        "executions": [
+          {
+            "target": "fixture-declines/lib/fixture_declines",
+            "test": "tests::halves_what_it_shares",
+            "came_to": "set-aside"
+          },
+          {
+            "target": "fixture-declines/test/elsewhere",
+            "test": "halves_without_looking",
+            "came_to": "passed"
+          }
+        ]
+      }
     }
   ],
   "rejections": [],
@@ -1728,9 +1988,9 @@
       "detail": "no test noticed 77b5f87a1e3470368cca; 1 test ran and passed"
     },
     {
-      "kind": "discharged-mutant",
+      "kind": "surviving-mutant",
       "mutant": "f7b807404f423876925c605fc23439020d3a34c97577a8b20f23ffbd7061746d",
-      "detail": "every target that could have noticed f7b807404f423876925c was removed by a proof, so no test could have: the mutation is in code the tests run and never observe"
+      "detail": "no test noticed f7b807404f423876925c; 1 test ran and passed"
     },
     {
       "kind": "surviving-mutant",
@@ -1765,22 +2025,22 @@
     {
       "kind": "surviving-mutant",
       "mutant": "bfa43f4caf8aee3905d29b0cfcdd8d791f1cbbce7914b90b7d7ee4300b36cde9",
-      "detail": "no test noticed bfa43f4caf8aee3905d2; 1 test ran and passed"
+      "detail": "no test noticed bfa43f4caf8aee3905d2; 2 tests ran and passed"
     },
     {
       "kind": "surviving-mutant",
       "mutant": "59f23e307f7b13d4ecf5c4cbffe13a13c6d361636b93074f376ac11bf89bbaf9",
-      "detail": "no test noticed 59f23e307f7b13d4ecf5; 1 test ran and passed"
+      "detail": "no test noticed 59f23e307f7b13d4ecf5; 2 tests ran and passed"
     },
     {
       "kind": "surviving-mutant",
       "mutant": "b58d7f6bd85ceb0493244310df6ccdd06f690a8d7cdc7c5e0809f6a8424f2ddb",
-      "detail": "no test noticed b58d7f6bd85ceb049324; 1 test ran and passed"
+      "detail": "no test noticed b58d7f6bd85ceb049324; 2 tests ran and passed"
     },
     {
       "kind": "surviving-mutant",
       "mutant": "8d51aaa1107600b45728b2761cc22f60cbd9983b4dc6ff41fd45f0ae5d449f79",
-      "detail": "no test noticed 8d51aaa1107600b45728; 1 test ran and passed"
+      "detail": "no test noticed 8d51aaa1107600b45728; 2 tests ran and passed"
     }
   ],
   "facts": [

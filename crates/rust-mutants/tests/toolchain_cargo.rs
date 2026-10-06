@@ -18,7 +18,8 @@ use rust_mutants::cargo::{
     CargoErrorKind, Diagnostic, Driver, LocateOptions, Message, Metadata, MetadataOptions,
     Toolchain, compile_time_inputs, emitted_of, parse_messages, resolve_executable, units_of,
 };
-use rust_mutants::runner::{Cancel, run};
+use rust_mutants::id::HexDigest;
+use rust_mutants::runner::{Cancel, RunResult, Spec, Watched, run};
 use rust_mutants::trace::Recorder;
 
 fn fixture(name: &str) -> PathBuf {
@@ -26,17 +27,43 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 fn toolchain(dir: &Path) -> Toolchain {
+    let mut env: rust_mutants::vars::Variables = njutest_devkit::paths::environment_for_a_run()
+        .into_iter()
+        .collect();
+    env.set("RUSTC_WRAPPER", "");
     let options = LocateOptions {
         cargo: Some(njutest_devkit::paths::cargo_binary()),
+        env: Some(env),
         ..LocateOptions::default()
     };
-    Toolchain::locate(&options, dir, &Cancel::new()).expect("locate")
+    Toolchain::locate(
+        &options,
+        dir,
+        &Watched::new(&Cancel::new(), &Recorder::disabled()),
+    )
+    .expect("locate")
 }
 fn scratch_target(name: &str) -> tempfile::TempDir {
     tempfile::Builder::new()
         .prefix(&format!("rust-mutants-{name}-"))
         .tempdir()
         .expect("tempdir")
+}
+
+fn run_build(spec: &Spec) -> RunResult {
+    let result = run(spec, &Cancel::new());
+    let messages = parse_messages(&result.stdout).expect("Cargo messages");
+    rust_mutants::cargo::record_build(
+        spec.env.as_ref(),
+        spec.dir.as_deref().expect("build root"),
+        rust_mutants::cargo::DirectBuild {
+            context: "a direct build the test made itself",
+            duration: result.duration,
+            messages: &messages,
+        },
+    )
+    .expect("direct build diagnostics");
+    result
 }
 /// Where `path` is below `root`, spelled the one way a catalog spells a path.
 fn under(root: &Path, path: &Path) -> String {
@@ -89,6 +116,44 @@ fn an_explicit_cargo_path_must_exist_and_a_bare_name_is_searched_on_the_given_pa
     assert_eq!(bare_without_path.kind(), CargoErrorKind::ToolchainNotFound);
 }
 #[test]
+fn variables_added_to_an_environment_the_toolchain_was_never_given_are_refused() {
+    let dir = scratch_target("unenvironed");
+    let tc = Toolchain::locate(
+        &LocateOptions {
+            cargo: Some(njutest_devkit::paths::cargo_binary()),
+            ..LocateOptions::default()
+        },
+        dir.path(),
+        &Watched::new(&Cancel::new(), &Recorder::disabled()),
+    )
+    .expect("locate without an explicit environment");
+    let cancel = Cancel::new();
+    let trace = Recorder::disabled();
+    let mut options = rust_mutants::cargo::CompileOptions::new(rust_mutants::cargo::BuildDir::new(
+        dir.path().join("target"),
+        Vec::new(),
+    ));
+    options.env.set("RUST_MUTANTS_ADDED", "1");
+    let refused = rust_mutants::cargo::compile(
+        &Driver {
+            toolchain: &tc,
+            dir: dir.path(),
+            cancel: &cancel,
+            trace: &trace,
+        },
+        &options,
+    )
+    .expect_err(
+        "a toolchain given no environment inherits this process's, so the variables a build adds \
+         have nothing to be added to, and an empty set in its place loses everything inherited",
+    );
+    assert!(
+        refused.to_string().contains("was given none"),
+        "the refusal says the toolchain was given no environment: {refused}"
+    );
+}
+
+#[test]
 fn locating_reads_both_versions_from_inside_the_directory() {
     let dir = fixture("fixture-simple");
     let tc = toolchain(&dir);
@@ -107,6 +172,457 @@ fn locating_reads_both_versions_from_inside_the_directory() {
         "{described}"
     );
 }
+
+fn build_trace() -> Recorder {
+    Recorder::wall(
+        rust_mutants::trace::Sink::Memory(rust_mutants::trace::MemorySink::unbounded()),
+        rust_mutants::trace::TraceContext::Standalone {
+            run_id: rust_mutants::id::RunId::try_from("build-cache-test".to_owned())
+                .expect("run identity"),
+            build_selection: rust_mutants::cargo::BuildConfig::default()
+                .selection()
+                .digest()
+                .clone(),
+        },
+    )
+}
+
+fn cargo_builds(trace: &Recorder) -> usize {
+    trace
+        .events()
+        .iter()
+        .filter(|event| {
+            matches!(&event.payload,
+                rust_mutants::trace::Payload::Note { note } if note.kind == "fixture-cargo-build"
+            )
+        })
+        .count()
+}
+
+#[test]
+fn an_identical_build_verifies_artifacts_without_starting_cargo() {
+    let directory = scratch_target("content-build");
+    let root = directory.path().join("source");
+    copy_tree(&fixture("fixture-simple"), &root);
+    let tc = toolchain(&root);
+    let cancel = Cancel::new();
+    let trace = build_trace();
+    let mut options = rust_mutants::cargo::CompileOptions::new(
+        rust_mutants::cargo::BuildDir::new(directory.path().join("target"), Vec::new())
+            .rooted(root.clone()),
+    );
+    options.kind = rust_mutants::cargo::CompileKind::Tests;
+    options.locked = true;
+    options.offline = true;
+    let driver = Driver {
+        toolchain: &tc,
+        dir: &root,
+        cancel: &cancel,
+        trace: &trace,
+    };
+    let first = rust_mutants::cargo::compile(&driver, &options).expect("cold compilation");
+    assert_eq!(cargo_builds(&trace), 1);
+    let second =
+        rust_mutants::cargo::compile(&driver, &options).expect("verified cached compilation");
+    assert_eq!(
+        cargo_builds(&trace),
+        1,
+        "a content-addressed hit starts no Cargo process: {:#?}",
+        trace
+            .events()
+            .iter()
+            .filter_map(|event| {
+                if let rust_mutants::trace::Payload::Note { note } = &event.payload {
+                    Some(note)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(first.provenance, rust_mutants::cargo::Provenance::Compiler);
+    assert_eq!(
+        second.provenance,
+        rust_mutants::cargo::Provenance::VerifiedReuse
+    );
+    assert_eq!(
+        first.units, second.units,
+        "verified reuse preserves the original raw Cargo unit freshness"
+    );
+    assert_eq!(
+        first.messages, second.messages,
+        "verified reuse preserves every original raw CompilerArtifact message"
+    );
+    assert_eq!(
+        first.observation(),
+        second.observation(),
+        "verified reuse retains the same actual CompilerObservation"
+    );
+    assert!(trace.events().iter().any(|event| matches!(&event.payload,
+        rust_mutants::trace::Payload::Note { note } if note.kind == "build-cache-hit" && note.detail.len() == 64
+    )), "every hit names its input digest");
+    let artifact = first
+        .messages
+        .iter()
+        .find_map(|message| {
+            if let Message::CompilerArtifact(artifact) = message {
+                artifact.executable.as_ref()
+            } else {
+                None
+            }
+        })
+        .expect("a test executable");
+    std::fs::write(artifact, b"corrupt").expect("damage a cached artifact");
+    rust_mutants::cargo::compile(&driver, &options).expect("damaged artifacts rebuild");
+    assert_eq!(
+        cargo_builds(&trace),
+        2,
+        "artifact digests are verified before reuse"
+    );
+}
+
+#[test]
+fn a_verified_hit_leaves_the_documentation_cargo_runs_nothing_to_compile() {
+    let directory = scratch_target("settled-hit");
+    let root = directory.path().join("source");
+    copy_tree(&fixture("fixture-simple"), &root);
+    let tc = toolchain(&root);
+    let cancel = Cancel::new();
+    let trace = build_trace();
+    let member = rust_mutants::cargo::Member {
+        name: "fixture-simple".to_owned(),
+        files: njutest_devkit::fixture::fingerprint(&root)
+            .into_iter()
+            .map(|(rel_path, _digest)| rust_mutants::cargo::MemberFile {
+                path: root.join(&rel_path),
+                rel_path,
+            })
+            .collect(),
+    };
+    let target = directory.path().join("target");
+    let mut options = rust_mutants::cargo::CompileOptions::new(
+        rust_mutants::cargo::BuildDir::new(target.clone(), vec![member]).rooted(root.clone()),
+    );
+    options.kind = rust_mutants::cargo::CompileKind::Tests;
+    options.locked = true;
+    options.offline = true;
+    let driver = Driver {
+        toolchain: &tc,
+        dir: &root,
+        cancel: &cancel,
+        trace: &trace,
+    };
+    rust_mutants::cargo::compile(&driver, &options).expect("cold compilation");
+    let library = root.join("src/lib.rs");
+    std::fs::write(
+        &library,
+        std::fs::read(&library).expect("the library's source"),
+    )
+    .expect("the same bytes written later, as every new copy of the tree writes them");
+    rust_mutants::cargo::compile(&driver, &options).expect("verified cached compilation");
+    assert_eq!(
+        cargo_builds(&trace),
+        1,
+        "the second compilation is answered by its verified record"
+    );
+    let mut documentation: Vec<OsString> = ["test", "--doc", "--locked", "--offline"]
+        .into_iter()
+        .map(OsString::from)
+        .collect();
+    documentation.push(OsString::from("--target-dir"));
+    documentation.push(target.into_os_string());
+    documentation.extend(
+        options
+            .build
+            .cargo_arguments()
+            .into_iter()
+            .map(OsString::from),
+    );
+    let ran = run(&tc.command(&root, documentation), &Cancel::new());
+    let printed = njutest_devkit::process::strict_utf8(&ran.output);
+    assert!(
+        printed.contains("test result: ok."),
+        "the documentation ran: {printed}"
+    );
+    assert!(
+        !printed
+            .lines()
+            .any(|line| line.trim_start().starts_with("Compiling ")),
+        "a verified hit settles the directory it answers for, so the Cargo that runs the documentation there compiles nothing again:\n{printed}"
+    );
+}
+
+#[test]
+fn every_changed_build_input_misses_and_then_reuses_only_its_verified_result() {
+    let directory = scratch_target("changed-build");
+    let root = directory.path().join("source");
+    copy_tree(&fixture("fixture-simple"), &root);
+    let tc = toolchain(&root);
+    let cancel = Cancel::new();
+    let trace = build_trace();
+    let mut options = rust_mutants::cargo::CompileOptions::new(
+        rust_mutants::cargo::BuildDir::new(directory.path().join("target"), Vec::new())
+            .rooted(root.clone()),
+    );
+    options.kind = rust_mutants::cargo::CompileKind::Tests;
+    options.locked = true;
+    options.offline = true;
+    let driver = Driver {
+        toolchain: &tc,
+        dir: &root,
+        cancel: &cancel,
+        trace: &trace,
+    };
+    let compile_pair = |options: &rust_mutants::cargo::CompileOptions| {
+        let before = cargo_builds(&trace);
+        rust_mutants::cargo::compile(&driver, options).expect("the changed input compiles");
+        assert_eq!(
+            cargo_builds(&trace),
+            before + 1,
+            "a changed source, manifest, lockfile, configuration, selection, flag or environment misses"
+        );
+        rust_mutants::cargo::compile(&driver, options).expect("its verified result reuses");
+        assert_eq!(
+            cargo_builds(&trace),
+            before + 1,
+            "a verified hit starts no Cargo process"
+        );
+    };
+    compile_pair(&options);
+    let source = root.join("src/cache_probe.rs");
+    std::fs::write(source, "pub const PROBE: u32 = 1;\n").expect("a new source");
+    compile_pair(&options);
+    let manifest = root.join("Cargo.toml");
+    let text = std::fs::read_to_string(&manifest).expect("the manifest");
+    std::fs::write(&manifest, format!("{text}\n[features]\nprobe = []\n"))
+        .expect("a changed manifest");
+    compile_pair(&options);
+    let lock = root.join("Cargo.lock");
+    let text = std::fs::read_to_string(&lock).expect("the lockfile");
+    std::fs::write(lock, format!("{text}\n")).expect("a changed lockfile");
+    compile_pair(&options);
+    options.build.features.push("probe".to_owned());
+    compile_pair(&options);
+    options.build.profile = Some("release".to_owned());
+    compile_pair(&options);
+    options.build.target = Some(tc.host().to_owned());
+    compile_pair(&options);
+    options
+        .env
+        .set("CARGO_ENCODED_RUSTFLAGS", "--cfg\u{1f}cache_probe");
+    compile_pair(&options);
+    options.env.set("BUILD_PROBE", "changed");
+    compile_pair(&options);
+    std::fs::create_dir_all(root.join(".cargo")).expect("configuration directory");
+    std::fs::write(
+        root.join(".cargo/config.toml"),
+        "[profile.release]\nopt-level = 1\n",
+    )
+    .expect("a changed configuration");
+    compile_pair(&options);
+    let keys: BTreeSet<String> = trace
+        .events()
+        .iter()
+        .filter_map(|event| {
+            if let rust_mutants::trace::Payload::Note { note } = &event.payload {
+                (note.kind == "build-cache-hit").then(|| note.detail.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(keys.len(), 10, "each complete input set has its own key");
+    let record = bound_compilation_record(&trace, options.target_dir.path());
+    assert!(record.is_err(), "multiple identities selected {record:?}");
+}
+
+/// A variable another platform's loader reads and this platform's does not.
+#[cfg(any(windows, target_os = "linux"))]
+const FOREIGN_LOADER_VARIABLE: &str = if cfg!(windows) {
+    "LD_LIBRARY_PATH"
+} else {
+    "DYLD_LIBRARY_PATH"
+};
+
+#[cfg(any(windows, target_os = "linux"))]
+#[test]
+fn a_variable_only_another_platform_s_loader_reads_is_bound_by_its_value_and_reused() {
+    let directory = scratch_target("foreign-loader");
+    let root = directory.path().join("source");
+    copy_tree(&fixture("fixture-simple"), &root);
+    let tc = toolchain(&root);
+    let cancel = Cancel::new();
+    let trace = build_trace();
+    let mut options = rust_mutants::cargo::CompileOptions::new(
+        rust_mutants::cargo::BuildDir::new(directory.path().join("target"), Vec::new())
+            .rooted(root.clone()),
+    );
+    options.kind = rust_mutants::cargo::CompileKind::Tests;
+    options.locked = true;
+    options.offline = true;
+    let driver = Driver {
+        toolchain: &tc,
+        dir: &root,
+        cancel: &cancel,
+        trace: &trace,
+    };
+    let mut builds = Vec::new();
+    for value in ["one value", "one value", "another value", "one value"] {
+        options.env.set(FOREIGN_LOADER_VARIABLE, value);
+        rust_mutants::cargo::compile(&driver, &options).expect("the tree compiles");
+        builds.push(cargo_builds(&trace));
+    }
+    let notes: Vec<String> = trace
+        .events()
+        .iter()
+        .filter_map(|event| {
+            if let rust_mutants::trace::Payload::Note { note } = &event.payload
+                && note.kind.starts_with("build-cache")
+            {
+                Some(format!("{}: {}", note.kind, note.detail))
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(
+        builds,
+        [1, 1, 2, 2],
+        "{FOREIGN_LOADER_VARIABLE} names nothing this platform's loader reads, so a build it is \
+         set for is bound, a second value is a second build, and the first value's build is \
+         reused: {notes:?}"
+    );
+}
+
+/// The actual compiler publication names one canonical regular record, independently of directory order.
+fn bound_compilation_record(
+    trace: &Recorder,
+    target: &Path,
+) -> std::io::Result<(HexDigest, PathBuf)> {
+    let mut bound: Option<HexDigest> = None;
+    for event in trace.events() {
+        if let rust_mutants::trace::Payload::Note { note } = &event.payload
+            && note.kind == "build-cache-bound"
+        {
+            let key = HexDigest::try_from(note.detail.as_str())
+                .map_err(|source| std::io::Error::new(std::io::ErrorKind::InvalidData, source))?;
+            match &bound {
+                Some(previous) if previous != &key => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "the compiler trace binds more than one input identity",
+                    ));
+                }
+                Some(_same_identity) => {}
+                None => bound = Some(key),
+            }
+        }
+    }
+    let key = bound.ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "the compiler trace has no bound input identity",
+        )
+    })?;
+    let record = target
+        .join("rust-mutants-compilations")
+        .join(format!("{}.json", rust_mutants::keyed::name(key.as_str())?));
+    if !std::fs::symlink_metadata(&record)?.file_type().is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "the named compiler cache record is not a regular file",
+        ));
+    }
+    Ok((key, record))
+}
+
+#[test]
+fn a_missing_or_invalid_compiler_binding_cannot_select_a_record() {
+    let trace = build_trace();
+    let missing = bound_compilation_record(&trace, Path::new("no compiler published here"));
+    assert!(matches!(missing, Err(source) if source.kind() == std::io::ErrorKind::NotFound));
+    trace.note(
+        "build-cache-bound",
+        "not a canonical complete input identity",
+    );
+    let invalid = bound_compilation_record(&trace, Path::new("no compiler published here"));
+    assert!(matches!(invalid, Err(source) if source.kind() == std::io::ErrorKind::InvalidData));
+}
+
+#[test]
+fn missing_or_malformed_cache_records_cannot_replace_a_verified_compilation() {
+    let directory = scratch_target("damaged-record");
+    let root = directory.path().join("source");
+    copy_tree(&fixture("fixture-simple"), &root);
+    let tc = toolchain(&root);
+    let cancel = Cancel::new();
+    let trace = build_trace();
+    let mut options = rust_mutants::cargo::CompileOptions::new(
+        rust_mutants::cargo::BuildDir::new(directory.path().join("target"), Vec::new())
+            .rooted(root.clone()),
+    );
+    options.locked = true;
+    options.offline = true;
+    let driver = Driver {
+        toolchain: &tc,
+        dir: &root,
+        cancel: &cancel,
+        trace: &trace,
+    };
+    rust_mutants::cargo::compile(&driver, &options).expect("initial compilation");
+    let (identity, record) = bound_compilation_record(&trace, options.target_dir.path())
+        .expect("the actual compiler publication names its authoritative record");
+    let bytes = std::fs::read(&record).expect("the complete record");
+    let mut partial: serde_json::Value =
+        njutest_devkit::strictjson::decode_slice(&bytes).expect("record JSON");
+    assert_eq!(partial["key"].as_str(), Some(identity.as_str()));
+    partial["files"] = serde_json::json!({});
+    let malformed = serde_json::to_vec(&partial).expect("incomplete record JSON");
+    for payload in [None, Some(b"{".as_slice()), Some(malformed.as_slice())] {
+        match payload {
+            None => std::fs::remove_file(&record).expect("a missing cache record"),
+            Some(payload) => std::fs::write(&record, payload).expect("a malformed cache record"),
+        }
+        let before = cargo_builds(&trace);
+        rust_mutants::cargo::compile(&driver, &options).expect("doubt returns to Cargo");
+        assert_eq!(cargo_builds(&trace), before + 1);
+        rust_mutants::cargo::compile(&driver, &options).expect("the repaired record verifies");
+        assert_eq!(cargo_builds(&trace), before + 1);
+    }
+}
+
+#[test]
+fn an_opaque_graph_or_unlocked_build_always_returns_to_cargo() {
+    for name in ["fixture-simple", "fixture-carry"] {
+        let directory = scratch_target("unbound-build");
+        let root = directory.path().join("source");
+        copy_tree(&fixture(name), &root);
+        let tc = toolchain(&root);
+        let cancel = Cancel::new();
+        let trace = build_trace();
+        let mut options = rust_mutants::cargo::CompileOptions::new(
+            rust_mutants::cargo::BuildDir::new(directory.path().join("target"), Vec::new())
+                .rooted(root.clone()),
+        );
+        options.locked = name != "fixture-simple";
+        options.offline = true;
+        let driver = Driver {
+            toolchain: &tc,
+            dir: &root,
+            cancel: &cancel,
+            trace: &trace,
+        };
+        for _ in 0..2 {
+            rust_mutants::cargo::compile(&driver, &options).expect("conservative Cargo fallback");
+        }
+        assert_eq!(
+            cargo_builds(&trace),
+            2,
+            "opaque inputs and an unlocked graph cannot claim a hit"
+        );
+    }
+}
+
 #[test]
 fn metadata_is_loaded_from_a_workspace_with_the_locked_offline_flags() {
     let dir = fixture("fixture-workspace");
@@ -199,7 +715,7 @@ fn a_unit_names_every_file_and_variable_the_compiler_read_for_it() {
     spec.argv.push("--target-dir".into());
     spec.argv.push(target.path().into());
     spec.structured_stdout = Some(64 << 20);
-    let result = run(&spec, &Cancel::new());
+    let result = run_build(&spec);
     assert!(
         result.succeeded(),
         "{}",
@@ -240,6 +756,160 @@ fn a_unit_names_every_file_and_variable_the_compiler_read_for_it() {
 }
 
 #[test]
+fn every_unit_is_read_from_the_dep_info_rustc_wrote_whatever_its_name_begins_with() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    for directory in ["src", "tests"] {
+        std::fs::create_dir_all(root.join(directory)).expect("mkdir");
+    }
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"library\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
+         [[bin]]\nname = \"libretto\"\npath = \"src/main.rs\"\n\n\
+         [[test]]\nname = \"libtest-x\"\npath = \"tests/x.rs\"\n",
+    )
+    .expect("manifest");
+    for (file, source) in [
+        ("src/lib.rs", "pub fn one() -> u32 { 1 }\n"),
+        ("src/main.rs", "fn main() {}\n"),
+        ("tests/x.rs", "#[test]\nfn one() {}\n"),
+    ] {
+        std::fs::write(root.join(file), source).expect("source");
+    }
+    let tc = toolchain(root);
+    let target = scratch_target("library");
+    let mut spec = tc.command(
+        root,
+        [
+            "test",
+            "--all-targets",
+            "--no-run",
+            "--message-format=json",
+            "--offline",
+        ],
+    );
+    spec.argv.push("--target-dir".into());
+    spec.argv.push(target.path().into());
+    spec.structured_stdout = Some(64 << 20);
+    let result = run_build(&spec);
+    assert!(
+        result.succeeded(),
+        "{}",
+        std::str::from_utf8(&result.output).expect("the tree writes exact UTF-8")
+    );
+    let messages = parse_messages(&result.stdout).expect("messages");
+    let units = units_of(&messages, root).unwrap_or_else(|error| {
+        panic!(
+            "a library named `library`, a binary named `libretto` and a test named `libtest-x` \
+             are each read from the dep-info rustc wrote for it: {error}"
+        )
+    });
+    let root = root
+        .canonicalize()
+        .expect("the tree has a physical spelling");
+    let read: BTreeSet<(String, bool, Vec<String>)> = units
+        .iter()
+        .map(|unit| {
+            (
+                unit.target.name.clone(),
+                unit.test,
+                unit.sources
+                    .iter()
+                    .map(|path| under(&root, &path.canonicalize().expect("a source")))
+                    .collect(),
+            )
+        })
+        .collect();
+    for (name, test, source) in [
+        ("library", false, "src/lib.rs"),
+        ("library", true, "src/lib.rs"),
+        ("libretto", true, "src/main.rs"),
+        ("libtest-x", true, "tests/x.rs"),
+    ] {
+        assert!(
+            read.contains(&(name.to_owned(), test, vec![source.to_owned()])),
+            "{name} (test: {test}) compiled {source}: {read:?}"
+        );
+    }
+}
+
+#[test]
+fn the_test_binaries_are_the_ones_cargo_test_runs_each_read_as_its_manifest_declares_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    for directory in ["src", "tests", "examples"] {
+        std::fs::create_dir_all(root.join(directory)).expect("mkdir");
+    }
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"own-harness\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
+         [lib]\nharness = false\n\n\
+         [[bin]]\nname = \"tool\"\npath = \"src/main.rs\"\ntest = false\n\n\
+         [[test]]\nname = \"kept\"\npath = \"tests/kept.rs\"\n\n\
+         [[example]]\nname = \"demo\"\npath = \"examples/demo.rs\"\n",
+    )
+    .expect("manifest");
+    for (file, source) in [
+        (
+            "src/lib.rs",
+            "pub fn above(n: u32) -> bool { n > 10 }\npub fn main() { assert!(above(11)); }\n",
+        ),
+        ("src/main.rs", "fn main() {}\n"),
+        (
+            "tests/kept.rs",
+            "#[test]\nfn eleven() { assert!(own_harness::above(11)); }\n",
+        ),
+        ("examples/demo.rs", "fn main() {}\n"),
+    ] {
+        std::fs::write(root.join(file), source).expect("source");
+    }
+    let tc = toolchain(root);
+    let cancel = Cancel::new();
+    let trace = Recorder::disabled();
+    let driver = Driver {
+        toolchain: &tc,
+        dir: root,
+        cancel: &cancel,
+        trace: &trace,
+    };
+    let metadata = Metadata::load(
+        &driver,
+        MetadataOptions {
+            locked: false,
+            offline: true,
+        },
+    )
+    .expect("metadata");
+    let target = scratch_target("own-harness");
+    let built = rust_mutants::execute::build(
+        &driver,
+        &metadata.packages,
+        &rust_mutants::execute::BuildOptions {
+            target_dir: rust_mutants::cargo::BuildDir::new(target.path().to_path_buf(), Vec::new()),
+            locked: false,
+            offline: true,
+            packages: Vec::new(),
+            build: rust_mutants::cargo::BuildConfig::default(),
+        },
+    )
+    .expect("the test binaries build");
+    let read: Vec<(&str, bool)> = built
+        .iter()
+        .map(|target| (target.id(), target.harness))
+        .collect();
+    assert_eq!(
+        read,
+        [
+            ("own-harness/lib/own_harness", false),
+            ("own-harness/test/kept", true)
+        ],
+        "`cargo test --all-targets` builds the binary and the example that `test = false` leaves \
+         out of `cargo test` as test binaries too, and the library's unnamed `[lib]` table says it \
+         is its own program rather than libtest"
+    );
+}
+
+#[test]
 fn units_from_a_check_name_exactly_the_files_each_unit_compiled() {
     let dir = fixture("fixture-simple");
     let tc = toolchain(&dir);
@@ -258,7 +928,7 @@ fn units_from_a_check_name_exactly_the_files_each_unit_compiled() {
     spec.argv.push("--target-dir".into());
     spec.argv.push(target.path().into());
     spec.structured_stdout = Some(64 << 20);
-    let result = run(&spec, &Cancel::new());
+    let result = run_build(&spec);
     assert!(
         result.succeeded(),
         "{}",
@@ -327,7 +997,7 @@ fn units_of_a_nested_member_resolve_against_the_workspace_root() {
     spec.argv.push("--target-dir".into());
     spec.argv.push(target.path().into());
     spec.structured_stdout = Some(64 << 20);
-    let result = run(&spec, &Cancel::new());
+    let result = run_build(&spec);
     assert!(
         result.succeeded(),
         "{}",
@@ -374,7 +1044,7 @@ fn a_check_that_fails_to_compile_still_yields_its_messages() {
     spec.argv.push("--target-dir".into());
     spec.argv.push(target.path().into());
     spec.structured_stdout = Some(64 << 20);
-    let result = run(&spec, &Cancel::new());
+    let result = run_build(&spec);
     assert!(!result.succeeded());
     let messages = parse_messages(&result.stdout).expect("messages");
     let errors: Vec<&Diagnostic> = messages
@@ -397,7 +1067,8 @@ fn a_check_that_fails_to_compile_still_yields_its_messages() {
     );
     assert!(matches!(
         messages.last(),
-        Some(Message::BuildFinished { success: false })
+        Some(Message::BuildFinished(finished))
+            if *finished == rust_mutants::cargo::Finished::new(false)
     ));
 }
 
@@ -417,7 +1088,7 @@ fn emitted_in(copy: &Path, target: &Path) -> Vec<Vec<rust_mutants::cargo::Emitte
     spec.argv.push("--target-dir".into());
     spec.argv.push(target.into());
     spec.structured_stdout = Some(64 << 20);
-    let result = run(&spec, &Cancel::new());
+    let result = run_build(&spec);
     assert!(
         result.succeeded(),
         "{}",

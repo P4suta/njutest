@@ -32,12 +32,14 @@ use std::path::{Path, PathBuf};
 
 use rust_mutants::runner::Cancel;
 
-/// The exit code of a usage error or an infrastructure failure.
-pub const EXIT_USAGE: u8 = run::Exit::Unestablished.code();
+/// The exit code of a usage error or of a command that failed rather than answered.
+pub const EXIT_USAGE: u8 = run::Exit::Failed.code();
 
 /// Everything the command line needs from the process it runs in.
 #[derive(Debug, Clone)]
 pub struct Environment {
+    /// The explicit compiled-module owner retained across this composition's preparation paths.
+    pub module_owner: rust_mutants::sealed::ModuleOwner,
     /// The process environment, which the engine hands to every command and test process it starts.
     pub vars: rust_mutants::vars::Variables,
     /// The directory snapshots and target directories are created in.
@@ -85,10 +87,10 @@ impl Environment {
     /// The workspace a command was pointed at: what it named, or where it was started.
     #[must_use]
     pub fn rooted(&self, named: Option<&Path>) -> PathBuf {
-        named.map_or_else(
-            || self.working_directory.clone(),
-            |path| self.working_directory.join(path),
-        )
+        match named {
+            Some(path) => self.working_directory.join(path),
+            None => self.working_directory.clone(),
+        }
     }
 }
 

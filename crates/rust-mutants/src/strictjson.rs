@@ -29,7 +29,11 @@ pub(crate) fn from_str(text: &str) -> Result<serde_json::Value, serde_json::Erro
     Ok(value)
 }
 
-fn from_slice(bytes: &[u8]) -> Result<serde_json::Value, serde_json::Error> {
+/// Parses JSON without accepting duplicate object keys.
+///
+/// # Errors
+/// When the input is not a unique-key JSON document.
+pub fn from_slice(bytes: &[u8]) -> Result<serde_json::Value, serde_json::Error> {
     let mut deserializer = serde_json::Deserializer::from_slice(bytes);
     let value = StrictValue::deserialize(&mut deserializer)?.0;
     deserializer.end()?;

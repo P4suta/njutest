@@ -59,7 +59,7 @@ fn measure(fixture: &str, test: &str) -> Measured {
             ..LocateOptions::default()
         },
         &root,
-        &cancel,
+        &Watched::new(&cancel, &Recorder::disabled()),
     )
     .expect("locate");
     let driver = Driver {
@@ -82,10 +82,7 @@ fn measure(fixture: &str, test: &str) -> Measured {
         &CompileOptions {
             kind: CompileKind::Tests,
             packages: Vec::new(),
-            target_dir: Some(rust_mutants::cargo::BuildDir::new(
-                target.path().to_path_buf(),
-                Vec::new(),
-            )),
+            target_dir: rust_mutants::cargo::BuildDir::new(target.path().to_path_buf(), Vec::new()),
             locked: true,
             offline: true,
             timeout: None,
@@ -94,7 +91,11 @@ fn measure(fixture: &str, test: &str) -> Measured {
         },
     )
     .expect("build");
-    assert!(built.success, "the instrumented fixture builds");
+    assert_eq!(
+        built.completion(),
+        rust_mutants::cargo::Completion::Built,
+        "the instrumented fixture builds"
+    );
     let executable = built
         .messages
         .iter()
@@ -236,16 +237,11 @@ fn a_target_that_runs_with_the_given_home_is_routed_as_one_nothing_measured() {
         &njutest_devkit::paths::cargo_binary(),
         fixture.temp(),
     );
-    let real = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
-        .map(PathBuf::from)
-        .expect("a real home");
-    for (name, beside) in [("CARGO_HOME", ".cargo"), ("RUSTUP_HOME", ".rustup")] {
-        if !options.env.holds(name) {
-            options.env.set(name, real.join(beside).into_os_string());
+    for change in njutest_devkit::paths::given_home(&home) {
+        match change {
+            njutest_devkit::paths::Given::Set(name, value) => options.env.set(name, value),
+            njutest_devkit::paths::Given::Removed(name) => options.env.remove(name),
         }
-    }
-    for name in ["HOME", "USERPROFILE"] {
-        options.env.set(name, home.clone().into_os_string());
     }
     let session = rust_mutants::workspace::Workspace::open(
         fixture.root(),
@@ -256,7 +252,7 @@ fn a_target_that_runs_with_the_given_home_is_routed_as_one_nothing_measured() {
     .prepare(
         &rust_mutants::session::PrepareOptions {
             coverage: true,
-            ..rust_mutants::session::PrepareOptions::default()
+            ..rust_mutants::session::PrepareOptions::new(rust_mutants::rule::Tier::Balanced)
         },
         &rust_mutants::runner::Cancel::new(),
     )
@@ -278,9 +274,13 @@ fn a_target_that_runs_with_the_given_home_is_routed_as_one_nothing_measured() {
     );
     assert!(
         !reached.targets.contains_key(reads)
-            && reached
-                .limitations
-                .contains(&format!("{}:{reads}", rust_mutants::reach::UNMEASURED)),
+            && reached.limitations.iter().any(|limited| {
+                limited.limitation == rust_mutants::limitation::Limitation::CoverageNotMeasured
+                    && limited
+                        .target
+                        .as_ref()
+                        .is_some_and(|target| target.as_str() == reads)
+            }),
         "what a target reached in a home of its own is not what it reaches with the given one, \
          so every mutant routes to it as to a target nothing measured: {reached:?}"
     );

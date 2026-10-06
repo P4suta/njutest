@@ -1,0 +1,8 @@
+# SPDX-FileCopyrightText: 2026 njutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+version = 1
+contract = "standard-v1"
+
+[project]
+allow_outside = ["../fixture-outside-dep-lib"]

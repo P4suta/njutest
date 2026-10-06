@@ -3,6 +3,7 @@
 
 //! The engine trace: what a run did while it did it, as diagnostic exhaust.
 
+mod cost;
 mod event;
 mod reader;
 mod sink;
@@ -14,14 +15,17 @@ use std::sync::{Arc, Mutex};
 use jiff::Timestamp;
 use sha2::{Digest as _, Sha256};
 
+pub use cost::{Origin as CostOrigin, ProbeRole, ProbeSite, Product as CostProduct, record_probe};
+
 pub use event::{
     AttributionRecord, BisectRecord, BuildRecord, CacheRecord, DelayRecord, DischargeRecord,
     DiscoverFileRecord, EVERY_TYPE, Event, EvidenceRecord, ExecRecord, IdenticalRecord,
     InstrumentRecord, KeptRecord, Measurement, MutantExecRecord, NjutestBuild, NjutestBuildError,
     NoteRecord, OpenRecord, Payload, PerturbationRecord, PerturbedRecord, PhaseRecord, ReachRecord,
-    RouteRecord, RunOutcome, RunRecord, SCHEMA, SelectRecord, SetRecord, SiteRecord,
-    SkipClaimRecord, SkipCount, SnapshotRecord, SummaryRecord, SweepRecord, TargetRecord,
-    TouchRecord, TraceContext, ValidateRoundRecord, VerifyRecord, WitnessRecord,
+    RouteRecord, RunOutcome, RunRecord, SCHEMA, SealedControlRecord, SealedExecRecord,
+    SelectRecord, SetRecord, SiteRecord, SkipClaimRecord, SkipCount, SnapshotRecord, SummaryRecord,
+    SweepRecord, TargetRecord, TouchRecord, TraceContext, ValidateRoundRecord, VerifyRecord,
+    WitnessRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{
@@ -59,6 +63,13 @@ fn trace_text(value: &std::ffi::OsStr, field: &'static str) -> Result<String, Ex
         .to_str()
         .map(str::to_owned)
         .ok_or(ExecRecordError::NonUtf8 { field })
+}
+
+/// Takes the labels a product names its cost records by out of `vars` once a recorder has read them, so no process the run starts is handed them and no build identity counts them.
+pub(crate) fn unlabelled(vars: &mut crate::vars::Variables) {
+    for label in cost::ORIGIN_LABELS {
+        vars.remove(label);
+    }
 }
 
 fn trace_env_names(env: Option<&crate::vars::Variables>) -> Result<Vec<String>, ExecRecordError> {
@@ -198,6 +209,7 @@ impl Clock {
 #[derive(Clone)]
 pub struct Recorder {
     inner: Option<Arc<Inner>>,
+    costs: Option<Arc<cost::Costs>>,
 }
 
 impl Default for Recorder {
@@ -211,6 +223,7 @@ impl std::fmt::Debug for Recorder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Recorder")
             .field("enabled", &self.inner.is_some())
+            .field("costs", &self.costs.is_some())
             .finish()
     }
 }
@@ -220,6 +233,7 @@ struct Inner {
     clock: Clock,
     started: Timestamp,
     state: Mutex<State>,
+    sealed: rust_mutants_sealed::Counted,
 }
 
 #[derive(Default)]
@@ -254,7 +268,34 @@ impl Recorder {
     /// The trace that records nothing.
     #[must_use]
     pub const fn disabled() -> Self {
-        Self { inner: None }
+        Self {
+            inner: None,
+            costs: None,
+        }
+    }
+
+    /// Attaches explicitly requested test cost counters without changing the trace authority.
+    pub(crate) fn costed(
+        &self,
+        vars: &crate::vars::Variables,
+        root: &std::path::Path,
+    ) -> std::io::Result<Self> {
+        self.costed_as(vars, root, "cost-")
+    }
+
+    /// Attaches a separately classified build diagnostic without changing trace authority.
+    pub(crate) fn costed_as(
+        &self,
+        vars: &crate::vars::Variables,
+        root: &std::path::Path,
+        prefix: &str,
+    ) -> std::io::Result<Self> {
+        if self.costs.is_some() {
+            return Ok(self.clone());
+        }
+        let mut recorder = self.clone();
+        recorder.costs = cost::Costs::new(vars, root, self.sealed_counts(), prefix)?.map(Arc::new);
+        Ok(recorder)
     }
 
     /// Starts a recording into `sink`, reading the moment from `clock`, and emits its `run-start` event.
@@ -266,8 +307,12 @@ impl Recorder {
             clock,
             started,
             state: Mutex::new(State::default()),
+            sealed: rust_mutants_sealed::Counted::default(),
         });
-        let recorder = Self { inner: Some(inner) };
+        let recorder = Self {
+            inner: Some(inner),
+            costs: None,
+        };
         recorder.emit_at(
             started,
             Payload::RunStart {
@@ -296,10 +341,10 @@ impl Recorder {
     /// Every event a memory sink of this recording kept, oldest first.
     #[must_use]
     pub fn events(&self) -> Vec<Event> {
-        self.inner
-            .as_ref()
-            .map(|inner| inner.sink.events())
-            .unwrap_or_default()
+        match self.inner.as_ref() {
+            Some(inner) => inner.sink.events(),
+            None => Vec::new(),
+        }
     }
 
     /// Whether anything is recorded.
@@ -460,6 +505,16 @@ impl Recorder {
         self.emit(Payload::MutantExec { mutant: record });
     }
 
+    /// Records one sealed control: one test run with nothing active, and every guard it reached.
+    pub fn sealed_control(&self, record: SealedControlRecord) {
+        self.emit(Payload::SealedControl { control: record });
+    }
+
+    /// Records one sealed execution of one test with one mutant active.
+    pub fn sealed_exec(&self, record: SealedExecRecord) {
+        self.emit(Payload::SealedExec { sealed: record });
+    }
+
     /// Records a free-form note.
     pub fn note(&self, kind: &str, detail: &str) {
         self.emit(Payload::Note {
@@ -468,6 +523,18 @@ impl Recorder {
                 detail: detail.to_owned(),
             },
         });
+    }
+
+    /// What the host spent on sealed executions, counted into this recording as its benches run; a handle of its own for a recording that records nothing.
+    #[must_use]
+    pub fn sealed_counts(&self) -> rust_mutants_sealed::Counted {
+        if let Some(costs) = &self.costs {
+            return costs.sealed();
+        }
+        match &self.inner {
+            Some(inner) => inner.sealed.clone(),
+            None => rust_mutants_sealed::Counted::default(),
+        }
     }
 
     /// Closes the recording with the outcome, the error that ended the run if there was one, and the event accounting, then closes the sink.
@@ -500,6 +567,7 @@ impl Recorder {
             }
             let events_dropped = state.observed_drops(inner.sink.dropped());
             let events_emitted = state.emitted(events_dropped);
+            let sealed = self.sealed_counts().spent();
             inner.deliver(
                 &mut state,
                 moment,
@@ -509,6 +577,7 @@ impl Recorder {
                         error,
                         events_emitted,
                         events_dropped,
+                        sealed,
                     },
                 },
             );
@@ -544,12 +613,18 @@ impl Recorder {
     }
 
     fn emit(&self, payload: Payload) {
+        if let Some(costs) = &self.costs {
+            costs.observe(&payload);
+        }
         if let Some(moment) = self.now() {
             self.emit_at(moment, payload);
         }
     }
 
     fn fail_accounting(&self) {
+        if let Some(costs) = &self.costs {
+            costs.invalid("trace cost accounting failed".to_owned());
+        }
         let Some(inner) = &self.inner else {
             return;
         };
@@ -696,10 +771,9 @@ fn primary_with_close(primary: std::io::Error, close: std::io::Result<()>) -> st
 fn environment_names(entries: &[String]) -> Vec<String> {
     let mut names: Vec<String> = entries
         .iter()
-        .map(|entry| {
-            entry
-                .split_once('=')
-                .map_or(entry.as_str(), |(name, _)| name)
+        .map(|entry| match entry.split_once('=') {
+            Some((name, _)) => name,
+            None => entry.as_str(),
         })
         .filter(|name| !name.is_empty())
         .map(str::to_owned)

@@ -16,6 +16,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 - [Development](development.md)
 - [Releasing](release.md)
 - [Roadmap](roadmap.md)
+- [Upgrading](upgrading.md)
 
 # Formats
 
@@ -34,7 +35,11 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 - [Proofs](engine/proofs.md)
 - [Item reach](engine/item-reach.md)
 - [Deciding an execution](engine/verdicts.md)
+- [Sealed execution](engine/sealed.md)
+- [Module reuse](engine/module-reuse.md)
+- [Suite cost](engine/suite-cost.md)
 - [Carrying an answer](engine/carry.md)
+- [The sealed host](engine/sealed-host.md)
 - [Reports](engine/reports.md)
 - [Trace](engine/trace.md)
 - [JSON Schema](engine/json-schema.md)
@@ -88,3 +93,8 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 - [0043 A test may decline to measure](adr/0043-a-test-may-decline-to-measure.md)
 - [0044 A test writes only where its execution may](adr/0044-a-test-writes-only-where-its-execution-may.md)
 - [0045 Rust is read on a thread that ends with it](adr/0045-rust-is-read-on-a-thread-that-ends-with-it.md)
+- [0046 A verdict is what a sealed run observed](adr/0046-a-verdict-is-what-a-sealed-run-observed.md)
+- [0047 A const fn is mutated where nothing evaluates it early](adr/0047-a-const-fn-is-mutated-where-nothing-evaluates-it-early.md)
+- [0048 Const items are mutated by a build per mutant](adr/0048-const-items-are-mutated-by-a-build-per-mutant.md)
+- [0049 OS records and sensitive values carry their boundaries](adr/0049-os-records-and-sensitive-values-carry-their-boundaries.md)
+- [0050 A run adopts every process it starts](adr/0050-a-run-adopts-every-process-it-starts.md)

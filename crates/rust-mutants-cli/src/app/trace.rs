@@ -33,7 +33,35 @@ pub fn recorder(
     wanted: &Recording<'_>,
     progress: Option<std::sync::mpsc::SyncSender<Event>>,
 ) -> Result<Recorder, CliError> {
-    let watching = progress.map(ChannelSink::new);
+    recorder_with(wanted, progress, None)
+}
+
+/// Builds the requested durable authority and the display's explicitly registered observation.
+///
+/// # Errors
+/// The recording cannot retain its requested authority.
+pub fn recorder_observed(
+    wanted: &Recording<'_>,
+    progress: Option<std::sync::mpsc::SyncSender<Event>>,
+    observed: Option<&rust_mutants::observation::Observation>,
+) -> Result<Recorder, CliError> {
+    match (progress, observed) {
+        (None, _) => recorder(wanted, None),
+        (Some(sender), None) => recorder(wanted, Some(sender)),
+        (Some(sender), Some(observed)) => recorder_with(wanted, Some(sender), Some(observed)),
+    }
+}
+
+/// Builds the actual authority with its chosen progress producer registration.
+fn recorder_with(
+    wanted: &Recording<'_>,
+    progress: Option<std::sync::mpsc::SyncSender<Event>>,
+    observed: Option<&rust_mutants::observation::Observation>,
+) -> Result<Recorder, CliError> {
+    let watching = progress.map(|sender| match observed {
+        Some(observed) => ChannelSink::observed(sender, observed.signal()),
+        None => ChannelSink::waking(sender, std::thread::current()),
+    });
     let context = TraceContext::Standalone {
         run_id: wanted.id.clone(),
         build_selection: wanted
@@ -282,15 +310,13 @@ fn stored(wanted: &Where<'_>, environment: &Environment) -> Result<(String, Path
         None => kept.into_iter().next_back(),
     };
     found.ok_or_else(|| CliError::ReportMissing {
-        message: wanted.run.map_or_else(
-            || format!("no recording is stored under {}", reports.display()),
-            |run| {
-                format!(
-                    "no recording named {run} is stored under {}",
-                    reports.display()
-                )
-            },
-        ),
+        message: match wanted.run {
+            Some(run) => format!(
+                "no recording named {run} is stored under {}",
+                reports.display()
+            ),
+            None => format!("no recording is stored under {}", reports.display()),
+        },
     })
 }
 

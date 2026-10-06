@@ -1,0 +1,53 @@
+=== a-derived-equality source crates/app/src/lib.rs
+#[derive(Debug, Clone, PartialEq)]
+struct Held { length: u64 }
+impl njutest_fixture_tree::settled::Stamp for Held {
+    fn newest(&self) -> Option<std::time::SystemTime> { None }
+    fn same(&self, other: &Self, _: njutest_fixture_tree::settled::Comparing) -> bool { self == other }
+}
+=== a-qualified-derive source crates/app/src/lib.rs
+use njutest_fixture_tree::settled;
+#[derive(Debug, std::cmp::Eq, core::cmp::PartialEq)]
+struct Held { length: u64 }
+impl settled::Stamp for Held {
+    fn newest(&self) -> Option<std::time::SystemTime> { None }
+    fn same(&self, other: &Self, _: settled::Comparing) -> bool { self.length == other.length }
+}
+=== a-conditional-derive source crates/app/src/lib.rs
+use njutest_fixture_tree::settled::{Comparing, Stamp};
+#[cfg_attr(unix, derive(PartialEq))]
+struct Held { length: u64 }
+impl Stamp for Held {
+    fn newest(&self) -> Option<std::time::SystemTime> { None }
+    fn same(&self, other: &Self, _: Comparing) -> bool { self.length == other.length }
+}
+=== an-implemented-equality source crates/app/src/lib.rs
+use njutest_fixture_tree::settled::{Comparing, Stamp};
+struct Held { length: u64 }
+impl PartialEq for Held { fn eq(&self, other: &Self) -> bool { self.length == other.length } }
+impl Stamp for Held {
+    fn newest(&self) -> Option<std::time::SystemTime> { None }
+    fn same(&self, other: &Self, _: Comparing) -> bool { self == other }
+}
+=== a-homemade-stamp source crates/app/src/lib.rs
+#[derive(PartialEq)]
+struct Stamp { length: u64, changed: i64 }
+fn stamp(metadata: &std::fs::Metadata) -> Stamp { use std::os::unix::fs::MetadataExt as _; Stamp { length: metadata.len(), changed: metadata.ctime() } }
+=== nanoseconds source crates/app/src/lib.rs
+fn changed(metadata: &std::fs::Metadata) -> i64 { use std::os::unix::fs::MetadataExt as _; metadata.ctime_nsec() }
+=== a-qualified-call source crates/app/src/lib.rs
+fn changed(metadata: &std::fs::Metadata) -> i64 { std::os::unix::fs::MetadataExt::ctime(metadata) }
+=== a-raw-stat source crates/app/src/lib.rs
+fn changed(stat: &libc::stat) -> (i64, i64) { (stat.st_ctime, stat.st_ctime_nsec) }
+=== a-windows-change-time source crates/app/src/lib.rs
+fn changed(basic: &FILE_BASIC_INFO) -> i64 { basic.ChangeTime }
+=== in-a-macro source crates/app/src/lib.rs
+fn said(metadata: &std::fs::Metadata) -> String { use std::os::unix::fs::MetadataExt as _; format!("{}", metadata.ctime()) }
+=== the-engine source crates/rust-mutants/src/apparatus.rs
+fn changed(metadata: &std::fs::Metadata) -> i64 { use std::os::unix::fs::MetadataExt as _; metadata.ctime() }
+=== beside-the-ffi source crates/rust-mutants/src/capdir/mod.rs
+fn changed(basic: &FILE_BASIC_INFO) -> i64 { basic.ChangeTime }
+=== test-support source crates/njutest-devkit/src/reproducible/witness.rs
+fn changed(metadata: &std::fs::Metadata) -> i64 { use std::os::unix::fs::MetadataExt as _; metadata.ctime() }
+=== a-test source crates/app/tests/it.rs
+fn changed(metadata: &std::fs::Metadata) -> i64 { use std::os::unix::fs::MetadataExt as _; metadata.ctime() }

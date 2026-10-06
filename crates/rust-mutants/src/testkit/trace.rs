@@ -22,8 +22,10 @@ pub const ORIGIN: i64 = 1_800_000_000;
 /// Never: [`ORIGIN`] is a moment.
 #[must_use]
 pub fn stepping_clock() -> Clock {
-    let origin = Timestamp::from_second(ORIGIN)
-        .unwrap_or_else(|error| panic!("the frozen origin is a moment: {error}"));
+    let origin = match Timestamp::from_second(ORIGIN) {
+        Ok(origin) => origin,
+        Err(error) => panic!("the frozen origin is a moment: {error}"),
+    };
     Clock::stepping(origin, std::time::Duration::from_secs(1))
 }
 
@@ -43,8 +45,10 @@ pub fn memory_recorder() -> Recorder {
 /// Panics only if the fixed test run identity ceases to be canonical, which is a defect in this testkit rather than a condition a test can recover from.
 #[must_use]
 pub fn standalone_context() -> TraceContext {
-    let run_id = crate::id::RunId::try_from("test")
-        .unwrap_or_else(|error| panic!("the fixed test run id is canonical: {error}"));
+    let run_id = match crate::id::RunId::try_from("test") {
+        Ok(run_id) => run_id,
+        Err(error) => panic!("the fixed test run id is canonical: {error}"),
+    };
     let build = crate::cargo::BuildConfig::default().selection();
     TraceContext::Standalone {
         run_id,
@@ -89,6 +93,8 @@ pub const fn record_key(payload: &Payload) -> Option<&'static str> {
         Payload::Identical { .. } => Some("identical"),
         Payload::Evidence { .. } => Some("evidence"),
         Payload::MutantExec { .. } => Some("mutant"),
+        Payload::SealedControl { .. } => Some("control"),
+        Payload::SealedExec { .. } => Some("sealed"),
         Payload::Note { .. } => Some("note"),
         Payload::RunEnd { .. } => Some("run"),
     }
@@ -111,8 +117,9 @@ pub fn every_payload() -> Vec<Payload> {
         AttributionRecord, BisectRecord, BuildRecord, CacheRecord, DischargeRecord,
         DiscoverFileRecord, EvidenceRecord, ExecRecord, IdenticalRecord, InstrumentRecord,
         KeptRecord, MutantExecRecord, NoteRecord, OpenRecord, PhaseRecord, RouteRecord, RunRecord,
-        SelectRecord, SiteRecord, SkipClaimRecord, SkipCount, SnapshotRecord, SweepRecord,
-        TargetRecord, TouchRecord, ValidateRoundRecord, VerifyRecord, WitnessRecord,
+        SealedControlRecord, SealedExecRecord, SelectRecord, SiteRecord, SkipClaimRecord,
+        SkipCount, SnapshotRecord, SweepRecord, TargetRecord, TouchRecord, ValidateRoundRecord,
+        VerifyRecord, WitnessRecord,
     };
 
     let phase = || PhaseRecord {
@@ -191,6 +198,10 @@ pub fn every_payload() -> Vec<Payload> {
                     code: Some("E0308".to_owned()),
                     said: "mismatched types".to_owned(),
                 }],
+                carried: vec![
+                    "error[E0015]: cannot call non-const function `bit` in constant functions"
+                        .to_owned(),
+                ],
                 unattributed: vec!["build failed".to_owned()],
             },
         },
@@ -373,6 +384,26 @@ pub fn every_payload() -> Vec<Payload> {
                 }],
             },
         },
+        Payload::SealedControl {
+            control: SealedControlRecord {
+                target: "demo/lib/demo".to_owned(),
+                test: "tests::caught".to_owned(),
+                standing: "controlled".to_owned(),
+                reached: vec![0, 1],
+            },
+        },
+        Payload::SealedExec {
+            sealed: SealedExecRecord {
+                transcript: Some(
+                    "a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8".to_owned(),
+                ),
+                mutant: "abcdef".to_owned(),
+                index: 1,
+                target: "demo/lib/demo".to_owned(),
+                test: "tests::caught".to_owned(),
+                came_to: "panicked".to_owned(),
+            },
+        },
         Payload::Note {
             note: NoteRecord {
                 kind: "progress".to_owned(),
@@ -385,6 +416,15 @@ pub fn every_payload() -> Vec<Payload> {
                 error: Some("one failure".to_owned()),
                 events_emitted: 22,
                 events_dropped: 1,
+                sealed: Some(rust_mutants_sealed::Spent {
+                    modules: None,
+                    compiles: 1,
+                    instances: 2,
+                    answered: 3,
+                    compilation: None,
+                    execution_ns: None,
+                    failures: None,
+                }),
             },
         },
     ];
@@ -510,7 +550,7 @@ pub fn every_stopped() -> [crate::execute::Stopped; 19] {
 
 /// Every closed step-protocol failure shape.
 #[must_use]
-pub fn every_step_protocol_failure() -> [crate::execute::StepProtocolFailure; 19] {
+pub fn every_step_protocol_failure() -> [crate::execute::StepProtocolFailure; 20] {
     use crate::execute::StepProtocolFailure;
 
     let failures = [
@@ -526,6 +566,7 @@ pub fn every_step_protocol_failure() -> [crate::execute::StepProtocolFailure; 19
             check: "lock".to_owned(),
             os: 33,
         },
+        StepProtocolFailure::Unconfirmed {},
         StepProtocolFailure::NoticeMissing {},
         StepProtocolFailure::NoticeNotRegular {
             path: "notice".to_owned(),
@@ -567,6 +608,7 @@ pub fn every_step_protocol_failure() -> [crate::execute::StepProtocolFailure; 19
             | StepProtocolFailure::MonitorInspect { .. }
             | StepProtocolFailure::Publication {}
             | StepProtocolFailure::Stated { .. }
+            | StepProtocolFailure::Unconfirmed {}
             | StepProtocolFailure::NoticeMissing {}
             | StepProtocolFailure::NoticeNotRegular { .. }
             | StepProtocolFailure::NoticeMetadata { .. }

@@ -3,46 +3,178 @@
 
 //! What a run says while it is still preparing.
 
-#![expect(
-    clippy::expect_used,
-    reason = "a test reports an impossible setup or join failure by panicking"
-)]
-
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
-
+use njutest_devkit::thread::ScopedThread;
 use rust_mutants::trace::{Recorder, Sink};
+use std::io::{self, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
 
-/// A scoped worker whose owner joins it both on the success path and while unwinding.
-struct JoinedWork<'scope>(Option<std::thread::ScopedJoinHandle<'scope, ()>>);
+struct Heard<'a> {
+    written: Vec<u8>,
+    acknowledgement: Option<std::sync::mpsc::SyncSender<()>>,
+    working: &'a AtomicBool,
+}
 
-impl<'scope> JoinedWork<'scope> {
-    fn launch(
-        scope: &'scope std::thread::Scope<'scope, '_>,
-        work: impl FnOnce() + Send + 'scope,
-    ) -> Self {
-        Self(Some(scope.spawn(work)))
+/// Keeps genuine producer phases queued while acknowledging each complete displayed phase.
+struct Continuous {
+    written: Vec<u8>,
+    lines: usize,
+    consumed: std::sync::mpsc::SyncSender<()>,
+    queued: std::sync::mpsc::Receiver<()>,
+}
+
+impl Write for Continuous {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.written.extend_from_slice(bytes);
+        if bytes.last() == Some(&b'\n') {
+            self.lines = self
+                .lines
+                .checked_add(1)
+                .ok_or_else(|| io::Error::other("the actual display line count overflowed"))?;
+            if self.lines.is_multiple_of(2) {
+                self.consumed.send(()).map_err(io::Error::other)?;
+                self.queued.recv().map_err(io::Error::other)?;
+            }
+        }
+        Ok(bytes.len())
     }
 
-    fn join(mut self) {
-        let handle = self
-            .0
-            .take()
-            .expect("the worker is owned until it is joined");
-        handle.join().expect("the work finishes");
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
     }
 }
 
-impl Drop for JoinedWork<'_> {
-    fn drop(&mut self) {
-        if let Some(handle) = self.0.take() {
-            let joined = handle.join();
-            debug_assert!(
-                joined.is_ok(),
-                "a panicking test still joins its scoped worker"
-            );
-        }
+#[test]
+fn wakes_for_consumed_live_progress_never_accumulate_as_lost_evidence() {
+    for streaming in [false, true] {
+        continuous_display(streaming);
     }
+}
+
+/// Runs 128 real phases while the next queued phase precedes each acknowledged read return.
+#[expect(
+    clippy::expect_used,
+    reason = "this live progress control requires its actual producer and acknowledged display"
+)]
+fn continuous_display(streaming: bool) {
+    use rust_mutants::observation::{Event, Observation};
+    let observed = Observation::subscribe();
+    let (sender, events) = std::sync::mpsc::sync_channel(64);
+    let recorder = Recorder::wall(
+        Sink::Channel(rust_mutants::trace::ChannelSink::observed(
+            sender,
+            observed.signal(),
+        )),
+        rust_mutants::testkit::trace::standalone_context(),
+    );
+    let working = AtomicBool::new(true);
+    let (consumed, read) = std::sync::mpsc::sync_channel(1);
+    let (queued, published) = std::sync::mpsc::sync_channel(1);
+    let mut written = Continuous {
+        written: Vec::new(),
+        lines: 0,
+        consumed,
+        queued: published,
+    };
+    let watched = std::thread::scope(|scope| {
+        let recorder = &recorder;
+        let working = &working;
+        let producer = observed.signal();
+        let doing = ScopedThread::launch(scope, move || {
+            for phase in 0..128 {
+                recorder.phase(format!("progress-{phase}")).end();
+                queued.send(()).expect("the actual phase is fully queued");
+                read.recv().expect("the actual phase was displayed");
+            }
+            working.store(false, Ordering::Release);
+            producer.publish(Event::Completed);
+            queued.send(()).expect("the actual producer ended");
+        });
+        written
+            .queued
+            .recv()
+            .expect("the first actual phase is queued");
+        let alive = || working.load(Ordering::Acquire);
+        let watched = if streaming {
+            rust_mutants_cli::stream::watch_observed(
+                &events,
+                &mut written,
+                &alive,
+                (&observed, recorder),
+            )
+        } else {
+            rust_mutants_cli::ui::watch_observed(
+                &events,
+                &mut written,
+                &alive,
+                (&observed, recorder),
+            )
+        };
+        doing
+            .join()
+            .expect("all original actual producer phases join");
+        watched
+    });
+    watched.expect("consumed live progress cannot leave a backlog of old wakes");
+    assert_eq!(
+        written.lines, 256,
+        "every real phase began and ended on the display"
+    );
+    assert!(
+        events.try_recv().is_err(),
+        "every genuine event was consumed"
+    );
+}
+
+impl Write for Heard<'_> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.written.extend_from_slice(bytes);
+        if self.written.contains(&b'\n')
+            && let Some(acknowledgement) = self.acknowledgement.take()
+        {
+            if !self.working.load(Ordering::SeqCst) {
+                return Err(io::Error::other(
+                    "the reader did not observe the phase before its producer finished",
+                ));
+            }
+            acknowledgement.send(()).map_err(io::Error::other)?;
+        }
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn a_phase_whose_end_carries_no_duration_ends_the_stream_rather_than_taking_no_time() {
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    sender
+        .send(rust_mutants::trace::Event {
+            seq: 1,
+            timestamp: "2026-09-29T00:00:00Z".to_owned(),
+            elapsed_ms: 0,
+            payload: rust_mutants::trace::Payload::PhaseEnd {
+                phase: rust_mutants::trace::PhaseRecord {
+                    name: "prepare".to_owned(),
+                    duration_ms: None,
+                },
+            },
+        })
+        .expect("the channel holds one event");
+    drop(sender);
+    let mut written: Vec<u8> = Vec::new();
+    let refused = rust_mutants_cli::stream::watch(&receiver, &mut written, &|| false)
+        .expect_err("a phase's end with no duration is no line the stream can write");
+    assert!(
+        refused.to_string().contains("prepare"),
+        "the refusal names the phase: {refused}"
+    );
+    assert_eq!(
+        written,
+        Vec::<u8>::new(),
+        "nothing was written as though the phase took no time"
+    );
 }
 
 /// A recorder whose events arrive on `receiver`, as the command line builds one for a display.
@@ -53,7 +185,10 @@ fn watched() -> (
     let (sender, receiver) = std::sync::mpsc::sync_channel(64);
     (
         Recorder::wall(
-            Sink::Channel(rust_mutants::trace::ChannelSink::new(sender)),
+            Sink::Channel(rust_mutants::trace::ChannelSink::waking(
+                sender,
+                std::thread::current(),
+            )),
             rust_mutants::testkit::trace::standalone_context(),
         ),
         receiver,
@@ -64,22 +199,31 @@ fn watched() -> (
 fn a_phase_that_ended_is_written_before_the_work_that_follows_it_is_done() {
     let (recorder, events) = watched();
     let working = AtomicBool::new(true);
-    let mut written: Vec<u8> = Vec::new();
+    let (acknowledgement, heard) = std::sync::mpsc::sync_channel(1);
+    let mut written = Heard {
+        written: Vec::new(),
+        acknowledgement: Some(acknowledgement),
+        working: &working,
+    };
+    let reader = std::thread::current();
     std::thread::scope(|scope| {
-        let doing = JoinedWork::launch(scope, || {
+        let working = &working;
+        let doing = ScopedThread::launch(scope, move || {
             let open = recorder.phase("open");
             open.end();
+            heard
+                .recv()
+                .expect("the reader has written the first phase");
             let pristine = recorder.phase("pristine");
             pristine.end();
-            let after_the_phases_a_reader_is_waiting_for = Duration::from_millis(120);
-            std::thread::sleep(after_the_phases_a_reader_is_waiting_for);
             working.store(false, Ordering::SeqCst);
+            reader.unpark();
         });
         rust_mutants_cli::ui::watch(&events, &mut written, &|| working.load(Ordering::SeqCst))
             .expect("the in-memory progress stream accepts every line");
-        doing.join();
+        doing.join().expect("the observed work finishes");
     });
-    let text = String::from_utf8(written).expect("the display writes text");
+    let text = String::from_utf8(written.written).expect("the display writes text");
     assert!(
         text.lines().any(|line| line.starts_with("open")),
         "the first phase is the first thing a reader hears: {text}"
@@ -116,4 +260,178 @@ fn a_display_with_nothing_to_say_says_nothing_and_returns() {
         written.is_empty(),
         "a recorder that is gone leaves a display with nothing to wait for"
     );
+}
+
+#[test]
+fn observed_displays_retain_actual_waits_without_waking_on_their_own_notes() {
+    for streaming in [false, true] {
+        observed_display_waits(streaming);
+    }
+}
+
+/// Runs one real subscribed display and independently reads its durable wait authority.
+#[expect(
+    clippy::expect_used,
+    reason = "a missing producer, authority or acknowledgement makes this test unable to proceed"
+)]
+fn observed_display_waits(streaming: bool) {
+    use rust_mutants::observation::{Event, Observation};
+    let observed = Observation::subscribe();
+    let producer = observed.signal();
+    let directory = tempfile::tempdir().expect("the actual authority's directory");
+    let trace = directory.path().join("trace");
+    let (sender, events) = std::sync::mpsc::sync_channel(64);
+    let recorder = Recorder::wall(
+        Sink::required_with_channel(
+            rust_mutants::trace::DirSink::create(&trace).expect("the actual durable recorder"),
+            rust_mutants::trace::ChannelSink::observed(sender, observed.signal()),
+        ),
+        rust_mutants::testkit::trace::standalone_context(),
+    );
+    let working = AtomicBool::new(true);
+    let begin = AtomicBool::new(false);
+    let (start, started) = std::sync::mpsc::sync_channel(1);
+    let (acknowledgement, heard) = std::sync::mpsc::sync_channel(1);
+    let mut written = Heard {
+        written: Vec::new(),
+        acknowledgement: Some(acknowledgement),
+        working: &working,
+    };
+    std::thread::scope(|scope| {
+        let recorder = &recorder;
+        let working = &working;
+        let doing = ScopedThread::launch(scope, move || {
+            started
+                .recv()
+                .expect("the subscribed display begins waiting");
+            recorder.phase("open").end();
+            heard
+                .recv()
+                .expect("the reader acknowledged the actual phase");
+            recorder.phase("pristine").end();
+            working.store(false, Ordering::Release);
+            producer.publish(Event::Completed);
+        });
+        let alive = || {
+            if !begin.swap(true, Ordering::AcqRel) {
+                start.send(()).expect("release the subscribed producer");
+            }
+            working.load(Ordering::Acquire)
+        };
+        let watched = if streaming {
+            rust_mutants_cli::stream::watch_observed(
+                &events,
+                &mut written,
+                &alive,
+                (&observed, recorder),
+            )
+        } else {
+            rust_mutants_cli::ui::watch_observed(
+                &events,
+                &mut written,
+                &alive,
+                (&observed, recorder),
+            )
+        };
+        watched.expect("every producer observation and output is retained");
+        doing.join().expect("the real producer is joined");
+    });
+    let text = String::from_utf8(written.written).expect("the actual display's text");
+    assert!(text.contains("open") && text.contains("pristine"), "{text}");
+    retained_display_waits(&trace, &events);
+}
+
+/// Requires genuine host measurements without recirculating them as presentation wakes.
+#[expect(
+    clippy::expect_used,
+    reason = "a missing authority or malformed wait measurement makes this test fail"
+)]
+fn retained_display_waits(
+    trace: &std::path::Path,
+    events: &std::sync::mpsc::Receiver<rust_mutants::trace::Event>,
+) {
+    let actual = rust_mutants::trace::read_events(io::BufReader::new(
+        std::fs::File::open(trace.join(rust_mutants::trace::FILE_NAME))
+            .expect("the actual authority stream"),
+    ))
+    .expect("the independently read durable authority");
+    let waits: Vec<_> = actual
+        .iter()
+        .filter_map(|event| {
+            if let rust_mutants::trace::Payload::Note { note } = &event.payload
+                && note.kind == "host-wait"
+            {
+                Some(
+                    njutest_devkit::strictjson::decode_str::<serde_json::Value>(&note.detail)
+                        .expect("the actual measured host wait"),
+                )
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert!(!waits.is_empty(), "the authority retains the actual waits");
+    for wait in waits {
+        assert_eq!(
+            wait.get("owner").and_then(serde_json::Value::as_str),
+            Some("workspace-preparation")
+        );
+        assert!(
+            wait.get("elapsed_ns")
+                .and_then(serde_json::Value::as_u64)
+                .is_some()
+        );
+        assert!(
+            wait.get("machine")
+                .and_then(|machine| machine.get("cpus"))
+                .and_then(serde_json::Value::as_u64)
+                .is_some_and(|cpus| cpus > 0)
+        );
+    }
+    assert!(
+        events.try_iter().all(|event| !matches!(&event.payload,
+            rust_mutants::trace::Payload::Note { note } if note.kind == "host-wait")),
+        "a display's own waits never become another display wake"
+    );
+}
+
+#[test]
+fn an_observed_display_refuses_a_producer_failure_after_its_last_phase() {
+    for streaming in [false, true] {
+        let observed = rust_mutants::observation::Observation::subscribe();
+        let (sender, events) = std::sync::mpsc::sync_channel(64);
+        let recorder = Recorder::wall(
+            Sink::Channel(rust_mutants::trace::ChannelSink::observed(
+                sender,
+                observed.signal(),
+            )),
+            rust_mutants::testkit::trace::standalone_context(),
+        );
+        recorder.phase("prepare").end();
+        observed.signal().failed(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "the actual producer lost its terminal evidence",
+        ));
+        let mut written = Vec::new();
+        let watched = if streaming {
+            rust_mutants_cli::stream::watch_observed(
+                &events,
+                &mut written,
+                &|| false,
+                (&observed, &recorder),
+            )
+        } else {
+            rust_mutants_cli::ui::watch_observed(
+                &events,
+                &mut written,
+                &|| false,
+                (&observed, &recorder),
+            )
+        };
+        let refusal = watched.expect_err("an ended display erased the producer's retained failure");
+        assert!(
+            refusal.to_string().contains("lost its terminal evidence"),
+            "{refusal}"
+        );
+    }
 }

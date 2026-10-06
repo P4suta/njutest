@@ -77,6 +77,7 @@ fn working_in(root: &std::path::Path, scratch: std::path::PathBuf) -> Environmen
         .into_iter()
         .collect::<rust_mutants::vars::Variables>();
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: Environment::cache_directory_of(&vars),
         working_directory: root.to_owned(),
         temp_directory: scratch,
@@ -177,6 +178,7 @@ fn a_run_with_nowhere_to_work_stops_before_it_says_it_looked() {
     std::fs::write(&occupied, "not a directory").expect("a file where a scratch goes");
 
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: root.path().to_owned(),
         working_directory: root.path().to_owned(),
         temp_directory: occupied,
@@ -270,6 +272,7 @@ fn a_run_told_where_to_look_for_a_toolchain_looks_there_and_nowhere_else() {
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
 
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: root.path().to_owned(),
         working_directory: root.path().to_owned(),
         temp_directory: scratch,
@@ -307,6 +310,7 @@ fn a_run_told_where_to_look_for_a_toolchain_looks_there_and_nowhere_else() {
     let scratch = root.path().join("scratch-again");
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
     let told = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: root.path().to_owned(),
         working_directory: root.path().to_owned(),
         temp_directory: scratch,
@@ -314,6 +318,10 @@ fn a_run_told_where_to_look_for_a_toolchain_looks_there_and_nowhere_else() {
         vars: std::env::vars_os()
             .filter(|(name, _)| {
                 njutest_devkit::paths::same_name(name, std::ffi::OsStr::new("PATH"))
+                    || njutest_devkit::paths::same_name(
+                        name,
+                        std::ffi::OsStr::new("NJUTEST_TEST_CACHE_ROOT"),
+                    )
             })
             .collect(),
         cancel: Cancel::new(),
@@ -327,8 +335,10 @@ fn a_run_told_where_to_look_for_a_toolchain_looks_there_and_nowhere_else() {
         &mut complaints,
     );
     assert_ne!(
-        code, EXIT_ERROR,
-        "the configured search path contains the toolchain"
+        code,
+        EXIT_ERROR,
+        "the configured search path contains the toolchain: {}",
+        njutest_devkit::process::strict_utf8(&complaints)
     );
 
     let complained = njutest_devkit::process::strict_utf8(&complaints);
@@ -377,9 +387,9 @@ fn stages_of(complained: &str, root: &std::path::Path) {
         .map(|event| event.payload.type_name())
         .collect();
     assert!(
-        kinds.contains(&"mutant-exec"),
-        "a run says what it started, or the minutes it spent belong to nothing a reader \
-         can name: {kinds:?}"
+        kinds.contains(&"mutant-exec") || kinds.contains(&"sealed-exec"),
+        "a run says what it started, natively or sealed, or the minutes it spent belong to \
+         nothing a reader can name: {kinds:?}"
     );
     let progressed: Vec<&str> = events
         .iter()
@@ -462,20 +472,42 @@ fn judged(events: &[njutest::trace::Event]) {
     );
 
     let execs = executions(events);
-    let started = execs.first().expect("a mutation this run started");
+    let sealed: Vec<&njutest::trace::SealedExecRecord> = events
+        .iter()
+        .filter_map(|event| njutest::testkit::payload::of(&event.payload).sealed_exec())
+        .collect();
     assert!(
-        !started.mutant.is_empty() && !started.target.is_empty() && !started.outcome.is_empty(),
-        "every execution says which mutation it was, what it ran against, and what came \
-         of it, or the count of executions is a number about nothing: {started:?}"
+        !execs.is_empty() || !sealed.is_empty(),
+        "a mutation this run started, natively or sealed"
     );
+    for started in &execs {
+        assert!(
+            !started.mutant.is_empty() && !started.target.is_empty() && !started.outcome.is_empty(),
+            "every execution says which mutation it was, what it ran against, and what came \
+             of it, or the count of executions is a number about nothing: {started:?}"
+        );
+    }
+    for started in &sealed {
+        assert!(
+            !started.mutant.is_empty()
+                && !started.target.is_empty()
+                && !started.test.is_empty()
+                && !started.came_to.is_empty(),
+            "a sealed execution says which mutation, which target's module, which test, and \
+             what the instance came to: {started:?}"
+        );
+    }
     assert!(
         !execs.iter().any(|exec| exec.alone),
         "and none of them was given the machine to itself, because none of them ran out \
          of time: a run that says it did that without a budget expiring is one whose \
          account of where the time went is wrong: {execs:?}"
     );
-    let against: std::collections::BTreeSet<&str> =
-        execs.iter().map(|exec| exec.target.as_str()).collect();
+    let against: std::collections::BTreeSet<&str> = execs
+        .iter()
+        .map(|exec| exec.target.as_str())
+        .chain(sealed.iter().map(|exec| exec.target.as_str()))
+        .collect();
     assert!(
         !against.contains("package-suite"),
         "and a mutation the measurement placed is put to the targets it placed rather \
@@ -644,6 +676,7 @@ fn a_second_run_of_one_tree_reads_back_what_the_first_established_and_says_whose
         .into_iter()
         .collect::<rust_mutants::vars::Variables>();
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: dir.path().join("cache"),
         working_directory: root.clone(),
         temp_directory: scratch,
@@ -783,6 +816,7 @@ fn fuzz_targets_a_run_was_not_asked_to_drive_are_a_gap_it_states_rather_than_pas
         .into_iter()
         .collect::<rust_mutants::vars::Variables>();
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: dir.path().join("cache"),
         working_directory: root.clone(),
         temp_directory: scratch,
@@ -850,6 +884,7 @@ fn a_mutation_the_compiler_renders_identically_is_only_equivalent_where_the_test
         .into_iter()
         .collect::<rust_mutants::vars::Variables>();
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: dir.path().join("cache"),
         working_directory: root.clone(),
         temp_directory: scratch,
@@ -973,6 +1008,7 @@ fn a_run_that_held_something_says_what_it_held_and_lets_go_of_it() {
         r#"{"version":1,"status":"stopped","instance":"pg-1"}"#,
     );
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: dir.path().join("cache"),
         working_directory: root.clone(),
         temp_directory: scratch,
@@ -1087,6 +1123,7 @@ fn a_candidate_offered_for_a_gap_is_put_to_the_tests_before_it_is_recorded() {
             r#"{{"version":1,"candidates":[{{"kind":"patch","path":"tests/zero.rs","preimage_sha256":null,"content_base64":"{OFFERED}"}}]}}"#
         ));
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: dir.path().join("cache"),
         working_directory: root.clone(),
         temp_directory: scratch,
@@ -1310,6 +1347,7 @@ fn a_run_that_was_stopped_leaves_what_it_established_for_the_next_one() {
         .into_iter()
         .collect::<rust_mutants::vars::Variables>();
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: dir.path().join("cache"),
         working_directory: root.clone(),
         temp_directory: scratch,
@@ -1449,6 +1487,7 @@ fn once(
         .into_iter()
         .collect::<rust_mutants::vars::Variables>();
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: dir.join(format!("{name}-cache")),
         working_directory: root.clone(),
         temp_directory: scratch,
@@ -1538,6 +1577,7 @@ fn part(root: &std::path::Path, dir: &std::path::Path, shard: &str) -> serde_jso
         .into_iter()
         .collect::<rust_mutants::vars::Variables>();
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: dir.join("parts-cache"),
         working_directory: root.to_path_buf(),
         temp_directory: scratch,
@@ -1564,8 +1604,8 @@ fn part(root: &std::path::Path, dir: &std::path::Path, shard: &str) -> serde_jso
     );
     assert_eq!(
         code,
-        0,
-        "{shard}: {}",
+        njutest::cli::EXIT_INSUFFICIENT,
+        "{shard} assures nothing on its own: {}",
         njutest_devkit::process::strict_utf8(&complaints)
     );
     latest_report_of(root)
@@ -1647,6 +1687,7 @@ fn refused(fixture: &str, dir: &std::path::Path, name: &str, configured: &str) -
     let scratch = dir.join(format!("{name}-scratch"));
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: dir.join(format!("{name}-cache")),
         working_directory: root,
         temp_directory: scratch,
@@ -1672,8 +1713,12 @@ fn refused(fixture: &str, dir: &std::path::Path, name: &str, configured: &str) -
 
 /// Whether this machine has the interpreter the `deep-v1` contract promises.
 fn interpreter() -> bool {
+    let vars: rust_mutants::vars::Variables = njutest_devkit::paths::environment_for_a_run()
+        .into_iter()
+        .collect();
     std::process::Command::new("cargo")
-        .args(["+nightly", "miri", "--version"])
+        .arg(njutest::assure::deep::interpreter_toolchain(&vars))
+        .args(["miri", "--version"])
         .output()
         .is_ok_and(|output| output.status.success())
 }
@@ -1786,6 +1831,7 @@ fn a_target_the_fuzzer_could_not_drive_is_a_gap_and_never_a_target_that_found_no
         .into_iter()
         .collect::<rust_mutants::vars::Variables>();
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: dir.path().join("cache"),
         working_directory: root.clone(),
         temp_directory: scratch,
@@ -1863,6 +1909,8 @@ fn verified_in_process(
     }
     let scratch = dir.join("scratch");
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
+    let clock = dir.join("clock-events");
+    std::fs::create_dir_all(&clock).expect("the owned logical clock directory");
 
     let mut vars: rust_mutants::vars::Variables = njutest_devkit::paths::environment_for_a_run()
         .into_iter()
@@ -1871,12 +1919,13 @@ fn verified_in_process(
         vars.set(*name, *value);
     }
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: Environment::cache_directory_of(&vars),
         working_directory: root.clone(),
         temp_directory: scratch,
         program: std::path::PathBuf::from(env!("CARGO_BIN_EXE_njutest")),
         vars,
-        cancel: Cancel::new(),
+        cancel: Cancel::new().with_clock(rust_mutants::runner::Clock::events(clock)),
         terminal: njutest::presentation::Terminal::default(),
     };
     let mut args: Vec<OsString> = ["njutest", "verify", "--offline", "--locked", "--no-cache"]
@@ -1908,7 +1957,7 @@ fn a_mutation_that_never_returns_is_stopped_measured_alone_and_reported_as_a_wai
     let (code, complained, root) = verified_in_process(
         "fixture-hang",
         dir.path(),
-        &["--trace", "--ui=plain"],
+        &["--trace", "--ui=plain", "--no-seal"],
         &[
             ("FIXTURE_HANG_MARKER", &paused.display().to_string()),
             ("FIXTURE_HANG_PAUSE_MS", "8000"),
@@ -1917,7 +1966,8 @@ fn a_mutation_that_never_returns_is_stopped_measured_alone_and_reported_as_a_wai
     assert_eq!(
         code, 2,
         "this fixture is slow once per mutation and bounded at a second, so every \
-         measurement of it runs out of time and every one is asked again: {complained}"
+         measurement of it runs out of time and every one is asked again, natively, which \
+         makes what each says a lead: {complained}"
     );
 
     let report = report_of(&root);
@@ -1991,6 +2041,7 @@ fn a_run_in_this_process_writes_what_it_learned_before_it_compiled_anything() {
         .into_iter()
         .collect::<rust_mutants::vars::Variables>();
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: Environment::cache_directory_of(&vars),
         working_directory: root.clone(),
         temp_directory: scratch,

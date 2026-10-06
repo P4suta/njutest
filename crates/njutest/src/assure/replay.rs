@@ -6,6 +6,7 @@
 use std::path::Path;
 use std::time::Duration;
 
+use rust_mutants::outcome::Outcome as Measured;
 use rust_mutants::session::{PrepareOptions, Request as ExecRequest, Timeout};
 use rust_mutants::workspace::{OpenOptions, Workspace};
 
@@ -89,6 +90,7 @@ pub fn replay(
     let workspace = Workspace::open(
         replaying.root,
         OpenOptions {
+            module_owner: replaying.environment.module_owner.clone(),
             allow_outside: Vec::new(),
             cargo: None,
             search_path: replaying
@@ -98,7 +100,7 @@ pub fn replay(
             env: replaying.environment.vars.clone(),
             temp_directory: replaying.environment.temp_directory.clone(),
             report_directory: Some(replaying.reports.as_str().to_owned()),
-            exclude: Vec::new(),
+            exclude: super::run::runner_outputs(None, replaying.root),
             keep_temp: false,
             offline: replaying.cargo.offline,
             locked: replaying.cargo.locked,
@@ -112,10 +114,13 @@ pub fn replay(
             build: replaying.build.clone(),
             harness_args: replaying.harness_args.clone(),
             skip_targets: replaying.skip_targets.clone(),
-            mutant_timeout: replaying.timeout.map_or(Timeout::Auto, Timeout::Fixed),
+            mutant_timeout: match replaying.timeout {
+                Some(after) => Timeout::Fixed(after),
+                None => Timeout::Auto,
+            },
             mutant_steps: (replaying.steps > 0).then_some(replaying.steps),
             operators,
-            ..crate::assure::engine::switches()
+            ..crate::assure::engine::switches(rust_mutants::sealed::Sealing::Off)
         },
         watch.cancel,
     )?;
@@ -159,6 +164,7 @@ fn replayed(kind: FindingKind) -> Replayable {
         | FindingKind::Timeout
         | FindingKind::WaitedMutant
         | FindingKind::StepLimitReachedMutant
+        | FindingKind::UnprovenMutant
         | FindingKind::NotMeasured
         | FindingKind::UnmatchedAcceptance
         | FindingKind::UndefinedBehaviour
@@ -171,35 +177,63 @@ fn replayed(kind: FindingKind) -> Replayable {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Established {
+    Detected,
+    NotDetected,
+    Nothing,
+}
+
+impl Established {
+    const fn of(outcome: Measured) -> Self {
+        match outcome {
+            Measured::Killed => Self::Detected,
+            Measured::Survived => Self::NotDetected,
+            Measured::NotRun
+            | Measured::StepLimitReached
+            | Measured::Waited
+            | Measured::Inconclusive
+            | Measured::Errored => Self::Nothing,
+        }
+    }
+
+    const fn resolved_by_measurement(self) -> Outcome {
+        match self {
+            Self::Detected | Self::NotDetected => Outcome::Resolved,
+            Self::Nothing => Outcome::Inconclusive,
+        }
+    }
+}
+
 /// Whether the finding is still what the tests say.
 ///
 /// A clock expiry reproduces a clock-expiry finding, and a verified step boundary reproduces a step-boundary finding.
 /// Neither is upgraded into a mutation verdict merely because the same non-answer happened twice.
 /// An execution that established nothing is neither: a replay saying the finding is still there is a claim that the measurement was made again.
-const fn observed(kind: FindingKind, outcome: rust_mutants::outcome::Outcome) -> Outcome {
-    use rust_mutants::outcome::Outcome as Measured;
+const fn observed(kind: FindingKind, outcome: Measured) -> Outcome {
+    let established = Established::of(outcome);
     match kind {
-        FindingKind::Timeout | FindingKind::WaitedMutant => match outcome {
-            Measured::Waited => Outcome::Reproduced,
-            Measured::Killed | Measured::Survived => Outcome::Resolved,
-            Measured::NotRun
-            | Measured::StepLimitReached
-            | Measured::Inconclusive
-            | Measured::Errored => Outcome::Inconclusive,
-        },
+        FindingKind::Timeout | FindingKind::WaitedMutant => {
+            if matches!(outcome, Measured::Waited) {
+                Outcome::Reproduced
+            } else {
+                established.resolved_by_measurement()
+            }
+        }
         FindingKind::BrokenUnderFault
         | FindingKind::DimensionNotMeasured
-        | FindingKind::CorruptAfterCrash => Outcome::Inconclusive,
-        FindingKind::StepLimitReachedMutant => match outcome {
-            Measured::StepLimitReached => Outcome::Reproduced,
-            Measured::Killed | Measured::Survived => Outcome::Resolved,
-            Measured::NotRun | Measured::Waited | Measured::Inconclusive | Measured::Errored => {
-                Outcome::Inconclusive
+        | FindingKind::CorruptAfterCrash
+        | FindingKind::UnprovenMutant => Outcome::Inconclusive,
+        FindingKind::StepLimitReachedMutant => {
+            if matches!(outcome, Measured::StepLimitReached) {
+                Outcome::Reproduced
+            } else {
+                established.resolved_by_measurement()
             }
-        },
+        }
+        FindingKind::TargetMissing => established.resolved_by_measurement(),
         FindingKind::BuildFailure
         | FindingKind::FailingTest
-        | FindingKind::TargetMissing
         | FindingKind::SurvivingMutant
         | FindingKind::NotMeasured
         | FindingKind::UnmatchedAcceptance
@@ -210,27 +244,49 @@ const fn observed(kind: FindingKind, outcome: rust_mutants::outcome::Outcome) ->
         | FindingKind::EnvironmentDependent
         | FindingKind::EnvironmentDependentReach
         | FindingKind::UnnoticedFault
-        | FindingKind::ScheduleDependent => match outcome {
-            Measured::Survived => Outcome::Reproduced,
-            Measured::Killed => Outcome::Resolved,
-            Measured::NotRun
-            | Measured::StepLimitReached
-            | Measured::Waited
-            | Measured::Inconclusive
-            | Measured::Errored => Outcome::Inconclusive,
+        | FindingKind::ScheduleDependent => match established {
+            Established::NotDetected => Outcome::Reproduced,
+            Established::Detected => Outcome::Resolved,
+            Established::Nothing => Outcome::Inconclusive,
         },
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use rust_mutants::outcome::Outcome as Measured;
-
-    use super::{FindingKind, Outcome, observed};
+    use super::{Established, FindingKind, Measured, Outcome, observed};
 
     /// The outcomes that answer no question a finding can ask: nothing ran, the run could not decide, or the harness failed.
     const ESTABLISH_NOTHING: [Measured; 3] =
         [Measured::NotRun, Measured::Inconclusive, Measured::Errored];
+
+    #[test]
+    fn every_engine_outcome_has_one_replay_measurement_class() {
+        let expected = [
+            (Measured::NotRun, Established::Nothing),
+            (Measured::Killed, Established::Detected),
+            (Measured::Survived, Established::NotDetected),
+            (Measured::StepLimitReached, Established::Nothing),
+            (Measured::Waited, Established::Nothing),
+            (Measured::Inconclusive, Established::Nothing),
+            (Measured::Errored, Established::Nothing),
+        ];
+        assert_eq!(expected.len(), Measured::ALL.len());
+        for (measured, class) in expected {
+            assert_eq!(Established::of(measured), class, "{measured:?}");
+        }
+    }
+
+    #[test]
+    fn a_missing_target_that_was_measured_is_resolved() {
+        for measured in [Measured::Killed, Measured::Survived] {
+            assert_eq!(
+                observed(FindingKind::TargetMissing, measured),
+                Outcome::Resolved,
+                "a measured mutation no longer has a missing target: {measured:?}"
+            );
+        }
+    }
 
     #[test]
     fn a_replay_that_established_nothing_says_so_rather_than_picking_a_side() {

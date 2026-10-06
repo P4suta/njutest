@@ -65,10 +65,6 @@ impl Machine {
         std::fs::write(self.turns.path().join("go"), "").expect("the holder's release");
     }
 
-    fn waiting(&self) -> bool {
-        self.waiters() > 0
-    }
-
     fn waiters(&self) -> usize {
         std::fs::read_dir(self.slots.path())
             .expect("a readable lane directory")
@@ -122,21 +118,27 @@ fn a_second_run_waits_until_the_first_has_ended() {
         until(Duration::from_secs(60), || machine.marker("inside")),
         "the first run never started"
     );
-    let second = machine.run("test ! -e \"$TURNS/inside\"");
+    let progress = machine.turns.path().join("waiting.log");
+    let told = std::fs::File::create(&progress).expect("the waiting run's progress");
+    let mut second = machine.command("test ! -e \"$TURNS/inside\"");
+    second.stderr(Stdio::from(told));
+    let second = SupervisedChild::launch(&mut second).expect("the second run in the lane");
     assert!(
-        until(Duration::from_secs(60), || machine.waiting()),
-        "the second run did not queue behind the first"
+        until(Duration::from_secs(60), || {
+            std::fs::read_to_string(&progress)
+                .is_ok_and(|said| said.contains("waiting for the heavy lane"))
+        }),
+        "the second run did not say it was waiting behind the first"
     );
     machine.release();
     let first = first.wait_with_output().expect("the first run's answer");
     let second = second.wait_with_output().expect("the second run's answer");
+    let waited = std::fs::read_to_string(&progress).expect("the waiting run's progress");
     assert!(first.status.success(), "{}", text(&first.stderr));
     assert!(
         second.status.success(),
-        "the second run started while the first was still inside the lane: {}",
-        text(&second.stderr)
+        "the second run started while the first was still inside the lane: {waited}"
     );
-    let waited = text(&second.stderr);
     assert!(
         waited.contains("waiting for the heavy lane") && waited.contains("$TURNS/go"),
         "a run that waits says what it waits for: {waited}"
@@ -601,9 +603,14 @@ fn a_group_is_the_work_s_while_its_leader_runs_or_a_member_shares_its_session() 
     );
 }
 
+/// The groups `record` names under the holder that wrote it, as the next run reads them in `this_boot`.
+fn groups_of(record: &str, this_boot: Option<&str>) -> Vec<xtask::lanes::Recorded> {
+    xtask::lanes::Record::read(record.as_bytes()).unreleased(this_boot)
+}
+
 #[test]
 fn a_record_from_another_boot_names_no_group_and_one_without_a_boot_still_does() {
-    use xtask::lanes::{Recorded, groups_of};
+    use xtask::lanes::Recorded;
 
     let group = Recorded {
         pid: 40,
@@ -645,6 +652,83 @@ fn a_record_from_another_boot_names_no_group_and_one_without_a_boot_still_does()
             session: None
         }],
         "a line from before sessions were recorded still names its group"
+    );
+}
+
+#[test]
+fn a_line_a_writer_was_killed_in_does_not_swallow_the_next_one() {
+    use std::ffi::OsString;
+
+    let machine = Machine::new();
+    let environment = xtask::environment::Environment::of([
+        (
+            OsString::from("NJUTEST_SLOT_DIR"),
+            machine.slots.path().as_os_str().to_owned(),
+        ),
+        (OsString::from("NJUTEST_SLOT_HELD"), OsString::from("heavy")),
+    ]);
+    let lanes = xtask::lanes::Lanes::from_environment(&environment).expect("the lanes");
+    let held = lanes
+        .inside(xtask::lanes::Lane::Heavy)
+        .expect("the lane the run is inside");
+    let boot = xtask::lanes::boot();
+    let record = machine.slots.path().join("heavy.holder");
+    std::fs::write(
+        &record,
+        format!(
+            "pid=1\nboot={}\ngroup=40 holder=1 sess",
+            boot.clone().unwrap_or_default()
+        ),
+    )
+    .expect("a record a writer was killed in");
+    held.working_on(std::process::id())
+        .expect("the next group is recorded");
+    let text = std::fs::read_to_string(&record).expect("the record");
+    let groups = groups_of(&text, boot.as_deref());
+    assert!(
+        groups.iter().any(|group| group.pid == std::process::id()),
+        "a line a writer was killed in the middle of took the next writer's line with it, and \
+         the group that line named would be left running by the next run: {text:?}"
+    );
+    assert_eq!(
+        xtask::lanes::Record::read(text.as_bytes()).unread(),
+        ["group=40 holder=1 sess"],
+        "the line nobody finished is named as one, rather than read or lost: {text:?}"
+    );
+}
+
+#[test]
+fn a_record_is_read_only_as_far_as_its_writers_finished_it() {
+    use xtask::lanes::Record;
+
+    let written = Record::read(
+        b"pid=1\ngroup=40 holder=1 session=7 born=th\0\ngroup=41 holder=1 session=7 born=then\n\
+          \xff\xfe\ngroup=42 hol",
+    );
+    assert_eq!(
+        written
+            .unreleased(None)
+            .iter()
+            .map(|group| group.pid)
+            .collect::<Vec<u32>>(),
+        [41],
+        "a line the next writer ended with the torn mark, one that is not text, and the one \
+         still being written are no lines, so only the group a finished line names is read"
+    );
+    assert_eq!(
+        written.unread(),
+        [
+            "group=40 holder=1 session=7 born=th",
+            "\\xff\\xfe",
+            "group=42 hol"
+        ],
+        "each is named as it stands"
+    );
+    assert_eq!(written.field("pid"), Some("1"));
+    assert!(
+        Record::read(b"pid=1\n\0\n").unread().is_empty(),
+        "two writers that each found the same unfinished line end it twice, which leaves an \
+         empty torn line and nothing to name"
     );
 }
 
@@ -730,8 +814,11 @@ fn a_live_group_a_record_from_another_boot_names_is_left_alone() {
 #[test]
 fn what_a_holder_that_let_go_itself_left_in_its_group_is_left_alone() {
     let machine = Machine::new();
-    let mut holder =
-        machine.run("sh -c 'echo $$ > \"$TURNS/daemon\"; exec sleep 30' > /dev/null 2>&1 &");
+    let mut holder = SupervisedChild::launch_session(
+        &mut machine
+            .command("sh -c 'echo $$ > \"$TURNS/daemon\"; exec sleep 30' > /dev/null 2>&1 &"),
+    )
+    .expect("the original session that retains the released daemon");
     let finished = finished_within(Duration::from_secs(60), &mut holder);
     assert!(
         finished.is_some_and(|status| status.success()),
@@ -768,13 +855,25 @@ fn a_group_whose_leader_is_gone_is_ended_only_where_it_shares_the_recorded_sessi
         .process_group(0);
     let mut leader = SupervisedChild::launch(&mut orphaning).expect("a leader that leaves");
     let group = leader.id().expect("the leader's id");
-    leader.wait().expect("the leader ends at once");
+    leader.observe_status().expect("the leader ends at once");
     assert!(
         until(Duration::from_secs(60), || machine.marker("member")),
         "the member never started"
     );
     let member = written(&machine, "member");
     let member_pid = member.parse::<u32>().expect("the member's id");
+    let retained = njutest_process::ForeignProcess::retain(member_pid)
+        .expect("the member's native generation can be retained")
+        .expect("the original named member still lives");
+    let completed = leader
+        .reap_to_member(retained)
+        .expect("the leader is reaped while its named member remains owned");
+    assert!(
+        completed.status.success(),
+        "the original shell exited: {:?}",
+        completed.status
+    );
+    let named_member = completed.member;
     let session = xtask::lanes::session(member_pid).expect("the member's session");
     let record = machine.slots.path().join("heavy.holder");
     let boot = xtask::lanes::boot().unwrap_or_default();
@@ -807,6 +906,7 @@ fn a_group_whose_leader_is_gone_is_ended_only_where_it_shares_the_recorded_sessi
         control_in.is_some_and(|status| status.success()),
         "the same group in the recorded session is the work's, and it is ended: {control_in:?}"
     );
+    drop(named_member);
 }
 
 /// The id of a process that ran and was reaped, which is how a holder that died is named in a record.
@@ -882,5 +982,67 @@ fn a_run_that_found_the_lock_free_waits_while_the_recorded_holder_still_runs() {
     assert!(
         late.is_some_and(|status| status.success()),
         "once the holder ended, the next run went in: {late:?}"
+    );
+}
+
+#[test]
+fn a_run_behind_a_holder_whose_work_shows_nothing_stops_waiting() {
+    let machine = Machine::new();
+    let mut holder = machine.run("mkdir \"$TURNS/inside\"; exec sleep 60");
+    assert!(
+        until(Duration::from_secs(60), || machine.marker("inside")),
+        "the holder never started"
+    );
+    let told = machine.turns.path().join("stalled.log");
+    let mut behind = machine.command("true");
+    behind
+        .env("NJUTEST_SLOT_QUIET_SECONDS", "3")
+        .stderr(Stdio::from(
+            std::fs::File::create(&told).expect("the waiting run's progress"),
+        ));
+    let mut behind = SupervisedChild::launch(&mut behind).expect("a run behind the holder");
+    let ended = finished_within(Duration::from_secs(20), &mut behind);
+    let asked = Command::new("kill")
+        .args(["-TERM", &holder.id().expect("a live holder").to_string()])
+        .status()
+        .expect("kill");
+    assert!(asked.success(), "the holder could not be asked to stop");
+    holder.wait().expect("the holder is reaped");
+    let said = std::fs::read_to_string(&told).expect("the waiting run's progress");
+    assert!(
+        ended.is_some_and(|status| !status.success()),
+        "a holder whose work neither used the processor nor started a process held every run \
+         behind it for as long as it liked: {ended:?}: {said}"
+    );
+    assert!(
+        said.contains("XT0203") && said.contains("NJUTEST_SLOT_QUIET_SECONDS"),
+        "the run that stopped waiting says why, and what bounds it: {said}"
+    );
+}
+
+#[test]
+fn a_run_behind_a_holder_whose_work_keeps_moving_waits_for_it() {
+    let machine = Machine::new();
+    let holder = machine.run(&holds_until_go());
+    assert!(
+        until(Duration::from_secs(60), || machine.marker("inside")),
+        "the holder never started"
+    );
+    let mut behind = machine.command("true");
+    behind.env("NJUTEST_SLOT_QUIET_SECONDS", "3");
+    let mut behind = SupervisedChild::launch(&mut behind).expect("a run behind the holder");
+    let early = finished_within(Duration::from_secs(9), &mut behind);
+    machine.release();
+    let late = finished_within(Duration::from_secs(60), &mut behind);
+    let holder = holder.wait_with_output().expect("the holder's answer");
+    assert!(holder.status.success(), "{}", text(&holder.stderr));
+    assert!(
+        early.is_none(),
+        "work that keeps starting processes is moving however long it takes, and the run behind \
+         it waited rather than give up by the clock: {early:?}"
+    );
+    assert!(
+        late.is_some_and(|status| status.success()),
+        "once the holder let go, the run behind it went in: {late:?}"
     );
 }

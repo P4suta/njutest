@@ -20,7 +20,7 @@ use jiff::Timestamp;
 use rust_mutants::glob::Pattern;
 use rust_mutants::snapshot::{
     CLEANUP_ATTEMPTS, CLEANUP_BACKOFF, DIR_PREFIX, Drift, Entry, Options, STABLE_NAME_HEX_LENGTH,
-    SnapshotErrorKind, TREE_NAME, WORKSPACE_DOMAIN, cleanup_guard, create, stable_name, survey,
+    SnapshotErrorKind, TREE_NAME, WORKSPACE_DOMAIN, cleanup_guard, create, survey,
     workspace_digest,
 };
 use rust_mutants::tempowner::{self, read_marker};
@@ -164,19 +164,23 @@ fn the_workspace_digest_ignores_sizes_because_the_content_hash_already_pins_them
 }
 
 #[test]
-fn the_stable_name_is_the_prefix_plus_sixteen_hex_of_the_path_digest() {
-    assert_eq!(
-        stable_name(Path::new("/home/alice/project")),
-        "rust-mutants-snap-9c2098df26004b24"
-    );
-    assert_eq!(
-        stable_name(Path::new("/home/alice/project/")),
-        "rust-mutants-snap-f83c1dd91efbeafc"
-    );
-    assert_eq!(
-        stable_name(Path::new("/x")).len(),
-        DIR_PREFIX.len() + STABLE_NAME_HEX_LENGTH
-    );
+fn the_snapshot_directory_is_named_by_what_the_tree_holds() {
+    let fx = fixture();
+    let snap = create(&options(&fx), now()).expect("create");
+    let digest: String = snap
+        .workspace_digest()
+        .chars()
+        .take(STABLE_NAME_HEX_LENGTH)
+        .collect();
+    let name = snap
+        .dir()
+        .file_name()
+        .expect("snapshot name")
+        .to_str()
+        .expect("snapshot name is exact UTF-8")
+        .to_owned();
+    assert_eq!(name, format!("{DIR_PREFIX}{digest}"));
+    assert_eq!(name.len(), DIR_PREFIX.len() + STABLE_NAME_HEX_LENGTH);
 }
 
 #[test]
@@ -193,14 +197,6 @@ fn create_copies_the_tree_byte_for_byte_and_records_a_sorted_manifest() {
     assert_eq!(snap.parent(), fx.dest);
     assert_eq!(snap.root(), snap.dir().join(TREE_NAME));
     assert!(snap.stable_dir());
-    assert_eq!(
-        snap.dir()
-            .file_name()
-            .expect("snapshot name")
-            .to_str()
-            .expect("snapshot name is exact UTF-8"),
-        stable_name(&fx.source)
-    );
 
     let rel: Vec<&str> = snap
         .manifest()
@@ -478,8 +474,8 @@ fn a_file_that_cannot_be_read_fails_the_copy_and_removes_the_partial_snapshot() 
         return;
     }
     let fx = fixture();
-    let secret = write(&fx.source, "src/secret.rs", b"//\n");
-    fs::set_permissions(&secret, fs::Permissions::from_mode(0o000)).expect("chmod");
+    let unreadable_file = write(&fx.source, "src/secret.rs", b"//\n");
+    fs::set_permissions(&unreadable_file, fs::Permissions::from_mode(0o000)).expect("chmod");
     let error = create(&options(&fx), now()).expect_err("an unreadable file is refused");
     assert_eq!(error.kind(), SnapshotErrorKind::Copy);
     assert_eq!(error.path(), "src/secret.rs");
@@ -516,7 +512,9 @@ fn a_second_live_snapshot_of_the_same_root_falls_back_to_a_random_name() {
 #[test]
 fn an_abandoned_stable_directory_is_swept_and_the_name_reused_never_adopted() {
     let fx = fixture();
-    let dir = fx.dest.join(stable_name(&fx.source));
+    let named = create(&options(&fx), now()).expect("the name this tree pins");
+    let dir = named.dir().to_path_buf();
+    named.cleanup().expect("cleanup the named snapshot");
     fs::create_dir_all(dir.join(TREE_NAME).join("src")).expect("mkdir");
     write(
         &dir.join(TREE_NAME),
@@ -563,7 +561,9 @@ fn a_kept_stable_directory_is_not_reused() {
 #[test]
 fn a_young_unowned_stable_directory_is_spared_and_the_name_not_taken() {
     let fx = fixture();
-    let dir = fx.dest.join(stable_name(&fx.source));
+    let named = create(&options(&fx), now()).expect("the name this tree pins");
+    let dir = named.dir().to_path_buf();
+    drop(named);
     fs::create_dir_all(&dir).expect("mkdir");
     let snap = create(&options(&fx), now()).expect("create");
     assert!(!snap.stable_dir());
@@ -671,6 +671,273 @@ fn cleanup_removes_the_whole_directory_and_releases_the_lock_first() {
     snap.cleanup().expect("cleanup");
     assert!(!path_exists(&dir).expect("inspect cleaned snapshot"));
     assert!(snapshot_dirs(&fx.dest).is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn explicit_cleanup_settles_a_live_producer_before_the_first_removal() {
+    use std::io::{BufRead as _, Read as _, Write as _};
+    const CHILD: &str = "NJUTEST_SNAPSHOT_PRODUCER_CONTROL";
+    if std::env::var_os(CHILD).is_some() {
+        println!("snapshot-producer-ready");
+        io::stdout().flush().expect("the real readiness event");
+        let mut release = [0_u8; 1];
+        io::stdin()
+            .read_exact(&mut release)
+            .expect("the owned release event");
+        return;
+    }
+    let fx = fixture();
+    let snapshot = create(&options(&fx), now()).expect("the owned source snapshot");
+    let mut command = std::process::Command::new(std::env::current_exe().expect("this binary"));
+    command
+        .args([
+            "--exact",
+            "snapshot::explicit_cleanup_settles_a_live_producer_before_the_first_removal",
+            "--nocapture",
+            "--quiet",
+        ])
+        .env(CHILD, "1")
+        .current_dir(snapshot.root())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut producer = njutest_devkit::process::SupervisedChild::launch(&mut command)
+        .expect("the real source producer");
+    let completion = producer
+        .completion()
+        .expect("the owned producer completion");
+    let mut reader = io::BufReader::new(producer.take_stdout().expect("the readiness pipe"));
+    loop {
+        let mut line = String::new();
+        assert_ne!(reader.read_line(&mut line).expect("the readiness event"), 0);
+        if line.trim() == "snapshot-producer-ready" {
+            break;
+        }
+    }
+    assert!(
+        !completion
+            .wait(Some(Duration::ZERO))
+            .expect("the still-live producer")
+    );
+    snapshot
+        .cleanup_with(
+            &|directory| {
+                assert!(
+                    completion
+                        .wait(Some(Duration::from_secs(10)))
+                        .expect("the actual terminal event"),
+                    "successful removal cannot certify that a live source producer has ended: \
+                     only the cleanup ends this producer, which waits on a pipe this test holds, \
+                     so an end its watcher has not heard within the bound is one that never came"
+                );
+                tempowner::remove_tree(directory)
+            },
+            &|_delay| panic!("a completed producer requires no retry clock"),
+        )
+        .expect("producer completion precedes the first removal");
+    let settled = producer
+        .wait_with_output()
+        .expect("all producer owners are reaped");
+    assert!(
+        !settled.status.success(),
+        "the source owner cancels its live producer"
+    );
+    drop(reader);
+    drop(completion);
+}
+
+#[cfg(target_os = "linux")]
+const HIDDEN: &str = "NJUTEST_SNAPSHOT_HIDDEN_HOLDER";
+#[cfg(target_os = "linux")]
+const STRANGER: &str = "NJUTEST_SNAPSHOT_STRANGER";
+
+/// Works where its first line of input names, hidden from `/proc` as a non-dumpable process is, and holds there until its input ends.
+#[cfg(target_os = "linux")]
+#[test]
+fn hidden_holder_fixture() {
+    use std::io::{BufRead as _, Read as _, Write as _};
+    if std::env::var_os(HIDDEN).is_none() {
+        return;
+    }
+    let mut input = io::stdin().lock();
+    let mut directory = String::new();
+    input
+        .read_line(&mut directory)
+        .expect("the directory to work in");
+    std::env::set_current_dir(directory.trim_end_matches('\n')).expect("the directory exists");
+    rustix::process::set_dumpable_behavior(rustix::process::DumpableBehavior::NotDumpable)
+        .expect("a process may hide itself");
+    println!("hidden-holder-ready {}", std::process::id());
+    io::stdout()
+        .flush()
+        .expect("the readiness reaches the pipe");
+    let mut rest = Vec::new();
+    input.read_to_end(&mut rest).expect("the input ends");
+}
+
+/// The holder's process id, read from its output past whatever else the harnesses wrote there.
+#[cfg(target_os = "linux")]
+fn holder_ready(output: &mut impl io::BufRead) -> u32 {
+    loop {
+        let mut line = String::new();
+        assert_ne!(
+            output.read_line(&mut line).expect("the holder's output"),
+            0,
+            "the holder ended before it said it was ready"
+        );
+        if let Some(pid) = line.trim().strip_prefix("hidden-holder-ready ") {
+            return pid.parse::<u32>().expect("the holder's process id");
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn hidden(pid: u32) -> bool {
+    matches!(
+        njutest_process::procfs::working_directory(pid),
+        Err(refusal) if refusal.kind() == io::ErrorKind::PermissionDenied
+    )
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_hidden_process_this_one_did_not_start_does_not_refuse_the_cleanup() {
+    use std::io::Write as _;
+    if std::env::var_os(STRANGER).is_none() {
+        let ran = std::process::Command::new(std::env::current_exe().expect("this binary"))
+            .args([
+                "--exact",
+                "snapshot::a_hidden_process_this_one_did_not_start_does_not_refuse_the_cleanup",
+                "--nocapture",
+            ])
+            .env(STRANGER, "1")
+            .output()
+            .expect("the run in a process of its own");
+        assert!(
+            ran.status.success(),
+            "run in a process that adopts nothing before its snapshot, so the holder it orphans \
+             first is nobody's it could adopt: {:?}\n{:?}",
+            std::str::from_utf8(&ran.stdout),
+            std::str::from_utf8(&ran.stderr)
+        );
+        return;
+    }
+    let mut command = std::process::Command::new(njutest_devkit::paths::posix_sh());
+    command
+        .args([
+            "-c",
+            "exec 3<&0; \"$0\" --exact snapshot::hidden_holder_fixture --nocapture --quiet <&3 3<&- &",
+        ])
+        .arg(std::env::current_exe().expect("this binary"))
+        .env(HIDDEN, "1")
+        .env_remove(STRANGER)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped());
+    let mut shell = njutest_devkit::process::SupervisedChild::launch(&mut command)
+        .expect("the shell that starts the holder");
+    let mut input = shell.take_stdin().expect("the holder's input");
+    let mut output = io::BufReader::new(shell.take_stdout().expect("the holder's output"));
+    assert!(
+        shell
+            .completion()
+            .expect("the shell's end")
+            .wait(Some(Duration::from_secs(10)))
+            .expect("the shell's end"),
+        "the shell ends at once, leaving the holder to whoever adopts above this process, which \
+         adopts nothing yet"
+    );
+    let fx = fixture();
+    let snapshot = create(&options(&fx), now()).expect("the snapshot");
+    writeln!(input, "{}", snapshot.root().display()).expect("the holder hears where to work");
+    let holder = holder_ready(&mut output);
+    let me = std::process::id();
+    match njutest_process::procfs::parsed(holder).expect("the holder's stat") {
+        njutest_process::Asked::Answered(stat) => assert_ne!(
+            stat.parent, me,
+            "the holder was left to whoever adopts above this process, not to it: {stat:?}"
+        ),
+        njutest_process::Asked::Gone => panic!("the holder runs"),
+    }
+    assert!(
+        hidden(holder),
+        "the holder is the process the census cannot read, as a new ssh login's session is"
+    );
+    let dir = snapshot.dir().to_path_buf();
+    snapshot.cleanup().expect(
+        "a process of this user that works where /proc will not say, and that does not descend \
+         from this process, is no process this process started, and leaves the cleanup to remove \
+         the copy",
+    );
+    assert!(!path_exists(&dir).expect("inspect the cleaned snapshot"));
+    let held = njutest_process::ForeignProcess::retain(holder)
+        .expect("the holder's generation")
+        .expect("the holder still runs");
+    drop(input);
+    assert!(
+        held.wait(Some(Duration::from_secs(10)))
+            .expect("the holder's end"),
+        "the holder ends once its input does"
+    );
+    drop(output);
+    shell
+        .wait_with_output()
+        .expect("the shell is reaped and its group settled");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_hidden_process_this_one_started_still_refuses_the_cleanup() {
+    use std::io::Write as _;
+    let fx = fixture();
+    let snapshot = create(&options(&fx), now()).expect("the snapshot");
+    let mut command = std::process::Command::new(std::env::current_exe().expect("this binary"));
+    command
+        .args([
+            "--exact",
+            "snapshot::hidden_holder_fixture",
+            "--nocapture",
+            "--quiet",
+        ])
+        .env(HIDDEN, "1")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped());
+    let mut holder = njutest_devkit::process::SupervisedChild::launch(&mut command)
+        .expect("the hidden holder starts");
+    let mut input = holder.take_stdin().expect("the holder's input");
+    let mut output = io::BufReader::new(holder.take_stdout().expect("the holder's output"));
+    writeln!(input, "{}", snapshot.root().display()).expect("the holder hears where to work");
+    let pid = holder_ready(&mut output);
+    assert_eq!(holder.id(), Some(pid), "the holder is this process's child");
+    assert!(hidden(pid), "the census cannot read where the holder works");
+    let dir = snapshot.dir().to_path_buf();
+    let refused = snapshot
+        .cleanup()
+        .expect_err("a process this one started may be working in the copy, so it is not removed");
+    assert_eq!(
+        refused.kind(),
+        SnapshotErrorKind::CleanupFailed,
+        "{refused}"
+    );
+    let said = refused.to_string();
+    let me = std::process::id();
+    for named in [
+        format!("process {pid} ("),
+        format!("descends from this process {me}"),
+        "Permission denied".to_owned(),
+    ] {
+        assert!(
+            said.contains(&named),
+            "the refusal names the process, why it counts as this one's, and what /proc said: \
+             {named:?} in {said}"
+        );
+    }
+    assert!(path_exists(&dir).expect("inspect the refused snapshot"));
+    drop(input);
+    holder
+        .wait_with_output()
+        .expect("the holder ends once its input does");
+    tempowner::remove_tree(&dir).expect("the refused copy is removed once its holder has ended");
 }
 
 #[test]
@@ -1066,4 +1333,30 @@ fn two_surveys_taken_under_different_rules_say_so() {
         plain.rules, excluding.rules,
         "a file a rule leaves out would vanish from one survey with nobody having edited it"
     );
+}
+
+#[test]
+fn two_roots_of_one_tree_get_one_snapshot_name() {
+    let first = fixture();
+    let second = fixture();
+    let one = create(&options(&first), now()).expect("first root");
+    let (pinned, first_was_stable) = (one.dir().to_path_buf(), one.stable_dir());
+    one.cleanup().expect("cleanup the first root's snapshot");
+    let two = create(&options_for(&second.source, &first.dest), now()).expect("second root");
+    assert!(
+        first_was_stable,
+        "the first copy carries the name its content pins"
+    );
+    assert!(
+        two.stable_dir(),
+        "and so does the second, from another root"
+    );
+    assert_eq!(
+        pinned,
+        two.dir(),
+        "the snapshot a build compiles from is spelled by what the tree holds, so the paths a \
+         sealed module bakes are the same from any root and one execution of one tree is one \
+         execution wherever the tree was"
+    );
+    two.cleanup().expect("cleanup the second root's snapshot");
 }

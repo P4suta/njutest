@@ -3,16 +3,22 @@
 
 //! The cargo boundary: locating the toolchain, reading `cargo metadata`, parsing `--message-format=json`, and reading dep-info to learn which files a unit really compiled.
 
+mod build_cache;
 mod build_identity;
 mod built;
 mod compile;
 pub mod config;
+mod cost;
 mod depinfo;
+mod doctests;
+mod execution_products;
 mod locate;
 pub mod manifest;
 mod messages;
 mod metadata;
+mod observed;
 mod outside;
+mod provenance;
 mod version;
 
 use std::fmt;
@@ -22,28 +28,39 @@ use crate::error::{self, ErrorCode};
 use crate::runner::Cancel;
 use crate::trace::Recorder;
 
+pub use crate::trace::{ProbeRole, ProbeSite, record_probe};
 pub use build_identity::{BUILD_SELECTION_DOMAIN, BuildSelection, BuildSelectionDigest};
 pub use built::{BuildDir, LEDGER_NAME, LEDGER_SCHEMA, Member, MemberFile, fingerprint_of};
 pub use compile::{
-    BuildConfig, Compilation, CompileKind, CompileOptions, Compiled, compile, compile_arguments,
+    BuildConfig, Compilation, CompileKind, CompileOptions, Compiled, Completion, CompletionError,
+    Exited, Provenance, Witness, compile, compile_arguments, compile_with,
 };
+pub use cost::{DirectBuild, record_build};
 pub use depinfo::{
     Emitted, Unit, compile_time_inputs, dep_info_path, emitted_of, env_deps, every_unit_of,
     parse_dep_info, units_of,
 };
+pub use doctests::{
+    DoctestCapture, NativeCompileExpectation, NativeCompiledDoctest, NativeDoctestKind,
+    NativeDoctestProducts, NativeDoctestProgram, PreparedDoctests, build_capture,
+    capture_arguments, capture_doctests, capture_prepared_doctests, empty_capture,
+    prepare_native_doctests,
+};
+pub use execution_products::ExecutionProducts;
+pub use provenance::{CompilerObservation, CompilerPurpose, InputIdentity};
 
 pub use locate::{
     ForTests, LocateOptions, Selecting, Toolchain, command_failed, resolve_executable,
 };
 pub use messages::{
-    Artifact, BuildScript, CompilerMessage, Diagnostic, DiagnosticSpan, Message, Profile,
+    Artifact, BuildScript, CompilerMessage, Diagnostic, DiagnosticSpan, Finished, Message, Profile,
     names_file, parse_messages,
 };
 pub use metadata::{
-    DepKind, Dependency, Metadata, MetadataOptions, Node, NodeDep, Package, Resolve, Target,
-    metadata_arguments,
+    DepKind, Dependency, ManifestPath, ManifestPathError, Metadata, MetadataOptions, Node, NodeDep,
+    Package, Resolve, Target, metadata_arguments,
 };
-pub use outside::{Outside, reaching_outside};
+pub use outside::{Outside, reaching_outside, resolved};
 pub use version::{VersionInfo, parse_version};
 
 /// Everything a cargo command needs besides its arguments: the toolchain, the directory to run in, the cancellation flag, and the trace.
@@ -59,8 +76,66 @@ pub struct Driver<'a> {
     pub trace: &'a Recorder,
 }
 
+/// Whether a variable can be an input of a build, which the verified compilation record and a shared source slot both ask by this one rule.
+pub(crate) fn compilation_input(spelling: crate::vars::Spelling, name: &std::ffi::OsStr) -> bool {
+    build_cache::compilation_input(spelling, name)
+}
+
+/// Whether this platform's dynamic loader reads `name`, which the compile and the toolchain observation both refuse by this one rule.
+#[cfg(any(test, feature = "testkit"))]
+pub(crate) fn loader_variable(name: &std::ffi::OsStr) -> bool {
+    build_cache::loaders::loader_variable(name)
+}
+
+/// The directory inside a target directory that holds verified compilations and their products.
+pub(crate) const COMPILATIONS: &str = "rust-mutants-compilations";
+
+/// The ending of a directory that holds one actual producer's immutable products.
+const PRODUCTS: &str = ".products";
+
+/// The directory inside a capture's products that holds the compiler products it copied.
+pub(crate) const CAPTURED_COMPILER: &str = "compiler";
+
+/// The name of the directory that holds the products the producer `observation` made for `key`, whose records keep both whole.
+///
+/// # Errors
+/// `key` or `observation` is not a key.
+pub(crate) fn products_name(key: &str, observation: &str) -> std::io::Result<String> {
+    Ok(format!(
+        "{}.{}{PRODUCTS}",
+        crate::keyed::name(key)?,
+        crate::keyed::name(observation)?
+    ))
+}
+
+/// Whether `name` is one [`products_name`] spells.
+fn names_products(name: &str) -> bool {
+    name.strip_suffix(PRODUCTS)
+        .and_then(|named| named.split_once('.'))
+        .is_some_and(|(key, observation)| {
+            crate::keyed::names(key) && crate::keyed::names(observation)
+        })
+}
+
+pub(crate) fn input_identity(
+    driver: &Driver<'_>,
+    options: &CompileOptions,
+) -> Result<InputIdentity, CargoError> {
+    compile::input_identity((driver, options))
+}
+
 /// The failure modes of this module, each with a stable code.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, njutest_macros::AllVariants)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    njutest_macros::AllVariants,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub enum CargoErrorKind {
     /// The cargo or rustc executable could not be found.
     ToolchainNotFound,

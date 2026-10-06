@@ -1,0 +1,16 @@
+=== a-statement source crates/app/tests/nested.rs
+fn cleared(command: &mut std::process::Command) { command.env_clear(); }
+=== a-chain source crates/app/tests/nested.rs
+fn asked() -> std::io::Result<std::process::Output> { std::process::Command::new(env!("CARGO_BIN_EXE_app")).env_clear().output() }
+=== after-the-devkit-command source crates/app/tests/nested.rs
+fn asked(program: &std::path::Path) -> std::io::Result<std::process::Output> { let mut command = njutest_devkit::paths::command(program); command.env_clear(); command.output() }
+=== a-path source crates/app/tests/nested.rs
+fn cleared(command: &mut std::process::Command) { std::process::Command::env_clear(command); }
+=== a-function-value source crates/app/tests/nested.rs
+fn cleared(commands: &mut [std::process::Command]) { commands.iter_mut().for_each(|command| { std::process::Command::env_clear(command); }); }
+=== in-a-macro source crates/app/tests/nested.rs
+fn cleared(command: &mut std::process::Command) { assert!(command.env_clear().get_envs().next().is_none()); }
+=== test-support source crates/app/tests/support/nested.rs
+fn pinned(program: &str) -> std::process::Command { let mut command = std::process::Command::new(program); command.env_clear(); command }
+=== a-gate-test source xtask/tests/nested.rs
+fn listing(engine: &std::path::Path) -> std::io::Result<std::process::Output> { std::process::Command::new(engine).env_clear().output() }

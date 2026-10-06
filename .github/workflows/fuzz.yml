@@ -36,10 +36,6 @@ jobs:
     name: fuzz (${{ matrix.target }})
     runs-on: ubuntu-24.04
     timeout-minutes: 45
-    env:
-      # The repository pins stable in rust-toolchain.toml.
-      # Make the fuzz process select the nightly that the action below installs.
-      RUSTUP_TOOLCHAIN: nightly
     strategy:
       fail-fast: false
       matrix:
@@ -72,9 +68,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # Fuzzing needs nightly for the sanitizer.
-      # Each rust-toolchain action branch bakes in its toolchain, so pin the nightly branch itself.
-      - uses: dtolnay/rust-toolchain@be39649afda95dbf70f87cce95f68b8d5797b296 # nightly branch
+      - name: Read the shared toolchain pins
+        id: toolchains
+        run: |
+          python3 scripts/toolchain.py --output >> "$GITHUB_OUTPUT"
+          python3 scripts/toolchain.py --env >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@f133eefe930d61f0d9371efd474daf0125ed3dd1
+        with:
+          toolchain: ${{ steps.toolchains.outputs.nightly }}
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: fuzz
@@ -83,12 +84,12 @@ jobs:
           tool: cargo-fuzz@0.13.2
       - name: Fetch the locked dependency graph
         working-directory: fuzz
-        run: cargo fetch --locked
+        run: cargo +"$NJUTEST_NIGHTLY" fetch --locked
       - name: Build
         working-directory: fuzz
         env:
           FUZZ_TARGET: ${{ matrix.target }}
-        run: cargo fuzz build --target x86_64-unknown-linux-gnu "$FUZZ_TARGET"
+        run: cargo +"$NJUTEST_NIGHTLY" fuzz build --target x86_64-unknown-linux-gnu "$FUZZ_TARGET"
       - name: Run
         working-directory: fuzz
         env:
@@ -96,7 +97,7 @@ jobs:
         run: |
           budget="-max_total_time=1500"
           bash ../scripts/seed-fuzz-corpus.sh "$FUZZ_TARGET"
-          cargo fuzz run --target x86_64-unknown-linux-gnu "$FUZZ_TARGET" -- "$budget" -max_len=4096
+          cargo +"$NJUTEST_NIGHTLY" fuzz run --target x86_64-unknown-linux-gnu "$FUZZ_TARGET" -- "$budget" -max_len=4096
       - name: Upload crash artifacts
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

@@ -5,6 +5,9 @@
 
 use std::collections::BTreeSet;
 
+mod original;
+pub use original::{Original, OriginalTree};
+
 /// Every way a document can ask for something that is not in it.
 pub const OUTSIDE: [&str; 10] = [
     "http://", "https://", "src=", "srcset=", "@import", "url(", "<link", "<iframe", "<object",

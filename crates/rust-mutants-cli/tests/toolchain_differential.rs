@@ -46,7 +46,7 @@ fn established(name: &str, extra: &[&str]) -> Established {
     let code = rust_mutants_cli::run_from(
         std::iter::once("rust-mutants")
             .chain(["run", "--tier", "all", "--offline", "--locked"])
-            .chain(["--jobs", "1", "--ui", "quiet", "--no-cache"])
+            .chain(["--jobs", "1", "--ui", "quiet", "--no-cache", "--no-seal"])
             .chain(extra.iter().copied())
             .chain(["--root", root.as_str()])
             .map(OsString::from),
@@ -58,9 +58,10 @@ fn established(name: &str, extra: &[&str]) -> Established {
         },
     );
     let output = njutest_devkit::process::answered(code, out, err);
-    assert!(
-        output.status.code().is_some_and(|code| code <= 1),
-        "{name} {extra:?}: {}",
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_UNESTABLISHED)),
+        "the layers route native runs, whose answers are leads: {name} {extra:?}: {}",
         njutest_devkit::process::strict_utf8(&output.stderr)
     );
     let directory = njutest_devkit::fixture::newest_run(
@@ -161,7 +162,7 @@ fn every_proof_that_removed_a_run_claimed_the_answer_a_whole_run_gives() {
                 whole.rows.len(),
                 "{name} by {mode}: the two runs cataloged different trees, so nothing compares"
             );
-            if proved.work.tests_started < whole.work.tests_started {
+            if started(&proved.work) < started(&whole.work) {
                 removed_something = removed_something.saturating_add(1);
             }
             for (id, row) in &proved.rows {
@@ -238,26 +239,32 @@ fn the_layers_remove_work_rather_than_only_promising_to() {
     );
 }
 
+/// The tests a run started, which a run whose every baseline ran counts.
+const fn started(work: &Work) -> u64 {
+    work.tests_started
+        .expect("every baseline ran, so the tests a run started are counted")
+}
+
 #[test]
 fn the_guards_put_a_mutation_to_fewer_tests_than_routing_by_target_can() {
     let whole = established("fixture-coverage", Measuring::NOTHING.flags());
     let guards = established("fixture-coverage", Measuring::GUARDS.flags());
     let coverage = established("fixture-coverage", Measuring::COVERAGE.flags());
     assert!(
-        guards.work.tests_started < coverage.work.tests_started,
+        started(&guards.work) < started(&coverage.work),
         "a target a region places a mutation in runs every test it has; a target a guard places \
          it in runs the tests that reached it: {} against {}",
-        guards.work.tests_started,
-        coverage.work.tests_started
+        started(&guards.work),
+        started(&coverage.work)
     );
     assert!(
-        coverage.work.tests_started <= whole.work.tests_started,
+        started(&coverage.work) <= started(&whole.work),
         "a region still removes whole targets: {} against {}",
-        coverage.work.tests_started,
-        whole.work.tests_started
+        started(&coverage.work),
+        started(&whole.work)
     );
     assert!(
-        guards.work.tests_started >= guards.work.established_tests(),
+        started(&guards.work) >= guards.work.established_tests(),
         "every test started to establish a filter is in the count the filters are judged by"
     );
     for (id, row) in &guards.rows {
@@ -349,6 +356,7 @@ fn a_remembered_measurement_routes_a_run_exactly_as_a_fresh_one_would() {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: njutest_devkit::paths::environment_for_a_run()
             .into_iter()
             .collect(),

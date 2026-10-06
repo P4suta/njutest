@@ -49,7 +49,7 @@ fn counted(rows: &[MutantRecord]) -> MutantAccounting {
         let outcome = row.outcome.outcome();
         counts
             .observers
-            .counted(outcome.decision())
+            .counted(row.decision())
             .expect("a fixture's rows are countable");
         if row.accepted {
             counts.accepted += 1;
@@ -117,6 +117,7 @@ fn disposed(id: &str, outcome: &str, reused: bool) -> MutantRecord {
             column: 1,
             character_column: 1,
         },
+        evidence: njutest::testkit::reports::sealed_as(&decided(outcome, None)),
         outcome: decided(outcome, None),
         accepted: false,
         reuse: njutest::report::Reuse(if reused {
@@ -186,7 +187,7 @@ fn measured(
         message: None,
     });
     source.limitations.push(Limitation::new(
-        "git-metadata-unavailable",
+        njutest::limitation::Limitation::GitMetadataUnavailable,
         "this synthetic fixture has no repository process",
     ));
     vary(&mut source);
@@ -198,9 +199,8 @@ fn measured(
         .iter()
         .filter_map(|mutant| {
             mutant
-                .outcome
-                .outcome()
-                .required_finding(mutant.accepted)
+                .verdict()
+                .required_finding()
                 .map(|kind| Finding::new(kind, &mutant.display_id, "synthetic mutation finding"))
         })
         .collect();
@@ -220,15 +220,7 @@ fn fault(
     index: u32,
     decision: njutest::report::faults::FaultDecision,
 ) -> njutest::report::faults::FaultRecord {
-    njutest::report::faults::FaultRecord {
-        catalog_index: njutest::report::CatalogIndex::new(index),
-        id: format!("{index:0>64}"),
-        display_id: format!("{index:0>20}"),
-        path: "src/lib.rs".to_owned(),
-        item: "load".to_owned(),
-        position: None,
-        decision,
-    }
+    njutest::testkit::reports::fault(index, decision)
 }
 
 /// States `faults` in a part, with the counts and findings a run derives from them.
@@ -678,7 +670,7 @@ fn what_only_the_last_part_found_is_still_what_the_whole_found() {
         vec![row(1, &"b".repeat(64), "survived", false)],
         &|source| {
             source.limitations.push(Limitation::new(
-                "custom-harness",
+                rust_mutants::limitation::Limitation::CustomHarness,
                 "the target brings its own harness",
             ));
             source.candidates = vec![offered("bbbbbbbbbbbbbbbbbbbb")];
@@ -743,16 +735,19 @@ fn the_acceptances_of_the_whole_are_the_ones_its_parts_recorded_and_no_others() 
 fn answered_by(rows: Vec<MutantRecord>, target: &str, outcome: &str) -> Vec<MutantRecord> {
     rows.into_iter()
         .map(|mut record| {
-            record.routing = Some(njutest::report::Routing {
-                granularity: rust_mutants::session::Granularity::Block,
-                reaching: vec![target.to_owned()],
-                discharged: Vec::new(),
-                fallback: None,
-                answered: vec![njutest::report::Answered {
-                    target: target.to_owned(),
-                    outcome: Outcome::parse(outcome).unwrap_or(Outcome::Errored),
-                }],
-            });
+            njutest::testkit::reports::asked(
+                &mut record,
+                njutest::report::Routing {
+                    granularity: rust_mutants::session::Granularity::Block,
+                    reaching: vec![target.to_owned()],
+                    discharged: Vec::new(),
+                    fallback: None,
+                    answered: vec![njutest::report::Answered {
+                        target: target.to_owned(),
+                        outcome: Outcome::parse(outcome).unwrap_or(Outcome::Errored),
+                    }],
+                },
+            );
             record
         })
         .collect()
@@ -846,7 +841,7 @@ fn a_move_one_part_saw_is_raised_by_the_merge_over_every_part_s_rows() {
         "one",
         "1/2",
         vec![row(0, &"a".repeat(64), "unreached", false)],
-        &|source| source.drift = vec![moved_at(target)],
+        &repaired_at(target, 0),
     );
     let two = part_varying(
         "two",
@@ -890,12 +885,81 @@ fn a_move_one_part_saw_is_raised_by_the_merge_over_every_part_s_rows() {
         conclusion
             .limitations
             .iter()
-            .all(|limitation| limitation.name != njutest::limitation::DRIFT_NOT_MEASURED),
+            .all(|limitation| limitation.name() != njutest::limitation::DRIFT_NOT_MEASURED),
         "a target one part compared is not unmeasured because another part ran no control \
          of it: {:?}",
         conclusion.limitations
     );
     assert_eq!(whole.verdict(), Verdict::Insufficient);
+}
+
+/// Records that a part saw `target` move and ran `again` of its dispositions again against it.
+fn repaired_at(target: &'static str, again: u32) -> impl Fn(&mut BuildReport) {
+    move |source: &mut BuildReport| {
+        source.drift = vec![moved_at(target)];
+        source.repaired = vec![njutest::report::drift::Repaired {
+            target: target.to_owned(),
+            again,
+        }];
+    }
+}
+
+#[test]
+fn a_merge_states_reach_moved_with_what_every_part_ran_again() {
+    let target = "pkg/lib/pkg";
+    let one = part_varying(
+        "one",
+        "1/2",
+        vec![row(0, &"a".repeat(64), "killed", false)],
+        &repaired_at(target, 1),
+    );
+    let two = part_varying(
+        "two",
+        "2/2",
+        vec![row(1, &"b".repeat(64), "killed", false)],
+        &repaired_at(target, 1),
+    );
+    let conclusion = whole("the-whole", &[one, two])
+        .conclusion()
+        .expect("the checked whole has a representable conclusion");
+    let moved: Vec<&str> = conclusion
+        .limitations
+        .iter()
+        .filter(|limitation| limitation.name() == njutest::limitation::REACH_MOVED)
+        .map(|limitation| limitation.detail.as_str())
+        .collect();
+    let [stated] = moved.as_slice() else {
+        panic!(
+            "each part ran its one resting disposition again and nothing rests on the moved \
+             target over the whole catalog, so the merge states reach-moved about it once \
+             (ADR 0036 decision 4): {:?}",
+            conclusion.limitations
+        );
+    };
+    assert!(
+        stated.contains("2 dispositions that rested on its baseline were run again")
+            && stated.ends_with(&format!("({target})")),
+        "the count is what every part ran again, read from the parts' own records: {stated}"
+    );
+}
+
+#[test]
+fn a_part_whose_repair_counts_are_not_its_moved_targets_is_refused() {
+    let refused = tried_part(
+        "one",
+        "1/2",
+        vec![row(0, &"a".repeat(64), "killed", false)],
+        &|source| source.drift = vec![moved_at("pkg/lib/pkg")],
+        &|_| {},
+    )
+    .expect_err("a moved target with no repair count");
+    assert!(
+        refused
+            .to_string()
+            .contains("repair records that are not its moved targets' own"),
+        "a part that saw a target move says how many dispositions it ran again against it, \
+         or a merge could not count them: {refused}"
+    );
 }
 
 #[test]
@@ -995,6 +1059,92 @@ fn a_shard_holds_evidence_about_its_survivor_beside_a_fault_another_shard_holds(
             "the fault beside a survivor is owned by whichever shard its index falls in: {refused}"
         );
     }
+}
+
+#[test]
+fn a_whole_run_that_established_every_dimension_is_assured() {
+    let established = |source: &mut BuildReport| {
+        source.contract = Contract::WholeV1;
+        source.knobs = njutest::report::knobs::Knob::ALL
+            .into_iter()
+            .map(|knob| njutest::report::knobs::KnobRecord {
+                target: "pkg/lib/pkg".to_owned(),
+                knob,
+                standing: njutest::report::knobs::Standing::Stable,
+            })
+            .collect();
+        source.concurrency = vec![njutest::report::concurrency::ConcurrencyRecord {
+            target: "pkg/lib/pkg".to_owned(),
+            standing: njutest::concurrency::proof::Standing::SingleThreaded,
+            explored: njutest::report::concurrency::Exploration::Unexplored {
+                why: njutest::report::concurrency::Unexplored::NotNeeded,
+            },
+        }];
+        source.limitations.push(Limitation::new(
+            njutest::limitation::Limitation::FaultNoSite,
+            "no measured file has a `?`",
+        ));
+        source.limitations.push(Limitation::new(
+            njutest::limitation::Limitation::CrashNoSite,
+            "no measured file calls anything that writes",
+        ));
+    };
+    let only = part_varying(
+        "only",
+        "1/1",
+        vec![row(0, &"a".repeat(64), "killed", false)],
+        &established,
+    );
+    let whole = whole("the-whole", &[only]);
+    let conclusion = whole.conclusion().expect("a representable conclusion");
+    let open: Vec<String> = conclusion
+        .matrix
+        .iter()
+        .filter_map(|row| row.column.hole(row.dimension))
+        .collect();
+    assert!(
+        open.is_empty(),
+        "every dimension is measured without a hole or has nothing to ask: {open:?}"
+    );
+    assert_eq!(
+        whole.verdict(),
+        Verdict::Assured,
+        "a strict contract that nothing can satisfy is a useless default, so a run that \
+         established every dimension is assured: {:?}",
+        conclusion.findings
+    );
+}
+
+#[test]
+fn a_binary_every_shard_ran_is_one_hole_of_the_merge_however_many_shards_ran_it() {
+    let whole = |source: &mut BuildReport| source.contract = Contract::WholeV1;
+    let one = part_varying(
+        "one",
+        "1/2",
+        vec![row(0, &"a".repeat(64), "killed", false)],
+        &whole,
+    );
+    let two = part_varying(
+        "two",
+        "2/2",
+        vec![row(1, &"b".repeat(64), "killed", false)],
+        &whole,
+    );
+    let conclusion = super_whole(&[one, two]);
+    let scheduled = conclusion
+        .matrix
+        .iter()
+        .find(|row| row.dimension == njutest::report::matrix::Dimension::Schedule)
+        .map(|row| row.column.clone());
+    assert!(
+        matches!(
+            &scheduled,
+            Some(njutest::report::matrix::Column::Measured { catalogued: 1, holes, .. })
+                if holes.len() == 1
+        ),
+        "the shards divide one catalog and share one baseline, so the binary each of them ran \
+         is one binary: {scheduled:?}"
+    );
 }
 
 #[test]
@@ -1140,7 +1290,7 @@ fn concluded(report: &Report) -> (Verdict, Vec<(String, String)>, Vec<String>) {
     let mut limitations: Vec<String> = conclusion
         .limitations
         .iter()
-        .map(|limitation| limitation.name.clone())
+        .map(|limitation| limitation.name().to_owned())
         .collect();
     limitations.sort();
     (conclusion.verdict, findings, limitations)
@@ -1171,7 +1321,7 @@ proptest::proptest! {
                 let mut record =
                     row(index, &format!("{:02x}{}", at.saturating_add(1), "a".repeat(62)), outcome, false);
                 record.outcome = decided(outcome, Some(last));
-                record.routing = Some(njutest::report::Routing {
+                njutest::testkit::reports::asked(&mut record, njutest::report::Routing {
                     granularity: rust_mutants::session::Granularity::Block,
                     reaching: order.iter().map(|target| (*target).to_owned()).collect(),
                     discharged: Vec::new(),
@@ -1212,7 +1362,16 @@ proptest::proptest! {
                         &format!("part{index}of{of}"),
                         &format!("{index}/{of}"),
                         owned,
-                        &move |source| source.drift.clone_from(&drift),
+                        &move |source| {
+                            source.drift.clone_from(&drift);
+                            source.repaired = drift
+                                .iter()
+                                .map(|one| njutest::report::drift::Repaired {
+                                    target: one.target().to_owned(),
+                                    again: 0,
+                                })
+                                .collect();
+                        },
                     )
                 })
                 .collect();

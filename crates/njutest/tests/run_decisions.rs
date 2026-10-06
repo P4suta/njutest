@@ -11,8 +11,8 @@
 use njutest::app::plan::{Planned, line};
 use njutest::assure::baseline::{Baseline, Measured};
 use njutest::assure::run::{
-    Narrowing, Request, alone, first_line, kind_of, measurable, requested, resolve_acceptances,
-    resolved, reusable, selected, stated,
+    Narrowing, Request, alone, first_line, kind_of, measurable, preparing, requested,
+    resolve_acceptances, resolved, reusable, selected, stated,
 };
 use njutest::config::{Acceptance, Config};
 use njutest::report::{FindingKind, RunKind, TargetStatus};
@@ -67,11 +67,13 @@ fn request(config: Config, packages: &[&str]) -> Request {
         run_id: RunId::try_from("20260909t000000z-000001").expect("a canonical run identity"),
         started: jiff::Timestamp::from_second(1_800_000_000).expect("in range"),
         engine_trace: rust_mutants::trace::Recorder::disabled(),
+        carried_evidence: None,
         evidence: njutest::assure::identity::Evidence::default(),
         changed: None,
         checkpoints: None,
         evidence_store: None,
         shard: None,
+        trace: None,
     }
 }
 
@@ -160,21 +162,25 @@ fn measured(name: &str, status: TargetStatus) -> Measured {
 }
 
 #[test]
-fn what_a_run_is_about_is_what_it_was_asked_for_narrowed_to_what_is_there() {
+fn what_a_run_is_about_is_the_whole_or_its_named_members() {
     let members = ["core".to_owned(), "app".to_owned()];
 
     let whole = request(Config::default(), &[]);
     assert!(
-        requested(&whole).is_empty() && resolved(&whole, &members) == Narrowing::Whole,
+        requested(&whole).is_empty()
+            && resolved(&whole, &members).expect("the whole workspace is a valid scope")
+                == Narrowing::Whole,
         "a run that named nothing is about the workspace, and says so by naming \
          nothing rather than by listing what it happens to hold today: a list would \
          make two runs of one workspace differ because somebody added a package"
     );
 
     let named = request(Config::default(), &["app"]);
+    let scope = resolved(&named, &members).expect("app is a member");
+    assert!(matches!(scope, Narrowing::Named(_)));
     assert_eq!(
-        resolved(&named, &members),
-        Narrowing::Named(vec!["app".to_owned()]),
+        scope.names(),
+        ["app"],
         "a run that named a package is about that one"
     );
     assert_eq!(
@@ -357,22 +363,18 @@ fn metadata(packages: &[(&str, &str)]) -> rust_mutants::cargo::Metadata {
 }
 
 #[test]
-fn a_scope_that_named_something_the_workspace_does_not_hold_measures_nothing_wider() {
-    let workspace = metadata(&[
-        ("core", "/w/core/Cargo.toml"),
-        ("edge", "/w/edge/Cargo.toml"),
-    ]);
+fn a_scope_with_an_unknown_package_is_refused_before_selection() {
     let members = ["core".to_owned(), "edge".to_owned()];
-    let typo = request(Config::default(), &["cor"]);
-    let scope = resolved(&typo, &members);
-    assert_ne!(
-        selected(&scope, &workspace).len(),
-        workspace.packages.len(),
-        "a reader who asked for one package and misspelled it had the whole workspace \
-         measured and was told the scope was assured: an empty resolved list means both \
-         `nothing was asked for` and `what was asked for is not here`, and the widening \
-         answers the first"
-    );
+    for named in [&["cor"][..], &["core", "cor"][..]] {
+        let typo = request(Config::default(), named);
+        assert!(
+            matches!(
+                resolved(&typo, &members),
+                Err(rust_mutants::discover::DiscoverError::UnknownPackage { name }) if name == "cor"
+            ),
+            "an unknown package is refused even when a known name precedes it"
+        );
+    }
 }
 
 #[test]
@@ -391,22 +393,46 @@ fn the_packages_an_inventory_walks_are_the_ones_in_scope_that_have_somewhere_to_
          widens: narrowing on it would inventory nothing at all and report a workspace \
          with no unsafe in it"
     );
+    let scope = resolved(
+        &request(Config::default(), &["edge"]),
+        &["core".to_owned(), "edge".to_owned()],
+    )
+    .expect("edge is a member");
     assert_eq!(
-        selected(&Narrowing::Named(vec!["edge".to_owned()]), &workspace),
+        selected(&scope, &workspace),
         vec![("edge".to_owned(), std::path::PathBuf::from("/w/edge"))],
         "and a scope that names one package walks that one"
     );
 
     for named in ["Cargo.toml", ""] {
-        assert_eq!(
-            selected(&Narrowing::Whole, &metadata(&[("nowhere", named)])),
-            Vec::new(),
-            "while a package whose manifest names no directory is left out rather than \
-             entered under one nobody has: an inventory is the files under a directory, \
-             and this one would be walked from wherever the process happens to stand, \
-             which is the whole machine as readily as the package. A bare name has a \
-             parent and it is the empty path, so the two ways of naming no directory \
-             are two guards and not one: {named:?}"
+        let read = serde_json::from_value::<rust_mutants::cargo::Metadata>(serde_json::json!({
+            "version": 1,
+            "workspace_root": "/w",
+            "target_directory": "/w/target",
+            "workspace_members": [],
+            "packages": [{
+                "id": njutest_devkit::cargo_double::package_id(
+                    std::path::Path::new("/w/nowhere"),
+                    "nowhere",
+                    "0.1.0",
+                ),
+                "name": "nowhere",
+                "version": "0.1.0",
+                "manifest_path": named,
+            }],
+        }));
+        let Err(refused) = read else {
+            panic!(
+                "a package whose manifest names no directory has nowhere for an inventory to \
+                 walk from, so the metadata that names one is refused where it is read, before \
+                 any walk could start from wherever the process stands: {named:?}"
+            );
+        };
+        assert!(
+            refused
+                .to_string()
+                .contains("names no file inside a directory"),
+            "{refused}"
         );
     }
 }
@@ -434,7 +460,7 @@ fn a_tree_the_compiler_vouches_for_entirely_has_no_limitation_to_state() {
     assert_eq!(
         found_states
             .iter()
-            .map(|one| one.name.clone())
+            .map(|one| one.name().to_owned())
             .collect::<Vec<_>>(),
         vec!["soundness-not-executed".to_owned()],
         "while a place the compiler stops vouching for is one this contract counts and \
@@ -450,7 +476,7 @@ fn a_tree_the_compiler_vouches_for_entirely_has_no_limitation_to_state() {
     assert_eq!(
         unread_states
             .iter()
-            .map(|one| one.name.clone())
+            .map(|one| one.name().to_owned())
             .collect::<Vec<_>>(),
         vec![
             "soundness-source-unreadable".to_owned(),
@@ -485,6 +511,29 @@ fn a_run_that_looked_at_less_than_everything_neither_believes_nor_records() {
         "and a resource a run started is a fact about the world its tests ran in that no \
          behaviour key covers: the next run may start a different one, or none, and \
          nothing in the record would say so"
+    );
+}
+
+#[test]
+fn a_run_builds_the_sealed_tree_unless_its_configuration_turns_sealing_off() {
+    let sealing = |config: Config| {
+        preparing(&request(config, &[]))
+            .expect("the switches of a run over no narrowing")
+            .sealing
+    };
+    assert_eq!(
+        sealing(Config::default()),
+        rust_mutants::sealed::Sealing::On,
+        "a run decides each mutation from sealed executions unless it is told not to, since \
+         everything else it can say about one is a lead (ADR 0046)"
+    );
+    let mut unsealed = Config::default();
+    unsealed.mutation.seal = false;
+    assert_eq!(
+        sealing(unsealed),
+        rust_mutants::sealed::Sealing::Off,
+        "and `[mutation] seal = false`, which `--no-seal` writes for one run, builds nothing \
+         for the sealed target, so a run that will read none of it does not pay for it"
     );
 }
 

@@ -59,16 +59,25 @@ fn dimensions(out: &mut String, told: &Told, terminal: Terminal) {
     }
     let telling = Telling::of(terminal);
     for row in &told.matrix {
-        let counted = match &row.column {
+        let (counted, open, unspoken) = match &row.column {
             crate::report::matrix::Column::Measured {
                 catalogued,
                 answered,
                 holes,
-                ..
-            } => format!("{catalogued} catalogued, {answered} answered, {holes} holes"),
+                speaks_not_about,
+            } => (
+                format!(
+                    "{catalogued} catalogued, {answered} answered, {} holes",
+                    holes.len()
+                ),
+                holes.as_slice(),
+                speaks_not_about.as_slice(),
+            ),
             crate::report::matrix::Column::Unmeasured { why }
-            | crate::report::matrix::Column::NothingToAsk { why } => why.clone(),
-            crate::report::matrix::Column::NotAsked => String::new(),
+            | crate::report::matrix::Column::NothingToAsk { why } => {
+                (why.clone(), &[][..], &[][..])
+            }
+            crate::report::matrix::Column::NotAsked => (String::new(), &[][..], &[][..]),
         };
         let mut said = format!(
             "{} {}",
@@ -85,6 +94,22 @@ fn dimensions(out: &mut String, told: &Told, terminal: Terminal) {
         }
         for rest in lines {
             super::line(out, format_args!("{:opening$}{rest}", ""));
+        }
+        let beneath = [("open", open), ("speaks not about", unspoken)];
+        for (heading, said) in beneath {
+            for one in said {
+                let named = format!("{} {one}", telling.painted(Style::Frame, heading));
+                let mut lines = super::folded(&named, telling.room(opening)).into_iter();
+                if let Some(first) = lines.next() {
+                    super::line(out, format_args!("{:opening$}{first}", ""));
+                }
+                for rest in lines {
+                    super::line(
+                        out,
+                        format_args!("{:width$}{rest}", "", width = opening + 2),
+                    );
+                }
+            }
         }
     }
     out.push('\n');

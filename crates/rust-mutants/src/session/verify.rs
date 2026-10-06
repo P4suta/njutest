@@ -127,14 +127,14 @@ fn verify_targets(
     for (index, target) in targets.iter_mut().enumerate() {
         let (baseline, observed) =
             verify_target((target, index), scratch, building, &mut verified.touched)?;
-        if tests_run.insert(target.id.clone(), observed).is_some()
+        if tests_run.insert(target.id().to_owned(), observed).is_some()
             || verified
                 .targets
-                .insert(target.id.clone(), Measured::of(baseline))
+                .insert(target.id().to_owned(), Measured::of(baseline))
                 .is_some()
         {
             return Err(SessionError::DuplicateBaselineTarget {
-                target: target.id.clone(),
+                target: target.id().to_owned(),
             }
             .into());
         }
@@ -151,7 +151,7 @@ fn verify_target(
     let recording = (building.asked && recordable(target)).then(|| {
         scratch
             .join("touch")
-            .join(format!("{}.log", slug(&target.id)))
+            .join(format!("{}.log", slug(target.id())))
     });
     let watched = Path::new(building.workspace.watched());
     crate::orphan::clear(watched).map_err(|source| SessionError::WriteFailed {
@@ -166,7 +166,7 @@ fn verify_target(
     } = attempted((target, index), (scratch, recording), building)?;
     let baseline = baseline_of(&result, home)?;
     building.trace.verify(crate::trace::VerifyRecord {
-        target: target.id.clone(),
+        target: target.id().to_owned(),
         outcome: baseline.outcome.name().to_owned(),
         tests_run: result.tests_run(),
         duration_ms: duration_millis(result.duration)?,
@@ -175,29 +175,38 @@ fn verify_target(
         retried,
         declined: baseline.declined.clone(),
     });
-    if target.kind == TargetKind::Doc && result.tests_run() == Some(0) {
+    if target.kind() == TargetKind::Doc && result.tests_run() == Some(0) {
         target
             .limitations
-            .push(crate::limitation::DOCTESTS_NONE.to_owned());
+            .push(crate::limitation::Limitation::DoctestsNone);
     }
     if baseline.passed() && retried && home == execute::Home::Confined {
-        touched.limited(crate::limitation::BASELINE_PASSED_ON_RETRY, &target.id);
+        touched.limited(
+            crate::limitation::Limitation::BaselinePassedOnRetry,
+            target.id(),
+        );
     }
     if baseline.passed() && home == execute::Home::Given {
         target
             .limitations
-            .push(crate::limitation::UNCONFINED_TARGET.to_owned());
+            .push(crate::limitation::Limitation::UnconfinedTarget);
     }
     if baseline.passed() && result.reading() == Reading::Short {
-        touched.limited(crate::limitation::BASELINE_PASSED_UNPARSED, &target.id);
+        touched.limited(
+            crate::limitation::Limitation::BaselinePassedUnparsed,
+            target.id(),
+        );
     }
-    if baseline.passed() && uncontrolled(watched, &target.id, building.trace) {
-        touched.limited(crate::limitation::UNCONTROLLED_CHILD, &target.id);
+    if baseline.passed() && uncontrolled(watched, target.id(), building.trace) {
+        touched.limited(
+            crate::limitation::Limitation::UncontrolledChild,
+            target.id(),
+        );
     } else if baseline.passed() {
         gather(
             touched,
             &Recording {
-                target: &target.id,
+                target: target.id(),
                 log: recording.as_deref(),
                 catalog: building.catalog,
                 items: building.items,
@@ -207,7 +216,10 @@ fn verify_target(
             building.trace,
         )?;
     } else {
-        touched.limited(crate::limitation::BASELINE_NOT_PASSING, &target.id);
+        touched.limited(
+            crate::limitation::Limitation::BaselineNotPassing,
+            target.id(),
+        );
     }
     Ok((baseline, result.tests_run()))
 }
@@ -247,7 +259,7 @@ fn attempted(
             &format!(
                 "{}: the process could not write what its guards reached, so it is run \
                  again with nothing to record and every test of it stays in every route",
-                target.id
+                target.id()
             ),
         );
         result = ran(
@@ -340,25 +352,69 @@ fn baseline_of(result: &MutantResult, home: execute::Home) -> Result<Baseline, S
         ),
         crate::decline::Declines::Unbelieved { .. } => (result.outcome(), Vec::new(), None),
     };
+    let completion = Completion::of(result);
+    let passes = passing(outcome) && completion.admits();
     Ok(Baseline {
         home,
         outcome,
         declined,
+        completion,
         duration: result.duration,
         tests: match result.tests_run() {
             Some(tests) => tests,
             None => trace_count("passed baseline tests", result.passed_tests.len())?,
         },
         ignored: trace_count("ignored baseline tests", result.ignored_tests.len())?,
+        ran: result.passed_tests.clone(),
+        should_panic: result.should_panic_tests.clone(),
         output: match refused {
             Some(refused) => refused,
-            None if passing(outcome) => String::new(),
-            None => match std::str::from_utf8(&result.output) {
-                Ok(output) => output.to_owned(),
-                Err(_not_utf8) => crate::telling::LosslessBytes::new(&result.output).to_string(),
-            },
+            None if passes => String::new(),
+            None => {
+                let printed = match std::str::from_utf8(&result.output) {
+                    Ok(output) => output.to_owned(),
+                    Err(_not_utf8) => {
+                        crate::telling::LosslessBytes::new(&result.output).to_string()
+                    }
+                };
+                match completion {
+                    Completion::Unaccounted(why) => format!(
+                        "the harness did not account for the run: {why}, and {}\n{printed}",
+                        ending(&result.stopped)
+                    ),
+                    Completion::Accounted | Completion::Unspoken => printed,
+                }
+            }
         },
     })
+}
+
+/// How a baseline process ended, which is all a refusal has to say why when the process printed nothing.
+fn ending(stopped: &execute::Stopped) -> String {
+    match stopped {
+        execute::Stopped::Exited {
+            exit: crate::runner::ProcessExit::Code(code),
+        } if *code < 0 => format!("its process exited with code {code} ({code:#010x})"),
+        execute::Stopped::Exited {
+            exit: crate::runner::ProcessExit::Code(code),
+        } => format!("its process exited with code {code}"),
+        execute::Stopped::Exited {
+            exit: crate::runner::ProcessExit::Signal(signal),
+        } => format!("its process ended on signal {signal}"),
+        execute::Stopped::Exited {
+            exit: crate::runner::ProcessExit::Unknown,
+        } => "its process ended with no status the system could read".to_owned(),
+        other @ (execute::Stopped::NotStarted { .. }
+        | execute::Stopped::TimedOut { .. }
+        | execute::Stopped::Stalled { .. }
+        | execute::Stopped::Cancelled { .. }
+        | execute::Stopped::WaitFailed
+        | execute::Stopped::Answered
+        | execute::Stopped::StepLimitReached { .. }
+        | execute::Stopped::StepProtocolFailed { .. }) => {
+            format!("its process stopped as {other:?}")
+        }
+    }
 }
 
 /// The trace note proving why no baseline process follows it.
@@ -413,7 +469,7 @@ fn again(
             "{}: the target did not pass with nothing active, so it is run once more before \
              the session refuses: a first answer something outside the code decided is not \
              one to end a run on",
-            target.id
+            target.id()
         ),
     );
     Ok(Some(ran(
@@ -448,7 +504,7 @@ fn given_home(
             "{}: the target does not pass in a home of its own and passes with the home the run \
              was given, so every execution of it runs with that home, where a mutation of it can \
              write (ADR 0044)",
-            target.id
+            target.id()
         ),
     );
     Ok((given, execute::Home::Given))
@@ -459,7 +515,7 @@ const BASELINE_NOT_REMEMBERED: &str = "baseline-not-remembered";
 
 /// The recipe of a remembered baseline.
 /// The engine version is also in every key; this number makes a semantic invalidation explicit within one build.
-const BASELINE_ABI: u32 = 4;
+const BASELINE_ABI: u32 = 7;
 
 /// The on-disk shape of one passing baseline.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -481,9 +537,37 @@ struct RememberedBaseline {
     duration_nanos: u64,
     tests: u32,
     ignored: u32,
+    ran: Vec<String>,
+    should_panic: Vec<String>,
     tests_run: Option<u32>,
     home: execute::Home,
     declined: Vec<crate::decline::Decline>,
+    completion: RememberedCompletion,
+}
+
+/// How a remembered baseline's harness accounted for its run, which is one of the two ways a passing one can.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum RememberedCompletion {
+    Accounted,
+    Unspoken,
+}
+
+impl RememberedCompletion {
+    const fn of(completion: Completion) -> Option<Self> {
+        match completion {
+            Completion::Accounted => Some(Self::Accounted),
+            Completion::Unspoken => Some(Self::Unspoken),
+            Completion::Unaccounted(_) => None,
+        }
+    }
+
+    const fn completion(self) -> Completion {
+        match self {
+            Self::Accounted => Completion::Accounted,
+            Self::Unspoken => Completion::Unspoken,
+        }
+    }
 }
 
 /// Where the passing answer to this exact baseline may be found.
@@ -816,7 +900,7 @@ impl Remembering {
                 detail: "the recorded answer digest does not match its facts",
             });
         }
-        let ids: BTreeSet<&str> = targets.iter().map(|target| target.id.as_str()).collect();
+        let ids: BTreeSet<&str> = targets.iter().map(TestTarget::id).collect();
         if !remembered
             .targets
             .keys()
@@ -847,21 +931,26 @@ impl Remembering {
         for target in targets {
             let Some(baseline) = verified
                 .targets
-                .get(&target.id)
+                .get(target.id())
                 .and_then(Measured::judgeable)
                 .map(Passing::baseline)
             else {
                 return Err(BaselineCacheError::MissingPassingBaseline {
-                    target: target.id.clone(),
+                    target: target.id().to_owned(),
                 });
             };
-            let Some(observed_tests_run) = tests_run.get(&target.id) else {
+            let Some(observed_tests_run) = tests_run.get(target.id()) else {
                 return Err(BaselineCacheError::MissingTestCount {
-                    target: target.id.clone(),
+                    target: target.id().to_owned(),
+                });
+            };
+            let Some(completion) = RememberedCompletion::of(baseline.completion) else {
+                return Err(BaselineCacheError::MissingPassingBaseline {
+                    target: target.id().to_owned(),
                 });
             };
             let previous = remembered_targets.insert(
-                target.id.clone(),
+                target.id().to_owned(),
                 RememberedBaseline {
                     outcome: baseline.outcome.name().to_owned(),
                     duration_nanos: u64::try_from(baseline.duration.as_nanos()).map_err(
@@ -871,14 +960,17 @@ impl Remembering {
                     )?,
                     tests: baseline.tests,
                     ignored: baseline.ignored,
+                    ran: baseline.ran.clone(),
+                    should_panic: baseline.should_panic.clone(),
                     tests_run: *observed_tests_run,
                     home: baseline.home,
                     declined: baseline.declined.clone(),
+                    completion,
                 },
             );
             if previous.is_some() {
                 return Err(BaselineCacheError::DuplicateTarget {
-                    target: target.id.clone(),
+                    target: target.id().to_owned(),
                 });
             }
         }
@@ -924,9 +1016,12 @@ fn recalled(remembered: Remembered, path: &Path) -> Result<Recalled, BaselineCac
             duration: Duration::from_nanos(baseline.duration_nanos),
             tests: baseline.tests,
             ignored: baseline.ignored,
+            ran: baseline.ran,
+            should_panic: baseline.should_panic,
             output: String::new(),
             home: baseline.home,
             declined: baseline.declined,
+            completion: baseline.completion.completion(),
         };
         if !value.passed() {
             return Err(BaselineCacheError::Contradiction {
@@ -971,14 +1066,14 @@ fn replay(
     trace: &crate::trace::Recorder,
 ) -> Result<(), EngineError> {
     for target in targets {
-        let Some(baseline) = verified.targets.get(&target.id).map(Measured::baseline) else {
+        let Some(baseline) = verified.targets.get(target.id()).map(Measured::baseline) else {
             continue;
         };
         trace.verify(crate::trace::VerifyRecord {
-            target: target.id.clone(),
+            target: target.id().to_owned(),
             outcome: baseline.outcome.name().to_owned(),
             tests_run: tests_run
-                .get(&target.id)
+                .get(target.id())
                 .copied()
                 .and_then(std::convert::identity),
             duration_ms: duration_millis(baseline.duration)?,
@@ -987,24 +1082,24 @@ fn replay(
             retried: false,
             declined: baseline.declined.clone(),
         });
-        if target.kind == TargetKind::Doc
+        if target.kind() == TargetKind::Doc
             && tests_run
-                .get(&target.id)
+                .get(target.id())
                 .copied()
                 .and_then(std::convert::identity)
                 == Some(0)
         {
             target
                 .limitations
-                .push(crate::limitation::DOCTESTS_NONE.to_owned());
+                .push(crate::limitation::Limitation::DoctestsNone);
         }
         if baseline.home == execute::Home::Given {
             target
                 .limitations
-                .push(crate::limitation::UNCONFINED_TARGET.to_owned());
+                .push(crate::limitation::Limitation::UnconfinedTarget);
         }
-        if let Some(touched) = verified.touched.targets.get(&target.id) {
-            trace_touch(&target.id, touched, trace)?;
+        if let Some(touched) = verified.touched.targets.get(target.id()) {
+            trace_touch(target.id(), touched, trace)?;
         }
     }
     Ok(())
@@ -1070,14 +1165,14 @@ fn artifacts(targets: &[TestTarget]) -> Result<BTreeMap<String, String>, Baselin
                 .is_some()
             {
                 return Err(BaselineCacheError::DuplicateTarget {
-                    target: target.id.clone(),
+                    target: target.id().to_owned(),
                 });
             }
             digest
         };
-        if found.insert(target.id.clone(), digest).is_some() {
+        if found.insert(target.id().to_owned(), digest).is_some() {
             return Err(BaselineCacheError::DuplicateTarget {
-                target: target.id.clone(),
+                target: target.id().to_owned(),
             });
         }
     }
@@ -1129,16 +1224,22 @@ fn valid_touches(
     let limited: BTreeSet<&str> = touched
         .limitations
         .iter()
-        .filter_map(|limitation| limitation.split_once(':').map(|(_, target)| target))
+        .filter_map(|limited| {
+            limited
+                .target
+                .as_ref()
+                .map(crate::limitation::TargetId::as_str)
+        })
         .collect();
     if touched
         .targets
         .keys()
         .any(|target| !targets.contains(target.as_str()))
-        || touched.limitations.iter().any(|limitation| {
-            limitation
-                .split_once(':')
-                .is_none_or(|(_, target)| !targets.contains(target))
+        || touched.limitations.iter().any(|limited| {
+            limited
+                .target
+                .as_ref()
+                .is_none_or(|target| !targets.contains(target.as_str()))
         })
     {
         return false;
@@ -1225,13 +1326,13 @@ impl Key {
         self.bytes(name, &[u8::from(value)])
     }
 
-    fn texts(&mut self, name: &str, values: &[String]) -> Result<(), BaselineCacheError> {
+    fn texts(&mut self, name: &str, values: &[impl AsRef<str>]) -> Result<(), BaselineCacheError> {
         self.u64(
             &format!("{name}-count"),
             baseline_count(BaselineQuantity::KeyValues, values.len())?,
         )?;
         for value in values {
-            self.text(name, value)?;
+            self.text(name, value.as_ref())?;
         }
         Ok(())
     }
@@ -1244,17 +1345,22 @@ fn target_key(
     (scratch, index): (&Path, usize),
     building: &Building<'_>,
 ) -> Result<(), BaselineCacheError> {
-    key.text("target-id", &target.id)?;
-    key.text("target-package", &target.package)?;
-    key.text("target-kind", target.kind.name())?;
-    key.text("target-name", &target.name)?;
+    key.text("target-id", target.id())?;
+    key.text("target-package", target.package())?;
+    key.text("target-kind", target.kind().name())?;
+    key.text("target-name", target.name())?;
     key.boolean("target-harness", target.harness)?;
-    key.texts("target-limitations", &target.limitations)?;
+    let limitations: Vec<&str> = target
+        .limitations
+        .iter()
+        .map(|limitation| limitation.name())
+        .collect();
+    key.texts("target-limitations", &limitations)?;
     key.os("target-cwd", target.cwd.as_os_str())?;
     let recording = (building.asked && recordable(target)).then(|| {
         scratch
             .join("touch")
-            .join(format!("{}.log", slug(&target.id)))
+            .join(format!("{}.log", slug(target.id())))
     });
     let context = Context {
         leaders: None,
@@ -1271,6 +1377,7 @@ fn target_key(
         steps: None,
         profile: None,
         crash: None,
+        fate: None,
     };
     let request = ExecRequest::new(target)
         .with_args(building.options.harness_args.clone())
@@ -1291,7 +1398,7 @@ fn target_key(
         let environment =
             execute::environment(&context, target, Some(&execute::Scratch::under(&own, home)))
                 .map_err(|source| BaselineCacheError::EnvironmentUnavailable {
-                    target: target.id.clone(),
+                    target: target.id().to_owned(),
                     source,
                 })?;
         let canonical = environment.canonical();
@@ -1383,7 +1490,7 @@ fn ran(
             Err(error) => {
                 let message = format!("could not clear touch log {}: {error}", path.display());
                 workspace.trace.note(crate::touch::UNRECORDED, &message);
-                return Ok(MutantResult::apparatus_error(&target.id, message));
+                return Ok(MutantResult::apparatus_error(target.id(), message));
             }
         }
     }
@@ -1402,6 +1509,7 @@ fn ran(
         steps: None,
         profile: None,
         crash: None,
+        fate: None,
     };
     let request = ExecRequest::new(target)
         .with_args(building.options.harness_args.clone())
@@ -1422,12 +1530,50 @@ pub struct Baseline {
     pub tests: u32,
     /// How many tests the harness was told to skip, which is what tells a target that ran nothing from one that said nothing.
     pub ignored: u32,
+    /// Every test it passed, as its harness named them, which a sealed build has to hold every one of before it answers for the target as a whole.
+    pub ran: Vec<String>,
+    /// Every test its harness said should panic, which a sealed build judges a merged doctest by, its listing saying nothing of it.
+    pub should_panic: Vec<String>,
     /// What it printed, kept only where it did not pass, because that is the only time anybody reads it.
     pub output: String,
     /// The home it ran with, which every execution against it runs with too (ADR 0044).
     pub home: execute::Home,
     /// Each test that declined to measure, in its words, which is the only decline a mutant execution of the target is excused (ADR 0043).
     pub declined: Vec<crate::decline::Decline>,
+    /// Whether the target's harness accounted for the run, which a baseline has to before any of it is believed.
+    pub completion: Completion,
+}
+
+/// Whether a baseline's harness accounted for its run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Completion {
+    /// The harness announced its tests, closed its report, and every count agreed.
+    Accounted,
+    /// The target answers by its exit status alone, so there is no report to account for.
+    Unspoken,
+    /// The harness's report did not account for the run, so it measured only part of the target, or said something else than it did.
+    Unaccounted(crate::libtest::Unaccounted),
+}
+
+impl Completion {
+    /// Whether a baseline may rest on this account of its run.
+    #[must_use]
+    pub const fn admits(self) -> bool {
+        match self {
+            Self::Accounted | Self::Unspoken => true,
+            Self::Unaccounted(_) => false,
+        }
+    }
+
+    /// How `result`'s harness accounted for a run of every test the target holds.
+    #[must_use]
+    pub fn of(result: &MutantResult) -> Self {
+        match result.harness_report(crate::libtest::Asked::Whole) {
+            None => Self::Unspoken,
+            Some(Ok(_)) => Self::Accounted,
+            Some(Err(unaccounted)) => Self::Unaccounted(unaccounted),
+        }
+    }
 }
 
 /// Whether an outcome with nothing active is one a mutation can be put to.
@@ -1439,10 +1585,10 @@ const fn passing(outcome: crate::outcome::Outcome) -> bool {
 }
 
 impl Baseline {
-    /// Whether this target can be judged against.
+    /// Whether this target can be judged against: it passed, and its harness accounted for the run.
     #[must_use]
     pub const fn passed(&self) -> bool {
-        passing(self.outcome)
+        passing(self.outcome) && self.completion.admits()
     }
 }
 
@@ -1552,7 +1698,7 @@ struct Recording<'a> {
 
 /// Whether a target's guards can be asked what they reached.
 pub(super) fn recordable(target: &TestTarget) -> bool {
-    target.kind != TargetKind::Doc && target.through.is_empty()
+    target.kind() != TargetKind::Doc && target.through.is_empty()
 }
 
 /// Reads one target's record into `touched`, or says why there is nothing of it to read.
@@ -1562,7 +1708,10 @@ fn gather(
     trace: &crate::trace::Recorder,
 ) -> Result<(), SessionError> {
     let Some(log) = recording.log else {
-        touched.limited(crate::touch::UNRECORDED, recording.target);
+        touched.limited(
+            crate::limitation::Limitation::TouchNotRecorded,
+            recording.target,
+        );
         return Ok(());
     };
     let unreadable = |touched: &mut crate::touch::Touched, why: &dyn std::fmt::Display| {
@@ -1570,7 +1719,10 @@ fn gather(
             crate::touch::UNREADABLE,
             &format!("{}: {why}", recording.target),
         );
-        touched.limited(crate::touch::UNREADABLE, recording.target);
+        touched.limited(
+            crate::limitation::Limitation::TouchLogUnreadable,
+            recording.target,
+        );
     };
     let text = match crate::limitation::appended(std::fs::read_to_string(log)) {
         Ok(text) => text,
@@ -1628,3 +1780,6 @@ fn slug(target: &str) -> String {
     let digest = crate::id::digest(target.as_bytes());
     format!("{readable}-{digest}")
 }
+
+#[cfg(test)]
+mod tests;

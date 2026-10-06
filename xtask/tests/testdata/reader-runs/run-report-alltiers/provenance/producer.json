@@ -1,0 +1,37 @@
+{
+  "schema": "njutest-reader-producer-v1",
+  "command": [
+    "/Users/yasunobu/projects/github.com/P4suta/njutest-w18/target/debug/rust-mutants",
+    "run",
+    "--offline",
+    "--locked",
+    "--tier",
+    "all",
+    "--trace",
+    "--root",
+    "/Users/yasunobu/njutest-oc/evidence/batch/phase3/package-C/reader-recording-products/run-report-alltiers/trees/fixture-simple"
+  ],
+  "cwd": "/Users/yasunobu/njutest-oc/evidence/batch/phase3/package-C/reader-recording-products/run-report-alltiers/trees/fixture-simple",
+  "environment": {
+    "CARGO_BUILD_JOBS": "6",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "CARGO_INCREMENTAL": "0",
+    "RUSTC_WRAPPER": "",
+    "RUSTUP_TOOLCHAIN": "1.98.0",
+    "NO_COLOR": "1",
+    "XDG_CACHE_HOME": "/Users/yasunobu/njutest-oc/evidence/batch/phase3/package-C/reader-recording-products/run-report-alltiers/cache",
+    "TMPDIR": "/Users/yasunobu/njutest-oc/evidence/batch/phase3/package-C/reader-recording-products/run-report-alltiers/temp",
+    "TMP": "/Users/yasunobu/njutest-oc/evidence/batch/phase3/package-C/reader-recording-products/run-report-alltiers/temp",
+    "TEMP": "/Users/yasunobu/njutest-oc/evidence/batch/phase3/package-C/reader-recording-products/run-report-alltiers/temp",
+    "NJUTEST_FIXTURE_BUILD_CACHE": "/Users/yasunobu/projects/github.com/P4suta/njutest-w18/target/fixture-build-cache"
+  },
+  "producer_revision": "e93ae5e0828e339e08c2f0ed2f7a7e2600ae8b75",
+  "producer_patch_sha256": "0f3b815a2d53979b2c81136d4a3a4ff9389c3480375d12d7d119408022e66e8b",
+  "binary_sha256": "7930c6f008289153f910d36a84fb3343c75e976a994d59e9c9a5d39fb57ba0e0",
+  "exit_code": 1,
+  "started": "2026-10-02T16:09:02.042842+00:00",
+  "duration_seconds": 4.226235541980714,
+  "stdout_sha256": "ed59eb432856b1cd05d0f68d1a2cdf46a179c45173487bd25386ecac74d39411",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

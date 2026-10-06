@@ -10,7 +10,6 @@
 
 use std::ffi::OsString;
 use std::path::Path;
-use std::process::Command;
 
 use njutest::git;
 use njutest::report::UNAVAILABLE;
@@ -54,10 +53,9 @@ fn excluded() -> njutest::evidence::tree::Excluded {
 fn repository() -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("a temporary directory");
     let run = |args: &[&str]| -> String {
-        let output = Command::new("git")
+        let mut command = njutest_devkit::repo::git(dir.path());
+        let output = njutest_devkit::paths::clear_environment(&mut command)
             .args(args)
-            .current_dir(dir.path())
-            .env_clear()
             .envs(env().for_process())
             .env("GIT_AUTHOR_NAME", "fixture")
             .env("GIT_AUTHOR_EMAIL", "fixture@example.invalid")

@@ -10,6 +10,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 Accepted, 2026-09-24.
 Implemented by `concurrency::scan`, `concurrency::proof` and `concurrency::explore`, by the runtime's delayed guard, by the `concurrency` record of every report part, the `schedule-dependent` finding, and the `schedule-not-explored` and `schedule-sampled` limitations.
 The first slice of dimension C, `concurrent-v1`: the proof layer, before any schedule is explored.
+Amended by [ADR 0046](0046-a-verdict-is-what-a-sealed-run-observed.md): a sealed test binary runs one thread by construction.
 
 ## Context
 
@@ -39,7 +40,7 @@ Reach alone cannot prove a binary single-threaded.
    A file the compiler read that is not `.rs` is code where a source of its package holds the tokens `include` `!`, however spaced or delimited, and data otherwise.
    A raw identifier is read as the name it spells, so `r#spawn` is `spawn`.
    A file is held to being Rust's tokens and parsed no further: no rule reads more than tokens, and a parser recurses through a chain of unary operators or nested generics that no limit on the source could bound.
-   A file whose brackets nest deeper than 128 outside its comments and literals is `unread` before it is lexed, because its token tree is built and dropped recursively and would end the run on a small enough stack.
+   A file whose groups nest deeper than a reading of the engine holds (`rust_mutants::parsing::NESTING`, RM0020) is `unread`, because the scan walks its token tree once per group and the reading refuses it before that walk could end the run.
    A false "can start one" leaves a hole the report states; a false "cannot" would be a proof of nothing, so every uncertain token is read the first way.
 
 3. **What is known to start a thread is said first.** A binary with a known spawn is `concurrent` even where something else of it could not be read, so the reason a reader acts on is not hidden behind the one they cannot.

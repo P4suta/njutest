@@ -96,6 +96,7 @@ pub fn check(
     let workspace = Workspace::open(
         checking.root,
         OpenOptions {
+            module_owner: checking.environment.module_owner.clone(),
             allow_outside: Vec::new(),
             cargo: None,
             search_path: checking
@@ -105,7 +106,7 @@ pub fn check(
             env: checking.environment.vars.clone(),
             temp_directory: checking.environment.temp_directory.clone(),
             report_directory: Some(checking.reports.as_str().to_owned()),
-            exclude: Vec::new(),
+            exclude: super::run::runner_outputs(None, checking.root),
             keep_temp: false,
             offline: checking.cargo.offline,
             locked: checking.cargo.locked,
@@ -127,7 +128,7 @@ pub fn check(
             build_timeout: checking.build_timeout,
             mutant_timeout: Timeout::Fixed(checking.timeout),
             mutant_steps: (checking.steps > 0).then_some(checking.steps),
-            ..crate::assure::engine::switches()
+            ..crate::assure::engine::switches(rust_mutants::sealed::Sealing::Off)
         },
         watch.cancel,
     )?;
@@ -191,7 +192,7 @@ fn put(
 
 /// Writes one candidate into a snapshot, which is a copy nobody is working in.
 fn write(root: &Path, proposal: &Proposal) -> Result<(), WriteError> {
-    let path = root.join(&proposal.path);
+    let path = root.join(proposal.path.as_str());
     rust_mutants::replace::file(&path, &proposal.content).map_err(|failure| WriteError {
         path: failure.path,
         source: failure.source,

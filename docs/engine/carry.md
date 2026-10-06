@@ -21,8 +21,9 @@ A body is not sealed when any of these holds, and `unsealed` names the first tha
 2. `unlocated`: the catalog's body span names no bytes of the file.
 3. `evaluated`: the item is a `const fn`, a `const` or a `static`, which the compiler can evaluate where nothing enters it.
 4. `compile-time`: a unit that read the item's file is a procedural macro or a build script, whose code runs in the compiler, where no test enters it, and decides what other code is.
-5. `unlocated`: the catalog's body span is not a function body of the file as the parser reads it.
-6. `attribute`: an attribute off the list is on the file, on an inline `mod`, `impl` or `trait` around the item, or on the item.
+5. `unit-file-unread`: the item's file could not be read at all — refused as nested or chained deeper than a reading holds (RM0020) or too large to read (RM0018), or left without a thread to read it on — so no rule after this one can be read of the body;
+   and otherwise `unlocated`: the catalog's body span is not a function body of the file as the parser reads it.
+6. `attribute`: an attribute off the list is on the file, on an inline `mod`, `impl`, `trait` or function around the item, or on the item.
    An attribute is on the list when its path is one segment named in `sealable-attributes`, or its first segment is named in `tool-namespaces`.
    A `cfg_attr` is on the list when every attribute it would apply is.
    `test`, `should_panic` and `ignore` are on it because the harness entry they generate is built from the function's name and attributes, which are outside the body.
@@ -36,12 +37,15 @@ A body is not sealed when any of these holds, and `unsealed` names the first tha
    - `declares-item`: any item: `fn`, `struct`, `enum`, `union`, `impl`, `trait`, `type`, `use`, `mod`, `macro_rules!` or another item macro, `const`, `static`, `extern crate`, an `extern` block, or an item the parser keeps as tokens;
    - `const-block`: an inline `const { … }` block.
 9. The first of these in the files the unit read, in byte order of their names:
+   - `unit-file-unread`: the file could not be read at all, for any reason rule 5 names, so what it declares is not known, and it could declare anything the next two name;
    - `shadowed`: the file declares `macro_rules!` with a name in `sealable-macros`, or a `use` makes a name in `sealable-macros` visible, directly or with `as`, from a path whose first segment is not in `standard-roots`;
    - `foreign-glob`: the file imports `*` from a path whose first segment is in neither `standard-roots` nor `local-roots`, or takes a crate that is not in `standard-roots` with `#[macro_use] extern crate`.
      A glob reaches every module below the one that holds it, so this unseals every body of the unit.
 
 Rule 9 reads every file of the unit that parses as a whole Rust file, whatever its extension.
 A file that does not, such as a data file or an included expression, can declare no macro another file sees.
+A file that could not be read at all is not such a file: nothing says it is not Rust, so it is `unit-file-unread`, never a file that declares nothing.
+Where of every reading only the one that finds the positions of a file below fails, which only a thread the operating system refused can do, every body of that file is `unit-file-unread` too, since a placeholder would hide an edit that moves a position after it.
 A body is sealed only if it is sealed in every unit that read its file; rule 9 names the first such unit in the order the build reported them.
 
 ### Lists
@@ -118,8 +122,14 @@ rustfmt
 
 ## Body digests
 
-An item's `body_digest` is the lowercase hex SHA-256 of the bytes `touched-v1.json`'s `items[].body` names, braces included, as the pristine file holds them.
+An item's `body_digest` is the lowercase hex SHA-256 of the bytes `touched-v1.json`'s `items[].body` names, braces included, as the pristine file holds them, or `null` where no unit read the file or its body could not be located in what a unit read: a digest of empty bytes would make two unread bodies one, and a record a run carried names no such body.
 Every item is named by `item`, the reference an entered union names it by: its package, its file, and its `ordinal`.
+`files` keeps, for every file an item is in that a unit read, the lowercase hex SHA-256 of all its bytes, whether or not the run mutated anything in it.
+It is what proves a file an audit reads again from the tree is the file the run measured, so a body digest or a `start` of a file only a test compiles, which no mutation's source digest names, is held as surely as one of a mutated file.
+
+The carry audit parses each source path once and reuses its tree for every body and unit that refers to it.
+This keeps repeated checks from filling the thread's 32-bit location map with copies of the same source ([ADR 0045](../adr/0045-rust-is-read-on-a-thread-that-ends-with-it.md)).
+An unread source remains distinct from readable text that is not Rust.
 
 An item's `start` is where its body's first byte stands, as the compiler reports a position with `line!()` and `column!()`: a line counted from 1 that only a line feed ends, and a column counted from 1 in characters.
 A leading byte-order mark is no column, a carriage return before a line feed ends no line and stands on the line it ends, and a carriage return alone is a column like any character.
@@ -136,7 +146,7 @@ Its skeleton is the SHA-256 of one line `<name>\0<digest>\n` per entry, in byte 
   The digest is the SHA-256 of the file's bytes with every sealed body of it replaced by `{sealed:<name>#<ordinal>}`.
   `<name>` is the entry's name, and `<ordinal>` is the `ordinal` of the item's reference, its position among the file's cataloged items from 0.
   The placeholder names neither the body's bytes nor its lines: a line added inside a sealed body moves every position after it, and those are kept where the compiler reads one, below, and held where a run could read one, by the rule's `item-moved`.
-- every workspace file that parses as a whole Rust file, again as `$positions/$root/<path>`, for where the compiler reads a position in it.
+- every workspace file that parses as a whole Rust file, again as `$positions/$root/<path>`, for where the compiler reads a position in it; a file that could not be read has no such entry, and no sealed body either, so its first entry holds every byte of it.
   The digest is the SHA-256 of one line per place, in byte order, joined by line feeds:
   `body <ordinal> <line>:<column>` for every cataloged body of the file that is not sealed, at its `start`, or `body <ordinal> unplaced` where it has none;
   and, outside every cataloged body, `<kind> <line>:<column>` for each place the compiler reads, at the token named for its kind:
@@ -172,6 +182,20 @@ After the exact key misses, a run reads the record under the mutation's locus an
 The trace's `cache` record says `rule: carried` for this lookup, and `refused` names the first premise that failed: `skeleton-changed`, `item-changed`, `unsealed`, `item-moved`, `entry-incomplete`, `route-grew`, `filter-differs`, `reach-moved` or `uncontrolled`.
 A believed record is reported like an exact one, with the run that established it as `source_run_id`.
 
+An answer is carried only by a run that keeps what it rests on where an audit reads it again.
+njutest keeps the carried records it believed, the skeletons, the guards' record and the catalog beside each build's recording, and `cargo xtask proofaudit` derives each record's locus again from the catalog's edit for its mutant, which must be the edit the report's row says.
+Given `--root`, the audit also reads every body a carried answer rests on again from the tree, in a file the skeletons' `files` digest proves the one measured, a file only a test compiles among them, and holds the build's digest and `start` of it to those bytes.
+Native documentation targets are routed conservatively by their package rather than by guards that cannot measure them, so an unfiltered documentation target in a plan does not claim measured reach.
+A filter claiming to narrow such a target by guards is a violation.
+The audit of a carried answer with those documents and a root re-decides its source premises; the unavailable behaviour key of an exact cache answer is stated only for exact reuse.
+Only a traced run writes that recording, so a run that is not traced files its answers for a later run and carries none: `mutation::Keeping::Nowhere` refuses the lookup before any record is read.
+
+A carried record lists native executions, and keeps no sealed execution, so a carried answer is a lead and never a verdict ([ADR 0046](../adr/0046-a-verdict-is-what-a-sealed-run-observed.md)).
+A run that seals puts the mutation to its sealed executions first, as it does a mutation nothing was kept about, and a verdict they establish is what the run reports, the carried answer set aside; only where they establish none is the carried answer read back, as the lead it is, resting on every reason they established none.
+So no sealed verdict is ever carried across an edit, and none is read back from here without running: a sealed verdict kept under the exact key is run again before it is believed, as [reproducing a sealed verdict](sealed.md#reproducing-a-sealed-verdict) says.
+
 `item-moved` is why the placeholder may forget a body's lines.
 Every body of a file the run instruments records its entry, the tests' own among them, and only such a file has placeholders; a `const fn`, a `const` and a `static`, which run where nothing records entering, are not sealed, so their `start` is in the file's `$positions` entry.
+The run instruments every file of a member a test program compiles, whether or not it holds a mutation: a file the configuration or the change set leaves out, a file only a test compiles, an integration test's, a benchmark's, an example's, and every file of a member the selection leaves out, in the native build and the sealed one alike.
+A file that cannot carry the runtime keeps every line in its entry: one a crate compiles that has no `std` to lend it or forbids what the runtime allows, one a procedural macro or a build script compiles, one pasted in where an expression goes, and one that does not read as a whole Rust file.
 So a position that moved can reach what an execution did only through a body it entered, which the rule holds where it stood, or through what the compiler read, which the skeleton holds; a `#[track_caller]` location or a backtrace frame is read by code that is running, and that code is an entered body or code outside the tree, which no edit moves.

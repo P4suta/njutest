@@ -19,11 +19,11 @@ authors = ["njutest contributors"]
 readme = "README.md"
 
 [workspace.lints.rust]
-# `deny`, not `forbid`: the process supervisor and the temporary-directory
-# owner need Windows FFI (Job Objects, LockFileEx) in exactly two modules,
-# whose individual FFI boundaries carry `#[expect(unsafe_code, reason = ...)]`.
-# Every crate that needs
-# none carries `#![forbid(unsafe_code)]` at its root.
+# `deny`, not `forbid`: the process supervisor, the temporary-directory owner and the capability directory call the platform (process groups, Job Objects,
+# LockFileEx, NtCreateFile) in the modules `xtask/src/lints/ffi.rs` names,
+# whose individual FFI boundaries carry `#[expect(unsafe_code, reason = ...)]`;
+# `cargo xtask lints` refuses `unsafe` anywhere else.
+# Every crate that needs none carries `#![forbid(unsafe_code)]` at its root.
 unsafe_code = "deny"
 non_ascii_idents = "deny"
 unexpected_cfgs = { level = "deny", check-cfg = ['cfg(kani)'] }
@@ -94,6 +94,7 @@ string_add = "deny"
 assertions_on_result_states = "deny"
 exit = "deny"
 disallowed_methods = "deny"
+disallowed_macros = "deny"
 disallowed_types = "deny"
 
 # Allowed: the fix would rename well-named types, or is outside our control
@@ -114,8 +115,13 @@ manual_let_else = "allow"
 # Internal crates. Version and path together so a member can be published.
 njutest = { version = "0.1.0", path = "crates/njutest" }
 rust-mutants = { version = "0.1.0", path = "crates/rust-mutants" }
+rust-mutants-sealed = { version = "0.1.0", path = "crates/rust-mutants-sealed" }
+rust-mutants-decision = { version = "0.1.0", path = "crates/rust-mutants-decision" }
+rust-mutants-adapt = { version = "0.1.0", path = "crates/rust-mutants-adapt" }
 njutest-macros = { version = "0.1.0", path = "crates/njutest-macros" }
-njutest-devkit = { version = "0.1.0", path = "crates/njutest-devkit" }
+njutest-devkit = { path = "crates/njutest-devkit" }
+njutest-fixture-tree = { version = "0.1.0", path = "crates/njutest-fixture-tree" }
+njutest-process = { version = "0.1.0", path = "crates/njutest-process" }
 
 serde = { version = "1.0", features = ["alloc", "derive"] }
 serde_json = { version = "1.0", features = ["float_roundtrip", "unbounded_depth"] }
@@ -138,11 +144,16 @@ toml = "1.1"
 toml_edit = "0.25"
 schemars = "1.2"
 clap = { version = "4.6", features = ["derive", "wrap_help"] }
-rustix = { version = "1.1", features = ["fs", "process", "termios"] }
+rustix = { version = "1.1", features = ["event", "fs", "process", "termios"] }
 windows-sys = { version = "0.61", features = [
+  "Wdk_Foundation",
+  "Wdk_Storage_FileSystem",
   "Win32_Foundation",
   "Win32_Security",
+  "Win32_Security_Authorization",
   "Win32_Storage_FileSystem",
+  "Win32_System_Com",
+  "Win32_System_Console",
   "Win32_System_IO",
   "Win32_System_JobObjects",
   "Win32_System_LibraryLoader",
@@ -150,6 +161,7 @@ windows-sys = { version = "0.61", features = [
   "Win32_System_SystemInformation",
   "Win32_System_SystemServices",
   "Win32_System_Threading",
+  "Win32_UI_Shell",
 ] }
 jiff = "0.2"
 ratatui = "0.30"
@@ -157,11 +169,24 @@ ratatui = "0.30"
 # `char`s it is. Already in the graph under ratatui, so this costs nothing but
 # the honesty of naming what the renderer depends on.
 unicode-width = "0.2"
-signal-hook = { version = "0.4", default-features = false }
+shared_child = "1.1"
+signal-hook = { version = "0.4", default-features = false, features = ["iterator"] }
+notify = { version = "8.2", features = ["macos_fsevent"] }
 globset = "0.4"
 walkdir = "2.5"
 cargo_metadata = "0.23"
 similar = { version = "3.2", default-features = false, features = ["text"] }
+# The sealed host: exact pins, because the compiled code, the fuel each operator costs, and the traps it raises are part of every transcript digest.
+wasmtime = { version = "=48.0.4", default-features = false, features = [
+  "cache",
+  "cranelift",
+  "runtime",
+  "std",
+] }
+wasmparser = "=0.254.2"
+# The release archive, written by the tooling itself so every platform writes the same bytes.
+flate2 = "1.1"
+tar = { version = "0.4", default-features = false }
 
 # Test-only.
 tempfile = "3.27"
@@ -169,6 +194,7 @@ proptest = "1.11"
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 jsonschema = { version = "0.56", default-features = false }
 trybuild = "1.0"
+wat = "=1.259.0"
 
 [profile.release]
 lto = "thin"
@@ -186,6 +212,21 @@ debug = "line-tables-only"
 
 [profile.dev.package."*"]
 opt-level = 1
+
+[profile.dev.package.wasmtime]
+opt-level = 3
+
+[profile.dev.package.wasmtime-internal-cranelift]
+opt-level = 3
+
+[profile.dev.package.cranelift-codegen]
+opt-level = 3
+
+[profile.dev.package.cranelift-frontend]
+opt-level = 3
+
+[profile.dev.package.regalloc2]
+opt-level = 3
 
 # cargo-mutants (the external tool that mutates *this* repository) builds with
 # this profile: see .cargo/mutants.toml.

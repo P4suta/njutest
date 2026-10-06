@@ -1,0 +1,21 @@
+# SPDX-FileCopyrightText: 2026 njutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+[package]
+name = "njutest-fixture-tree"
+description = "Dependency-free filesystem policy shared by the engine, gates and tests"
+keywords = ["filesystem", "testing", "assurance"]
+categories = ["development-tools::testing"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme.workspace = true
+
+[package.metadata.njutest]
+surface = "public"
+
+[lints]
+workspace = true

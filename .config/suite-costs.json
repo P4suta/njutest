@@ -1,0 +1,529 @@
+{
+  "platforms": {
+    "Darwin": {
+      "njutest::toolchain_baseline": {
+        "builds": 33,
+        "module_requests": 5,
+        "records": 5,
+        "tests": 9
+      },
+      "njutest::toolchain_build": {
+        "builds": 6,
+        "module_requests": 0,
+        "records": 6,
+        "tests": 6
+      },
+      "njutest::toolchain_cli_contract": {
+        "builds": 0,
+        "module_requests": 0,
+        "records": 0,
+        "tests": 18
+      },
+      "njutest::toolchain_commands": {
+        "builds": 155,
+        "module_requests": 44,
+        "records": 36,
+        "tests": 19
+      },
+      "njutest::toolchain_concurrency": {
+        "builds": 52,
+        "module_requests": 12,
+        "records": 12,
+        "tests": 4
+      },
+      "njutest::toolchain_crashes": {
+        "builds": 108,
+        "module_requests": 42,
+        "records": 23,
+        "tests": 8
+      },
+      "njutest::toolchain_edits": {
+        "builds": 30,
+        "module_requests": 0,
+        "records": 30,
+        "tests": 1
+      },
+      "njutest::toolchain_faults": {
+        "builds": 133,
+        "module_requests": 0,
+        "records": 35,
+        "tests": 12
+      },
+      "njutest::toolchain_generation": {
+        "builds": 214,
+        "module_requests": 18,
+        "records": 45,
+        "tests": 6
+      },
+      "njutest::toolchain_interrupt": {
+        "builds": 12,
+        "module_requests": 0,
+        "records": 6,
+        "tests": 3
+      },
+      "njutest::toolchain_knobs": {
+        "builds": 8,
+        "module_requests": 0,
+        "records": 1,
+        "tests": 1
+      },
+      "njutest::toolchain_lsp": {
+        "builds": 0,
+        "module_requests": 0,
+        "records": 0,
+        "tests": 1
+      },
+      "njutest::toolchain_matrix": {
+        "builds": 52,
+        "module_requests": 15,
+        "records": 14,
+        "tests": 4
+      },
+      "njutest::toolchain_mutation": {
+        "builds": 414,
+        "module_requests": 114,
+        "records": 95,
+        "tests": 33
+      },
+      "njutest::toolchain_repeatable": {
+        "builds": 29,
+        "module_requests": 24,
+        "records": 4,
+        "tests": 1
+      },
+      "njutest::toolchain_replay": {
+        "builds": 49,
+        "module_requests": 9,
+        "records": 14,
+        "tests": 3
+      },
+      "njutest::toolchain_resource_run": {
+        "builds": 14,
+        "module_requests": 4,
+        "records": 4,
+        "tests": 2
+      },
+      "njutest::toolchain_run_documents": {
+        "builds": 172,
+        "module_requests": 36,
+        "records": 52,
+        "tests": 8
+      },
+      "njutest::toolchain_select": {
+        "builds": 45,
+        "module_requests": 0,
+        "records": 11,
+        "tests": 10
+      },
+      "njutest::toolchain_sharded_runs": {
+        "builds": 46,
+        "module_requests": 9,
+        "records": 10,
+        "tests": 2
+      },
+      "njutest::toolchain_targets": {
+        "builds": 0,
+        "module_requests": 0,
+        "records": 0,
+        "tests": 10
+      },
+      "njutest::toolchain_verify": {
+        "builds": 1042,
+        "module_requests": 259,
+        "records": 230,
+        "tests": 64
+      },
+      "njutest::toolchain_watch": {
+        "builds": 262,
+        "module_requests": 59,
+        "records": 52,
+        "tests": 15
+      },
+      "njutest::toolchain_wire_fixture": {
+        "builds": 42,
+        "module_requests": 16,
+        "records": 8,
+        "tests": 2
+      },
+      "rust-mutants-cli::toolchain_annotated": {
+        "builds": 16,
+        "module_requests": 8,
+        "records": 3,
+        "tests": 2
+      },
+      "rust-mutants-cli::toolchain_build_script": {
+        "builds": 11,
+        "module_requests": 4,
+        "records": 3,
+        "tests": 3
+      },
+      "rust-mutants-cli::toolchain_cache": {
+        "builds": 185,
+        "module_requests": 89,
+        "records": 32,
+        "tests": 15
+      },
+      "rust-mutants-cli::toolchain_changed": {
+        "builds": 16,
+        "module_requests": 4,
+        "records": 5,
+        "tests": 7
+      },
+      "rust-mutants-cli::toolchain_cli_contract": {
+        "builds": 121,
+        "module_requests": 18,
+        "records": 29,
+        "tests": 21
+      },
+      "rust-mutants-cli::toolchain_compiler_tiers": {
+        "builds": 501,
+        "module_requests": 447,
+        "records": 86,
+        "tests": 87
+      },
+      "rust-mutants-cli::toolchain_crlf": {
+        "builds": 30,
+        "module_requests": 15,
+        "records": 5,
+        "tests": 3
+      },
+      "rust-mutants-cli::toolchain_custom_harness": {
+        "builds": 16,
+        "module_requests": 4,
+        "records": 3,
+        "tests": 3
+      },
+      "rust-mutants-cli::toolchain_diagnostics": {
+        "builds": 73,
+        "module_requests": 33,
+        "records": 11,
+        "tests": 11
+      },
+      "rust-mutants-cli::toolchain_differential": {
+        "builds": 160,
+        "module_requests": 6,
+        "records": 37,
+        "tests": 4
+      },
+      "rust-mutants-cli::toolchain_docs": {
+        "builds": 6,
+        "module_requests": 3,
+        "records": 1,
+        "tests": 1
+      },
+      "rust-mutants-cli::toolchain_doctest": {
+        "builds": 54,
+        "module_requests": 20,
+        "records": 7,
+        "tests": 7
+      },
+      "rust-mutants-cli::toolchain_engine_runs": {
+        "builds": 37,
+        "module_requests": 19,
+        "records": 6,
+        "tests": 3
+      },
+      "rust-mutants-cli::toolchain_errors": {
+        "builds": 26,
+        "module_requests": 7,
+        "records": 7,
+        "tests": 6
+      },
+      "rust-mutants-cli::toolchain_explain": {
+        "builds": 103,
+        "module_requests": 42,
+        "records": 24,
+        "tests": 15
+      },
+      "rust-mutants-cli::toolchain_fates": {
+        "builds": 583,
+        "module_requests": 274,
+        "records": 86,
+        "tests": 89
+      },
+      "rust-mutants-cli::toolchain_hang": {
+        "builds": 24,
+        "module_requests": 0,
+        "records": 6,
+        "tests": 6
+      },
+      "rust-mutants-cli::toolchain_interrupt": {
+        "builds": 5,
+        "module_requests": 0,
+        "records": 2,
+        "tests": 2
+      },
+      "rust-mutants-cli::toolchain_outside": {
+        "builds": 4,
+        "module_requests": 0,
+        "records": 1,
+        "tests": 1
+      },
+      "rust-mutants-cli::toolchain_outside_dep": {
+        "builds": 10,
+        "module_requests": 4,
+        "records": 3,
+        "tests": 3
+      },
+      "rust-mutants-cli::toolchain_panics": {
+        "builds": 12,
+        "module_requests": 0,
+        "records": 3,
+        "tests": 3
+      },
+      "rust-mutants-cli::toolchain_projections": {
+        "builds": 36,
+        "module_requests": 13,
+        "records": 6,
+        "tests": 13
+      },
+      "rust-mutants-cli::toolchain_reports": {
+        "builds": 64,
+        "module_requests": 30,
+        "records": 10,
+        "tests": 9
+      },
+      "rust-mutants-cli::toolchain_run_filter": {
+        "builds": 131,
+        "module_requests": 41,
+        "records": 28,
+        "tests": 12
+      },
+      "rust-mutants-cli::toolchain_run_progress": {
+        "builds": 29,
+        "module_requests": 15,
+        "records": 5,
+        "tests": 3
+      },
+      "rust-mutants-cli::toolchain_run_report": {
+        "builds": 476,
+        "module_requests": 157,
+        "records": 90,
+        "tests": 50
+      },
+      "rust-mutants-cli::toolchain_run_stream": {
+        "builds": 33,
+        "module_requests": 15,
+        "records": 6,
+        "tests": 8
+      },
+      "rust-mutants-cli::toolchain_sealed_memory": {
+        "builds": 77,
+        "module_requests": 39,
+        "records": 13,
+        "tests": 6
+      },
+      "rust-mutants-cli::toolchain_strict_lints": {
+        "builds": 6,
+        "module_requests": 2,
+        "records": 1,
+        "tests": 1
+      },
+      "rust-mutants-cli::toolchain_targets": {
+        "builds": 21,
+        "module_requests": 9,
+        "records": 3,
+        "tests": 3
+      },
+      "rust-mutants-cli::toolchain_trace": {
+        "builds": 98,
+        "module_requests": 43,
+        "records": 22,
+        "tests": 13
+      },
+      "rust-mutants-cli::toolchain_verify": {
+        "builds": 12,
+        "module_requests": 3,
+        "records": 4,
+        "tests": 4
+      },
+      "rust-mutants-cli::toolchain_work": {
+        "builds": 79,
+        "module_requests": 34,
+        "records": 12,
+        "tests": 6
+      },
+      "rust-mutants-sealed::toolchain_guests": {
+        "builds": 2,
+        "module_requests": 50,
+        "records": 50,
+        "tests": 26
+      },
+      "rust-mutants::toolchain_2021": {
+        "builds": 7,
+        "module_requests": 1,
+        "records": 1,
+        "tests": 1
+      },
+      "rust-mutants::toolchain_apparatus": {
+        "builds": 14,
+        "module_requests": 4,
+        "records": 2,
+        "tests": 3
+      },
+      "rust-mutants::toolchain_cargo": {
+        "builds": 1,
+        "module_requests": 0,
+        "records": 1,
+        "tests": 11
+      },
+      "rust-mutants::toolchain_compiled_catalog": {
+        "builds": 5,
+        "module_requests": 1,
+        "records": 3,
+        "tests": 2
+      },
+      "rust-mutants::toolchain_coverage": {
+        "builds": 7,
+        "module_requests": 1,
+        "records": 2,
+        "tests": 2
+      },
+      "rust-mutants::toolchain_discover": {
+        "builds": 33,
+        "module_requests": 0,
+        "records": 33,
+        "tests": 22
+      },
+      "rust-mutants::toolchain_drift": {
+        "builds": 13,
+        "module_requests": 2,
+        "records": 2,
+        "tests": 2
+      },
+      "rust-mutants::toolchain_durable": {
+        "builds": 18,
+        "module_requests": 3,
+        "records": 3,
+        "tests": 3
+      },
+      "rust-mutants::toolchain_entered": {
+        "builds": 20,
+        "module_requests": 3,
+        "records": 3,
+        "tests": 3
+      },
+      "rust-mutants::toolchain_equivalence": {
+        "builds": 14,
+        "module_requests": 0,
+        "records": 5,
+        "tests": 5
+      },
+      "rust-mutants::toolchain_faults": {
+        "builds": 27,
+        "module_requests": 4,
+        "records": 4,
+        "tests": 4
+      },
+      "rust-mutants::toolchain_features": {
+        "builds": 12,
+        "module_requests": 2,
+        "records": 2,
+        "tests": 1
+      },
+      "rust-mutants::toolchain_instrumented_tree": {
+        "builds": 10,
+        "module_requests": 1,
+        "records": 5,
+        "tests": 4
+      },
+      "rust-mutants::toolchain_metadata_double": {
+        "builds": 0,
+        "module_requests": 0,
+        "records": 0,
+        "tests": 3
+      },
+      "rust-mutants::toolchain_modern": {
+        "builds": 8,
+        "module_requests": 1,
+        "records": 1,
+        "tests": 1
+      },
+      "rust-mutants::toolchain_perturbed": {
+        "builds": 34,
+        "module_requests": 5,
+        "records": 5,
+        "tests": 5
+      },
+      "rust-mutants::toolchain_pool": {
+        "builds": 45,
+        "module_requests": 11,
+        "records": 6,
+        "tests": 5
+      },
+      "rust-mutants::toolchain_proofs": {
+        "builds": 88,
+        "module_requests": 10,
+        "records": 26,
+        "tests": 26
+      },
+      "rust-mutants::toolchain_reach": {
+        "builds": 38,
+        "module_requests": 6,
+        "records": 7,
+        "tests": 6
+      },
+      "rust-mutants::toolchain_run": {
+        "builds": 174,
+        "module_requests": 68,
+        "records": 8,
+        "tests": 7
+      },
+      "rust-mutants::toolchain_sealed_build": {
+        "builds": 133,
+        "module_requests": 56,
+        "records": 30,
+        "tests": 21
+      },
+      "rust-mutants::toolchain_sentinel": {
+        "builds": 17,
+        "module_requests": 0,
+        "records": 5,
+        "tests": 4
+      },
+      "rust-mutants::toolchain_session": {
+        "builds": 197,
+        "module_requests": 29,
+        "records": 33,
+        "tests": 29
+      },
+      "rust-mutants::toolchain_shared_path": {
+        "builds": 9,
+        "module_requests": 1,
+        "records": 1,
+        "tests": 1
+      },
+      "rust-mutants::toolchain_touch": {
+        "builds": 88,
+        "module_requests": 17,
+        "records": 17,
+        "tests": 17
+      },
+      "rust-mutants::toolchain_validate": {
+        "builds": 81,
+        "module_requests": 8,
+        "records": 26,
+        "tests": 5
+      },
+      "rust-mutants::toolchain_verify": {
+        "builds": 58,
+        "module_requests": 11,
+        "records": 13,
+        "tests": 9
+      },
+      "xtask::toolchain_bundle": {
+        "builds": 6,
+        "module_requests": 0,
+        "records": 6,
+        "tests": 5
+      },
+      "xtask::toolchain_gates": {
+        "builds": 10,
+        "module_requests": 0,
+        "records": 10,
+        "tests": 3
+      }
+    }
+  },
+  "schema": "njutest-suite-cost-budget-v1"
+}

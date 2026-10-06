@@ -51,6 +51,7 @@ impl Settings {
             locked,
             keep_temp: _read_when_the_workspace_is_opened,
             no_verify,
+            no_seal,
             coverage,
             no_coverage,
             no_touch,
@@ -76,6 +77,7 @@ impl Settings {
         config.execution.offline |= offline;
         config.execution.locked |= locked;
         config.mutation.verify &= !no_verify;
+        config.mutation.seal &= !no_seal;
         config.mutation.coverage |= coverage;
         config.mutation.coverage &= !no_coverage;
         config.mutation.touch &= !no_touch;
@@ -97,6 +99,7 @@ impl Settings {
         let report_directory = rust_mutants::id::slashed(&self.config.reports.directory)
             .map_err(rust_mutants::workspace::SessionError::from)?;
         Ok(OpenOptions {
+            module_owner: environment.module_owner.clone(),
             cargo: environment.cargo.clone(),
             search_path: environment.vars.search_path().map(ToOwned::to_owned),
             env: environment.vars.clone(),
@@ -150,9 +153,15 @@ impl Settings {
                 .map(crate::config::Skip::rule)
                 .collect::<Result<Vec<_>, _>>()?,
             measurements: None,
+            transcripts: None,
             failing: rust_mutants::session::Failing::Refuse,
             max_rounds: rust_mutants::validate::DEFAULT_MAX_ROUNDS,
             validation_filter: None,
+            sealing: if self.config.mutation.seal {
+                rust_mutants::sealed::Sealing::On
+            } else {
+                rust_mutants::sealed::Sealing::Off
+            },
         })
     }
 

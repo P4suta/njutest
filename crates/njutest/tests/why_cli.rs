@@ -2,10 +2,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! `njutest why seam` follows one typed seam claim through the command boundary.
-//!
-//! Every test here needs a published report, and `Store::keep` answers `NJ6004` on Windows because publication is rooted at a POSIX directory capability. `docs/limitations.md` says so; these say it by not existing there.
 
-#![cfg(unix)]
 #![expect(
     clippy::expect_used,
     reason = "a synthetic run that cannot be written is a test setup failure"
@@ -29,6 +26,7 @@ const FAULT: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 
 fn environment(root: &Path) -> Environment {
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         cache_directory: njutest_devkit::paths::cache_beside(root).expect("a cache directory"),
         working_directory: root.to_path_buf(),
         temp_directory: njutest_devkit::paths::temp_beside(root).expect("a temporary directory"),

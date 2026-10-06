@@ -38,6 +38,7 @@ fn against(fixture: &Fixture, args: &[&str]) -> std::process::Output {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: njutest_devkit::paths::environment_for_a_run()
             .into_iter()
             .collect(),
@@ -63,10 +64,11 @@ fn report(fixture: &Fixture) -> serde_json::Value {
 #[test]
 fn a_harness_free_target_answers_by_exit_code_alone() {
     let fixture = Fixture::copy("fixture-custom-harness");
-    let output = against(&fixture, &[]);
-    assert!(
-        output.status.code().is_some_and(|code| code < 2),
-        "{}",
+    let output = against(&fixture, &["--no-seal"]);
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_UNESTABLISHED)),
+        "a harness-free target answers natively by its exit code, which is a lead: {}",
         njutest_devkit::process::strict_utf8(&output.stderr)
     );
     let document = report(&fixture);
@@ -76,7 +78,7 @@ fn a_harness_free_target_answers_by_exit_code_alone() {
         "a target with no libtest prints no summary, and reading its silence as 'nothing ran' \
          left every mutation of this library undecided: {document}"
     );
-    assert_eq!(document["accounting"]["killed"].as_u64(), Some(4));
+    assert_eq!(document["accounting"]["unproven_killed"].as_u64(), Some(4));
     for row in document["mutants"].as_array().expect("the rows") {
         assert_eq!(
             row["target"].as_str(),
@@ -155,7 +157,10 @@ fn the_recording_says_what_each_target_is_and_which_one_was_skipped() {
     let directory = fixture.temp().join("recording");
     let output = against(&fixture, &[&format!("--trace={}", directory.display())]);
     assert!(
-        output.status.code().is_some_and(|code| code < 2),
+        output
+            .status
+            .code()
+            .is_some_and(|code| code < i32::from(rust_mutants::run::EXIT_FAILED)),
         "{}",
         njutest_devkit::process::strict_utf8(&output.stderr)
     );

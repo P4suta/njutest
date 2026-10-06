@@ -37,19 +37,19 @@ fn stdout(output: &Output) -> String {
     njutest_devkit::process::strict_utf8(&output.stdout).into_owned()
 }
 
-fn measured() -> Fixture {
-    let fixture = Fixture::copy("fixture-unicode");
-    let ran = against(&fixture, &["run", "--offline", "--locked"]);
-    assert!(
-        ran.status.code().is_some_and(|code| code <= 1),
-        "the run establishes something: {ran:?}"
-    );
-    fixture
+/// Projections remain live while the genuine original holds their complete engine execution.
+fn measured() -> std::io::Result<Fixture> {
+    njutest_devkit::report::Original::open(
+        "projections-unicode",
+        &["run", "--offline", "--locked"],
+    )?
+    .fixture()
 }
 
 #[test]
 fn a_stryker_projection_validates_against_the_schema_it_answers_to() {
-    let fixture = measured();
+    let fixture =
+        measured().expect("the genuine Unicode recording matches the complete current input");
     let projected = against(&fixture, &["report", "--format", "stryker"]);
     assert!(
         projected.status.code().is_some_and(|code| code <= 1),
@@ -76,7 +76,8 @@ fn a_stryker_projection_validates_against_the_schema_it_answers_to() {
 
 #[test]
 fn a_stryker_projection_counts_columns_in_utf16_as_the_schema_requires() {
-    let fixture = measured();
+    let fixture =
+        measured().expect("the genuine Unicode recording matches the complete current input");
     let projected = against(&fixture, &["report", "--format", "stryker"]);
     let document: serde_json::Value = njutest_devkit::strictjson::decode_str(&stdout(&projected))
         .expect("the projection is JSON");
@@ -108,7 +109,8 @@ fn a_stryker_projection_counts_columns_in_utf16_as_the_schema_requires() {
 
 #[test]
 fn a_page_needs_nothing_from_the_network_to_be_read() {
-    let fixture = measured();
+    let fixture =
+        measured().expect("the genuine Unicode recording matches the complete current input");
     let page = against(&fixture, &["report", "--format", "html"]);
     let text = stdout(&page);
     assert!(text.starts_with("<!doctype html>"), "{text}");
@@ -131,7 +133,8 @@ fn a_page_needs_nothing_from_the_network_to_be_read() {
 
 #[test]
 fn a_page_written_to_a_file_says_where_it_put_it() {
-    let fixture = measured();
+    let fixture =
+        measured().expect("the genuine Unicode recording matches the complete current input");
     let path = fixture.root().join("report.html");
     let written = against(
         &fixture,
@@ -157,7 +160,8 @@ fn a_page_written_to_a_file_says_where_it_put_it() {
 
 #[test]
 fn a_page_that_could_not_be_written_is_a_refusal_naming_the_path() {
-    let fixture = measured();
+    let fixture =
+        measured().expect("the genuine Unicode recording matches the complete current input");
     let occupied = fixture.root().join("a-directory-where-the-page-goes");
     std::fs::create_dir_all(&occupied).expect("a directory where the file would go");
 
@@ -318,7 +322,11 @@ fn a_root_that_is_a_member_of_a_workspace_fails_and_names_the_root_to_use() {
         text.contains(&fixture.root().display().to_string()),
         "the root to use is named: {text}"
     );
-    assert_eq!(asked.status.code(), Some(2), "{text}");
+    assert_eq!(
+        asked.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_FAILED)),
+        "{text}"
+    );
 }
 
 #[test]
@@ -366,6 +374,7 @@ fn a_project_that_moved_its_reports_is_still_told_what_a_run_kept() {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: njutest_devkit::paths::environment_for_a_run()
             .into_iter()
             .collect(),

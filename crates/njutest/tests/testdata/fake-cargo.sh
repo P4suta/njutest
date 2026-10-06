@@ -6,12 +6,24 @@
 # It is committed rather than written by the test that uses it: a file this process has just opened for writing is a file another thread's fork may still hold open, and exec'ing it then fails with ETXTBSY.
 # Nothing writes to this one.
 # Asked whether it is an interpreter, it says yes and records nothing: what a machine with Miri installed answers, and a question about the toolchain rather than about the suite.
+# Told to by FAKE_CARGO_PROBE_SIGNAL, it ends by that signal instead, which is a question nobody answered.
 case " $* " in
-  *" miri --version "*) exit 0 ;;
+  *" miri --version "*)
+    if [ -n "${FAKE_CARGO_PROBE_SIGNAL:-}" ]; then
+      kill -s "${FAKE_CARGO_PROBE_SIGNAL}" $$
+    fi
+    exit 0
+    ;;
 esac
 if [ -n "${FAKE_CARGO_ARTIFACT:-}" ]; then
   mkdir -p "$(dirname "${FAKE_CARGO_ARTIFACT}")"
-  printf '%s' "${FAKE_CARGO_ARTIFACT_CONTENT:-bad input}" >"${FAKE_CARGO_ARTIFACT}"
+  if [ -n "${FAKE_CARGO_ARTIFACT_FROM:-}" ]; then
+    cp "${FAKE_CARGO_ARTIFACT_FROM}" "${FAKE_CARGO_ARTIFACT}"
+  elif [ -n "${FAKE_CARGO_ARTIFACT_FIFO:-}" ]; then
+    mkfifo "${FAKE_CARGO_ARTIFACT}"
+  else
+    printf '%s' "${FAKE_CARGO_ARTIFACT_CONTENT:-bad input}" >"${FAKE_CARGO_ARTIFACT}"
+  fi
 fi
 if [ -n "${FAKE_CARGO_ARTIFACT_TWO:-}" ]; then
   mkdir -p "$(dirname "${FAKE_CARGO_ARTIFACT_TWO}")"
@@ -34,5 +46,8 @@ if [ -n "${FAKE_CARGO_SLEEP:-}" ]; then
 fi
 if [ -n "${FAKE_CARGO_SAYS:-}" ]; then
   printf '%s\n' "${FAKE_CARGO_SAYS}"
+fi
+if [ -n "${FAKE_CARGO_SIGNAL:-}" ]; then
+  kill -s "${FAKE_CARGO_SIGNAL}" $$
 fi
 exit "${FAKE_CARGO_CODE:-0}"

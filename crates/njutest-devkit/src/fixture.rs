@@ -12,6 +12,9 @@
 
 use std::path::{Path, PathBuf};
 
+use njutest_fixture_tree::{
+    FixtureDiscoveryError, FixtureEntry, FixtureEntryKind, discover_fixtures,
+};
 use sha2::Digest as _;
 
 /// A copy of a fixture project, removed when the test drops it.
@@ -31,6 +34,36 @@ impl Fixture {
     #[must_use]
     pub fn copy(name: &str) -> Self {
         Self::copy_with_siblings(name, &[])
+    }
+
+    /// Copies an external tree, such as a cached upstream crate exactly as the registry holds it, into a directory of this test's own.
+    ///
+    /// # Panics
+    /// When the copy cannot be made, which a test cannot continue without, or when the tree holds what a run writes.
+    #[must_use]
+    pub fn copy_external(source: &Path) -> Self {
+        let dir = tempfile::Builder::new()
+            .prefix("njutest-fixture-")
+            .tempdir()
+            .expect("a temporary directory");
+        if let Some(written) = run_output_in(source) {
+            panic!(
+                "{} is what a run writes, so a run was made inside the tree this test copies, \
+                 and a copy would hand this test its stored runs; remove it",
+                written.display()
+            );
+        }
+        copy_tree(source, &dir.path().join("trees").join("copied"));
+        let temp = dir.path().join("temp");
+        let cache = dir.path().join("cache");
+        std::fs::create_dir_all(&temp).expect("the temporary directory");
+        std::fs::create_dir_all(&cache).expect("the cache directory");
+        Self {
+            root: canonical(&dir.path().join("trees").join("copied")),
+            temp: canonical(&temp),
+            cache: canonical(&cache),
+            _dir: dir,
+        }
     }
 
     /// Copies the fixture project `name`, and every fixture in `siblings` beside it, so a path dependency that climbs out of the tree has somewhere to land.
@@ -195,23 +228,11 @@ fn sorted(dir: &Path) -> Vec<std::fs::DirEntry> {
     entries
 }
 
-/// `path` resolved, in the one spelling the products hold a directory in.
-///
-/// Windows answers `canonicalize` with the extended form, `\\?\C:\...`, and the products put what they resolved back into the plain one: the engine states the rule in `rust_mutants::canonical`, and the dependency direction `cargo xtask deps` holds keeps this crate below it rather than above, so the rule is stated again here for the suites.
-/// A fixture that handed a run the extended spelling would have the run answer in a name no assertion here writes.
+/// `path` resolved through the shared filesystem-root spelling used by fixtures and snapshots.
 fn canonical(path: &Path) -> PathBuf {
-    let resolved = path.canonicalize().expect("the fixture path exists");
-    #[cfg(windows)]
-    {
-        let text = resolved.to_str().expect("fixture paths are UTF-8");
-        if let Some(rest) = text.strip_prefix(r"\\?\")
-            && !rest.starts_with("UNC\\")
-            && Path::new(rest).is_absolute()
-        {
-            return PathBuf::from(rest);
-        }
-    }
-    resolved
+    njutest_fixture_tree::filesystem_spelling(
+        &path.canonicalize().expect("the fixture path exists"),
+    )
 }
 
 /// The fence that opens the block of a fixture's README stating what a run of it establishes.
@@ -222,13 +243,13 @@ pub const FATES_FENCE: &str = "```fates";
 pub struct Fate {
     /// The file the mutation is in, relative to the fixture root.
     pub path: String,
-    /// The 1-based line of the edit, or zero for a candidate the compiler refused.
+    /// The 1-based line of the edit, or zero for a candidate validation left out.
     pub line: u32,
-    /// The 1-based byte column of the edit, or zero for a refusal.
+    /// The 1-based byte column of the edit, or zero for a candidate validation left out.
     pub column: u32,
     /// The rule that proposed it.
     pub rule: String,
-    /// What a run establishes: an outcome, or `refused`.
+    /// What a run establishes: an outcome, `refused`, or `evaluated-before-run`.
     pub outcome: String,
 }
 
@@ -420,40 +441,42 @@ pub fn stored_report(reports: &Path) -> String {
 
 /// Every fixture under `fixtures/`, as a `/`-joined name, in sorted order.
 ///
-/// A directory holding a `Cargo.toml` is a fixture, and one holding no `Cargo.toml` is a group of them.
-/// `cargo xtask fixtures` reads the same rule and refuses a group holding anything else, so what a test drives and what the gate checks are the same set.
-///
 /// # Panics
-/// When the fixtures directory cannot be read, which a test cannot continue without.
+/// When the fixtures directory cannot be enumerated or a group holds a non-fixture file.
 #[must_use]
 pub fn names() -> Vec<String> {
     let root = crate::paths::fixtures_dir();
-    let mut found = Vec::new();
-    for (name, path) in directories(&root) {
-        if std::fs::metadata(path.join("Cargo.toml")).is_ok_and(|entry| entry.is_file()) {
-            found.push(name);
-            continue;
-        }
-        for (inner, nested) in directories(&path) {
-            if std::fs::metadata(nested.join("Cargo.toml")).is_ok_and(|entry| entry.is_file()) {
-                found.push(format!("{name}/{inner}"));
-            }
-        }
-    }
-    found.sort();
-    found
+    names_in(&root)
+        .unwrap_or_else(|error| panic!("fixture discovery at {}: {error:?}", root.display()))
 }
 
-/// Every subdirectory of `dir`, by name, in sorted order.
-fn directories(dir: &Path) -> Vec<(String, PathBuf)> {
-    let mut found: Vec<(String, PathBuf)> = std::fs::read_dir(dir)
-        .unwrap_or_else(|error| panic!("{}: {error}", dir.display()))
-        .map(|entry| entry.expect("a fixtures directory entry"))
-        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
-        .map(|entry| (crate::paths::owned_utf8(entry.file_name()), entry.path()))
-        .collect();
-    found.sort();
-    found
+/// Every fixture under a selected directory, read from the filesystem.
+///
+/// # Errors
+/// A directory cannot be enumerated, or a group holds a file that belongs to no fixture.
+pub fn names_in(root: &Path) -> Result<Vec<String>, FixtureDiscoveryError<std::io::Error>> {
+    discover_fixtures(root, |dir| {
+        std::fs::read_dir(dir)?
+            .map(|read| {
+                let entry = read?;
+                let kind = entry.file_type()?;
+                let kind = if kind.is_file() {
+                    FixtureEntryKind::File
+                } else if kind.is_dir() {
+                    FixtureEntryKind::Directory
+                } else {
+                    return Err(std::io::Error::other(format!(
+                        "{} is neither a regular file nor a directory",
+                        entry.path().display()
+                    )));
+                };
+                let name = entry.file_name().into_string().map_err(|name| {
+                    std::io::Error::other(format!("{} is not a UTF-8 fixture path", name.display()))
+                })?;
+                Ok(FixtureEntry { name, kind })
+            })
+            .collect()
+    })
 }
 
 /// Names `contract` in the copied tree's configuration, writing one where the tree has none, so a test about one contract's behaviour is not a test about the default.

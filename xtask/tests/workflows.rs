@@ -87,7 +87,7 @@ fn every_job_that_runs_the_repository_tests_fetches_the_comparison_base() {
 }
 
 #[test]
-fn newest_macos_and_windows_each_run_one_whole_suite() {
+fn each_matrix_platform_runs_one_whole_suite() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join(".github/workflows/ci.yml");
@@ -97,34 +97,158 @@ fn newest_macos_and_windows_each_run_one_whole_suite() {
         .into_iter()
         .find_map(|(name, body)| (name == "test").then_some(body))
         .unwrap_or_else(|| panic!("ci.yml has the test matrix"));
-    let lines: Vec<&str> = test.lines().collect();
-    let parts_for = |wanted: &str| {
-        lines
-            .windows(2)
-            .filter_map(|pair| {
-                let [os, part] = pair else {
-                    return None;
-                };
-                (os.trim().strip_prefix("- os: ") == Some(wanted))
-                    .then(|| part.trim())
-                    .and_then(|part| part.strip_prefix("part: "))
-            })
-            .collect::<Vec<_>>()
-    };
-
+    let matrix = test
+        .split_once("      matrix:\n")
+        .and_then(|(_, rest)| rest.split_once("    steps:\n"))
+        .map_or_else(
+            || panic!("ci.yml has a test matrix before its steps"),
+            |(matrix, _)| matrix,
+        );
+    let dimensions: Vec<&str> = matrix.lines().map(str::trim).collect();
     assert_eq!(
-        parts_for("macos-26"),
-        ["whole"],
-        "macOS 26 must run the whole suite in exactly one row"
+        dimensions,
+        ["os: [macos-26, macos-15, windows-2025]"],
+        "the test matrix has only the operating-system dimension"
     );
     assert_eq!(
-        parts_for("windows-2025"),
-        ["whole"],
-        "Windows must run the whole suite in exactly one row"
+        test.lines()
+            .filter(|line| line.trim() == "run: mise run test:ci")
+            .count(),
+        1,
+        "each platform runs the full test task once"
     );
     assert!(
         !test.contains("--partition"),
         "the test matrix must not partition the suite"
+    );
+}
+
+#[test]
+fn mutation_ci_runs_one_whole_workspace() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(".github/workflows/mutation.yml");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let Some((_, jobs_source)) = source.split_once("\njobs:\n") else {
+        panic!("{} has no jobs", path.display());
+    };
+    let workflow_jobs = jobs(jobs_source);
+    let [(name, body)] = workflow_jobs.as_slice() else {
+        panic!("mutation CI has one job, found {}", workflow_jobs.len());
+    };
+    assert_eq!(name, "whole");
+    assert!(!body.contains("matrix:"), "mutation CI has no matrix");
+    assert_eq!(
+        body.matches("cargo mutants --config .cargo/mutants.toml")
+            .count(),
+        1,
+        "mutation CI invokes cargo-mutants once"
+    );
+    assert!(
+        body.contains("--workspace"),
+        "mutation CI measures the whole workspace"
+    );
+    assert_eq!(
+        body.matches("fetch-depth: 0").count(),
+        1,
+        "mutation CI fetches the comparison base for repository tests"
+    );
+    assert_eq!(
+        body.matches("--copy-vcs=true").count(),
+        1,
+        "mutation CI keeps Git in the copied tree for repository tests"
+    );
+    assert!(
+        !body.contains("--shard") && !body.contains("--package"),
+        "mutation CI does not partition the catalog"
+    );
+}
+
+#[test]
+fn dogfood_ci_builds_the_engine_it_runs_and_the_gate_it_invokes() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(".github/workflows/dogfood.yml");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let Some((_, jobs_source)) = source.split_once("\njobs:\n") else {
+        panic!("{} has no jobs", path.display());
+    };
+    let workflow_jobs = jobs(jobs_source);
+    let [(name, body)] = workflow_jobs.as_slice() else {
+        panic!("dogfood CI has one job, found {}", workflow_jobs.len());
+    };
+    assert_eq!(name, "whole");
+    assert!(!body.contains("matrix:"), "dogfood CI has no matrix");
+    assert!(
+        body.contains("cargo build --locked --release --bin rust-mutants -p rust-mutants-cli"),
+        "the engine binary belongs to rust-mutants-cli"
+    );
+    assert!(
+        body.contains("cargo build --locked --release --bin xtask -p xtask"),
+        "the audit binary belongs to xtask"
+    );
+    assert!(
+        body.contains("xtask engine-audit") && body.contains("xtask report-diff"),
+        "both audit commands need the built xtask binary"
+    );
+    assert!(
+        body.contains("--sites --root . --ledger .rust-mutants.toml"),
+        "the carry audit needs the original source tree"
+    );
+    assert!(
+        !source.contains("inputs:") && !body.contains("--include") && !body.contains("--tier"),
+        "the workflow measures the ledger's whole catalog at its configured tier"
+    );
+    assert!(
+        source.contains("  actions: read\n"),
+        "comparison with an earlier run needs Actions read permission"
+    );
+}
+
+#[test]
+fn ci_and_mise_execute_one_coverage_ratchet() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let mise_path = root.join("mise.toml");
+    let mise = std::fs::read_to_string(&mise_path)
+        .unwrap_or_else(|error| panic!("{}: {error}", mise_path.display()));
+    let table = mise
+        .parse::<toml::Table>()
+        .unwrap_or_else(|error| panic!("{}: {error}", mise_path.display()));
+    let local = table
+        .get("tasks")
+        .and_then(|tasks| tasks.get("coverage"))
+        .and_then(|coverage| coverage.get("run"))
+        .and_then(toml::Value::as_str)
+        .unwrap_or_else(|| panic!("mise.toml declares the coverage task's command"));
+    let ci_path = root.join(".github/workflows/ci.yml");
+    let ci = std::fs::read_to_string(&ci_path)
+        .unwrap_or_else(|error| panic!("{}: {error}", ci_path.display()));
+    let coverage = jobs(&ci)
+        .into_iter()
+        .find_map(|(name, body)| (name == "coverage").then_some(body))
+        .unwrap_or_else(|| panic!("ci.yml has the coverage job"));
+
+    assert_eq!(
+        local
+            .lines()
+            .filter(|line| line.trim() == "cargo xtask coverage-ratchet")
+            .count(),
+        1,
+        "the local coverage task runs the shared ratchet once"
+    );
+    assert_eq!(
+        coverage
+            .lines()
+            .filter(|line| line.trim() == "run: cargo xtask coverage-ratchet")
+            .count(),
+        1,
+        "the CI coverage job runs the same ratchet once"
+    );
+    assert!(
+        !local.contains("--fail-under-regions") && !coverage.contains("--fail-under-regions"),
+        "floor values and exclusion rules belong to the shared ratchet, not either caller"
     );
 }
 
@@ -171,6 +295,84 @@ fn every_step_runs_in_a_shell_that_stops_at_the_first_failure_even_inside_a_pipe
          second reported a failing test forty-five minutes later as a cancelled job. \
          Declare `shell: bash` as the workflow's default, which GitHub runs with \
          `-o pipefail` on every runner, and override it with nothing else. {loose:?}"
+    );
+}
+
+/// The body of the job `name` of the workflow file `file`.
+fn job_of(file: &str, name: &str) -> String {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(".github/workflows")
+        .join(file);
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let Some((_, jobs_source)) = source.split_once("\njobs:\n") else {
+        panic!("{} has no jobs", path.display());
+    };
+    jobs(jobs_source)
+        .into_iter()
+        .find_map(|(job, body)| (job == name).then_some(body))
+        .unwrap_or_else(|| panic!("{file} has no job {name}"))
+}
+
+/// Every `os` and `target` a job's matrix pairs, in order.
+fn platforms(body: &str) -> Vec<(String, String)> {
+    let mut found: Vec<(String, String)> = Vec::new();
+    for line in body.lines().map(str::trim) {
+        if let Some(os) = line.strip_prefix("- os: ") {
+            found.push((os.to_owned(), String::new()));
+        } else if let Some(target) = line.strip_prefix("target: ")
+            && let Some(last) = found.last_mut()
+        {
+            target.clone_into(&mut last.1);
+        }
+    }
+    found
+}
+
+#[test]
+fn every_platform_the_release_archives_on_installs_from_its_archive_on_every_pull_request() {
+    let released = platforms(&job_of("release.yml", "artifacts"));
+    assert_eq!(
+        released.len(),
+        3,
+        "the release builds an archive on three platforms: {released:?}"
+    );
+    let installed = job_of("ci.yml", "package-install");
+    assert_eq!(
+        platforms(&installed),
+        released,
+        "package-install builds, unpacks and runs the archive for exactly the platforms and \
+         targets the release builds one for, so a release is never the first time an archive \
+         of a platform is made or run"
+    );
+    for held in [
+        "runs-on: ${{ matrix.os }}",
+        "fail-fast: false",
+        "NJUTEST_BUNDLE_TARGET: ${{ matrix.target }}",
+        "run: mise run package",
+    ] {
+        assert!(
+            installed.contains(held),
+            "package-install is a matrix whose every platform answers for itself, and each \
+             bundles its own target through the task a developer runs ({held:?}): {installed}"
+        );
+    }
+    let releasing: Vec<&str> = [
+        "gh release",
+        "git tag",
+        "git push",
+        "cargo publish",
+        "gh workflow",
+        "permissions:",
+    ]
+    .into_iter()
+    .filter(|operation| installed.contains(operation))
+    .collect();
+    assert!(
+        releasing.is_empty(),
+        "package-install checks what a release would publish and publishes nothing: it tags, \
+         pushes, dispatches and is granted nothing ({releasing:?})"
     );
 }
 
@@ -984,11 +1186,11 @@ fn invocations(line: &str) -> Vec<(String, Option<String>, String)> {
         }) else {
             continue;
         };
-        let installed = at >= 2
+        let named_argument = at >= 2
             && words
                 .get(at.saturating_sub(2))
-                .is_some_and(|before| *before == "install");
-        if installed {
+                .is_some_and(|before| ["install", "-p", "--package"].contains(before));
+        if named_argument {
             continue;
         }
         let command = words
@@ -1019,6 +1221,25 @@ fn invocations(line: &str) -> Vec<(String, Option<String>, String)> {
         }
     }
     found
+}
+
+#[test]
+fn a_cargo_package_argument_is_not_a_program_invocation() {
+    for source in [
+        "cargo +nightly miri test --locked -p rust-mutants --lib capdir::records::tests::",
+        "cargo nextest run --package njutest --test suite",
+    ] {
+        assert!(invocations(source).is_empty(), "{source}");
+    }
+    assert_eq!(
+        invocations("cargo test -p rust-mutants --lib && rust-mutants run --unknown"),
+        [(
+            "rust-mutants".to_owned(),
+            Some("run".to_owned()),
+            "--unknown".to_owned()
+        )],
+        "the program after the Cargo command is still checked"
+    );
 }
 
 #[test]

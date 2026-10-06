@@ -4,7 +4,7 @@
 //! One verification, from a request to a report.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use jiff::Timestamp;
 use rust_mutants::id::RunId;
@@ -79,6 +79,44 @@ pub enum RunInvariantError {
         /// The target whose answer should have been present.
         target: String,
     },
+    /// The engine gave a sealed verdict in the shape of an outcome no verdict has.
+    #[error("the engine gave {mutant} a sealed verdict of {outcome}, which no verdict is")]
+    SealedVerdictUnshaped {
+        /// The mutation.
+        mutant: String,
+        /// The outcome the verdict came as.
+        outcome: &'static str,
+    },
+    /// The engine cataloged a mutation at a place the source it read cannot locate.
+    #[error("the engine cataloged {mutant} in {path} at a place its source does not have")]
+    UnplacedMutation {
+        /// The mutation.
+        mutant: String,
+        /// The file it names.
+        path: String,
+    },
+    /// A surviving-mutant finding names a mutation the report holds no row of.
+    #[error("the finding about {subject} names a mutation the report holds no row of")]
+    UnrowedFinding {
+        /// What the finding names.
+        subject: String,
+    },
+    /// A fault the phase judged is not in the catalog its identity was minted from.
+    #[error("the fault {fault} was judged and its catalog holds no site of that index")]
+    FaultSiteUncataloged {
+        /// The fault.
+        fault: String,
+    },
+    /// The text a fault site covers is not Rust source text, so no record can carry it exactly.
+    #[error("the fault {fault} has {which} text the source does not hold as UTF-8: {source}")]
+    FaultTextNotText {
+        /// The fault.
+        fault: String,
+        /// Which of its two texts it is.
+        which: &'static str,
+        /// Why the bytes are not UTF-8.
+        source: std::str::Utf8Error,
+    },
 }
 
 /// What one run was asked to do.
@@ -104,6 +142,8 @@ pub struct Request {
     pub started: Timestamp,
     /// Where the engine records its own stream.
     pub engine_trace: rust_mutants::trace::Recorder,
+    /// Where the engine keeps, beside its recording, what an audit re-derives this build's carried answers from; nothing where the run keeps no recording.
+    pub carried_evidence: Option<PathBuf>,
     /// What this run is, as numbers.
     /// Empty when the tree could not be read, which states a limitation rather than failing the run.
     pub evidence: crate::assure::identity::Evidence,
@@ -121,6 +161,8 @@ pub struct Request {
     /// Which part of the catalog this run judges.
     /// `None` judges every one of them.
     pub shard: Option<rust_mutants::run::Shard>,
+    /// Where this run was asked to record its trace, which is never a build input.
+    pub trace: Option<String>,
 }
 
 /// What one run produced.
@@ -277,9 +319,9 @@ fn attributed(
 ) -> Result<Vec<crate::wire::settle::Answered>, RunnerError> {
     let mut answered = Vec::new();
     for target in session.targets() {
-        seams.during(Some(target.id.as_str()));
+        seams.during(Some(target.id()));
         let asked = rust_mutants::session::Request::new(String::new())
-            .with_target(target.id.as_str())
+            .with_target(target.id())
             .with_timeout(Some(timeout));
         let ran = session
             .control(
@@ -288,9 +330,9 @@ fn attributed(
                 rust_mutants::session::Observing::Nothing,
             )?
             .result;
-        if ran.target != target.id {
+        if ran.target != target.id() {
             return Err(RunInvariantError::ControlTargetMismatch {
-                requested: target.id.clone(),
+                requested: target.id().to_owned(),
                 observed: ran.target,
             }
             .into());
@@ -318,12 +360,10 @@ fn wired(
     }
     notes.phase("wire")?;
     watch.trace.stage("wire");
-    let held_up = seams
-        .watching
-        .iter()
-        .map(|one| one.held_up)
-        .max()
-        .unwrap_or_default();
+    let held_up = match seams.watching.iter().map(|one| one.held_up).max() {
+        Some(longest) => longest,
+        None => std::time::Duration::ZERO,
+    };
     let timeout = session
         .slowest_baseline()
         .checked_mul(2)
@@ -397,7 +437,7 @@ fn licensed(
 fn state_unwatched(report: &mut BuildReport, seams: &super::wire::Seams) {
     for (capability, why) in &seams.unwatched {
         report.limitations.push(Limitation::new(
-            crate::limitation::SEAM_NOT_WATCHED,
+            crate::limitation::Limitation::SeamNotWatched,
             &format!("{capability}: {}", why.why()),
         ));
     }
@@ -416,12 +456,8 @@ fn surveyed(
         .iter()
         .map(|package| package.name.clone())
         .collect();
-    if let Some(name) = unknown_package(request, &report.repository.packages) {
-        return Err(RunnerError::Engine(
-            rust_mutants::discover::DiscoverError::UnknownPackage { name }.into(),
-        ));
-    }
-    let narrowing = resolved(request, &report.repository.packages);
+    let narrowing = resolved(request, &report.repository.packages)
+        .map_err(|error| RunnerError::Engine(error.into()))?;
     report.scope.resolved_packages = narrowing.names().to_vec();
     Ok(narrowing)
 }
@@ -505,7 +541,7 @@ pub fn opened(
     )?;
     if report.repository.git.said().is_none() {
         report.limitations.push(Limitation::new(
-            crate::limitation::GIT_METADATA_UNAVAILABLE,
+            crate::limitation::Limitation::GitMetadataUnavailable,
             "git could not be asked, so the run cannot name the commit it verified",
         ));
     }
@@ -543,7 +579,7 @@ fn driven(
         Ok(held) => held,
         Err(error) => {
             report.limitations.push(Limitation::new(
-                crate::limitation::CARGO_FUZZ_UNAVAILABLE,
+                crate::limitation::Limitation::CargoFuzzUnavailable,
                 &format!("fuzz targets could not be read completely: {error}"),
             ));
             report.findings.push(Finding {
@@ -594,21 +630,38 @@ fn driven(
 
 /// The environment the fuzzer runs with: the toolchain's own, since a fuzz build is a build.
 fn environment_of(toolchain: &rust_mutants::cargo::Toolchain) -> rust_mutants::vars::Variables {
-    toolchain.env().cloned().unwrap_or_default()
+    match toolchain.env() {
+        Some(own) => own.clone(),
+        None => rust_mutants::vars::Variables::default(),
+    }
 }
 
 /// Keeps one crashing input as a candidate for the corpus.
 fn kept(report: &mut BuildReport, request: &Request, crash: &super::fuzz::Crash) {
+    let path = match crate::repair::TreePath::parse(&crash.corpus) {
+        Ok(path) => path,
+        Err(refusal) => {
+            report.limitations.push(Limitation::new(
+                crate::limitation::Limitation::CargoFuzzUnavailable,
+                &format!(
+                    "the input that crashed {} has no place in the corpus, so it cannot be \
+                     promoted: {refusal}",
+                    crash.target
+                ),
+            ));
+            return;
+        }
+    };
     let proposal = crate::repair::Proposal {
         kind: crate::repair::Kind::Corpus,
-        path: crash.corpus.clone(),
-        preimage: crate::repair::preimage_of(&request.root, &crash.corpus),
+        preimage: crate::repair::preimage_of(&request.root, &path),
+        path,
         digest: hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&crash.content)),
         content: crash.content.clone(),
     };
     if crate::repair::keep(&request.root, &proposal).is_err() {
         report.limitations.push(Limitation::new(
-            crate::limitation::CARGO_FUZZ_UNAVAILABLE,
+            crate::limitation::Limitation::CargoFuzzUnavailable,
             &format!(
                 "the input that crashed {} could not be kept, so it cannot be promoted",
                 crash.target
@@ -620,7 +673,7 @@ fn kept(report: &mut BuildReport, request: &Request, crash: &super::fuzz::Crash)
         finding: format!("fuzz:{}", crash.target),
         mutant: String::new(),
         kind: crate::repair::Kind::Corpus.name().to_owned(),
-        path: proposal.path,
+        path: proposal.path.to_string(),
         digest: proposal.digest,
         preimage: proposal.preimage,
         stability_runs: 0,
@@ -643,19 +696,21 @@ fn proposed(
     }
     notes.phase("generation")?;
     watch.trace.stage("generation");
-    propose(report, request, environment, watch);
-    Ok(())
+    propose(report, request, environment, watch)
 }
 
 /// Asks the generation provider to close what the run found, and puts every candidate to the tests before keeping it.
+///
+/// # Errors
+/// A surviving-mutant finding that names a mutation the report holds no row of.
 fn propose(
     report: &mut BuildReport,
     request: &Request,
     environment: &Environment,
     watch: Watch<'_>,
-) {
+) -> Result<(), RunnerError> {
     let Some(generation) = &request.config.generation else {
-        return;
+        return Ok(());
     };
     let allowed = crate::repair::allowed(&generation.allowed_paths);
     let subjects: Vec<(String, String)> = report
@@ -668,27 +723,30 @@ fn propose(
         if watch.cancel.is_cancelled() {
             break;
         }
-        let asking = ask(report, request, (&mutant, &detail), &allowed);
+        let asking = ask(report, request, (&mutant, &detail), &allowed)?;
         let Ok(asked) = serde_json::to_string(&asking) else {
             continue;
         };
         let seen = crate::resource::visible(&environment.vars, &generation.environment);
-        let said = crate::provider::once(&crate::provider::Once {
-            command: &generation.command,
-            dir: &request.root,
-            env: &seen,
-            question: &asked,
-            timeout: request.config.execution.timeout,
-            limit: crate::repair::OUTPUT_LIMIT,
-        });
+        let said = crate::provider::once_observed(
+            &crate::provider::Once {
+                command: &generation.command,
+                dir: &request.root,
+                env: &seen,
+                question: &asked,
+                timeout: request.config.execution.timeout,
+                limit: crate::repair::OUTPUT_LIMIT,
+            },
+            watch.trace,
+        );
         let said = match said {
             Ok(said) => said,
             Err(refusal) => {
                 report.limitations.push(Limitation::new(
-                    crate::limitation::GENERATION_PROVIDER_UNAVAILABLE,
+                    crate::limitation::Limitation::GenerationProviderUnavailable,
                     &format!("the generation provider could not be asked: {refusal}"),
                 ));
-                return;
+                return Ok(());
             }
         };
         match crate::repair::take(&said, &request.root, &allowed) {
@@ -698,35 +756,44 @@ fn propose(
                 }
             }
             Err(refusal) => report.limitations.push(Limitation::new(
-                crate::limitation::GENERATION_PROVIDER_UNAVAILABLE,
+                crate::limitation::Limitation::GenerationProviderUnavailable,
                 &format!("a candidate for {mutant} was not read: {refusal}"),
             )),
         }
     }
+    Ok(())
 }
 
 /// What the provider is told about one finding.
+///
+/// # Errors
+/// [`RunInvariantError::UnrowedFinding`] where the report holds no row of the mutation it names.
 fn ask(
     report: &BuildReport,
     request: &Request,
     about: (&str, &str),
     allowed: &[String],
-) -> crate::repair::Ask {
+) -> Result<crate::repair::Ask, RunInvariantError> {
     let (mutant, detail) = about;
-    let found = report
+    let Some(found) = report
         .mutants
         .iter()
-        .find(|one| one.display_id == mutant || one.id == mutant);
-    crate::repair::Ask {
+        .find(|one| one.display_id == mutant || one.id == mutant)
+    else {
+        return Err(RunInvariantError::UnrowedFinding {
+            subject: mutant.to_owned(),
+        });
+    };
+    Ok(crate::repair::Ask {
         version: crate::repair::VERSION,
         finding: crate::repair::AskedFinding {
             id: mutant.to_owned(),
             kind: "surviving-mutant".to_owned(),
-            path: found.map(|one| one.path.clone()).unwrap_or_default(),
-            line: found.map_or(0, |one| one.position.line),
+            path: found.path.clone(),
+            line: found.position.line,
             summary: detail.to_owned(),
             replay: format!("njutest replay {mutant}"),
-            mutant: found.map(|one| one.rule.clone()).unwrap_or_default(),
+            mutant: found.rule.clone(),
             mutant_id: mutant.to_owned(),
         },
         allowed_paths: allowed.to_vec(),
@@ -734,7 +801,7 @@ fn ask(
             workspace_digest: report.repository.workspace_digest.clone(),
             run_id: request.run_id.to_string(),
         },
-    }
+    })
 }
 
 /// Puts one candidate to the tests and records what that established.
@@ -772,7 +839,7 @@ fn considered(
     };
     if verdict.accepted && crate::repair::keep(&request.root, proposal).is_err() {
         report.limitations.push(Limitation::new(
-            crate::limitation::GENERATION_CANDIDATE_NOT_KEPT,
+            crate::limitation::Limitation::GenerationCandidateNotKept,
             &format!("a candidate for {mutant} could not be kept, so it cannot be applied"),
         ));
         return;
@@ -781,7 +848,7 @@ fn considered(
         finding: mutant.to_owned(),
         mutant: mutant.to_owned(),
         kind: proposal.kind.name().to_owned(),
-        path: proposal.path.clone(),
+        path: proposal.path.to_string(),
         digest: proposal.digest.clone(),
         preimage: proposal.preimage.clone(),
         stability_runs: verdict.stable,
@@ -795,7 +862,7 @@ fn considered(
 fn released(resources: &mut crate::resource::Manager, report: &mut BuildReport) {
     for refusal in resources.release() {
         report.limitations.push(Limitation::new(
-            crate::limitation::RESOURCE_NOT_STOPPED,
+            crate::limitation::Limitation::ResourceNotStopped,
             &format!("a resource would not stop: {refusal}"),
         ));
     }
@@ -815,7 +882,8 @@ fn holding(
     let mut resources = crate::resource::Manager::new(crate::resource::Where {
         dir: request.root.clone(),
         env: environment.vars.clone(),
-    });
+    })
+    .with_trace(watch.trace);
     if !request.config.resources.is_empty() {
         notes.phase("resources")?;
         watch.trace.stage("resources");
@@ -926,7 +994,7 @@ pub fn identity(request: &Request) -> Result<BuildReport, RunnerError> {
             .collect();
     if !request.config.execution.skip_targets.is_empty() {
         report.limitations.push(Limitation::new(
-            rust_mutants::limitation::TARGET_SKIPPED_BY_CONFIGURATION,
+            rust_mutants::limitation::Limitation::TargetSkippedByConfiguration,
             &format!(
                 "{} ({})",
                 limitation_detail(rust_mutants::limitation::TARGET_SKIPPED_BY_CONFIGURATION),
@@ -936,7 +1004,7 @@ pub fn identity(request: &Request) -> Result<BuildReport, RunnerError> {
     }
     if !request.evidence.is_known() {
         report.limitations.push(Limitation::new(
-            crate::limitation::WORKSPACE_DIGEST_NOT_COMPUTED,
+            crate::limitation::Limitation::WorkspaceDigestNotComputed,
             "the tree could not be read as one number, so no result of this run can be \
              reused by another",
         ));
@@ -971,7 +1039,7 @@ fn resume_state(
         return Ok(None);
     }
     report.limitations.push(Limitation::new(
-        crate::limitation::RESUMED_FROM_CHECKPOINT,
+        crate::limitation::Limitation::ResumedFromCheckpoint,
         &format!(
             "an interrupted run had already measured {} targets and established {} mutants; \
              a restored target carries the files it reached and not the regions inside them, \
@@ -995,9 +1063,10 @@ impl Journal {
         restore: Option<&crate::checkpoint::State>,
     ) -> Result<Self, RunInvariantError> {
         let identity = request.evidence.continuation_identity();
-        let mut state = restore
-            .cloned()
-            .unwrap_or_else(|| crate::checkpoint::State::new(&identity));
+        let mut state = match restore {
+            Some(restored) => restored.clone(),
+            None => crate::checkpoint::State::new(&identity),
+        };
         state.attempts = state
             .attempts
             .checked_add(1)
@@ -1015,6 +1084,13 @@ impl Journal {
         &mut self,
         judged: &mutation::Judged,
     ) -> Result<(), crate::checkpoint::CheckpointError> {
+        let Some(evidence) = judged
+            .evidence
+            .as_ref()
+            .filter(|evidence| evidence.class() == rust_mutants::sealed::record::Class::Sealed)
+        else {
+            return Ok(());
+        };
         let disposition = match &judged.disposition {
             mutation::Disposition::Killed { by } => crate::checkpoint::SavedDisposition::Killed {
                 by: by.clone(),
@@ -1039,6 +1115,7 @@ impl Journal {
         self.state.record_mutant(crate::checkpoint::SavedMutant {
             id: judged.id.clone(),
             disposition,
+            evidence: evidence.clone(),
             duration_ms: 0,
         });
         self.write()
@@ -1091,7 +1168,7 @@ fn open_phase(
     } = *opening;
     if !scratch.is_claimed() {
         report.limitations.push(Limitation::new(
-            crate::limitation::TEMP_DIRECTORY_UNCLAIMED,
+            crate::limitation::Limitation::TempDirectoryUnclaimed,
             "the run works in a directory it could not claim, so a sweep may remove it \
              while the run is still using it",
         ));
@@ -1130,7 +1207,7 @@ fn take_inventory(
     let selected = selected(narrowing, metadata);
     let Ok(taken) = soundness::inventory(&request.root, &selected) else {
         report.limitations.push(Limitation::new(
-            crate::limitation::SOUNDNESS_SOURCE_UNREADABLE,
+            crate::limitation::Limitation::SoundnessSourceUnreadable,
             "the tree could not be walked for the places the compiler stops vouching for, so \
              the run makes no claim about them",
         ));
@@ -1152,13 +1229,7 @@ pub fn selected(narrowing: &Narrowing, metadata: &Metadata) -> Vec<(String, Path
         .packages
         .iter()
         .filter(|package| narrowing.holds(&package.name))
-        .filter_map(|package| {
-            let directory = package.manifest_path.parent()?;
-            if directory.as_os_str().is_empty() {
-                return None;
-            }
-            Some((package.name.clone(), directory.to_path_buf()))
-        })
+        .map(|package| (package.name.clone(), package.manifest_dir().to_path_buf()))
         .collect()
 }
 
@@ -1168,7 +1239,7 @@ pub fn stated(taken: &soundness::Inventory) -> Vec<Limitation> {
     let mut stated = Vec::new();
     if !taken.unreadable.is_empty() {
         stated.push(Limitation::new(
-            crate::limitation::SOUNDNESS_SOURCE_UNREADABLE,
+            crate::limitation::Limitation::SoundnessSourceUnreadable,
             &format!(
                 "{} files could not be read as Rust this release understands, so what they \
                  hold is not in the inventory: {}",
@@ -1179,7 +1250,7 @@ pub fn stated(taken: &soundness::Inventory) -> Vec<Limitation> {
     }
     if !taken.is_empty() {
         stated.push(Limitation::new(
-            crate::limitation::SOUNDNESS_NOT_EXECUTED,
+            crate::limitation::Limitation::SoundnessNotExecuted,
             &format!(
                 "{} places in {} packages step outside what the compiler guarantees, and this \
                  contract counts them rather than executing them; `contract = \"deep-v1\"` \
@@ -1228,7 +1299,10 @@ fn locate(
             env: Some(environment.vars.clone()),
         },
         &request.root,
-        watch.cancel,
+        &rust_mutants::runner::Watched::new(
+            watch.cancel,
+            &rust_mutants::trace::Recorder::disabled(),
+        ),
     )
     .map_err(rust_mutants::EngineError::from)?;
     let metadata = Metadata::load(
@@ -1315,15 +1389,13 @@ pub fn resolve_acceptances(
         .iter()
         .filter(|acceptance| acceptance.holds(now))
     {
-        let found = acceptance.locator().map_or_else(
-            || {
-                catalog
-                    .resolve_prefix(&acceptance.id)
-                    .map(|mutant| mutant.id.to_string())
-                    .map_err(AcceptanceResolutionError::from)
-            },
-            |locator| locate(&locator).map_err(AcceptanceResolutionError::from),
-        );
+        let found = match acceptance.locator() {
+            Some(locator) => locate(&locator).map_err(AcceptanceResolutionError::from),
+            None => catalog
+                .resolve_prefix(&acceptance.id)
+                .map(|mutant| mutant.id.to_string())
+                .map_err(AcceptanceResolutionError::from),
+        };
         match found {
             Ok(id) => ids.push(id),
             Err(error) => findings.push(Finding::new(
@@ -1390,7 +1462,7 @@ fn run_mutation(
     let tree_written = !session.changes()?.is_empty();
     if tree_written {
         mutating.report.limitations.push(Limitation::new(
-            crate::limitation::TREE_WRITTEN_DURING_MEASUREMENT,
+            crate::limitation::Limitation::TreeWrittenDuringMeasurement,
             "a test wrote into the tree while it was being measured, so every later \
              mutation was measured against what it wrote",
         ));
@@ -1411,6 +1483,10 @@ fn run_mutation(
     record(mutating.report, &mutation, &accepted.ids)?;
     mutating.report.findings.extend(accepted.findings);
     concurrency_of(mutating, session, watch)?;
+    if let Some(directory) = &mutating.request.carried_evidence {
+        rust_mutants::report::evidence::carried(session, directory, &preparing(mutating.request)?)
+            .map_err(|source| RunnerError::CarriedEvidence { source })?;
+    }
     Ok(())
 }
 
@@ -1494,7 +1570,8 @@ fn prove_equivalence(
         &equivalence::Proving {
             root: &request.root,
             open: rust_mutants::workspace::OpenOptions {
-                allow_outside: Vec::new(),
+                module_owner: mutating.environment.module_owner.clone(),
+                allow_outside: request.config.project.outside(&request.root),
                 cargo: None,
                 search_path: mutating
                     .environment
@@ -1503,7 +1580,7 @@ fn prove_equivalence(
                 env: mutating.environment.vars.clone(),
                 temp_directory: mutating.environment.temp_directory.clone(),
                 report_directory: Some(request.config.reports.directory.as_str().to_owned()),
-                exclude: Vec::new(),
+                exclude: runner_outputs(request.trace.as_deref(), &request.root),
                 keep_temp: false,
                 offline: request.cargo.offline,
                 locked: request.cargo.locked,
@@ -1569,18 +1646,47 @@ pub fn opening(
     environment: &Environment,
 ) -> rust_mutants::workspace::OpenOptions {
     rust_mutants::workspace::OpenOptions {
-        allow_outside: Vec::new(),
+        module_owner: environment.module_owner.clone(),
+        allow_outside: request.config.project.outside(&request.root),
         cargo: None,
         search_path: environment.var("PATH").map(std::ffi::OsStr::to_owned),
         env: environment.vars.clone(),
         temp_directory: environment.temp_directory.clone(),
         report_directory: Some(request.config.reports.directory.as_str().to_owned()),
-        exclude: Vec::new(),
+        exclude: runner_outputs(request.trace.as_deref(), &request.root),
         keep_temp: request.keep_temp,
         offline: request.cargo.offline,
         locked: request.cargo.locked,
         trace: request.engine_trace.clone(),
     }
+}
+
+/// Runner-owned outputs that are never build inputs: the `.njutest` store, and the trace directory this run writes when it sits inside the tree, whose absence from the digest is what lets a repeated run's snapshot match the one before it.
+#[must_use]
+pub fn runner_outputs(trace: Option<&str>, root: &Path) -> Vec<rust_mutants::glob::Pattern> {
+    let mut patterns = Vec::new();
+    match rust_mutants::glob::Pattern::compile(".njutest") {
+        Ok(store) => patterns.push(store),
+        Err(_the_store_literal_never_fails_to_compile) => {}
+    }
+    let Some(asked) = trace.filter(|asked| !asked.is_empty()) else {
+        return patterns;
+    };
+    let absolute = match std::path::absolute(PathBuf::from(asked)) {
+        Ok(absolute) => absolute,
+        Err(_a_working_directory_it_cannot_name) => return patterns,
+    };
+    let within = match absolute.strip_prefix(root) {
+        Ok(within) => within,
+        Err(_a_trace_directory_outside_the_tree_is_never_a_build_input) => return patterns,
+    };
+    if let Some(text) = within.as_os_str().to_str() {
+        match rust_mutants::glob::Pattern::compile(text) {
+            Ok(pattern) => patterns.push(pattern),
+            Err(_a_trace_directory_a_glob_cannot_name_stays_a_build_input) => {}
+        }
+    }
+    patterns
 }
 
 /// Every switch this run prepares the tree with, which is also what decides how the engine routes a mutant.
@@ -1589,6 +1695,10 @@ pub fn opening(
 /// Returns the engine's refusal of a pattern the configuration or the change set narrowed the run to.
 pub fn preparing(request: &Request) -> Result<rust_mutants::session::PrepareOptions, RunnerError> {
     let include = narrowing(request).map_err(rust_mutants::EngineError::from)?;
+    let transcripts = request
+        .evidence_store
+        .as_ref()
+        .map(|root| root.join(rust_mutants::sealed::TRANSCRIPTS_LAYOUT));
     Ok(rust_mutants::session::PrepareOptions {
         packages: request.packages.clone(),
         include,
@@ -1603,7 +1713,8 @@ pub fn preparing(request: &Request) -> Result<rust_mutants::session::PrepareOpti
             .then_some(request.config.execution.steps),
         skip_targets: request.config.execution.skip_targets.clone(),
         coverage: request.config.execution.coverage,
-        ..crate::assure::engine::switches()
+        transcripts,
+        ..crate::assure::engine::switches(request.config.mutation.sealing())
     })
 }
 
@@ -1658,6 +1769,10 @@ fn evidence_of(mutating: &Mutating<'_>) -> Result<Option<mutation::Evidence>, Ru
     let carry = keyed.usable().then(|| mutation::Carry {
         store: rust_mutants::carry::Store::new(root),
         keyed,
+        kept: match &request.carried_evidence {
+            Some(beside) => mutation::Keeping::Beside(beside.clone()),
+            None => mutation::Keeping::Nowhere,
+        },
     });
     Ok(Some(mutation::Evidence {
         root: root.clone(),
@@ -1712,27 +1827,25 @@ pub fn record(
             id: judged.id.clone(),
             display_id: judged.display_id.clone(),
             path: judged.path.clone(),
-            position: judged.position.unwrap_or(crate::report::Position {
-                line: 1,
-                column: 1,
-                character_column: 1,
-            }),
+            position: judged.position,
             rule: judged.rule.clone(),
             item: judged.item.clone(),
             original: judged.original.clone(),
             replacement: judged.replacement.clone(),
             outcome: judged.disposition.decided(),
+            evidence: judged.evidence.clone(),
             accepted: mutation::answered_by(judged, accepted),
-            reuse: crate::report::Reuse(judged.source_run_id.clone().map_or(
-                crate::report::Established::Here,
-                crate::report::Established::ReadBackFrom,
-            )),
+            reuse: crate::report::Reuse(match &judged.source_run_id {
+                Some(source) => crate::report::Established::ReadBackFrom(source.clone()),
+                None => crate::report::Established::Here,
+            }),
             blind_in: Vec::new(),
             routing: judged.routing.clone(),
         })
         .collect();
     report.findings.extend(mutation.findings(accepted));
     report.drift.clone_from(&mutation.drift);
+    report.repaired.clone_from(&mutation.repaired);
     report.sources.clone_from(&mutation.sources);
     if report.scope.shard.is_none() {
         let whole = crate::report::whole_catalog(&report.drift, &report.knobs, &report.mutants);
@@ -1741,19 +1854,20 @@ pub fn record(
         report.limitations.extend(crate::report::drift::repaired(
             &report.drift,
             &report.mutants,
-            &mutation.repaired,
-        ));
+            &report.repaired,
+        )?);
     }
     for (reason, count) in &mutation.skips {
         report.limitations.push(Limitation::new(
-            &format!("skipped-{reason}"),
+            *reason,
             &format!(
-                "{count} {} not mutated: {reason}",
+                "{count} {} not mutated: {}",
                 if *count == 1 {
                     "place was"
                 } else {
                     "places were"
-                }
+                },
+                reason.name()
             ),
         ));
     }
@@ -1762,20 +1876,24 @@ pub fn record(
 
 /// Each limitation the baseline stated, once, beside the targets it was stated about.
 #[must_use]
-pub fn about(limitations: &[String]) -> Vec<(String, Vec<String>)> {
-    let mut named: BTreeMap<String, Vec<String>> = BTreeMap::new();
+pub fn about(
+    limitations: &[baseline::BaselineLimitation],
+) -> Vec<(
+    crate::limitation::Name,
+    Vec<rust_mutants::limitation::TargetId>,
+)> {
+    let mut named = BTreeMap::new();
     for limitation in limitations {
-        let (name, target) = limitation
-            .split_once(':')
-            .map_or((limitation.as_str(), None), |(head, tail)| {
-                (head, Some(tail))
-            });
-        let targets = named.entry(name.to_owned()).or_default();
-        if let Some(target) = target {
-            targets.push(target.to_owned());
+        let name = limitation.name();
+        let targets: &mut Vec<rust_mutants::limitation::TargetId> = &mut named
+            .entry(name.name())
+            .or_insert_with(|| (name, Vec::new()))
+            .1;
+        if let Some(target) = limitation.target() {
+            targets.push(target.clone());
         }
     }
-    named.into_iter().collect()
+    named.into_values().collect()
 }
 
 /// Puts what the baseline observed into the report.
@@ -1787,13 +1905,20 @@ pub fn absorb(
     baseline: &baseline::Baseline,
 ) -> Result<(), crate::report::CountError> {
     for (name, targets) in about(&baseline.limitations) {
-        let detail = limitation_detail(&name);
+        let detail = limitation_detail(&name.name());
         let detail = if targets.is_empty() {
             detail
         } else {
-            format!("{detail} ({})", targets.join(", "))
+            format!(
+                "{detail} ({})",
+                targets
+                    .iter()
+                    .map(rust_mutants::limitation::TargetId::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
         };
-        report.limitations.push(Limitation::new(&name, &detail));
+        report.limitations.push(Limitation::new(name, &detail));
     }
     if let Some(failure) = &baseline.failure {
         report.findings.push(Finding::new(
@@ -1809,10 +1934,10 @@ pub fn absorb(
             report.findings.push(Finding::new(
                 kind,
                 &subject,
-                measured
-                    .message
-                    .as_deref()
-                    .unwrap_or("the target ended without saying why"),
+                match measured.message.as_deref() {
+                    Some(said) => said,
+                    None => "the target ended without saying why",
+                },
             ));
         }
         report.targets.push(TargetRecord {
@@ -1865,7 +1990,28 @@ pub enum Narrowing {
     /// Every member, because nothing named any.
     Whole,
     /// Exactly these members, each one the workspace holds.
-    Named(Vec<String>),
+    Named(NamedPackages),
+}
+
+/// A nonempty list of packages explicitly named for one run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NamedPackages {
+    names: Vec<String>,
+}
+
+impl NamedPackages {
+    #[must_use]
+    fn new(first: String, more: impl IntoIterator<Item = String>) -> Self {
+        let mut names = vec![first];
+        names.extend(more);
+        Self { names }
+    }
+
+    /// The packages named for this run.
+    #[must_use]
+    pub fn names(&self) -> &[String] {
+        &self.names
+    }
 }
 
 impl Narrowing {
@@ -1874,7 +2020,7 @@ impl Narrowing {
     pub fn names(&self) -> &[String] {
         match self {
             Self::Whole => &[],
-            Self::Named(named) => named,
+            Self::Named(named) => named.names(),
         }
     }
 
@@ -1883,25 +2029,27 @@ impl Narrowing {
     pub fn holds(&self, name: &str) -> bool {
         match self {
             Self::Whole => true,
-            Self::Named(named) => named.iter().any(|held| held == name),
+            Self::Named(named) => named.names().iter().any(|held| held == name),
         }
     }
 }
 
 /// The packages the run settled on: what was asked for, or every member.
-#[must_use]
-pub fn resolved(request: &Request, members: &[String]) -> Narrowing {
-    let asked = requested(request);
-    if asked.is_empty() {
-        Narrowing::Whole
-    } else {
-        Narrowing::Named(
-            asked
-                .into_iter()
-                .filter(|name| members.contains(name))
-                .collect(),
-        )
+///
+/// # Errors
+/// A named package that is not in the workspace is refused before anything is measured.
+pub fn resolved(
+    request: &Request,
+    members: &[String],
+) -> Result<Narrowing, rust_mutants::discover::DiscoverError> {
+    let mut asked = requested(request).into_iter();
+    let Some(first) = asked.next() else {
+        return Ok(Narrowing::Whole);
+    };
+    if let Some(name) = unknown_package(request, members) {
+        return Err(rust_mutants::discover::DiscoverError::UnknownPackage { name });
     }
+    Ok(Narrowing::Named(NamedPackages::new(first, asked)))
 }
 
 /// The first package a run was narrowed to that the workspace does not hold, if one is.
@@ -1913,7 +2061,7 @@ pub fn unknown_package(request: &Request, members: &[String]) -> Option<String> 
 }
 
 /// The name a person calls the workspace.
-fn root_name(root: &std::path::Path) -> Result<String, crate::evidence::tree::ScanError> {
+fn root_name(root: &Path) -> Result<String, crate::evidence::tree::ScanError> {
     let Some(name) = root.file_name() else {
         return Ok(UNAVAILABLE.to_owned());
     };
@@ -1927,10 +2075,10 @@ fn root_name(root: &std::path::Path) -> Result<String, crate::evidence::tree::Sc
 /// One sentence of a compiler's several, and something to say when it said nothing.
 #[must_use]
 pub fn first_line(text: &str) -> String {
-    text.lines()
-        .find(|line| !line.trim().is_empty())
-        .unwrap_or("the workspace does not compile")
-        .to_owned()
+    match text.lines().find(|line| !line.trim().is_empty()) {
+        Some(line) => line.to_owned(),
+        None => "the workspace does not compile".to_owned(),
+    }
 }
 
 /// What a named limitation means, for the ones a phase reports by name.
@@ -1940,7 +2088,10 @@ pub fn first_line(text: &str) -> String {
     reason = "one sentence for every limitation a phase names, and a table split in two is two places to add the next one to"
 )]
 pub fn limitation_detail(name: &str) -> String {
-    let named = name.split_once(':').map_or(name, |(head, _target)| head);
+    let named = match name.split_once(':') {
+        Some((head, _target)) => head,
+        None => name,
+    };
     match named {
         crate::limitation::TARGET_RUSTFLAGS_NOT_MERGED
         | rust_mutants::limitation::COVERAGE_REFUSED_CONFIGURED_RUSTFLAGS => {

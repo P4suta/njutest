@@ -6,7 +6,7 @@ SCOPE	requested=(nothing named)	resolved=(nothing named)	included=(nothing named
 TIMING	started=2026-09-05T08:15:00Z	finished=2026-09-05T08:16:12Z	compute_total_ms=72000
 TARGET	failed	40ms	0123456789abcdef	core/lib/adds::works	assertion failed: left == right
 TARGET	passed	12ms	fedcba9876543210	core/lib/adds::rounds
-MUTANT	unnoticed	cccccccccccccccccccc	crates/core/src/lib.rs:12:9	lt-to-le@1
+MUTANT	unnoticed	cccccccccccccccccccc	crates/core/src/lib.rs:12:9	lt-to-le@1	observable_under_fault=8c841811e491fadad887 failed=alone by=core/lib/adds::rounds
 FINDING	surviving-mutant	cccccccccccccccccccc	no test noticed the edit at crates/core/src/lib.rs:12
 LIMITATION	git-metadata-unavailable	the stream fixture is not a git repository
 NEXT	njutest explain crates/core/src/lib.rs:demo:lt-to-le@1@12	says which tests reached it	njutest accept crates/core/src/lib.rs:demo:lt-to-le@1@12 --reason "..."	records why it is not a gap
@@ -14,10 +14,11 @@ TARGETS	selected=2	passed=1	failed=1	skipped=0	missing=0
 MUTANTS	cataloged=1	rejected=0	executed=1	unreached=0
 OUTCOMES	killed=0	survived=1	step_limit_reached=0	waited=0	equivalent=0
 WITHIN_OUTCOMES	accepted_of_survived=0	reused_of_killed=0	reused_of_survived=0
+FAULTS	sites=1	noticed=1	unnoticed=0	absorbed=0	unreached=0	waited=0	undecided=0	not_put=0
 DIMENSION	mutation	measured	catalogued=1	answered=1	holes=0
 DIMENSION	repeatable	not-asked
-DIMENSION	fault	not-asked
-DIMENSION	schedule	measured	catalogued=1	answered=0	holes=1
+DIMENSION	fault	measured	catalogued=1	answered=1	holes=0
+DIMENSION	schedule	measured	catalogued=1	answered=0	holes=1	open=core/lib/adds::rounds: it passed and no record says whether it runs one thread
 DIMENSION	wire	nothing-to-ask	no seam was configured or asked a question
 DIMENSION	durable	not-asked
 SOUNDNESS	build=default	unsafe_items=0	packages_with_unsafe=0	was_executed=false

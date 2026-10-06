@@ -1,0 +1,33 @@
+=== method-default source xtask/src/route.rs
+fn read(v: Option<u8>) -> u8 { v.unwrap_or_default() }
+=== method-value source xtask/src/proofaudit.rs
+fn read(v: Option<u8>) -> u8 { v.unwrap_or(0) }
+=== method-closure source xtask/src/engineaudit/evidence.rs
+fn read(v: Option<u8>) -> u8 { v.unwrap_or_else(|| 1) }
+=== mapped-value source xtask/src/proofaudit/knobs.rs
+fn read(v: Option<u8>) -> u8 { v.map_or(0, |one| one) }
+=== mapped-closure source xtask/src/wire.rs
+fn read(v: Option<u8>) -> u8 { v.map_or_else(|| 0, |one| one) }
+=== path-default source xtask/src/drift.rs
+fn read(v: Vec<Option<u8>>) -> Vec<u8> { v.into_iter().map(Option::unwrap_or_default).collect() }
+=== inside-format source xtask/src/faults.rs
+fn say(v: Option<&str>) -> String { format!("{}", v.unwrap_or("?")) }
+=== inside-json source xtask/src/crashes.rs
+fn doc(v: Option<u8>) -> serde_json::Value { serde_json::json!({ "n": v.map_or(0, u8::from) }) }
+=== impl-method source xtask/src/knobs.rs
+struct Reader;
+impl Reader { fn read(&self, v: Option<u8>) -> u8 { v.unwrap_or_default() } }
+=== nested-reader source xtask/src/engineaudit/recording.rs
+fn read(v: Option<Option<u8>>) -> u8 { v.map(|inner| inner.unwrap_or(1)).unwrap_or(0) }
+=== runner-decider source crates/njutest/src/assure/mutation.rs
+fn decide(v: Option<u8>) -> u8 { v.unwrap_or_default() }
+=== runner-column source crates/njutest/src/report/matrix.rs
+fn column(v: Option<u8>) -> u8 { v.map_or(0, |one| one) }
+=== sealed-host source crates/rust-mutants-sealed/src/host/fs.rs
+fn size(v: Option<u64>) -> u64 { v.map_or_else(|| 0, |one| one) }
+=== command-line source crates/rust-mutants-cli/src/app/mod.rs
+fn say(v: Option<&str>) -> String { format!("{}", v.unwrap_or_else(|| "?")) }
+=== engine-skeleton source crates/rust-mutants/src/skeleton.rs
+fn read(v: Option<u8>) -> u8 { v.unwrap_or_default() }
+=== engine-work source crates/rust-mutants/src/work.rs
+fn counted(v: Option<u64>) -> u64 { v.map_or(1, |one| one) }

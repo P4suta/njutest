@@ -20,6 +20,9 @@ pub mod matrix;
 pub mod merge;
 pub mod sarif;
 pub mod spec;
+mod verdict;
+
+pub use verdict::{Resting, RowVerdict, sealed_answers, sealed_killer, sealed_standing};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -35,7 +38,7 @@ pub const SCHEMA: &str = "njutest-assurance-report-v1";
 pub const SHARD_SCHEMA: &str = "njutest-assurance-shard-report-v1";
 
 /// The version of that shape.
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// The sentinel a report uses where a fact was not available.
 /// An empty string would read as "nothing to say"; this reads as "we asked".
@@ -170,11 +173,9 @@ impl Verdict {
     #[must_use]
     pub const fn exit_code(self) -> u8 {
         match self {
-            Self::Assured | Self::ChangeAssured | Self::ScopeAssured | Self::Partial => {
-                crate::cli::EXIT_ASSURED
-            }
+            Self::Assured | Self::ChangeAssured | Self::ScopeAssured => crate::cli::EXIT_ASSURED,
             Self::Defect => crate::cli::EXIT_DEFECT,
-            Self::Insufficient => crate::cli::EXIT_INSUFFICIENT,
+            Self::Insufficient | Self::Partial => crate::cli::EXIT_INSUFFICIENT,
             Self::Error => crate::cli::EXIT_ERROR,
         }
     }
@@ -245,7 +246,10 @@ impl Position {
     /// Returns [`CountError`] when either one-based column is outside the v1 wire range.
     #[cfg(feature = "testkit")]
     pub fn of(line_text: &str, line: u32, offset: usize) -> Result<Self, CountError> {
-        let prefix = line_text.get(..offset).unwrap_or(line_text);
+        let prefix = match line_text.get(..offset) {
+            Some(prefix) => prefix,
+            None => line_text,
+        };
         Ok(Self {
             line,
             column: count_of("position byte column", prefix.len())?
@@ -513,14 +517,20 @@ impl Git {
     ///
     /// The word is made here rather than stored, so nothing can hold a commit and say it was not asked at the same time.
     #[must_use]
-    pub fn commit(&self) -> &str {
-        self.said().map_or(UNAVAILABLE, |said| said.commit.as_str())
+    pub const fn commit(&self) -> &str {
+        match self.said() {
+            Some(said) => said.commit.as_str(),
+            None => UNAVAILABLE,
+        }
     }
 
     /// The branch, or [`UNAVAILABLE`] where git was not asked.
     #[must_use]
-    pub fn branch(&self) -> &str {
-        self.said().map_or(UNAVAILABLE, |said| said.branch.as_str())
+    pub const fn branch(&self) -> &str {
+        match self.said() {
+            Some(said) => said.branch.as_str(),
+            None => UNAVAILABLE,
+        }
     }
 
     /// Whether the tree had uncommitted changes, which a tree nobody could ask about does not.
@@ -558,7 +568,10 @@ impl Serialize for Git {
             branch: self.branch().to_owned(),
             dirty: self.dirty(),
             merge_base: against.map(|taken| taken.merge_base.clone()),
-            changed_files: against.map_or_else(Vec::new, |taken| taken.changed_files.clone()),
+            changed_files: match against {
+                Some(taken) => taken.changed_files.clone(),
+                None => Vec::new(),
+            },
         }
         .serialize(serializer)
     }
@@ -790,6 +803,8 @@ pub enum Decision {
     Unnoticed,
     /// Nothing ran at all.
     Unreached,
+    /// No sealed execution decided it, so what a native run said of it is a lead and not a verdict (ADR 0046).
+    Unproven,
     /// The configured step boundary was reached.
     /// This is an execution fact,
     /// not a verdict about the mutation.
@@ -805,25 +820,33 @@ impl Decision {
     #[must_use]
     #[cfg(feature = "testkit")]
     pub fn of_outcome(outcome: &str) -> Option<Self> {
-        Outcome::parse(outcome).map(Outcome::decision)
+        Outcome::parse(outcome).map(|outcome| {
+            RowVerdict {
+                outcome,
+                accepted: false,
+                resting: Resting::Sealed,
+            }
+            .decision()
+        })
     }
 
     /// How much a mutation decided this way stands on, where less is a weaker run.
     ///
-    /// The first four are holes in the verification and the last three are not; the order inside each group decides only which sentence a reader is given when two builds disagree.
+    /// The six holes come before the five answers; the order inside each group decides only which sentence a reader is given when two builds disagree.
     #[must_use]
     pub const fn standing(self) -> u8 {
         match self {
             Self::Errored => 0,
-            Self::Waited => 1,
-            Self::StepLimitReached => 2,
-            Self::Unnoticed => 3,
-            Self::Unreached => 4,
-            Self::Types => 5,
-            Self::Tests => 6,
-            Self::ModelNoticed => 7,
-            Self::Proved => 8,
-            Self::ModelProved => 9,
+            Self::Unproven => 1,
+            Self::Waited => 2,
+            Self::StepLimitReached => 3,
+            Self::Unnoticed => 4,
+            Self::Unreached => 5,
+            Self::Types => 6,
+            Self::Tests => 7,
+            Self::ModelNoticed => 8,
+            Self::Proved => 9,
+            Self::ModelProved => 10,
         }
     }
 
@@ -845,6 +868,7 @@ impl Decision {
         match self {
             Self::Unnoticed => Some(Blind::Unnoticed),
             Self::Unreached => Some(Blind::Unreached),
+            Self::Unproven => Some(Blind::Unproven),
             Self::StepLimitReached => Some(Blind::StepLimitReached),
             Self::Waited => Some(Blind::Waited),
             Self::Errored => Some(Blind::Errored),
@@ -866,6 +890,7 @@ impl Decision {
             Self::Proved => "proved",
             Self::Unnoticed => "unnoticed",
             Self::Unreached => "unreached",
+            Self::Unproven => "unproven",
             Self::Waited => "waited",
             Self::Errored => "errored",
         }
@@ -945,26 +970,6 @@ impl Outcome {
         Self::ALL.into_iter().find(|one| one.name() == name)
     }
 
-    /// Who decided a mutation this outcome is recorded for.
-    ///
-    /// A step boundary and a clock boundary are both explicit non-answers.
-    /// Neither may become detection credit without a separately represented comparison proving that the mutant diverged from its control.
-    #[must_use]
-    pub const fn decision(self) -> Decision {
-        match self {
-            Self::CompileRejected => Decision::Types,
-            Self::Killed => Decision::Tests,
-            Self::ModelNoticed => Decision::ModelNoticed,
-            Self::ModelProved => Decision::ModelProved,
-            Self::StepLimitReached => Decision::StepLimitReached,
-            Self::Waited => Decision::Waited,
-            Self::Survived => Decision::Unnoticed,
-            Self::Unreached => Decision::Unreached,
-            Self::Equivalent => Decision::Proved,
-            Self::Unconfirmed | Self::Errored | Self::Declined => Decision::Errored,
-        }
-    }
-
     /// Whether a mutation recorded under this outcome was executed: every outcome but a refusal by the compiler and the two that no test ran, a proof and nothing reaching it.
     ///
     /// Matched without a catch-all, so an outcome added later is one the compiler makes somebody count on one side.
@@ -981,56 +986,6 @@ impl Outcome {
             | Self::Errored
             | Self::Declined => true,
             Self::CompileRejected | Self::Unreached | Self::Equivalent => false,
-        }
-    }
-
-    /// Whether a review acceptance can answer this outcome.
-    ///
-    /// This is the single domain boundary used by producers and durable audits.
-    /// In particular, an expired clock or a crossed step allowance is an observation that still needs an answer; it cannot be converted into one by accepting it.
-    #[must_use]
-    pub const fn review_answerable(self) -> bool {
-        matches!(self, Self::Survived | Self::Unreached | Self::Equivalent)
-    }
-
-    /// Whether this individual row supports a completed answer.
-    ///
-    /// `accepted` belongs to the row rather than to an aggregate count.
-    /// That prevents an acceptance on one mutation from hiding an unanswered survivor or unreached mutation elsewhere in the report.
-    #[must_use]
-    pub const fn answered(self, accepted: bool) -> bool {
-        match self {
-            Self::CompileRejected
-            | Self::Killed
-            | Self::ModelNoticed
-            | Self::ModelProved
-            | Self::Equivalent => true,
-            Self::Survived | Self::Unreached => accepted,
-            Self::StepLimitReached
-            | Self::Waited
-            | Self::Unconfirmed
-            | Self::Errored
-            | Self::Declined => false,
-        }
-    }
-
-    /// The actionable finding this row must carry, after any row-local acceptance has been applied.
-    #[must_use]
-    pub const fn required_finding(self, accepted: bool) -> Option<FindingKind> {
-        match self {
-            Self::Survived | Self::Unreached if !accepted => Some(FindingKind::SurvivingMutant),
-            Self::StepLimitReached => Some(FindingKind::StepLimitReachedMutant),
-            Self::Waited => Some(FindingKind::WaitedMutant),
-            Self::Unconfirmed => Some(FindingKind::FailingTest),
-            Self::Errored => Some(FindingKind::TargetMissing),
-            Self::Declined => Some(FindingKind::NotMeasured),
-            Self::CompileRejected
-            | Self::Killed
-            | Self::ModelNoticed
-            | Self::ModelProved
-            | Self::Equivalent
-            | Self::Survived
-            | Self::Unreached => None,
         }
     }
 }
@@ -1178,12 +1133,6 @@ impl Decided {
     #[must_use]
     pub const fn name(&self) -> &'static str {
         self.outcome().name()
-    }
-
-    /// Who decided a mutation this outcome is recorded for.
-    #[must_use]
-    pub const fn decision(&self) -> Decision {
-        self.outcome().decision()
     }
 
     /// The target this was established against, where it was established against one.
@@ -1429,6 +1378,8 @@ pub enum Blind {
     Unnoticed,
     /// Nothing ran it.
     Unreached,
+    /// No sealed execution decided it, so what a native run said of it is a lead (ADR 0046).
+    Unproven,
     /// The deterministic guard boundary was reached, without a control proof that the mutation caused divergence.
     StepLimitReached,
     /// A bound expired before anything finished.
@@ -1445,6 +1396,7 @@ impl Blind {
         match self {
             Self::Unnoticed => Decision::Unnoticed,
             Self::Unreached => Decision::Unreached,
+            Self::Unproven => Decision::Unproven,
             Self::StepLimitReached => Decision::StepLimitReached,
             Self::Waited => Decision::Waited,
             Self::Errored => Decision::Errored,
@@ -1464,7 +1416,7 @@ impl Blind {
     #[must_use]
     pub const fn is_unanswered(self) -> bool {
         match self {
-            Self::StepLimitReached | Self::Waited | Self::Errored => true,
+            Self::Unproven | Self::StepLimitReached | Self::Waited | Self::Errored => true,
             Self::Unnoticed | Self::Unreached => false,
         }
     }
@@ -1673,6 +1625,8 @@ pub struct BuildPartEvidence {
     limitations: Vec<Limitation>,
     /// Whether each target this source's baseline measured held its reach on a control.
     drift: Vec<drift::Drift>,
+    /// How many dispositions resting on each target this source saw move it ran again against it, one record per moved target in drift order.
+    repaired: Vec<drift::Repaired>,
     /// What each knob asked for established about each target whose baseline passed.
     knobs: Vec<knobs::KnobRecord>,
     /// Whether each test binary this source's baseline measured is proven to run one thread.
@@ -1705,6 +1659,7 @@ impl BuildPartEvidence {
             findings,
             limitations: report.limitations.clone(),
             drift: report.drift.clone(),
+            repaired: report.repaired.clone(),
             knobs: report.knobs.clone(),
             concurrency: report.concurrency.clone(),
         };
@@ -1734,6 +1689,7 @@ struct BuildPartEvidenceWire {
     findings: Vec<Finding>,
     limitations: Vec<Limitation>,
     drift: Vec<drift::Drift>,
+    repaired: Vec<drift::Repaired>,
     knobs: Vec<knobs::KnobRecord>,
     concurrency: Vec<concurrency::ConcurrencyRecord>,
 }
@@ -1762,6 +1718,7 @@ impl<'de> Deserialize<'de> for BuildPartEvidence {
             findings: wire.findings,
             limitations: wire.limitations,
             drift: wire.drift,
+            repaired: wire.repaired,
             knobs: wire.knobs,
             concurrency: wire.concurrency,
         };
@@ -2037,6 +1994,14 @@ pub enum PartLedgerError {
         /// Which.
         about: String,
     },
+    /// The repair counts are not one for each target the part saw move, in drift order, or count more dispositions than the part holds.
+    #[error("source {run_id} has repair records that are not its moved targets' own: {about}")]
+    RepairRecords {
+        /// The owning source.
+        run_id: rust_mutants::id::RunId,
+        /// Which.
+        about: String,
+    },
 }
 
 impl PartLedger {
@@ -2210,6 +2175,47 @@ fn validate_beside(part: &BuildPartEvidence) -> Result<(), PartLedgerError> {
 }
 
 /// Every knob asked for is put once on every target whose baseline passed, so the records of one part are one per knob and target, and every knob's are over one set of targets.
+/// Nothing, where `part` records one repair count for each target its drift says moved, in drift order, none counting more dispositions than the part holds (ADR 0036 decision 4).
+fn validate_repair_records(part: &BuildPartEvidence) -> Result<(), PartLedgerError> {
+    let refused = |about: String| PartLedgerError::RepairRecords {
+        run_id: part.run_id.clone(),
+        about,
+    };
+    let moved: Vec<&str> = part
+        .drift
+        .iter()
+        .filter_map(|one| match one {
+            drift::Drift::Moved { target, .. } => Some(target.as_str()),
+            drift::Drift::Held { .. } | drift::Drift::NotMeasured { .. } => None,
+        })
+        .collect();
+    let counted: Vec<&str> = part
+        .repaired
+        .iter()
+        .map(|one| one.target.as_str())
+        .collect();
+    if moved != counted {
+        return Err(refused(format!(
+            "the targets it saw move are {moved:?} and it counts repairs against {counted:?}"
+        )));
+    }
+    let held = part.mutants.len();
+    if let Some(over) = part
+        .repaired
+        .iter()
+        .find(|one| match usize::try_from(one.again) {
+            Ok(again) => again > held,
+            Err(_wider_than_memory) => true,
+        })
+    {
+        return Err(refused(format!(
+            "it ran {} dispositions again against {} and holds {held}",
+            over.again, over.target
+        )));
+    }
+    Ok(())
+}
+
 fn validate_knob_records(part: &BuildPartEvidence) -> Result<(), PartLedgerError> {
     let refused = |about: String| PartLedgerError::KnobRecords {
         run_id: part.run_id.clone(),
@@ -2331,6 +2337,7 @@ fn validate_part_evidence(part: &BuildPartEvidence) -> Result<(), PartLedgerErro
     validate_beside(part)?;
     validate_dimension_accounting(part)?;
     validate_knob_records(part)?;
+    validate_repair_records(part)?;
     validate_concurrency_records(part)?;
     let mut target_ids = BTreeSet::new();
     for target in &part.targets {
@@ -2496,6 +2503,7 @@ fn exact_mutant_accounting(part: &BuildPartEvidence) -> Result<MutantAccounting,
             proved: count_decision(part, Decision::Proved, "proof decisions")?,
             unnoticed: count_decision(part, Decision::Unnoticed, "unnoticed decisions")?,
             unreached: count_decision(part, Decision::Unreached, "unreached decisions")?,
+            unproven: count_decision(part, Decision::Unproven, "unproven decisions")?,
             waited: count_decision(part, Decision::Waited, "waited decisions")?,
             errored: count_decision(part, Decision::Errored, "errored decisions")?,
         },
@@ -2527,7 +2535,7 @@ fn count_decision(
         about,
         part.mutants
             .iter()
-            .filter(|mutant| mutant.outcome.decision() == decision)
+            .filter(|mutant| mutant.decision() == decision)
             .count(),
     )
 }
@@ -2694,6 +2702,17 @@ impl BuildEvidence {
         &self.name
     }
 
+    /// The exact Cargo inputs the build was made with.
+    #[must_use]
+    pub const fn selection(&self) -> &BuildSelection {
+        &self.configuration
+    }
+
+    /// Every mutation row the build judged, source by source in whole-or-shard order.
+    pub fn rows(&self) -> impl Iterator<Item = &MutantRecord> {
+        self.parts.iter().flat_map(|part| part.mutants.iter())
+    }
+
     /// The constructor-proved common baseline source.
     #[must_use]
     pub const fn baseline(&self) -> &BuildPartEvidence {
@@ -2750,6 +2769,8 @@ pub struct ObserverAccounting {
     pub unnoticed: u32,
     /// How many nothing ran at all.
     pub unreached: u32,
+    /// How many no sealed execution decided, where what a native run said is a lead (ADR 0046).
+    pub unproven: u32,
     /// How many a bound expired on before anything finished, which establishes nothing about them.
     pub waited: u32,
     /// How many nothing could be measured about, which is a gap in the verification rather than in the project.
@@ -2773,6 +2794,7 @@ impl ObserverAccounting {
             Decision::Proved => ("observer proved", &mut self.proved),
             Decision::Unnoticed => ("observer unnoticed", &mut self.unnoticed),
             Decision::Unreached => ("observer unreached", &mut self.unreached),
+            Decision::Unproven => ("observer unproven", &mut self.unproven),
             Decision::Waited => ("observer waited", &mut self.waited),
             Decision::Errored => ("observer errored", &mut self.errored),
         };
@@ -2807,6 +2829,7 @@ impl ObserverAccounting {
             Decision::Proved => self.proved,
             Decision::Unnoticed => self.unnoticed,
             Decision::Unreached => self.unreached,
+            Decision::Unproven => self.unproven,
             Decision::Waited => self.waited,
             Decision::Errored => self.errored,
         }
@@ -4372,6 +4395,9 @@ pub struct MutantRecord {
     /// What the run established, and the target it was established against where there was one.
     #[serde(rename = "decision")]
     pub outcome: Decided,
+    /// What that rests on: the sealed executions that established it, or no verdict and every reason why, and `null` exactly where no execution was asked about it (ADR 0046).
+    #[serde(deserialize_with = "crate::strictjson::required_option")]
+    pub evidence: Option<rust_mutants::sealed::record::Evidence>,
     /// Whether a reviewer explicitly accepted this remaining gap.
     ///
     /// Kept on the row so durable accounting can be re-derived rather than trusted as an independent counter.
@@ -4387,6 +4413,24 @@ pub struct MutantRecord {
     pub reuse: Reuse,
 }
 
+impl MutantRecord {
+    /// What the row is judged by.
+    #[must_use]
+    pub const fn verdict(&self) -> RowVerdict {
+        RowVerdict {
+            outcome: self.outcome.outcome(),
+            accepted: self.accepted,
+            resting: Resting::of(self.evidence.as_ref()),
+        }
+    }
+
+    /// Who decided it, which is nobody for a lead.
+    #[must_use]
+    pub const fn decision(&self) -> Decision {
+        self.verdict().decision()
+    }
+}
+
 /// Whether any target's reach moved between its baseline and a control.
 pub(crate) fn moved(drift: &[drift::Drift]) -> bool {
     drift
@@ -4399,59 +4443,82 @@ pub(crate) fn moved(drift: &[drift::Drift]) -> bool {
 /// Producers, shard merging, configured-build reconciliation, and the persistence audit all call this function.
 /// A new outcome therefore cannot acquire four subtly different accounting rules.
 pub(crate) fn count_mutants(mutants: &[MutantRecord]) -> Result<MutantAccounting, CountError> {
+    tally(
+        mutants
+            .iter()
+            .map(|mutant| (mutant.verdict(), mutant.reuse.0.read_back().is_some())),
+    )
+}
+
+/// What rows judged by each verdict, each with whether another run established it, count to: the one fold a run's judgements and a report's rows are both counted with.
+///
+/// # Errors
+/// Returns [`CountError`] rather than inventing a terminal value when a durable counter cannot hold the exact census.
+pub fn tally(
+    rows: impl ExactSizeIterator<Item = (RowVerdict, bool)>,
+) -> Result<MutantAccounting, CountError> {
     let mut counts = MutantAccounting {
-        cataloged: count_of("mutation rows", mutants.len())?,
+        cataloged: count_of("mutation rows", rows.len())?,
         ..MutantAccounting::default()
     };
-    for mutant in mutants {
-        let outcome = mutant.outcome.outcome();
-        counts.observers.counted(outcome.decision())?;
-        if mutant.accepted {
+    for (verdict, reused) in rows {
+        counts.observers.counted(verdict.decision())?;
+        if verdict.accepted {
             increment("accepted mutations", &mut counts.accepted)?;
         }
-        match outcome {
-            Outcome::CompileRejected => increment("rejected mutations", &mut counts.rejected)?,
-            Outcome::Killed => {
-                increment("executed mutations", &mut counts.executed)?;
-                increment("killed mutations", &mut counts.killed)?;
-                if mutant.reuse.0.read_back().is_some() {
-                    increment("reused killed mutations", &mut counts.reused_killed)?;
-                }
-            }
-            Outcome::Survived => {
-                increment("executed mutations", &mut counts.executed)?;
-                increment("surviving mutations", &mut counts.survived)?;
-                if mutant.reuse.0.read_back().is_some() {
-                    increment("reused surviving mutations", &mut counts.reused_survived)?;
-                }
-            }
-            Outcome::StepLimitReached => {
-                increment("executed mutations", &mut counts.executed)?;
-                increment(
-                    "step-limit-reached mutations",
-                    &mut counts.step_limit_reached,
-                )?;
-            }
-            Outcome::Waited => {
-                increment("executed mutations", &mut counts.executed)?;
-                increment("waited mutations", &mut counts.waited)?;
-            }
-            Outcome::Unreached => increment("unreached mutations", &mut counts.unreached)?,
-            Outcome::Equivalent => increment("equivalent mutations", &mut counts.equivalent)?,
-            Outcome::ModelNoticed => {
-                increment("executed mutations", &mut counts.executed)?;
-                increment("model-noticed mutations", &mut counts.model_noticed)?;
-            }
-            Outcome::ModelProved => {
-                increment("executed mutations", &mut counts.executed)?;
-                increment("model-proved mutations", &mut counts.model_proved)?;
-            }
-            Outcome::Unconfirmed | Outcome::Errored | Outcome::Declined => {
-                increment("executed mutations", &mut counts.executed)?;
-            }
-        }
+        counted_as(&mut counts, verdict.outcome, reused)?;
     }
     Ok(counts)
+}
+
+/// One more mutation in the outcome columns of `counts`, as `outcome` counts, `reused` where another run established it: the one fold a part's rows and a conclusion's projection are both counted with.
+fn counted_as(
+    counts: &mut MutantAccounting,
+    outcome: Outcome,
+    reused: bool,
+) -> Result<(), CountError> {
+    match outcome {
+        Outcome::CompileRejected => increment("rejected mutations", &mut counts.rejected)?,
+        Outcome::Killed => {
+            increment("executed mutations", &mut counts.executed)?;
+            increment("killed mutations", &mut counts.killed)?;
+            if reused {
+                increment("reused killed mutations", &mut counts.reused_killed)?;
+            }
+        }
+        Outcome::Survived => {
+            increment("executed mutations", &mut counts.executed)?;
+            increment("surviving mutations", &mut counts.survived)?;
+            if reused {
+                increment("reused surviving mutations", &mut counts.reused_survived)?;
+            }
+        }
+        Outcome::StepLimitReached => {
+            increment("executed mutations", &mut counts.executed)?;
+            increment(
+                "step-limit-reached mutations",
+                &mut counts.step_limit_reached,
+            )?;
+        }
+        Outcome::Waited => {
+            increment("executed mutations", &mut counts.executed)?;
+            increment("waited mutations", &mut counts.waited)?;
+        }
+        Outcome::Unreached => increment("unreached mutations", &mut counts.unreached)?,
+        Outcome::Equivalent => increment("equivalent mutations", &mut counts.equivalent)?,
+        Outcome::ModelNoticed => {
+            increment("executed mutations", &mut counts.executed)?;
+            increment("model-noticed mutations", &mut counts.model_noticed)?;
+        }
+        Outcome::ModelProved => {
+            increment("executed mutations", &mut counts.executed)?;
+            increment("model-proved mutations", &mut counts.model_proved)?;
+        }
+        Outcome::Unconfirmed | Outcome::Errored | Outcome::Declined => {
+            increment("executed mutations", &mut counts.executed)?;
+        }
+    }
+    Ok(())
 }
 
 /// Where the findings of one kind come from.
@@ -4487,6 +4554,8 @@ pub enum FindingKind {
     WaitedMutant,
     /// A mutation crossed its verified step allowance without a matched control establishing divergence.
     StepLimitReachedMutant,
+    /// No sealed execution established a verdict about a mutation, so what a native run said of it is a lead (ADR 0046).
+    UnprovenMutant,
     /// Something a run could not measure, so it claims nothing about it.
     NotMeasured,
     /// An unexpired acceptance does not name exactly one mutant in this catalog.
@@ -4549,6 +4618,7 @@ impl FindingKind {
             | Self::Timeout
             | Self::WaitedMutant
             | Self::StepLimitReachedMutant
+            | Self::UnprovenMutant
             | Self::NotMeasured
             | Self::UnmatchedAcceptance
             | Self::UndefinedBehaviour
@@ -4571,6 +4641,7 @@ impl FindingKind {
             Self::Timeout => "timeout",
             Self::WaitedMutant => "waited-mutant",
             Self::StepLimitReachedMutant => "step-limit-reached-mutant",
+            Self::UnprovenMutant => "unproven-mutant",
             Self::NotMeasured => "not-measured",
             Self::UnmatchedAcceptance => "unmatched-acceptance",
             Self::UndefinedBehaviour => "undefined-behaviour",
@@ -4591,9 +4662,10 @@ impl FindingKind {
     #[must_use]
     pub const fn derivation(self) -> Derivation {
         match self {
-            Self::SurvivingMutant | Self::WaitedMutant | Self::StepLimitReachedMutant => {
-                Derivation::Row
-            }
+            Self::SurvivingMutant
+            | Self::WaitedMutant
+            | Self::StepLimitReachedMutant
+            | Self::UnprovenMutant => Derivation::Row,
             Self::HollowTarget
             | Self::UnstableBaseline
             | Self::UnnoticedFault
@@ -4630,6 +4702,7 @@ impl FindingKind {
             | Self::Timeout
             | Self::WaitedMutant
             | Self::StepLimitReachedMutant
+            | Self::UnprovenMutant
             | Self::NotMeasured
             | Self::UnmatchedAcceptance
             | Self::HollowTarget
@@ -4726,22 +4799,60 @@ pub struct CandidateRecord {
 
 /// One thing a report cannot claim, and why.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, try_from = "StatedLimitation")]
 pub struct Limitation {
-    /// The stable name a reader can grep for.
-    pub name: String,
+    /// Which limitation it is, which every reader of it places by an exhaustive match.
+    #[serde(skip)]
+    named: crate::limitation::Name,
+    /// The stable name a reader can grep for, which is always `named`'s.
+    name: String,
     /// One sentence saying what is not claimed.
     pub detail: String,
 }
 
 impl Limitation {
+    /// The stable report name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Which limitation it is.
+    #[must_use]
+    pub const fn named(&self) -> crate::limitation::Name {
+        self.named
+    }
+
     /// A limitation named `name`.
     #[must_use]
-    pub fn new(name: &str, detail: &str) -> Self {
+    pub fn new(name: impl Into<crate::limitation::Name>, detail: &str) -> Self {
+        let named = name.into();
         Self {
-            name: name.to_owned(),
+            named,
+            name: named.name(),
             detail: detail.to_owned(),
         }
+    }
+}
+
+/// A limitation as a document spells it, before its name is known to be one this release can state.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StatedLimitation {
+    name: String,
+    detail: String,
+}
+
+impl TryFrom<StatedLimitation> for Limitation {
+    type Error = crate::limitation::NameError;
+
+    fn try_from(stated: StatedLimitation) -> Result<Self, Self::Error> {
+        let named = stated.name.parse::<crate::limitation::Name>()?;
+        Ok(Self {
+            named,
+            name: named.name(),
+            detail: stated.detail,
+        })
     }
 }
 
@@ -4900,6 +5011,8 @@ pub struct BuildReport {
     pub limitations: Vec<Limitation>,
     /// Whether each target its baseline measured reached, on an original-code control, what it reached on that baseline.
     pub drift: Vec<drift::Drift>,
+    /// How many dispositions resting on each target whose reach moved it ran again against it, one record per moved target in drift order (ADR 0036).
+    pub repaired: Vec<drift::Repaired>,
     /// What each knob asked for established about each target whose baseline passed.
     pub knobs: Vec<knobs::KnobRecord>,
     /// Whether each test binary its baseline measured is proven to run one thread.
@@ -4945,6 +5058,7 @@ impl BuildReport {
             findings: Vec::new(),
             limitations: Vec::new(),
             drift: Vec::new(),
+            repaired: Vec::new(),
             knobs: Vec::new(),
             concurrency: Vec::new(),
         }
@@ -4968,28 +5082,20 @@ impl BuildReport {
         Ok(())
     }
 
-    /// What these observations support.
+    /// What these observations support, by the one function every verdict of a report is drawn from.
     #[must_use]
     pub fn concluded(&self) -> Verdict {
-        if self.findings.iter().any(|finding| finding.kind.is_defect()) {
-            return Verdict::Defect;
-        }
-        if !self.findings.is_empty() {
-            return Verdict::Insufficient;
-        }
-        let observed = self.accounting.targets.passed > 0;
-        let asked = self.accounting.mutants.executed > 0;
-        if !observed || !asked || moved(&self.drift) || knobs::shaken(&self.knobs) {
-            return Verdict::Insufficient;
-        }
-        if self.scope.shard.is_some() {
-            return Verdict::Partial;
-        }
-        match self.run_kind {
-            RunKind::Full => Verdict::Assured,
-            RunKind::Changed => Verdict::ChangeAssured,
-            RunKind::Scoped => Verdict::ScopeAssured,
-        }
+        let part = self.scope.shard.is_some();
+        concluded_from(&Basis {
+            extent: Extent::of(self.run_kind, part),
+            findings: &self.findings,
+            answered: self
+                .mutants
+                .iter()
+                .all(|row| answers(row.decision(), row.verdict())),
+            observed: self.accounting.targets.passed > 0 && self.accounting.mutants.executed > 0,
+            unsettled: part && (moved(&self.drift) || knobs::shaken(&self.knobs)),
+        })
     }
 
     /// Whether a limitation of this name is stated.
@@ -5496,12 +5602,29 @@ pub struct BuildMutationDecision {
     run_id: rust_mutants::id::RunId,
     part: CatalogPart,
     decision: Decided,
+    evidence: Option<rust_mutants::sealed::record::Evidence>,
     accepted: bool,
     routing: Option<Routing>,
     reuse: Reuse,
 }
 
 impl BuildMutationDecision {
+    /// What the source row is judged by.
+    #[must_use]
+    pub const fn verdict(&self) -> RowVerdict {
+        RowVerdict {
+            outcome: self.decision.outcome(),
+            accepted: self.accepted,
+            resting: Resting::of(self.evidence.as_ref()),
+        }
+    }
+
+    /// What the source row's answer rests on, where any execution was asked about it.
+    #[must_use]
+    pub const fn evidence(&self) -> Option<&rust_mutants::sealed::record::Evidence> {
+        self.evidence.as_ref()
+    }
+
     /// The configured build that established this answer.
     #[must_use]
     pub const fn build(&self) -> &BuildName {
@@ -5920,7 +6043,7 @@ pub enum CompletionError {
     #[error("verified-v1 requires an exact post-lattice model batch")]
     ModelRequired,
     /// A non-model contract was given a model batch.
-    #[error("contract {contract:?} does not admit model evidence")]
+    #[error("contract {} does not admit model evidence", contract.name())]
     ModelForbidden {
         /// The contract that has no model phase.
         contract: crate::config::Contract,
@@ -6183,7 +6306,7 @@ fn reject_premature_model_outcomes(builds: &BuildLedger) -> Result<(), Completio
         .flat_map(|build| build.parts.iter())
         .flat_map(|part| part.mutants.iter())
     {
-        let decision = row.outcome.decision();
+        let decision = row.decision();
         if matches!(decision, Decision::ModelNoticed | Decision::ModelProved) {
             return Err(CompletionError::PrematureModelOutcome {
                 mutant: row.id.clone(),
@@ -6233,25 +6356,15 @@ impl Report {
     fn checked(report: Self) -> Result<Self, CompletionError> {
         validate_completion_shape(&report.run_id, &report.composition, &report.builds)?;
         reject_premature_model_outcomes(&report.builds)?;
-        match (&report.contract, &report.model_completion) {
-            (crate::config::Contract::VerifiedV1, ModelCompletion::Verified(batch)) => {
+        match (report.contract.proves_models(), &report.model_completion) {
+            (true, ModelCompletion::Verified(batch)) => {
                 validate_model_batch(&report.run_id, &report.builds, batch)?;
             }
-            (crate::config::Contract::VerifiedV1, ModelCompletion::NotRequired) => {
+            (true, ModelCompletion::NotRequired) => {
                 return Err(CompletionError::ModelRequired);
             }
-            (
-                crate::config::Contract::StandardV1
-                | crate::config::Contract::DeepV1
-                | crate::config::Contract::WholeV1,
-                ModelCompletion::NotRequired,
-            ) => {}
-            (
-                crate::config::Contract::StandardV1
-                | crate::config::Contract::DeepV1
-                | crate::config::Contract::WholeV1,
-                ModelCompletion::Verified(_),
-            ) => {
+            (false, ModelCompletion::NotRequired) => {}
+            (false, ModelCompletion::Verified(_)) => {
                 return Err(CompletionError::ModelForbidden {
                     contract: report.contract,
                 });
@@ -6284,10 +6397,10 @@ impl Report {
         &self.provenance
     }
 
-    /// Reissues an immutable completed answer under a new response run while retaining every evidence namespace and measurement time that actually established it.
+    /// Reissues an immutable completed answer under a new response run while retaining every evidence namespace and measurement time that actually established it, and marks every reusable verdict it holds as read back from the run that established it, so a reader or an audit holds the verdict to that run and not to this one.
     ///
     /// # Errors
-    /// Refuses model-complete evidence because its retained artifacts are owned by the original final-run namespace.
+    /// Refuses model-complete evidence because its retained artifacts are owned by the original final-run namespace, and any counter a re-marked row no longer fits.
     pub fn read_back_as(
         mut self,
         run_id: &rust_mutants::id::RunId,
@@ -6300,7 +6413,31 @@ impl Report {
         }
         let source = std::mem::replace(&mut self.run_id, run_id.clone());
         self.provenance.facts = Established::ReadBackFrom(source.to_string());
+        self.reads_back_verdicts_from(&source)?;
         Self::checked(self)
+    }
+
+    /// Marks every reusable verdict of every part as read back from `source`, and counts each part's mutation accounting again from its re-marked rows.
+    ///
+    /// # Errors
+    /// Returns [`CompletionError`] where a re-marked row no longer fits a durable counter.
+    fn reads_back_verdicts_from(
+        &mut self,
+        source: &rust_mutants::id::RunId,
+    ) -> Result<(), CompletionError> {
+        for build in std::iter::once(&mut self.builds.first).chain(self.builds.rest.iter_mut()) {
+            for part in std::iter::once(&mut build.parts.first).chain(build.parts.rest.iter_mut()) {
+                for row in &mut part.mutants {
+                    if matches!(row.outcome, Decided::Killed { .. } | Decided::Survived)
+                        && row.reuse.0.read_back().is_none()
+                    {
+                        row.reuse = Reuse(Established::ReadBackFrom(source.to_string()));
+                    }
+                }
+                part.accounting.mutants = count_mutants(&part.mutants)?;
+            }
+        }
+        Ok(())
     }
 
     /// Every configured build in the exact requested order.
@@ -6324,6 +6461,10 @@ impl Report {
         let mutants = projected_mutants_with_models(&self.builds, self.models());
         let findings =
             projected_findings(&self.builds, &self.global_findings, &mutants, self.contract);
+        let mut limitations = Vec::new();
+        for build in self.builds.iter() {
+            limitations.extend(stated_by(build)?);
+        }
         Ok(Conclusion {
             verdict: concluded_from_projection(ConclusionProjection {
                 run_kind: self.run_kind,
@@ -6365,7 +6506,7 @@ impl Report {
                 .collect(),
             mutants,
             findings,
-            limitations: self.builds.iter().flat_map(stated_by).collect(),
+            limitations,
             sources: self
                 .builds
                 .iter()
@@ -6667,35 +6808,81 @@ impl ReportDocument {
 }
 
 fn shard_verdict(builds: &ShardBuildLedger, global_findings: &[Finding]) -> Verdict {
-    if global_findings
+    let findings: Vec<Finding> = global_findings
+        .iter()
+        .chain(builds.iter().flat_map(|build| build.source.findings.iter()))
+        .cloned()
+        .collect();
+    concluded_from(&Basis {
+        extent: Extent::Part,
+        findings: &findings,
+        answered: builds.iter().all(|build| {
+            build
+                .source
+                .mutants
+                .iter()
+                .all(|row| answers(row.decision(), row.verdict()))
+        }),
+        observed: builds.iter().all(|build| {
+            build.source.accounting.targets.passed > 0
+                && build.source.accounting.mutants.executed > 0
+        }),
+        unsettled: builds
+            .iter()
+            .any(|build| moved(&build.source.drift) || knobs::shaken(&build.source.knobs)),
+    })
+}
+
+/// What a report's verdict is drawn from, whichever report holds it: one build's, a part's, or the projection of every build.
+struct Basis<'a> {
+    extent: Extent,
+    findings: &'a [Finding],
+    answered: bool,
+    observed: bool,
+    /// Whether a part of a divided catalog saw a reach move or a knob shake, whose findings only the merge raises over what every part holds (ADR 0036 decision 4).
+    unsettled: bool,
+}
+
+/// How much of a catalog a body of evidence is about, which is what it can assure where nothing stands against it.
+#[derive(Debug, Clone, Copy)]
+enum Extent {
+    /// The whole catalog, of a run of this kind.
+    Whole(RunKind),
+    /// One part of a divided catalog, which assures nothing on its own.
+    Part,
+}
+
+impl Extent {
+    /// The extent of a run of `kind` that was one `part` of a divided catalog or the whole of it.
+    const fn of(kind: RunKind, part: bool) -> Self {
+        if part { Self::Part } else { Self::Whole(kind) }
+    }
+}
+
+/// Whether a row decided `decision` and judged by `verdict` answers its mutation: a model's decision, or a row whose verdict is an answer.
+const fn answers(decision: Decision, verdict: RowVerdict) -> bool {
+    matches!(decision, Decision::ModelNoticed | Decision::ModelProved) || verdict.answered()
+}
+
+/// The one verdict every report draws from its basis: a defect decides it; a finding, a mutation nothing answered, or a run that measured or asked nothing leaves it insufficient; and otherwise a part is partial and a whole run assures what it was asked.
+///
+/// A target whose reach moved is read here only by a part: in a whole report what still rests on it is an `unstable-baseline` finding, and one nothing rests on is the limitation `reach-moved` (ADR 0036 decision 3).
+fn concluded_from(basis: &Basis<'_>) -> Verdict {
+    if basis
+        .findings
         .iter()
         .any(|finding| finding.kind.is_defect())
-        || builds
-            .iter()
-            .flat_map(|build| build.source.findings.iter())
-            .any(|finding| finding.kind.is_defect())
     {
         return Verdict::Defect;
     }
-    let answered = builds.iter().all(|build| {
-        build
-            .source
-            .mutants
-            .iter()
-            .all(|row| row.outcome.outcome().answered(row.accepted))
-    });
-    let observed = builds.iter().all(|build| {
-        build.source.accounting.targets.passed > 0 && build.source.accounting.mutants.executed > 0
-    });
-    let no_findings =
-        global_findings.is_empty() && builds.iter().all(|build| build.source.findings.is_empty());
-    let steady = builds
-        .iter()
-        .all(|build| !moved(&build.source.drift) && !knobs::shaken(&build.source.knobs));
-    if answered && observed && no_findings && steady {
-        Verdict::Partial
-    } else {
-        Verdict::Insufficient
+    if !basis.answered || !basis.observed || !basis.findings.is_empty() || basis.unsettled {
+        return Verdict::Insufficient;
+    }
+    match basis.extent {
+        Extent::Part => Verdict::Partial,
+        Extent::Whole(RunKind::Full) => Verdict::Assured,
+        Extent::Whole(RunKind::Changed) => Verdict::ChangeAssured,
+        Extent::Whole(RunKind::Scoped) => Verdict::ScopeAssured,
     }
 }
 
@@ -6733,40 +6920,24 @@ fn concluded_from_projection(projection: ConclusionProjection<'_>) -> Verdict {
         mutants,
         findings,
     } = projection;
-    if findings.iter().any(|finding| finding.kind.is_defect()) {
-        return Verdict::Defect;
-    }
-    let all_answered = mutants.iter().all(|mutant| {
-        if matches!(
-            mutant.decision,
-            Decision::ModelNoticed | Decision::ModelProved
-        ) {
-            return true;
-        }
-        mutant
-            .by_build
-            .iter()
-            .all(|fact| fact.decision.outcome().answered(fact.accepted))
-    });
-    let all_observed = builds.iter().all(|build| {
-        build.baseline().accounting.targets.passed > 0
-            && build
-                .parts
-                .iter()
-                .any(|part| part.accounting.mutants.executed > 0)
-    });
-    let no_findings = findings.is_empty();
-    if !all_answered || !all_observed || !no_findings {
-        return Verdict::Insufficient;
-    }
-    if shard.is_some() {
-        return Verdict::Partial;
-    }
-    match run_kind {
-        RunKind::Full => Verdict::Assured,
-        RunKind::Changed => Verdict::ChangeAssured,
-        RunKind::Scoped => Verdict::ScopeAssured,
-    }
+    concluded_from(&Basis {
+        extent: Extent::of(run_kind, shard.is_some()),
+        findings,
+        answered: mutants.iter().all(|mutant| {
+            matches!(
+                mutant.decision,
+                Decision::ModelNoticed | Decision::ModelProved
+            ) || mutant.by_build.iter().all(|fact| fact.verdict().answered())
+        }),
+        observed: builds.iter().all(|build| {
+            build.baseline().accounting.targets.passed > 0
+                && build
+                    .parts
+                    .iter()
+                    .any(|part| part.accounting.mutants.executed > 0)
+        }),
+        unsettled: false,
+    })
 }
 
 fn projected_mutants(builds: &BuildLedger) -> Vec<ProjectedMutant> {
@@ -6785,12 +6956,13 @@ fn projected_mutants(builds: &BuildLedger) -> Vec<ProjectedMutant> {
                 item: row.item.clone(),
                 original: row.original.clone(),
                 replacement: row.replacement.clone(),
-                decision: row.outcome.decision(),
+                decision: row.decision(),
                 by_build: vec![BuildMutationDecision {
                     build: builds.first.name.clone(),
                     run_id: part.run_id.clone(),
                     part: part.part,
                     decision: row.outcome.clone(),
+                    evidence: row.evidence.clone(),
                     accepted: row.accepted,
                     routing: row.routing.clone(),
                     reuse: row.reuse.clone(),
@@ -6807,12 +6979,13 @@ fn projected_mutants(builds: &BuildLedger) -> Vec<ProjectedMutant> {
                 .map(move |row| (part.run_id.clone(), part.part, row))
         });
         for (projection, (run_id, part, row)) in projected.iter_mut().zip(rows) {
-            projection.decision = projection.decision.weaker(row.outcome.decision());
+            projection.decision = projection.decision.weaker(row.decision());
             projection.by_build.push(BuildMutationDecision {
                 build: build.name.clone(),
                 run_id,
                 part,
                 decision: row.outcome.clone(),
+                evidence: row.evidence.clone(),
                 accepted: row.accepted,
                 routing: row.routing.clone(),
                 reuse: row.reuse.clone(),
@@ -6827,19 +7000,18 @@ fn projected_mutants(builds: &BuildLedger) -> Vec<ProjectedMutant> {
                 continue;
             };
             let rest: Vec<_> = facts
-                .map(|fact| (&fact.build, fact.decision.outcome().decision()))
+                .map(|fact| (&fact.build, fact.verdict().decision()))
                 .collect();
-            let resolved =
-                across::across((&first.build, first.decision.outcome().decision()), &rest);
+            let resolved = across::across((&first.build, first.verdict().decision()), &rest);
             projection.decision = resolved.decision();
             projection.blind_in = resolved
                 .blind_in()
                 .iter()
                 .filter(|blind| {
-                    projection.by_build.iter().any(|fact| {
-                        fact.build == blind.build
-                            && !fact.decision.outcome().answered(fact.accepted)
-                    })
+                    projection
+                        .by_build
+                        .iter()
+                        .any(|fact| fact.build == blind.build && !fact.verdict().answered())
                 })
                 .cloned()
                 .collect();
@@ -6893,12 +7065,12 @@ fn projected_findings(
         .map(|mutant| (mutant.id.as_str(), mutant.display_id.as_str()))
         .collect();
     let mut projected = global_findings.to_vec();
+    if contract.asks_every_dimension() {
+        projected.extend(matrix::holes(&pooled_matrix(builds)));
+    }
     for build in builds.iter() {
         let from = projected.len();
         projected.extend(catalog_of(build).findings);
-        if contract.asks_every_dimension() {
-            projected.extend(merged_matrix_findings(build));
-        }
         for part in build.parts.iter() {
             for finding in part
                 .findings
@@ -6982,12 +7154,6 @@ pub fn acceptances_the_catalog_resolves(
         .collect()
 }
 
-/// The dimension findings of a build, derived from every part's records rather than read from what a part stored, so a report cannot drop one (ADR 0033).
-fn merged_matrix_findings(build: &BuildEvidence) -> Vec<Finding> {
-    let owned = MatrixEvidence::of(&[build]);
-    matrix::holes(&matrix::rows(&owned.borrowed()))
-}
-
 /// Every record of one kind every part of every build holds, part by part.
 fn part_records<T: Clone>(builds: &BuildLedger, of: fn(&BuildPartEvidence) -> &[T]) -> Vec<T> {
     builds
@@ -7019,9 +7185,9 @@ fn pooled_matrix(builds: &BuildLedger) -> Vec<matrix::Row> {
         .collect()
 }
 
-/// Every record of some builds a matrix is read off, gathered from every part.
+/// Every record of some builds a matrix is read off: what each part decided from every part, and what every part's shared baseline holds once per build.
 struct MatrixEvidence {
-    mutations: (usize, usize),
+    mutations: (usize, Vec<String>),
     targets: Vec<TargetRecord>,
     knobs: Vec<knobs::KnobRecord>,
     faults: Vec<faults::FaultRecord>,
@@ -7036,18 +7202,11 @@ impl MatrixEvidence {
     /// What every part of `builds` holds.
     fn of(builds: &[&BuildEvidence]) -> Self {
         let parts = || builds.iter().flat_map(|build| build.parts.iter());
-        let holes = parts()
-            .flat_map(|part| part.mutants.iter())
-            .filter(|mutant| matrix::unsettled(mutant.outcome.outcome()))
-            .count();
-        let answered = parts()
-            .flat_map(|part| part.mutants.iter())
-            .filter(|mutant| !matrix::unsettled(mutant.outcome.outcome()))
-            .count();
         Self {
-            mutations: (answered, holes),
-            targets: parts()
-                .flat_map(|part| part.targets.iter().cloned())
+            mutations: matrix::mutations(parts().flat_map(|part| part.mutants.iter())),
+            targets: builds
+                .iter()
+                .flat_map(|build| build.baseline().targets.iter().cloned())
                 .collect(),
             knobs: knobs::combined(parts().flat_map(|part| part.knobs.iter())),
             faults: parts()
@@ -7056,15 +7215,25 @@ impl MatrixEvidence {
             crashes: parts()
                 .flat_map(|part| part.crashes.iter().cloned())
                 .collect(),
-            concurrency: parts()
-                .flat_map(|part| part.concurrency.iter().cloned())
+            concurrency: builds
+                .iter()
+                .flat_map(|build| build.baseline().concurrency.iter().cloned())
                 .collect(),
             seams: builds
                 .iter()
                 .flat_map(|build| build.baseline().seams.iter().cloned())
                 .collect(),
-            limitations: parts()
-                .flat_map(|part| part.limitations.iter().cloned())
+            limitations: builds
+                .iter()
+                .flat_map(|build| {
+                    let mut stated: Vec<Limitation> = Vec::new();
+                    for limitation in build.parts.iter().flat_map(|part| part.limitations.iter()) {
+                        if !stated.contains(limitation) {
+                            stated.push(limitation.clone());
+                        }
+                    }
+                    stated
+                })
                 .collect(),
             findings: parts()
                 .flat_map(|part| part.findings.iter().cloned())
@@ -7075,7 +7244,7 @@ impl MatrixEvidence {
     /// The same records, as the matrix reads them.
     fn borrowed(&self) -> matrix::Evidence<'_> {
         matrix::Evidence {
-            mutations: self.mutations,
+            mutations: self.mutations.clone(),
             targets: &self.targets,
             knobs: &self.knobs,
             faults: &self.faults,
@@ -7089,7 +7258,10 @@ impl MatrixEvidence {
 }
 
 /// Every limitation `build` states: each its parts state, once however many parts state it, and what only the whole catalog decides.
-fn stated_by(build: &BuildEvidence) -> Vec<Limitation> {
+///
+/// # Errors
+/// [`CountError`] as [`catalog_of`] refuses.
+fn stated_by(build: &BuildEvidence) -> Result<Vec<Limitation>, CountError> {
     let mut stated: Vec<Limitation> = Vec::new();
     for limitation in build
         .parts
@@ -7098,6 +7270,7 @@ fn stated_by(build: &BuildEvidence) -> Vec<Limitation> {
         .filter(|limitation| {
             ![
                 crate::limitation::DRIFT_NOT_MEASURED,
+                crate::limitation::REACH_MOVED,
                 crate::limitation::KNOB_NOT_PUT,
                 crate::limitation::KNOB_NOT_COMPARED,
             ]
@@ -7109,7 +7282,17 @@ fn stated_by(build: &BuildEvidence) -> Vec<Limitation> {
         }
     }
     stated.extend(catalog_of(build).limitations);
-    stated
+    let repaired: Vec<drift::Repaired> = build
+        .parts
+        .iter()
+        .flat_map(|part| part.repaired.iter().cloned())
+        .collect();
+    stated.extend(drift::repaired(
+        &build.drift(),
+        &build.rows().cloned().collect::<Vec<MutantRecord>>(),
+        &repaired,
+    )?);
+    Ok(stated)
 }
 
 /// What only the whole catalog decides about `build`, over every part's records together, whether it was measured whole or in shards: the one place a conclusion gets it, so no producer can store it or forget it.
@@ -7200,10 +7383,7 @@ fn count_projected_mutants(
     };
     for mutant in mutants {
         counts.observers.counted(mutant.decision)?;
-        let accepted_answer = mutant
-            .by_build
-            .iter()
-            .all(|fact| fact.decision.outcome().answered(fact.accepted))
+        let accepted_answer = mutant.by_build.iter().all(|fact| fact.verdict().answered())
             && mutant.by_build.iter().any(|fact| fact.accepted);
         if accepted_answer {
             increment("accepted projected mutations", &mut counts.accepted)?;
@@ -7212,53 +7392,26 @@ fn count_projected_mutants(
             .by_build
             .iter()
             .any(|fact| fact.reuse().0.read_back().is_some());
-        match mutant.decision {
-            Decision::Types => increment("rejected projected mutations", &mut counts.rejected)?,
-            Decision::Tests => {
-                increment("executed projected mutations", &mut counts.executed)?;
-                increment("killed projected mutations", &mut counts.killed)?;
-                if reused {
-                    increment("reused killed mutations", &mut counts.reused_killed)?;
-                }
-            }
-            Decision::ModelNoticed => {
-                increment("executed projected mutations", &mut counts.executed)?;
-                increment(
-                    "model-noticed projected mutations",
-                    &mut counts.model_noticed,
-                )?;
-            }
-            Decision::ModelProved => {
-                increment("executed projected mutations", &mut counts.executed)?;
-                increment("model-proved projected mutations", &mut counts.model_proved)?;
-            }
-            Decision::Proved => {
-                increment("equivalent projected mutations", &mut counts.equivalent)?;
-            }
-            Decision::Unnoticed => {
-                increment("executed projected mutations", &mut counts.executed)?;
-                increment("surviving projected mutations", &mut counts.survived)?;
-                if reused {
-                    increment("reused surviving mutations", &mut counts.reused_survived)?;
-                }
-            }
-            Decision::Unreached => {
-                increment("unreached projected mutations", &mut counts.unreached)?;
-            }
-            Decision::StepLimitReached => {
-                increment("executed projected mutations", &mut counts.executed)?;
-                increment(
-                    "step-limit-reached projected mutations",
-                    &mut counts.step_limit_reached,
-                )?;
-            }
-            Decision::Waited => {
-                increment("executed projected mutations", &mut counts.executed)?;
-                increment("waited projected mutations", &mut counts.waited)?;
-            }
-            Decision::Errored => {
-                increment("executed projected mutations", &mut counts.executed)?;
-            }
+        let outcome = match mutant.decision {
+            Decision::Types => Some(Outcome::CompileRejected),
+            Decision::Tests => Some(Outcome::Killed),
+            Decision::ModelNoticed => Some(Outcome::ModelNoticed),
+            Decision::ModelProved => Some(Outcome::ModelProved),
+            Decision::Proved => Some(Outcome::Equivalent),
+            Decision::Unnoticed => Some(Outcome::Survived),
+            Decision::Unreached => Some(Outcome::Unreached),
+            Decision::StepLimitReached => Some(Outcome::StepLimitReached),
+            Decision::Waited => Some(Outcome::Waited),
+            Decision::Errored => Some(Outcome::Errored),
+            Decision::Unproven => mutant
+                .by_build
+                .iter()
+                .map(BuildMutationDecision::verdict)
+                .find(|verdict| verdict.lead())
+                .map(|lead| lead.outcome),
+        };
+        if let Some(outcome) = outcome {
+            counted_as(&mut counts, outcome, reused)?;
         }
     }
     Ok(counts)

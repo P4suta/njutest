@@ -62,7 +62,7 @@ fn report(run_id: &str, identity: &str) -> Report {
     "2026-01-01T00:00:00Z".clone_into(&mut source.timing.started);
     "2026-01-01T00:00:00Z".clone_into(&mut source.timing.finished);
     source.limitations.push(njutest::report::Limitation::new(
-        "git-metadata-unavailable",
+        njutest::limitation::Limitation::GitMetadataUnavailable,
         "the tree a test builds is not a git repository",
     ));
     source.targets.push(TargetRecord {
@@ -88,6 +88,9 @@ fn report(run_id: &str, identity: &str) -> Report {
         item: "demo".to_owned(),
         original: ">".to_owned(),
         replacement: String::new(),
+        evidence: njutest::testkit::reports::sealed_as(&njutest::report::Decided::Killed {
+            by: "demo/lib/demo".to_owned(),
+        }),
         outcome: njutest::report::Decided::Killed {
             by: "demo/lib/demo".to_owned(),
         },

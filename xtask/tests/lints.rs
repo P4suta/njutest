@@ -30,6 +30,112 @@ fn ordinary_code_is_not_a_finding() {
 }
 
 #[test]
+fn os_records_cannot_be_read_through_unbounded_pointers() {
+    for source in [
+        "fn read(raw: *const u8) { unsafe { raw.read_unaligned() }; }",
+        "fn read(raw: *const u8) { unsafe { raw.add(4).read() }; }",
+        "fn read(raw: *const u8) { unsafe { std::slice::from_raw_parts(raw, 4) }; }",
+        "fn read(raw: *const u8) { unsafe { *raw }; }",
+        "fn read(buffer: Vec<u8>) { buffer.as_ptr().cast::<Record>(); }",
+        "use std::ptr::read_unaligned as load;",
+        "macro_rules! load { ($raw:expr) => { unsafe { $raw.offset(1).read() } } }",
+        "use std::ptr::read as load;",
+        "fn read(raw: *const u8) { unsafe { std::ptr::read(raw) }; }",
+        "struct Reader; impl Reader { unsafe fn load(raw: *const u8) { raw.read(); } }",
+        "macro_rules! load { ($buffer:expr) => { $buffer.as_ptr().cast::<Record>() } }",
+        "macro_rules! load { ($raw:expr) => { unsafe { *$raw } } }",
+    ] {
+        let found = scan_source("crates/rust-mutants/src/capdir/windows.rs", source)
+            .expect("the source parses");
+        assert!(
+            found
+                .iter()
+                .any(|finding| finding.kind.label() == "raw-buffer-pointer"),
+            "an OS record must carry its owner's bounds: {source}: {found:?}"
+        );
+    }
+}
+
+#[test]
+fn pointer_operations_cannot_escape_through_safe_arithmetic_or_inference() {
+    for source in [
+        "fn input(raw: *const u8) { raw.wrapping_add(4); }",
+        "fn input(raw: *const u8) { raw.wrapping_byte_offset(4); }",
+        "fn input(buffer: Vec<u8>) { let raw: *const Record = buffer.as_ptr().cast(); }",
+        "fn input(raw: *const u8) { unsafe { raw.offset_from(raw) }; }",
+        "macro_rules! input { ($raw:expr) => { $raw.wrapping_add(4) } }",
+    ] {
+        let found = scan_source("crates/rust-mutants/src/capdir/windows.rs", source)
+            .expect("the source parses");
+        assert!(
+            found
+                .iter()
+                .any(|finding| finding.kind == Kind::RawBufferPointer),
+            "a raw pointer cannot acquire unproved bounds: {source}: {found:?}"
+        );
+    }
+    let source = "fn input(buffer: Vec<u8>) { unsafe { ForeignCall(buffer.as_ptr().cast()) }; }";
+    assert!(
+        scan_source("crates/rust-mutants/src/capdir/windows.rs", source)
+            .expect("the source parses")
+            .iter()
+            .all(|finding| finding.kind != Kind::RawBufferPointer),
+        "the opaque argument conversion itself reads no record"
+    );
+}
+
+#[test]
+fn sensitive_sources_include_constants_and_enum_constructors() {
+    for source in [
+        "const PASSWORD: &str = \"synthetic\";",
+        "static API_KEY: &str = \"synthetic\";",
+        "enum Input { Password(String) }",
+        "macro_rules! input { () => { const PASSWORD: &str = \"synthetic\"; } }",
+    ] {
+        assert!(
+            kinds(source).contains(&Kind::SensitiveName),
+            "every sensitive source needs a protected representation: {source}"
+        );
+    }
+    assert!(
+        !kinds("const PASSWORD: rust_mutants::sensitive::Sensitive<&str> = rust_mutants::sensitive::Sensitive::new(\"synthetic\");")
+            .contains(&Kind::SensitiveName)
+    );
+}
+
+#[test]
+fn sensitive_names_require_a_redacting_type_or_an_honest_domain_name() {
+    for source in [
+        "fn account() -> u32 { 2 }",
+        "fn accounts() -> u32 { 2 }",
+        "fn read() { let password = String::new(); println!(\"{password}\"); }",
+        "struct Settings { api_key: String }",
+        "macro_rules! read { () => { let secret = String::new(); } }",
+        "fn read(values: Vec<String>) { for password in values { println!(\"{password}\"); } }",
+        "fn read(value: Option<String>) { if let Some(api_key) = value { println!(\"{api_key}\"); } }",
+    ] {
+        assert!(
+            kinds(source)
+                .iter()
+                .any(|kind| kind.label() == "sensitive-name"),
+            "a sensitive-looking value must state its protected representation: {source}"
+        );
+    }
+    for source in [
+        "fn harness_report() -> u32 { 2 }",
+        "struct Settings { password: rust_mutants::sensitive::Sensitive<String> }",
+        "fn read(secret: rust_mutants::sensitive::Sensitive<String>) {}",
+        "fn read() { let secret: rust_mutants::sensitive::Sensitive<String> = rust_mutants::sensitive::Sensitive::new(String::new()); println!(\"{secret}\"); }",
+    ] {
+        assert_eq!(
+            kinds(source),
+            [],
+            "the representation states the protection: {source}"
+        );
+    }
+}
+
+#[test]
 fn lossy_text_conversions_cannot_turn_distinct_bytes_or_paths_into_one_string() {
     for source in [
         "//! A file.\nfn read(bytes: &[u8]) { drop(String::from_utf8_lossy(bytes)); }\n",
@@ -167,7 +273,7 @@ fn cfg_excluded_platform_code_cannot_hide_an_unchecked_cast() {
         "fn size(value: usize) -> u32 { value as u32 }",
         "macro_rules! handle { ($raw:expr) => { $raw as HANDLE } }",
     ] {
-        let found = scan_source("crates/rust-mutants/src/runner/windows.rs", source)
+        let found = scan_source("crates/njutest-process/src/windows.rs", source)
             .expect("the Windows source parses");
         assert!(
             found
@@ -178,13 +284,71 @@ fn cfg_excluded_platform_code_cannot_hide_an_unchecked_cast() {
     }
     assert!(
         scan_source(
-            "crates/rust-mutants/src/runner/windows.rs",
+            "crates/njutest-process/src/windows.rs",
             "fn size(value: usize) -> Result<u32, core::num::TryFromIntError> { u32::try_from(value) }",
         )
         .expect("the Windows source parses")
         .is_empty(),
         "a checked conversion preserves the failure branch"
     );
+}
+
+#[test]
+fn unsafe_code_lives_only_in_the_modules_the_rule_names() {
+    const MODULES: [&str; 4] = [
+        "crates/rust-mutants/src/capdir/windows.rs",
+        "crates/njutest-process/src/unix.rs",
+        "crates/njutest-process/src/windows.rs",
+        "crates/rust-mutants/src/tempowner/lock.rs",
+    ];
+    let outside = |file: &str, source: &str| {
+        scan_source(file, source)
+            .expect("the source parses")
+            .iter()
+            .any(|finding| finding.kind.label() == "unsafe-outside-ffi")
+    };
+    for source in [
+        "fn f() { unsafe { g() } }",
+        "unsafe fn f() {}",
+        "trait Boundary { unsafe fn f(); }",
+        "unsafe trait Marker {}",
+        "unsafe impl Send for Handle {}",
+        "unsafe extern \"system\" { fn CloseHandle(handle: isize) -> i32; }",
+        "#[expect(unsafe_code, reason = \"one boundary\")]\nfn f() {}",
+        "#[cfg_attr(windows, expect(unsafe_code, reason = \"one boundary\"))]\nfn f() {}",
+        "#[warn(unsafe_code)]\nfn f() {}",
+        "macro_rules! boundary { ($call:expr) => { unsafe { $call } } }",
+        "fn f() { boundary!(unsafe { g() }); }",
+    ] {
+        for elsewhere in [
+            "crates/rust-mutants/src/capdir/mod.rs",
+            "crates/app/src/runner/windows.rs",
+            "crates/njutest/tests/reports_store.rs",
+            "xtask/src/lib.rs",
+            "fuzz/fuzz_targets/parse.rs",
+        ] {
+            assert!(
+                outside(elsewhere, source),
+                "unsafe code outside the named modules is one more boundary nobody listed: \
+                 {elsewhere}: {source}"
+            );
+        }
+        for module in MODULES {
+            assert!(
+                !outside(module, source),
+                "a named module is where the foreign boundary is allowed to be: {module}: {source}"
+            );
+        }
+    }
+    for module in MODULES {
+        assert!(
+            scan_source(module, "fn size(value: usize) -> u32 { value as u32 }")
+                .expect("the source parses")
+                .iter()
+                .any(|finding| finding.kind == Kind::UncheckedCast),
+            "the list that permits unsafe code is the list held to checked conversions: {module}"
+        );
+    }
 }
 
 #[test]
@@ -692,6 +856,16 @@ fn vacuous_cfg_cannot_hide_code_or_pretend_to_condition_it() {
         "#[cfg(not(all()))] fn dormant() {}\n",
         "#[cfg(all())] fn unconditional() {}\n",
         "#[cfg(not(any()))] fn unconditional() {}\n",
+        "#[cfg(unix)] #[cfg(not(unix))] fn impossible() {}\n",
+        "#[cfg(feature = \"extra\")] #[cfg(not(feature = \"extra\"))] fn impossible() {}\n",
+        "#[cfg(all(unix, not(unix)))] fn impossible() {}\n",
+        "#[cfg(any(unix, windows))] #[cfg(not(any(unix, windows)))] fn impossible() {}\n",
+        "#[cfg(unix)] mod platform { #[cfg(not(unix))] fn impossible() {} }\n",
+        "#[cfg(unix)] #[cfg_attr(unix, cfg(not(unix)))] fn impossible() {}\n",
+        "#[cfg_attr(unix, cfg(not(unix)))] #[cfg(unix)] fn impossible() {}\n",
+        "#[cfg_attr(unix, cfg_attr(unix, cfg(not(unix))))] #[cfg(unix)] fn impossible() {}\n",
+        "#[cfg_attr(unix, cfg(not(unix)))] #[cfg_attr(not(unix), cfg(unix))] fn impossible() {}\n",
+        "#[cfg(unix)] mod platform { #[cfg_attr(unix, cfg(not(unix)))] fn impossible() {} }\n",
         "#[cfg_attr(test, cfg(any()))] fn nested() {}\n",
         "macro_rules! hidden { () => { #[cfg(any())] fn dormant() {} } }\n",
         "fn active() -> bool { cfg!(all()) }\n",
@@ -707,6 +881,11 @@ fn vacuous_cfg_cannot_hide_code_or_pretend_to_condition_it() {
     }
     for source in [
         "#[cfg(unix)] fn platform() {}\n",
+        "#[cfg(unix)] #[cfg(feature = \"extra\")] fn platform() {}\n",
+        "#[cfg(any(unix, windows))] #[cfg(not(unix))] fn windows_only() {}\n",
+        "#[cfg_attr(unix, cfg(not(unix)))] fn other_platform() {}\n",
+        "#[cfg(unix)] #[cfg_attr(not(unix), cfg(not(unix)))] fn unix_only() {}\n",
+        "#[cfg(not(unix))] #[cfg_attr(unix, cfg(unix))] fn other_platform() {}\n",
         "#[cfg_attr(test, derive(Debug))] struct Conditional;\n",
         "fn platform() -> bool { cfg!(windows) }\n",
     ] {
@@ -715,6 +894,30 @@ fn vacuous_cfg_cannot_hide_code_or_pretend_to_condition_it() {
             "a real cfg boundary was mistaken for a constant: {source}"
         );
     }
+}
+
+#[test]
+fn contradictory_child_cfg_is_reported_at_the_child_attribute() {
+    let source = "#[cfg(unix)]\nmod platform {\n    #[cfg(not(unix))]\n    fn impossible() {}\n}\n";
+    let lines: Vec<_> = scan_source("a.rs", source)
+        .expect("the source parses")
+        .into_iter()
+        .filter(|finding| finding.kind == Kind::VacuousCfg)
+        .map(|finding| finding.line)
+        .collect();
+    assert_eq!(lines, [3]);
+}
+
+#[test]
+fn contradictory_cfg_attr_is_reported_at_the_attribute_that_closes_the_contradiction() {
+    let source = "#[cfg(unix)]\n#[cfg_attr(unix, cfg(not(unix)))]\nfn impossible() {}\n";
+    let lines: Vec<_> = scan_source("a.rs", source)
+        .expect("the source parses")
+        .into_iter()
+        .filter(|finding| finding.kind == Kind::VacuousCfg)
+        .map(|finding| finding.line)
+        .collect();
+    assert_eq!(lines, [2]);
 }
 
 #[test]
@@ -803,18 +1006,36 @@ fn an_expect_is_the_waiver_this_repository_writes() {
 
 #[test]
 fn an_expectation_cannot_waive_future_dead_or_unsafe_code_for_a_module() {
+    let in_a_named_module = |source: &str| {
+        scan_source("crates/njutest-process/src/windows.rs", source)
+            .expect("the source parses")
+            .into_iter()
+            .map(|finding| finding.kind)
+            .collect::<Vec<_>>()
+    };
     for source in [
         "//! A file.\n#![expect(dead_code, reason = \"one current item\")]\nfn unused() {}\n",
         "//! A file.\n#[cfg_attr(test, expect(unsafe_code, reason = \"one current block\"))]\nmod ffi {}\n",
     ] {
-        assert_eq!(kinds(source), [Kind::BroadExpectation], "{source}");
+        assert_eq!(
+            in_a_named_module(source),
+            [Kind::BroadExpectation],
+            "{source}"
+        );
     }
     assert_eq!(
-        kinds(
+        in_a_named_module(
             "//! A file.\nfn ffi() { #[expect(unsafe_code, reason = \"one FFI call\")] unsafe { std::ptr::read_volatile(&0); } }\n"
         ),
+        [Kind::RawBufferPointer],
+        "an unsafe expectation cannot waive the bounded-reader rule"
+    );
+    assert_eq!(
+        in_a_named_module(
+            "//! A file.\nfn ffi() { #[expect(unsafe_code, reason = \"one FFI call\")] unsafe { ForeignCall(); } }\n"
+        ),
         [],
-        "the exact unsafe expression remains a compiler-checked exception"
+        "the exact foreign call remains a compiler-checked exception"
     );
 }
 
@@ -1508,6 +1729,8 @@ fn a_macro_cannot_make_a_checked_attribute_opaque_to_the_gate() {
         "//! A file.\nmacro_rules! input { ($policy:meta) => { #[serde($policy)] struct Input { value: String } } }\n",
         "//! A file.\nmacro_rules! input { ($condition:meta) => { #[cfg_attr($condition, derive(serde::Deserialize))] struct Input { value: String } } }\n",
         "//! A file.\n#[cfg_attr(test, derive($derive))]\nstruct Input { value: String }\n",
+        "#[cfg(all(,))] fn hidden() {}\n",
+        "macro_rules! hidden { ($condition:meta) => { #[cfg($condition)] fn hidden() {} } }\n",
     ] {
         assert!(
             kinds(source).contains(&Kind::OpaqueMacroSyntax),
@@ -1767,6 +1990,51 @@ fn the_engine_s_own_annotation_is_an_instruction_rather_than_an_account() {
         kinds("//! A file.\n\npub fn f() {\n    // rust-mutants: skip nothing to see\n}\n"),
         [],
         "a skip marker is read by the engine, and its syntax is what says so"
+    );
+}
+
+/// The lines `source`, laid at `file`, holds a value supplied where its input gave none on.
+fn defaulted_lines(file: &str, source: &str) -> Vec<usize> {
+    scan_source(file, source)
+        .expect("the source parses")
+        .into_iter()
+        .filter(|finding| finding.kind == Kind::DefaultedAbsence)
+        .map(|finding| finding.line)
+        .collect()
+}
+
+#[test]
+fn an_audit_reader_supplying_a_value_its_input_never_gave_is_refused_and_a_test_module_is_not() {
+    let source = "//! A reader.\n\
+                  fn read(v: Option<u8>) -> u8 { v.unwrap_or(0) }\n\
+                  fn mapped(v: Option<u8>) -> u8 { v.map_or(1, |x| x) }\n\
+                  fn all(v: Vec<Option<u8>>) -> Vec<u8> { v.into_iter().map(Option::unwrap_or_default).collect() }\n\
+                  #[cfg(test)] mod tests { fn t(v: Option<u8>) -> u8 { v.unwrap_or_default() } }\n";
+    assert_eq!(
+        defaulted_lines("xtask/src/proofaudit/knobs.rs", source),
+        [2, 3, 4],
+        "a value supplied where the input gave none is refused where the audit runs, and a test \
+         building its own specimen is not the audit"
+    );
+    assert_eq!(
+        defaulted_lines("crates/app/src/lib.rs", source),
+        Vec::<usize>::new(),
+        "outside the audit readers a default is somebody else's contract"
+    );
+}
+
+#[test]
+fn a_value_supplied_inside_a_macro_is_refused_like_one_outside() {
+    let source = "//! A reader.\n\
+                  fn say(v: Option<&str>) -> String { format!(\"{}\", v.unwrap_or(\"?\")) }\n\
+                  fn doc(v: Option<u8>) -> serde_json::Value { serde_json::json!({ \"n\": v.map_or(0, u8::from) }) }\n\
+                  fn check(v: Option<u8>) { assert!(v.map(Option::Some).unwrap_or_default().is_some()); }\n\
+                  fn named(unwrap_or: u8) -> String { format!(\"{unwrap_or}\") }\n";
+    assert_eq!(
+        defaulted_lines("xtask/src/route.rs", source),
+        [2, 3, 4],
+        "syn leaves a macro's arguments as tokens, so a value supplied inside format!, json! or \
+         assert! is read from the tokens; a name that is only a binding is not a call"
     );
 }
 
@@ -2390,6 +2658,193 @@ fn a_shell_compiled_only_for_unix_or_only_compared_against_is_not_a_bare_one() {
 }
 
 #[test]
+fn a_change_time_is_read_only_beside_a_settled_stamp_that_compares_through_its_moment() {
+    let raw = |file: &str, source: &str| {
+        scan_source(file, source)
+            .expect("the source parses")
+            .into_iter()
+            .any(|finding| finding.kind == Kind::RawStamp)
+    };
+    let stamp = "use njutest_fixture_tree::settled;\n\
+        #[derive(Debug, Clone, serde::Serialize)]\n\
+        struct Stamp { length: u64, changed: (i64, i64) }\n\
+        impl settled::Stamp for Stamp {\n\
+            fn newest(&self) -> Option<std::time::SystemTime> { settled::since_unix_epoch(self.changed.0, self.changed.1) }\n\
+            fn same(&self, other: &Self, _: settled::Comparing) -> bool { self.length == other.length && self.changed == other.changed }\n\
+        }\n\
+        #[derive(PartialEq)]\n\
+        struct Content { digest: String }\n\
+        fn stamp(metadata: &std::fs::Metadata) -> Stamp { use std::os::unix::fs::MetadataExt as _; Stamp { length: metadata.len(), changed: (metadata.ctime(), metadata.ctime_nsec()) } }";
+    assert!(
+        !raw(
+            "crates/rust-mutants/src/cargo/build_cache/toolchain.rs",
+            stamp
+        ),
+        "a stamp compared only through settled::Taken may read the change time it holds, and \
+         content beside it may compare by equality"
+    );
+    assert!(
+        raw(
+            "crates/rust-mutants/src/cargo/build_cache/toolchain.rs",
+            &stamp.replace(
+                "#[derive(Debug, Clone, serde::Serialize)]",
+                "#[derive(Debug, Clone, PartialEq, serde::Serialize)]"
+            )
+        ),
+        "a stamp that compares by equality of its own skips the question whether it had settled"
+    );
+    let windows = "fn change_time(basic: &FILE_BASIC_INFO) -> i64 { basic.ChangeTime }";
+    assert!(
+        !raw("crates/rust-mutants/src/capdir/windows.rs", windows),
+        "the engine's Windows FFI reads the change time for the engine's stamp"
+    );
+    assert!(
+        raw("crates/rust-mutants/src/capdir/mod.rs", windows),
+        "only the FFI module itself is the door"
+    );
+    for passing in [
+        "/// Reads the `ctime` a stamp holds.\nfn documented() {}",
+        "fn said() -> &'static str { \"ctime\" }",
+        "fn modified(metadata: &std::fs::Metadata) -> std::io::Result<std::time::SystemTime> { metadata.modified() }",
+        "#[derive(PartialEq)] struct Taken { moment: std::time::SystemTime }",
+    ] {
+        assert!(
+            !raw("crates/app/src/lib.rs", passing),
+            "prose, a string, a modification time and an equality on no stamp read no change \
+             time: {passing}"
+        );
+    }
+}
+
+#[test]
+fn a_serialized_type_holds_no_integer_wider_than_a_json_reader_reads_back() {
+    let wide = |source: &str| {
+        scan_source("crates/app/src/lib.rs", source)
+            .expect("the source parses")
+            .into_iter()
+            .filter(|finding| finding.kind == Kind::WideRecordInteger)
+            .map(|finding| finding.line)
+            .collect::<Vec<_>>()
+    };
+    let stamp = "#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]\n\
+        struct Stamp {\n\
+            length: u64,\n\
+            #[cfg(windows)]\n\
+            changed: (u64, u128, i64),\n\
+        }";
+    assert_eq!(
+        wide(stamp),
+        [5],
+        "a Windows file identity in a stamp a record holds is refused on every platform, \
+         whichever one reads the source"
+    );
+    assert_eq!(
+        wide(&stamp.replace("u128", "rust_mutants::wide::Wide")),
+        Vec::<usize>::new(),
+        "the identity spelled as text is what a record holds"
+    );
+    for passing in [
+        "struct Stamp { changed: (u64, u128, i64) }",
+        "#[derive(Debug, Clone)] struct Identity { object: u128 }",
+        "#[derive(serde::Serialize)] struct Counted { total: u64, share: f64 }",
+        "#[derive(serde::Serialize)] struct Spelled { bound: u32 }\nfn widen(value: u32) -> u128 { u128::from(value) }",
+        "type Object = u128;\n#[derive(serde::Serialize)] struct Identity { object: u64 }",
+    ] {
+        assert_eq!(
+            wide(passing),
+            Vec::<usize>::new(),
+            "a 128-bit integer no serialized type holds is no record's: {passing}"
+        );
+    }
+}
+
+#[test]
+fn a_test_clears_a_nested_environment_only_through_the_door_that_keeps_the_profile_away() {
+    let clears = |file: &str, source: &str| {
+        scan_source(file, source)
+            .expect("the source parses")
+            .into_iter()
+            .any(|finding| finding.kind == Kind::RawEnvironmentClear)
+    };
+    let shard = "fn asked(root: &std::path::Path) -> std::io::Result<std::process::Output> { \
+        let mut command = njutest_devkit::paths::command(std::path::Path::new(env!(\"CARGO_BIN_EXE_njutest\"))); \
+        command.env_clear(); command.current_dir(root).output() }";
+    assert!(
+        clears("crates/njutest/tests/toolchain_sharded_runs.rs", shard),
+        "a shard started with its environment cleared is told nothing about its profile, and \
+         writes one into the fixture it measures"
+    );
+    assert!(
+        !clears(
+            "crates/njutest/tests/toolchain_sharded_runs.rs",
+            &shard.replace(
+                "command.env_clear();",
+                "njutest_devkit::paths::clear_environment(&mut command);"
+            )
+        ),
+        "the devkit's door clears the environment and tells the process again where its \
+         profile goes"
+    );
+    for door in [
+        "crates/njutest-devkit/src/paths.rs",
+        "crates/rust-mutants/src/runner/mod.rs",
+        "crates/njutest/src/provider.rs",
+        "xtask/src/bundle.rs",
+    ] {
+        assert!(
+            !clears(door, shard),
+            "the devkit composes a nested environment for every test, and a product or gate \
+             composes the one it hands a program it does not instrument: {door}"
+        );
+    }
+    for passing in [
+        "fn kept(command: &mut std::process::Command) { command.env_remove(\"NO_COLOR\"); }",
+        "/// Says why `env_clear` is not called here.\nfn documented() {}",
+        "fn said() -> &'static str { \"env_clear\" }",
+    ] {
+        assert!(
+            !clears("crates/app/tests/nested.rs", passing),
+            "removing one variable, prose and a string clear nothing: {passing}"
+        );
+    }
+}
+
+#[test]
+fn only_the_process_crate_reads_the_process_table_and_the_kernel_settings_name_no_process() {
+    let reads = |file: &str, source: &str| {
+        scan_source(file, source)
+            .expect("the source parses")
+            .into_iter()
+            .any(|finding| finding.kind == Kind::RawProcfs)
+    };
+    let census =
+        "fn listed() -> std::io::Result<std::fs::ReadDir> { std::fs::read_dir(\"/proc\") }";
+    assert!(
+        reads("crates/rust-mutants/src/escaped.rs", census),
+        "a census outside the process crate decides again what a process reaped mid-read means"
+    );
+    assert!(
+        !reads("crates/njutest-process/src/procfs.rs", census),
+        "the process crate is where the race is read once for everybody"
+    );
+    for passing in [
+        "fn boot() -> std::io::Result<String> { std::fs::read_to_string(\"/proc/sys/kernel/random/boot_id\") }",
+        "fn settings() -> &'static str { \"/proc/sys\" }",
+        "fn other() -> &'static str { \"/process\" }",
+        "fn relative() -> &'static str { \"proc/1/stat\" }",
+        "fn module() -> &'static str { \"src/proc.rs\" }",
+        "/// Reads what `/proc/<pid>/stat` says.\nfn documented() {}",
+        "fn said() -> String { format!(\"{} has gone from /proc\", 42) }",
+    ] {
+        assert!(
+            !reads("crates/app/src/lib.rs", passing),
+            "the kernel settings, another root directory, a relative path and prose name no \
+             process: {passing}"
+        );
+    }
+}
+
+#[test]
 fn text_read_by_the_reader_or_for_a_test_or_as_no_rust_is_no_raw_lexing() {
     let found = |path: &str, source: &str| -> Vec<Kind> {
         scan_source(path, source)
@@ -2410,6 +2865,18 @@ fn text_read_by_the_reader_or_for_a_test_or_as_no_rust_is_no_raw_lexing() {
         (
             "crates/app/src/lib.rs",
             "fn count(text: &str) -> Option<u32> { text.parse::<u32>().ok() }",
+        ),
+        (
+            "crates/app/src/lib.rs",
+            "fn count(text: &str) -> bool { str::parse::<u32>(text).is_ok() }",
+        ),
+        (
+            "crates/app/src/lib.rs",
+            "fn count(text: &str) -> String { format!(\"{}\", text.parse::<u32>().is_ok()) }",
+        ),
+        (
+            "crates/app/src/lib.rs",
+            "fn named() -> String { format!(\"{}\", stringify!(syn::parse::Parser)) }",
         ),
         (
             "crates/app/src/lib.rs",
@@ -2460,6 +2927,7 @@ fn an_environment_held_as_raw_pairs_is_refused_wherever_it_is_named() {
     }
     for held in [
         "crates/rust-mutants/src/vars.rs",
+        "xtask/src/environment.rs",
         "crates/njutest-devkit/src/paths.rs",
     ] {
         let found = scan_source(
@@ -2472,23 +2940,41 @@ fn an_environment_held_as_raw_pairs_is_refused_wherever_it_is_named() {
              dependency of"
         );
     }
+    for reader in [
+        "xtask/src/lanes.rs",
+        "xtask/src/prepush.rs",
+        "xtask/tests/slot.rs",
+    ] {
+        let found = scan_source(
+            reader,
+            "fn given() -> Vec<(OsString, OsString)> { Vec::new() }",
+        );
+        assert!(
+            found.is_ok_and(|found| found.iter().any(|one| one.kind == Kind::RawEnvironment)),
+            "xtask reads its environment through `xtask::environment` alone, whose rule is the \
+             engine's, so pairs anywhere else in it are a reader comparing names by bytes: \
+             {reader}"
+        );
+    }
+}
+
+fn signals(file: &str, source: &str) -> bool {
+    scan_source(file, source)
+        .expect("the source parses")
+        .into_iter()
+        .any(|finding| finding.kind == Kind::RawGroupSignal)
 }
 
 #[test]
 fn only_the_runner_signals_a_process_group_in_shipped_code() {
-    let shipped = |file: &str, source: &str| {
-        scan_source(file, source)
-            .expect("the source parses")
-            .into_iter()
-            .any(|finding| finding.kind == Kind::RawGroupSignal)
-    };
+    let shipped = signals;
     let group_kill = "fn stop(pid: rustix::process::Pid) { let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL); }";
     assert!(
         shipped("crates/njutest/src/provider.rs", group_kill),
         "a second place that signals a group decides again what the kernel's refusal means"
     );
     assert!(
-        !shipped("crates/rust-mutants/src/runner/unix.rs", group_kill),
+        !shipped("crates/njutest-process/src/unix.rs", group_kill),
         "the runner is where the question is answered for everybody"
     );
     assert!(
@@ -2503,6 +2989,216 @@ fn only_the_runner_signals_a_process_group_in_shipped_code() {
         assert!(
             !shipped("crates/njutest/src/provider.rs", passing),
             "a child's own `kill`, a liveness probe, and a function merely named `kill` signal no group: {passing}"
+        );
+    }
+}
+
+#[test]
+fn only_one_module_of_the_phases_reads_how_a_process_ended() {
+    let asks = |file: &str, source: &str| {
+        scan_source(file, source)
+            .expect("the source parses")
+            .into_iter()
+            .any(|finding| finding.kind == Kind::RawProcessEnd)
+    };
+    let asked = "fn ended(ran: &rust_mutants::runner::RunResult) -> bool { ran.succeeded() }";
+    assert!(
+        asks("crates/njutest/src/assure/deep.rs", asked),
+        "a phase that asks one question about how its process ended leaves every other ending to \
+         whoever forgot it"
+    );
+    assert!(
+        !asks("crates/njutest/src/assure/ended.rs", asked),
+        "the module that sorts every ending at once is where the questions are asked"
+    );
+    assert!(
+        !asks("crates/njutest/src/targets.rs", asked),
+        "outside the phases a listing that did not succeed is refused whatever ended it, which \
+         concludes nothing about the suite"
+    );
+    assert!(
+        !asks(
+            "crates/njutest/src/assure/deep.rs",
+            "fn ended(status: std::process::ExitStatus) -> bool { status.success() }"
+        ),
+        "a standard exit status says `success`, which is not a supervised run's end"
+    );
+}
+
+#[test]
+fn a_signal_spelled_as_a_path_a_script_a_number_or_a_method_is_still_a_signal() {
+    for source in [
+        "fn s() { let _ = std::process::Command::new(\"/usr/bin/pkill\"); }",
+        "fn s() { let _ = std::process::Command::new(\"C:\\\\Windows\\\\System32\\\\TASKKILL.EXE\"); }",
+        "fn s() { let _ = std::process::Command::new(std::path::Path::new(\"/bin/kill\")); }",
+        "const PROGRAM: &str = \"pkill\";\nfn s() { let _ = std::process::Command::new(PROGRAM); }",
+        "fn s() { let program = \"killall\"; let _ = std::process::Command::new(program); }",
+        "fn s() -> [&'static str; 3] { [\"kill\", \"-9\", \"42\"] }",
+        "fn s() -> Vec<&'static str> { vec![\"/usr/bin/pkill\", \"-f\", \"runner\"] }",
+        "fn s() { let _ = std::process::Command::new(\"sh\").args([\"-c\", \"kill -9 -1\"]); }",
+        "fn s() { let _ = std::process::Command::new(\"bash\").arg(\"-c\").arg(\"sleep 1; pkill -f runner\"); }",
+        "fn s(pid: u32) { let _ = std::process::Command::new(\"sh\").arg(\"-c\").arg(format!(\"exec kill -TERM {pid}\")); }",
+        "fn s() { let mut shell = std::process::Command::new(\"sh\"); shell.arg(\"-c\"); shell.arg(\"killall runner\"); }",
+        "fn s() { let _ = std::process::Command::new(\"powershell\").args([\"-Command\", \"Stop-Process -Id 42\"]); }",
+        "fn s() { let _ = std::process::Command::new(\"cmd\").args([\"/C\", \"taskkill /PID 42 /F\"]); }",
+        "fn s() { let _ = std::process::Command::new(\"sudo\").args([\"-n\", \"kill\", \"42\"]); }",
+        "fn s() { let _ = std::process::Command::new(\"timeout\").args([\"5\", \"kill\", \"42\"]); }",
+        "fn s(p: i64) { unsafe { libc::syscall(62, p, 9); } }",
+        "fn s(number: i64, p: i64) { unsafe { libc::syscall(number, p, 9); } }",
+        "fn s() { unsafe { core::arch::asm!(\"syscall\"); } }",
+        "unsafe extern \"C\" { fn kill(pid: i32, sig: i32) -> i32; }",
+        "unsafe extern \"C\" { #[link_name = \"kill\"] fn end(pid: i32, sig: i32) -> i32; }",
+        "fn s(process: &sysinfo::Process) { process.kill(); }",
+        "fn s(group: &mut command_group::GroupChild) { let _ = group.kill(); }",
+        "fn s(process: &sysinfo::Process) { let same = process; same.kill(); }",
+        "fn s() { let _ = lookup(42).kill(); }",
+        "fn s(pid: Pid) { let _ = pid.killpg(); }",
+        "fn s(process: &sysinfo::Process) { sysinfo::Process::kill(process); }",
+        "fn s(pid: u32) { assert!(nix::sys::signal::kill(pid, None).is_ok()); }",
+    ] {
+        assert!(
+            signals("crates/njutest/src/provider.rs", source),
+            "a program named by its path, a script a shell is handed, a system call by its \
+             number, a foreign declaration, and a method of a type that is not a child this \
+             process owns each signal a process by its id: {source}"
+        );
+    }
+}
+
+#[test]
+fn a_name_that_only_looks_like_a_signal_is_none() {
+    for source in [
+        "struct Reaper;\nimpl Reaper { fn kill(&self) {} }\nfn f(r: &Reaper) { Reaper::kill(r); r.kill(); }",
+        "fn f() -> bool { let kill = true; kill }",
+        "struct S { kill: bool }\nfn f(kill: bool) -> S { S { kill } }",
+        "fn f(verb: &str) -> bool { verb == \"kill\" }",
+        "fn f(outcome: Result<(), String>) { outcome.expect(\"kill\"); }",
+        "fn f(word: &str) -> u8 { match word { \"kill\" => 1, _ => 0 } }",
+        "fn f() { assert_eq!(label(), \"kill\"); }",
+        "fn s(c: &mut std::process::Child) -> std::io::Result<()> { <std::process::Child>::kill(c) }",
+        "fn s(c: &mut std::process::Child) -> std::io::Result<()> { std::process::Child::kill(c) }",
+        "struct Owner { child: std::process::Child }\nimpl Owner { fn end(&mut self) -> std::io::Result<()> { self.child.kill() } }",
+        "struct Owner { child: Option<std::process::Child> }\nimpl Owner { fn end(&mut self) -> std::io::Result<()> { let Some(child) = self.child.as_mut() else { return Ok(()); }; child.kill() } }",
+        "fn s(command: &mut std::process::Command) -> std::io::Result<()> { command.spawn()?.kill() }",
+        "fn s() { let _ = std::process::Command::new(\"git\").args([\"log\", \"--grep\", \"kill\"]); }",
+        "fn s() { let _ = std::process::Command::new(\"git\").args([\"commit\", \"-m\", \"kill the flake\"]); }",
+        "fn s() { let _ = std::process::Command::new(\"sh\").args([\"-c\", \"echo kill\"]); }",
+        "fn s() { unsafe { libc::syscall(libc::SYS_getpid); } }",
+        "fn s() { println!(\"kill {}\", 1); }",
+    ] {
+        assert!(
+            !signals("crates/njutest/src/provider.rs", source),
+            "a method of a type this file writes, a child's own `kill`, a binding, a field and a \
+             word that is only text signal nothing: {source}"
+        );
+    }
+}
+
+#[test]
+fn every_place_code_runs_from_is_held_to_the_one_signaller() {
+    let signalling = "fn s() { unsafe { libc::kill(1, 9); } }";
+    for held in [
+        "crates/njutest/build.rs",
+        "compiler-surfaces/build.rs",
+        "compiler-surfaces/src/bin/xtask.rs",
+        "fuzz/fuzz_targets/cargo_metadata.rs",
+        "crates/rust-mutants/examples/fake_provider.rs",
+        "crates/rust-mutants/benches/pipeline.rs",
+        "crates/njutest/src/tests/helper.rs",
+        "xtask/src/lanes.rs",
+        "xtask/src/work.rs",
+        "crates/rust-mutants/src/runner/unix.rs",
+        "crates/rust-mutants/src/runner/windows.rs",
+    ] {
+        assert!(
+            signals(held, signalling),
+            "a build script, a fuzz target, an example, a benchmark, a compiler surface and a \
+             module under src/tests all run somewhere, and a signal from there is one more place \
+             that decides what the kernel's answer means: {held}"
+        );
+    }
+    for exempt in [
+        "crates/njutest/tests/toolchain_interrupt.rs",
+        "xtask/tests/slot.rs",
+        "crates/njutest-process/src/unix.rs",
+        "crates/njutest-process/src/windows.rs",
+    ] {
+        assert!(
+            !signals(exempt, signalling),
+            "a suite interrupts what it started the way a person would, and the one signaller of \
+             each platform is where the question is answered: {exempt}"
+        );
+    }
+    assert!(
+        !signals(
+            "crates/njutest/src/tests/helper.rs",
+            &format!("#![cfg(test)]\n{signalling}")
+        ),
+        "a module that says it is compiled only for tests is test code wherever it sits"
+    );
+}
+
+#[test]
+fn compiler_failures_cannot_discard_the_actual_stderr() {
+    let refused = |source| {
+        scan_source("crates/app/src/lib.rs", source)
+            .expect("the diagnostic specimen parses")
+            .iter()
+            .any(|finding| finding.kind.label() == "discarded-compiler-stderr")
+    };
+    for source in [
+        "fn failed(messages: &[Message]) { crate::validate::first_error_of(messages); }",
+        "use crate::validate::first_error_of as explain; fn failed(messages: &[Message]) { explain(messages); }",
+        "fn failed(messages: &[Message]) { let explain = crate::validate::first_error_of; explain(messages); }",
+        "macro_rules! failed { ($messages:expr) => { crate::validate::first_error_of($messages) } }",
+        "#[cfg(windows)] fn failed(messages: &[Message]) { crate::validate::first_error_of(messages); }",
+        "fn failed(messages: &[Message]) { crate::validate::first_error_with_stderr(messages, &[]); }",
+    ] {
+        assert!(
+            refused(source),
+            "discarded captured stderr was accepted: {source}"
+        );
+    }
+    for source in [
+        "fn failed(attempt: &Attempt) { crate::validate::first_error_with_stderr(&attempt.messages, &attempt.stderr); }",
+        "#[cfg(test)] fn failed(messages: &[Message]) { crate::validate::first_error_of(messages); }",
+    ] {
+        assert!(
+            !refused(source),
+            "the complete diagnostic or pure compatibility control was refused: {source}"
+        );
+    }
+}
+
+#[test]
+fn a_claimed_directory_changes_its_declaration_only_under_the_claim_that_holds_it() {
+    let handed = |file: &str, source: &str| {
+        scan_source(file, source)
+            .expect("the source parses")
+            .into_iter()
+            .any(|finding| finding.kind == Kind::ClaimAfterRelease)
+    };
+    let handover = "fn take(owner: &mut crate::tempowner::Owner, dir: &std::path::Path) -> std::io::Result<()> { owner.release()?; crate::tempowner::claim_cache(dir, jiff::Timestamp::now(), \"cache-v1\").map_err(std::io::Error::other)?.release() }";
+    assert!(
+        handed("crates/rust-mutants/src/snapshot/frozen.rs", handover),
+        "letting a directory go and claiming it again leaves a moment nobody holds it"
+    );
+    assert!(
+        !handed("crates/rust-mutants/tests/tempowner.rs", handover),
+        "a suite of the claim protocol claims what it let go to show the lock is free again"
+    );
+    for passing in [
+        "fn lease(root: &std::path::Path, now: jiff::Timestamp) -> std::io::Result<crate::tempowner::Owner> { let mut at = 0_u64; loop { match crate::tempowner::claim_cache(&root.join(at.to_string()), now, \"slot-v1\") { Ok(mut owner) if at > 0 => owner.release()?, Ok(owner) => return Ok(owner), Err(_) => {} } at += 1; } }",
+        "fn first(owner: &mut crate::tempowner::Owner) -> std::io::Result<()> { owner.release() }\nfn second(dir: &std::path::Path, now: jiff::Timestamp) -> bool { crate::tempowner::claim(dir, now).is_ok() }",
+        "fn retained(owner: &mut crate::tempowner::Owner) -> std::io::Result<()> { owner.release_as_cache(\"cache-v1\") }",
+        "fn other(lock: &mut Lease, places: usize, state: &mut State) { lock.release(); state.claim(places); }",
+        "fn unrelated(lock: &mut Lease, dir: &std::path::Path) -> bool { lock.release(); crate::cache::claim(dir).is_ok() }",
+        "fn counted(lock: &mut Lease, dir: &std::path::Path, now: jiff::Timestamp) -> bool { lock.release(1); crate::tempowner::claim(dir, now).is_ok() }",
+    ] {
+        assert!(
+            !handed("crates/app/src/lib.rs", passing),
+            "a claim before a release, one in another function, a declaration under the held \
+             claim, and a claim of somebody else's are no handover: {passing}"
         );
     }
 }

@@ -33,6 +33,7 @@ struct Said {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: njutest_devkit::paths::environment_for_a_run()
             .into_iter()
             .collect(),
@@ -86,6 +87,8 @@ fn owned(
         kept,
         role,
         keyed_to: keyed_to.map(|tree| tree.display().to_string()),
+        holder: None,
+        released: false,
     };
     std::fs::write(
         rust_mutants::tempowner::marker_path(directory),
@@ -379,6 +382,7 @@ fn emptying_what_earlier_runs_established_says_how_much_was_in_it() {
                     &rust_mutants::vars::Variables::empty(),
                 ),
             },
+            evidence: rust_mutants::sealed::record::Evidence::not_sealed(),
         })
         .expect("the cache record is stored");
 

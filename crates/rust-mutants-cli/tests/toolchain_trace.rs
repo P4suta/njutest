@@ -325,7 +325,10 @@ fn trace_diff_between_two_runs_reports_the_moved_columns() {
         ],
     );
     assert!(
-        first.status.code().is_some_and(|code| code < 2),
+        first
+            .status
+            .code()
+            .is_some_and(|code| code < i32::from(rust_mutants::run::EXIT_FAILED)),
         "{}",
         stderr(&first)
     );
@@ -380,7 +383,12 @@ fn an_explicit_trace_directory_that_cannot_be_created_refuses_before_the_command
         &fixture,
         &["list", &format!("--trace={}", blocked.display())],
     );
-    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_FAILED)),
+        "{}",
+        stderr(&output)
+    );
     let said = stderr(&output);
     assert_eq!(
         said.lines().count(),
@@ -468,7 +476,15 @@ fn a_mutation_a_run_leaves_out_records_why_it_was_left_out() {
     let fixture = Fixture::copy("fixture-coverage");
     let output = against(
         &fixture,
-        &["run", "--trace", "--rule", "le-to-lt", "--tier", "all"],
+        &[
+            "run",
+            "--trace",
+            "--rule",
+            "le-to-lt",
+            "--tier",
+            "all",
+            "--no-seal",
+        ],
     );
     let run = only_run(&reports(&fixture));
     let events = recorded(&run.join("trace"));
@@ -623,14 +639,15 @@ fn a_mutation_a_run_puts_to_the_tests_leaves_the_execution_that_ran_it() {
     for index in executed {
         assert!(
             events.iter().any(|event| {
-                event
+                let kind = event
                     .pointer("/payload/type")
-                    .and_then(serde_json::Value::as_str)
-                    == Some("mutant-exec")
-                    && event
-                        .pointer("/payload/mutant/index")
-                        .and_then(serde_json::Value::as_u64)
-                        == Some(index)
+                    .and_then(serde_json::Value::as_str);
+                let ran = match kind {
+                    Some("mutant-exec") => event.pointer("/payload/mutant/index"),
+                    Some("sealed-exec") => event.pointer("/payload/sealed/index"),
+                    _ => None,
+                };
+                ran.and_then(serde_json::Value::as_u64) == Some(index)
             }),
             "a mutation that ran leaves the execution that ran it, or a recording says a run \
              removed work it did: {index}"
@@ -640,6 +657,7 @@ fn a_mutation_a_run_puts_to_the_tests_leaves_the_execution_that_ran_it() {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: njutest_devkit::paths::environment_for_a_run()
             .into_iter()
             .collect(),
@@ -701,4 +719,62 @@ fn every_line_a_real_run_records_is_on_the_published_engine_trace_schema() {
              schema"
         );
     }
+}
+
+#[test]
+fn a_source_the_build_reads_as_text_is_read_as_it_was_written_and_the_trace_says_where() {
+    let fixture = Fixture::copy("fixture-reads-its-source");
+    let output = against(&fixture, &["run", "--trace", "--tier", "all", "--no-seal"]);
+    assert!(
+        matches!(output.status.code(), Some(0 | 2)),
+        "a test that compares its crate's source with the text as written passes with nothing \
+         active, so the run measures rather than refusing the target: {}",
+        stderr(&output)
+    );
+    let run = only_run(&reports(&fixture));
+    let events = recorded(&run.join("trace"));
+    let kept: Vec<&str> = events
+        .iter()
+        .filter(|event| {
+            event
+                .pointer("/payload/note/kind")
+                .and_then(serde_json::Value::as_str)
+                == Some(rust_mutants::verbatim::NOTE)
+        })
+        .filter_map(|event| event.pointer("/payload/note/detail")?.as_str())
+        .collect();
+    assert_eq!(
+        kept,
+        [
+            "src/lib.rs:9 reads src/twice.rs as it was copied, from src/.0, not as the run \
+             rewrites it",
+            "src/lib.rs:12 reads src/twice.rs as it was copied, from src/.0, not as the run \
+             rewrites it",
+            "tests/source.rs:25 reads src/twice.rs as it was copied, from tests/.0, not as the \
+             run rewrites it",
+        ],
+        "each include of a Rust source of the tree, by a path beside it, by the package's \
+         directory, and from a test, reads the source as it was copied"
+    );
+    let document: serde_json::Value = njutest_devkit::strictjson::decode_str(
+        &std::fs::read_to_string(run.join("run-report-v1.json")).expect("the report"),
+    )
+    .expect("the report is a document");
+    let fates: Vec<(String, String)> = document["mutants"]
+        .as_array()
+        .expect("the rows")
+        .iter()
+        .map(|row| {
+            (
+                row["path"].as_str().expect("a path").to_owned(),
+                row["outcome"].as_str().expect("an outcome").to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        fates,
+        vec![("src/twice.rs".to_owned(), "killed".to_owned()); 4],
+        "every mutation of the module the others read is put to the tests, which read it as \
+         written: {document}"
+    );
 }

@@ -9,7 +9,7 @@
               file that cannot be read leaves nothing to assert"
 )]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use njutest_devkit::result::{OptionState, option_state};
@@ -32,12 +32,340 @@ fn task(name: &str) -> String {
     rest.get(..end).unwrap_or_default().to_owned()
 }
 
-/// Every gate `cargo xtask all` runs, which is what CI runs.
+#[test]
+fn codeql_runs_before_a_push_and_ci_refuses_findings() {
+    let text = repository("mise.toml");
+    let configuration: toml::Value = toml::from_str(&text).expect("mise configuration");
+    let check = mise_runs(&configuration, "check").join("\n");
+    assert!(check.contains("mise run security:local"));
+    assert!(check.contains("mise run security:codeql"));
+    assert_eq!(
+        configuration
+            .get("tasks")
+            .and_then(|tasks| tasks.get("security:codeql"))
+            .and_then(|task| task.get("env"))
+            .and_then(|environment| environment.get("CARGO_NET_OFFLINE"))
+            .and_then(toml::Value::as_str),
+        Some("true"),
+        "the analysis cannot download dependencies during a check"
+    );
+    let workflow = repository(".github/workflows/codeql.yml");
+    assert!(workflow.contains("SARIF_DIRECTORY:"));
+    assert!(workflow.contains("raise SystemExit(1 if findings else 0)"));
+    let configuration = repository(".github/codeql/codeql-config.yml");
+    assert!(!configuration.contains("paths-ignore"));
+    assert!(!configuration.contains("query-filters"));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_codeql_check_cannot_pass_when_the_bundle_is_absent() {
+    let cache = tempfile::tempdir().expect("empty CodeQL cache");
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/codeql.sh");
+    let output = std::process::Command::new("bash")
+        .arg(script)
+        .arg("check")
+        .env("NJUTEST_CODEQL_CACHE", cache.path())
+        .output()
+        .expect("start the local check");
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8(output.stderr)
+            .expect("diagnostic text")
+            .contains("mise run setup:codeql"),
+        "a missing installation must refuse analysis with its remedy"
+    );
+    assert_eq!(std::fs::read_dir(cache.path()).expect("cache").count(), 0);
+}
+
+fn advisories_ignore_is_empty(deny: &str) -> bool {
+    let Ok(configuration) = toml::from_str::<toml::Value>(deny) else {
+        return false;
+    };
+    configuration
+        .get("advisories")
+        .and_then(|advisories| advisories.get("ignore"))
+        .and_then(toml::Value::as_array)
+        .is_some_and(Vec::is_empty)
+}
+
+fn mise_runs<'a>(configuration: &'a toml::Value, name: &str) -> Vec<&'a str> {
+    let run = configuration
+        .get("tasks")
+        .and_then(|tasks| tasks.get(name))
+        .and_then(|task| task.get("run"))
+        .unwrap_or_else(|| panic!("mise task {name} has no run command"));
+    match run {
+        toml::Value::String(command) => vec![command],
+        toml::Value::Array(commands) => commands
+            .iter()
+            .map(|command| {
+                command
+                    .as_str()
+                    .unwrap_or_else(|| panic!("mise task {name} has a non-command run entry"))
+            })
+            .collect(),
+        _ => panic!("mise task {name} has an unknown run shape"),
+    }
+}
+
+fn ci_run_steps(workflow: &str, job: &str) -> Vec<(String, String)> {
+    let header = format!("  {job}:");
+    let mut in_job = false;
+    let mut steps: Vec<Vec<&str>> = Vec::new();
+    for line in workflow.lines() {
+        if !in_job {
+            in_job = line == header;
+            continue;
+        }
+        if line
+            .strip_prefix("  ")
+            .is_some_and(|tail| !tail.starts_with([' ', '#']) && tail.ends_with(':'))
+        {
+            break;
+        }
+        if let Some(first) = line.strip_prefix("      - ") {
+            steps.push(vec![first]);
+        } else if let Some(step) = steps.last_mut() {
+            step.push(line);
+        }
+    }
+    assert!(in_job, "CI has no job {job}");
+    let mut found = Vec::new();
+    for step in steps {
+        let mut lines = step.into_iter();
+        let first = lines.next().unwrap_or_default();
+        let mut run = None;
+        let mut block = Vec::new();
+        let mut in_block = false;
+        for line in lines {
+            if let Some(command) = line.strip_prefix("        run: ") {
+                run = Some(command);
+                in_block = command == "|";
+            } else if in_block && (line.starts_with("          ") || line.is_empty()) {
+                block.push(line.strip_prefix("          ").unwrap_or_default());
+            } else {
+                in_block = false;
+            }
+        }
+        if first.starts_with("run: ") || run.is_some() {
+            let name = first
+                .strip_prefix("name: ")
+                .unwrap_or_else(|| panic!("CI {job} has an unnamed run step"));
+            let command = run.unwrap_or_else(|| panic!("CI {job}/{name} has no run"));
+            let script = if command == "|" {
+                block.join("\n")
+            } else {
+                command.to_owned()
+            };
+            found.push((name.to_owned(), script.trim_end().to_owned()));
+        }
+    }
+    found
+}
+
+const FETCH_LOCKED: &str =
+    "cargo fetch --locked\ncargo fetch --locked --manifest-path fuzz/Cargo.toml";
+const DENY_FETCH: &str = "for attempt in 1 2 3 4 5; do\n  cargo deny --locked --all-features fetch db && exit 0\n  sleep $((attempt * 15))\ndone\nexit 1";
+const AUDIT_FETCH: &str = "for attempt in 1 2 3 4 5; do\n  rm -rf \"$HOME/.cargo/advisory-db\"\n  git clone --depth 1 https://github.com/RustSec/advisory-db.git \"$HOME/.cargo/advisory-db\" && exit 0\n  sleep $((attempt * 15))\ndone\nexit 1";
+const COMMITTED_CI: &str = "git fetch --no-tags origin \"refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}\"\ngit cat-file -e \"${HEAD_SHA}^{commit}\"\ncommitted \"origin/${BASE_REF}..${HEAD_SHA}\"";
+
+#[derive(Clone, Copy)]
+enum CiCommand {
+    Task(&'static str),
+    Runs(&'static str, &'static [usize]),
+    CiOnly(&'static str, &'static str),
+}
+
+fn lint_ci_steps(fetch: CiCommand) -> Vec<(&'static str, CiCommand)> {
+    use CiCommand::{CiOnly, Runs};
+    vec![
+        ("Fetch the locked dependency graph", fetch),
+        ("fmt", Runs("fmt:check", &[0])),
+        ("clippy", Runs("clippy", &[0])),
+        ("doc", Runs("doc", &[0])),
+        (
+            "repository gates (seam ratchet, dependency direction, fixtures, release consistency)",
+            Runs("gates", &[0]),
+        ),
+        (
+            "fuzz targets satisfy the root Clippy policy",
+            Runs("fuzz:clippy", &[0]),
+        ),
+        ("typos", Runs("lint", &[0])),
+        ("taplo", Runs("fmt:check", &[1, 2])),
+        ("actionlint", Runs("lint", &[1])),
+        (
+            "every workflow the documentation shows passes actionlint against this repository's actions",
+            Runs("lint", &[2]),
+        ),
+        (
+            "committed (pull request commits)",
+            CiOnly(
+                COMMITTED_CI,
+                "CI fetches the PR base and checks its head SHA before the local committed-range rule",
+            ),
+        ),
+    ]
+}
+
+fn expected_ci_steps(job: &str) -> Vec<(&'static str, CiCommand)> {
+    use CiCommand::{CiOnly, Runs, Task};
+    let fetch = CiOnly(
+        FETCH_LOCKED,
+        "CI primes both lockfiles before an offline run",
+    );
+    match job {
+        "test" => vec![
+            ("Fetch the locked dependency graph", fetch),
+            ("Test every target", Task("test:ci")),
+            ("Doctests", Runs("test:doc", &[0])),
+            (
+                "Lint what only this platform compiles",
+                Runs("clippy", &[0]),
+            ),
+        ],
+        "lint" => lint_ci_steps(fetch),
+        "deny" => vec![
+            (
+                "Fetch the advisory database",
+                CiOnly(
+                    DENY_FETCH,
+                    "CI retries the network fetch before the shared offline deny check",
+                ),
+            ),
+            ("Check dependency policy", Runs("deny", &[1])),
+        ],
+        "audit" => vec![
+            (
+                "Fetch the advisory database",
+                CiOnly(
+                    AUDIT_FETCH,
+                    "CI uses its isolated Cargo home; the local audit task uses a target-local database",
+                ),
+            ),
+            (
+                "Audit dependency advisories",
+                CiOnly(
+                    "cargo audit --no-fetch --deny warnings",
+                    "CI audits its Cargo-home database; the local audit task passes its target-local database with --db",
+                ),
+            ),
+        ],
+        "package-install" => vec![
+            ("Fetch the locked dependency graph", fetch),
+            (
+                "Package both CLIs, install them, and run them from the archive a release would publish",
+                Task("package"),
+            ),
+        ],
+        "book" => vec![(
+            "build the book, which refuses a summary naming a page nobody holds",
+            Runs("book", &[0]),
+        )],
+        "kani-verified" => vec![
+            ("Fetch the locked dependency graph", fetch),
+            (
+                "Install the exact verifier and backend",
+                CiOnly(
+                    "cargo install --locked kani-verifier --version '=0.68.0'\ncargo kani setup",
+                    "CI installs the verifier that the local Kani task requires",
+                ),
+            ),
+            (
+                "Prove the production mutation outcome laws",
+                Task("kani:laws"),
+            ),
+            (
+                "Exercise generated harnesses and the retained-result protocol with real Kani",
+                Task("kani:verified"),
+            ),
+        ],
+        "wasi-testsuite" => vec![
+            ("Fetch the locked dependency graph", fetch),
+            (
+                "Run every preview1 test of WebAssembly/wasi-testsuite on the sealed host",
+                Task("wasi-testsuite"),
+            ),
+        ],
+        _ => panic!("locally answerable CI job {job} has no step-command correspondence"),
+    }
+}
+
+#[test]
+fn every_locally_answerable_ci_step_runs_its_mise_command() {
+    let workflow = repository(".github/workflows/ci.yml");
+    let mise: toml::Value = toml::from_str(&repository("mise.toml"))
+        .unwrap_or_else(|error| panic!("mise.toml: {error}"));
+    let mut used: BTreeMap<&str, BTreeSet<usize>> = BTreeMap::new();
+    for (job, local) in GATED {
+        if local.is_none() {
+            continue;
+        }
+        let actual = ci_run_steps(&workflow, job);
+        let expected = expected_ci_steps(job);
+        assert_eq!(
+            actual
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            expected.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+            "CI {job} added, removed, or reordered a run step without accounting for its local command"
+        );
+        for ((name, script), (_, command)) in actual.iter().zip(expected) {
+            let (wanted, reason) = match command {
+                CiCommand::Task(task) => {
+                    assert!(!mise_runs(&mise, task).is_empty());
+                    (format!("mise run {task}"), "CI invokes the task itself")
+                }
+                CiCommand::Runs(task, indices) => {
+                    let runs = mise_runs(&mise, task);
+                    used.entry(task)
+                        .or_default()
+                        .extend(indices.iter().copied());
+                    let selected = indices
+                        .iter()
+                        .map(|index| {
+                            *runs
+                                .get(*index)
+                                .unwrap_or_else(|| panic!("mise task {task} lost command {index}"))
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" && ");
+                    (selected, "CI runs the same command as the local task")
+                }
+                CiCommand::CiOnly(script, reason) => (script.to_owned(), reason),
+            };
+            assert_eq!(script, &wanted, "CI {job}/{name}: {reason}");
+        }
+    }
+    let deny = mise_runs(&mise, "deny");
+    let deny_fetch = deny
+        .first()
+        .unwrap_or_else(|| panic!("mise deny has no fetch command"));
+    assert!(DENY_FETCH.contains(&format!("{deny_fetch} && exit 0")));
+    used.entry("deny").or_default().insert(0);
+    for (task, selected) in used {
+        let every: BTreeSet<usize> = (0..mise_runs(&mise, task).len()).collect();
+        assert_eq!(
+            selected, every,
+            "mise task {task} has a command CI does not run"
+        );
+    }
+    let audit = mise_runs(&mise, "audit");
+    assert_eq!(audit.len(), 1, "CI does not run an added audit command");
+    let audit_run = audit
+        .first()
+        .unwrap_or_else(|| panic!("mise audit has no run command"));
+    assert!(audit_run.lines().any(|line| line.trim() == "git clone --quiet --depth 1 https://github.com/RustSec/advisory-db.git \"${db}\" && fetched=true"));
+    assert!(audit_run.lines().any(|line| line.trim() == "cargo audit --no-fetch --deny warnings --db \"${db}\" || {"));
+}
+
 /// Every job `required` waits for, and the local task that answers it first.
 ///
 /// `None` is a job this machine cannot answer, with the reason it cannot.
 /// The list is the whole of what a push has to wait for CI to find out, so adding to it is a decision rather than an omission.
-const GATED: [(&str, Option<&str>); 11] = [
+const GATED: [(&str, Option<&str>); 12] = [
     ("test", Some("mise run test")),
     ("lint", Some("mise run lint")),
     ("deny", Some("mise run deny")),
@@ -47,6 +375,7 @@ const GATED: [(&str, Option<&str>); 11] = [
     ("coverage", None),
     ("soundness", None),
     ("kani-verified", Some("mise run kani:verified")),
+    ("wasi-testsuite", Some("mise run wasi-testsuite")),
     ("action-smoke", None),
     ("action-smoke-rust-mutants", None),
 ];
@@ -57,8 +386,7 @@ fn the_gates_a_person_runs_are_the_gates_the_pipeline_runs() {
     assert!(
         local.contains("cargo xtask all"),
         "`mise run gates` lists gates of its own rather than running the one command CI \
-         runs, which is a second enumeration of a set `gates::all` already holds and \
-         `every_gate_that_needs_no_argument_is_one_all_runs` already closes: {local}"
+         runs, which is a second enumeration of the typed repository gate set: {local}"
     );
     let hooks = repository("lefthook.yml");
     assert!(
@@ -131,18 +459,36 @@ fn package_install_deny_and_typos_are_exact_local_ci_pairs() {
         "cargo njutest --version",
         "cargo rust-mutants --version",
         "cargo xtask sbom",
+        "target=\"${NJUTEST_BUNDLE_TARGET:-$(rustc --print host-tuple)}\"",
+        "cargo xtask bundle --target \"${target}\" --out \"$install_root/dist\"",
+        "tar -xzf \"$install_root/dist/\"*.tar.gz -C \"$install_root/unpacked\"",
+        "\"$program\" --version",
+        "cp rust-toolchain.toml \"$install_root/assured/\"",
+        "\"$bundle/rust-mutants\" run --root \"$install_root/assured\" --offline --locked --no-cache",
+        "\"$bundle/njutest\" verify --directory \"$install_root/assured\" --offline --locked --no-cache --ui=plain",
     ] {
         assert!(
             package.contains(held),
             "the local package-install proof is missing {held:?}: {package}"
         );
     }
-    for forbidden in ["cargo publish", "gh release"] {
+    for forbidden in [
+        "cargo publish",
+        "gh release",
+        "git tag",
+        "git push",
+        "gh workflow",
+    ] {
         assert!(
             !package.contains(forbidden),
             "an ordinary package check performs a release operation {forbidden:?}: {package}"
         );
     }
+
+    assert!(
+        !package.contains("--no-verify"),
+        "every workspace archive must be verified by Cargo: {package}"
+    );
 
     let deny = task("deny");
     assert!(
@@ -162,7 +508,7 @@ fn package_install_deny_and_typos_are_exact_local_ci_pairs() {
 fn the_windows_cfg_is_linted_with_the_pinned_target() {
     let setup = task("\"setup:windows-target\"");
     assert!(
-        setup.contains("rustup target add --toolchain 1.98.0 x86_64-pc-windows-msvc"),
+        setup.contains("rustup target add --toolchain $RUSTUP_TOOLCHAIN x86_64-pc-windows-msvc"),
         "the cross-target standard library is not tied to the pinned compiler: {setup}"
     );
     let windows = task("\"lint:windows\"");
@@ -357,6 +703,65 @@ fn every_gate_the_pipeline_waits_for_is_one_this_machine_answered_first() {
 }
 
 #[test]
+fn every_ci_platform_runs_the_same_complete_suite() {
+    let workflow = repository(".github/workflows/ci.yml");
+    let test_job = workflow
+        .split_once("  test:")
+        .and_then(|(_, tail)| tail.split_once("\n  lint:"))
+        .map(|(job, _)| job)
+        .expect("the test job precedes the lint job");
+    assert!(
+        test_job.contains("os: [macos-26, macos-15, windows-2025]"),
+        "each supported platform has a full test row"
+    );
+    assert!(
+        !test_job.contains("matrix.part") && !test_job.contains("part:"),
+        "no CI test row selects only part of the suite"
+    );
+    assert_eq!(
+        test_job.matches("mise run test:ci").count(),
+        1,
+        "one complete suite run per row"
+    );
+    let local = task("\"test:ci\"");
+    assert!(
+        local.contains("cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level pass --test-threads 3 --profile ci"),
+        "the CI task covers every target: {local}"
+    );
+    assert!(
+        !local.contains(" -E ") && !local.contains("--exclude"),
+        "the CI test row must not filter or shard the suite"
+    );
+}
+
+#[test]
+fn coverage_runs_the_whole_suite_once_without_sharding() {
+    let workflow = repository(".github/workflows/ci.yml");
+    let steps = ci_run_steps(&workflow, "coverage");
+    let collect = steps
+        .iter()
+        .find(|(name, _)| name == "Collect coverage (run the suite once)")
+        .map(|(_, script)| script.as_str())
+        .expect("the coverage collection step");
+    let local = task("coverage");
+    for script in [collect, &local] {
+        assert_eq!(
+            script
+                .matches("cargo xtask tidy -- cargo nextest run")
+                .count(),
+            1,
+            "coverage runs its complete suite once: {script}"
+        );
+        assert!(
+            script.contains("--workspace --all-targets --all-features")
+                && !script.contains(" -E ")
+                && !script.contains("--exclude"),
+            "coverage does not filter the suite: {script}"
+        );
+    }
+}
+
+#[test]
 fn the_inner_loop_starts_no_toolchain_and_the_whole_suite_still_runs_everything() {
     let fast = task("\"test:fast\"");
     assert!(
@@ -366,13 +771,32 @@ fn the_inner_loop_starts_no_toolchain_and_the_whole_suite_still_runs_everything(
     let slow = task("\"test:slow\"");
     assert!(slow.contains("binary(/^toolchain_/)"), "{slow}");
     let whole = task("test");
-    for half in ["test:fast", "test:slow", "test:doc"] {
+    for half in ["test:cost", "test:doc"] {
         assert!(
             whole.contains(half),
             "`mise run test` leaves out {half}, so something is only ever run in the pipeline: \
              {whole}"
         );
     }
+}
+
+#[test]
+fn the_local_whole_suite_records_and_gates_every_toolchain_binarys_work() {
+    let whole = task("test");
+    assert!(whole.contains("mise run test:cost"));
+    let cost = task("\"test:cost\"");
+    assert!(cost.contains("scripts/run-suite-cost.py"));
+    let script = repository("scripts/run-suite-cost.py");
+    for argument in [
+        "--workspace",
+        "--all-targets",
+        "--all-features",
+        "--no-fail-fast",
+    ] {
+        assert!(script.contains(argument), "{argument}: {script}");
+    }
+    assert!(!script.contains("\"-E\"") && !script.contains("--partition"));
+    assert!(script.contains("NJUTEST_TEST_COST_DIR") && script.contains("suite-cost.py"));
 }
 
 #[test]
@@ -485,7 +909,9 @@ fn local_and_weekly_fuzz_runs_copy_the_committed_seeds_into_the_real_corpus() {
     assert!(
         smoke.contains("bash ../scripts/seed-fuzz-corpus.sh \"$target\"")
             && smoke.find("seed-fuzz-corpus").unwrap_or(usize::MAX)
-                < smoke.find("cargo +nightly fuzz run").unwrap_or(usize::MAX),
+                < smoke
+                    .find("cargo +\"$NJUTEST_NIGHTLY\" fuzz run")
+                    .unwrap_or(usize::MAX),
         "the local smoke run does not seed each target before invoking cargo-fuzz: {smoke}"
     );
 
@@ -530,6 +956,71 @@ fn seed_copier_takes_the_hidden_one_too() {
         let actual = std::fs::read_to_string(&copied)
             .unwrap_or_else(|error| panic!("{} was not copied: {error}", copied.display()));
         assert_eq!(actual, expected);
+    }
+}
+
+/// The copier is a POSIX shell script run where fuzz targets build, which is unix.
+#[cfg(unix)]
+#[test]
+fn every_fuzz_run_replays_the_crashes_an_earlier_run_found_before_it_explores() {
+    let fixture = tempfile::tempdir()
+        .unwrap_or_else(|error| panic!("could not make a fuzz-regression fixture: {error}"));
+    let kept = fixture.path().join("regressions/example");
+    std::fs::create_dir_all(&kept)
+        .unwrap_or_else(|error| panic!("could not make {}: {error}", kept.display()));
+    std::fs::write(kept.join("crash-1"), b"crashed once")
+        .unwrap_or_else(|error| panic!("could not write a kept crash: {error}"));
+    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("scripts/seed-fuzz-corpus.sh");
+    let output = std::process::Command::new("bash")
+        .arg(&script)
+        .arg("example")
+        .current_dir(fixture.path())
+        .output()
+        .unwrap_or_else(|error| panic!("could not run {}: {error}", script.display()));
+    assert!(
+        output.status.success(),
+        "seed copier failed: {:?}",
+        output.stderr
+    );
+    let copied = fixture.path().join("corpus/example/crash-1");
+    let actual = std::fs::read_to_string(&copied).unwrap_or_else(|error| {
+        panic!(
+            "{} was not copied, so a run starts without the input that crashed the last one \
+             and a crash that came back is found again only by luck: {error}",
+            copied.display()
+        )
+    });
+    assert_eq!(actual, "crashed once");
+}
+
+#[test]
+fn the_compiler_refuses_every_reading_of_rust_that_resolves_to_syn_or_quote() {
+    let configured = repository("clippy.toml");
+    for (table, path) in [
+        ("disallowed-methods", "syn::parse_str"),
+        ("disallowed-methods", "syn::parse_file"),
+        ("disallowed-methods", "syn::parse::Parser::parse_str"),
+        ("disallowed-methods", "syn::LitStr::parse"),
+        ("disallowed-methods", "syn::LitStr::parse_with"),
+        ("disallowed-methods", "syn::LitInt::new"),
+        ("disallowed-methods", "syn::LitFloat::new"),
+        ("disallowed-macros", "quote::quote"),
+        ("disallowed-macros", "quote::quote_spanned"),
+        ("disallowed-macros", "syn::parse_quote"),
+        ("disallowed-macros", "syn::parse_quote_spanned"),
+    ] {
+        let listed = configured
+            .split_once(&format!("{table} = ["))
+            .and_then(|(_, rest)| rest.split_once("\n]"))
+            .is_some_and(|(entries, _)| entries.contains(&format!("path = \"{path}\"")));
+        assert!(
+            listed,
+            "{path} lexes into the calling thread's location map, and the compiler resolves every \
+             name, alias and macro argument it is reached by, so {table} keeps it out of all but \
+             the doors of ADR 0045"
+        );
     }
 }
 
@@ -582,7 +1073,13 @@ fn the_gate_catalogue_names_the_compiler_backed_methods_the_policy_holds() {
 
 #[test]
 fn every_task_that_runs_the_suite_builds_the_scripted_toolchain_first() {
-    for name in ["\"test:fast\"", "\"test:slow\"", "coverage"] {
+    for name in [
+        "\"test:fast\"",
+        "\"test:slow\"",
+        "\"test:ci\"",
+        "\"test:cost\"",
+        "coverage",
+    ] {
         let body = task(name);
         let depends = body
             .lines()
@@ -602,15 +1099,9 @@ fn every_task_that_runs_the_suite_builds_the_scripted_toolchain_first() {
 #[test]
 fn the_pipeline_builds_the_scripted_toolchain_before_it_runs_the_suite() {
     let workflow = repository(".github/workflows/ci.yml");
-    let built = workflow
-        .find("cargo build --locked --examples")
-        .unwrap_or_else(|| panic!("no step builds the examples: {workflow}"));
-    let tested = workflow
-        .find("cargo nextest run --locked --workspace")
-        .unwrap_or_else(|| panic!("no step runs the suite: {workflow}"));
     assert!(
-        built < tested,
-        "the suite runs before the scripted cargo it drives is built"
+        workflow.contains("run: mise run test:ci"),
+        "CI must use the task that builds its scripted example before testing"
     );
 }
 
@@ -637,7 +1128,12 @@ fn everything_that_runs_a_gate() -> String {
 #[test]
 fn nothing_that_runs_a_gate_turns_a_comparison_into_a_recording() {
     let running = everything_that_runs_a_gate();
-    for lever in ["UPDATE_GOLDEN", "UPDATE_FATES", "TRYBUILD"] {
+    for lever in [
+        "UPDATE_GOLDEN",
+        "UPDATE_FATES",
+        "UPDATE_ENGINE_RUNS",
+        "TRYBUILD",
+    ] {
         assert!(
             !running.contains(lever),
             "a task or a workflow setting {lever} turns 59 goldens from a comparison \
@@ -667,11 +1163,21 @@ fn nothing_shrinks_what_a_gate_sees_from_a_file_of_its_own() {
     }
     let deny = repository("deny.toml");
     assert!(
-        deny.contains("ignore = []"),
+        advisories_ignore_is_empty(&deny),
         "a waived advisory is a decision somebody made about a vulnerability, and an \
          ignore list that grows without a number going up in a file of its own is the \
          ledger this repository refuses everywhere else: {deny}"
     );
+}
+
+#[test]
+fn an_advisory_ignore_cannot_be_hidden_behind_a_comment() {
+    for deny in [
+        "[advisories]\n# ignore = []\nignore = [\"RUSTSEC-2026-0001\"]\n",
+        "[advisories]\n# ignore = []\n",
+    ] {
+        assert!(!advisories_ignore_is_empty(deny), "{deny}");
+    }
 }
 
 #[test]
@@ -729,7 +1235,7 @@ fn every_task_a_page_or_a_workflow_names_is_one_mise_declares() {
 const PLUMBING: [&str; 5] = [
     "cargo fetch --locked",
     "rustup toolchain install",
-    "cargo +nightly miri setup",
+    "cargo +\"${NJUTEST_NIGHTLY}\" miri setup",
     "cargo llvm-cov report",
     "cargo xtask sbom",
 ];
@@ -744,6 +1250,19 @@ fn every_gate_the_pipeline_runs_is_one_this_machine_can_run() {
             continue;
         };
         let command = command.trim();
+        let command = if let Some(inner) = command
+            .strip_prefix('\'')
+            .and_then(|text| text.strip_suffix('\''))
+        {
+            inner
+        } else if let Some(inner) = command
+            .strip_prefix('"')
+            .and_then(|text| text.strip_suffix('"'))
+        {
+            inner
+        } else {
+            command
+        };
         if command.is_empty() || command.starts_with(['>', '|']) {
             continue;
         }
@@ -773,103 +1292,6 @@ fn every_gate_the_pipeline_runs_is_one_this_machine_can_run() {
          mapping is by name and says nothing about what either one does: `mise run \
          lint` omitted cargo fmt and taplo for exactly this long. {unanswerable:?}"
     );
-}
-
-/// The crate each coverage floor is about, by the order the ratchets appear; the empty name is the whole workspace.
-const MEASURED: [&str; 5] = [
-    "",
-    "crates/rust-mutants",
-    "crates/rust-mutants-cli",
-    "crates/njutest",
-    "xtask",
-];
-
-/// The crate that holds no Rust of its own: it recompiles other crates' sources privately, which llvm-cov counts a second time at nothing per cent.
-const SURFACES: &str = "compiler-surfaces";
-
-/// Every place in this tree that holds Rust a coverage report can count.
-///
-/// The members cargo names, plus the one workspace that is not a member; a crate added or renamed joins this on the day it does, rather than when somebody remembers the list.
-fn places(root: &Path) -> Vec<String> {
-    let mut found: Vec<String> = njutest_devkit::census::members(root)
-        .into_iter()
-        .filter(|member| member.name != SURFACES)
-        .map(|member| match member.directory.strip_prefix(root) {
-            Ok(at) => at.display().to_string().replace('\\', "/"),
-            Err(error) => panic!("{} is not under the workspace: {error}", member.name),
-        })
-        .collect();
-    found.push("fuzz".to_owned());
-    found.sort();
-    found
-}
-
-/// The paths one `--ignore-filename-regex` leaves out, with its one alternation spelled out.
-fn left_out(pattern: &str) -> Vec<String> {
-    let mut alternatives: Vec<String> = Vec::new();
-    let rest = match pattern.split_once('(') {
-        None => pattern.to_owned(),
-        Some((head, after)) => {
-            let (group, tail) = after
-                .split_once(')')
-                .unwrap_or_else(|| panic!("the alternation closes: {pattern}"));
-            let (suffix, beyond) = tail.split_once('|').unwrap_or((tail, ""));
-            alternatives.extend(
-                group
-                    .split('|')
-                    .map(|member| format!("{head}{member}{suffix}")),
-            );
-            beyond.to_owned()
-        }
-    };
-    alternatives.extend(rest.split('|').map(ToOwned::to_owned));
-    alternatives.retain(|one| !one.is_empty());
-    alternatives
-}
-
-#[test]
-fn every_coverage_floor_measures_the_one_crate_it_is_about() {
-    let coverage = task("coverage");
-    let patterns: Vec<&str> = coverage
-        .lines()
-        .filter_map(|line| line.split_once("--ignore-filename-regex '"))
-        .filter_map(|(_, rest)| rest.split_once('\''))
-        .map(|(pattern, _)| pattern)
-        .collect();
-    assert_eq!(
-        patterns.len(),
-        MEASURED.len(),
-        "a floor was added or removed and this table did not follow: {patterns:?}"
-    );
-    let under = |place: &str| format!("{place}/");
-    let every = places(
-        &std::fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join(".."))
-            .expect("the workspace root"),
-    );
-    for (measured, pattern) in MEASURED.into_iter().zip(patterns) {
-        let out = left_out(pattern);
-        let left_in: Vec<&str> = every
-            .iter()
-            .map(String::as_str)
-            .filter(|place| !out.iter().any(|one| under(place).starts_with(one.as_str())))
-            .collect();
-        if measured.is_empty() {
-            assert_eq!(
-                left_in.len(),
-                every.len(),
-                "the workspace floor leaves a place out, so what it prints is not the \
-                 workspace's coverage: {pattern}"
-            );
-            continue;
-        }
-        assert_eq!(
-            left_in,
-            [measured],
-            "a floor is a number about one crate, and this one is an average over what \
-             it leaves in: raising one crate's tests moves another crate's floor, and a \
-             package added anywhere joins every floor silently. {pattern}"
-        );
-    }
 }
 
 #[test]
@@ -952,33 +1374,6 @@ fn rust_sources_under(at: &Path) -> Vec<std::path::PathBuf> {
 }
 
 #[test]
-fn the_mutation_matrix_is_every_crate_that_holds_rust_of_its_own() {
-    let root = std::fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join(".."))
-        .unwrap_or_else(|error| panic!("the workspace root: {error}"));
-    let workflow = repository(".github/workflows/mutation.yml");
-    let listed: BTreeSet<String> = workflow
-        .lines()
-        .find_map(|line| line.trim().strip_prefix("package: ["))
-        .and_then(|rest| rest.strip_suffix(']'))
-        .unwrap_or_else(|| panic!("mutation.yml declares a package matrix: {workflow}"))
-        .split(',')
-        .map(|name| name.trim().to_owned())
-        .collect();
-    let wanted: BTreeSet<String> = njutest_devkit::census::members(&root)
-        .into_iter()
-        .filter(|member| member.name != SURFACES && member.name != "xtask")
-        .map(|member| member.name)
-        .collect();
-    assert_eq!(
-        listed, wanted,
-        "the weekly measurement of how strong this suite is runs one leg per crate, and \
-         the list was written by hand: a rename made it name one crate twice and \
-         njutest-devkit not at all, so one leg did the same work as another and one \
-         crate was never measured"
-    );
-}
-
-#[test]
 fn every_suite_leaves_nothing_in_a_temporary_directory_nobody_owns() {
     for place in ["mise.toml", ".github/workflows/ci.yml"] {
         let text = repository(place);
@@ -1032,6 +1427,44 @@ fn a_nested_toolchain_run_shares_the_machine_with_the_ones_beside_it() {
              multiply the machine by their number"
         );
     }
+}
+
+#[test]
+fn claims_oracle_runs_without_competing_nested_cargos() {
+    let text = repository(".config/nextest.toml");
+    let config: toml::Value = toml::from_str(&text).expect("the nextest configuration parses");
+    let overrides = config
+        .get("profile")
+        .and_then(|profile| profile.get("default"))
+        .and_then(|default| default.get("overrides"))
+        .and_then(toml::Value::as_array)
+        .expect("the nextest default profile has overrides");
+    let filter = "binary(=toolchain_gates) & test(/^claims_oracle::/)";
+    let mut matching = overrides.iter().enumerate().filter(|(_, override_)| {
+        override_.get("filter").and_then(toml::Value::as_str) == Some(filter)
+    });
+    let (at, specific) = matching.next().expect("the claims oracle override exists");
+    assert!(
+        matching.next().is_none(),
+        "claims oracle has one exact override: {text}"
+    );
+    assert_eq!(
+        specific
+            .get("threads-required")
+            .and_then(toml::Value::as_str),
+        Some("num-test-threads"),
+        "the claims oracle reserves the entire test pool: {text}"
+    );
+    let broad = overrides
+        .iter()
+        .position(|override_| {
+            override_.get("filter").and_then(toml::Value::as_str) == Some("binary(/^toolchain_/)")
+        })
+        .expect("the toolchain override exists");
+    assert!(
+        at < broad,
+        "the narrower override precedes the broad toolchain override: {text}"
+    );
 }
 
 /// Every command in `place` that compiles the workspace in the dev profile for a build or a test.
@@ -1166,5 +1599,273 @@ fn a_loop_of_durable_writes_answers_to_its_own_watch_and_not_the_cpu_clock() {
     assert_eq!(
         named, 2,
         "and the filter names the tests that are that loop, in both crates that keep entries"
+    );
+}
+
+const PLANTED_OWNER: &str = "{\"schema\":\"njutest-test-temp-owner-v1\",\"binary\":\"xtask::tasks\",\"test\":\"planted\",\"pid\":1}";
+
+#[test]
+fn tidy_passes_a_command_that_leaves_nothing_behind() {
+    let said = tidy_over("exit 0");
+    assert!(
+        said.status.success(),
+        "a command that leaves nothing passes with the run's own exit code: {}",
+        said.text
+    );
+}
+
+#[test]
+fn tidy_keeps_cache_work_until_its_producer_process_ends() {
+    let receipt = tempfile::tempdir().expect("a receipt directory");
+    let named = receipt.path().join("cache-root");
+    let script = format!(
+        "test -n \"$NJUTEST_TEST_CACHE_ROOT\" || exit 91; printf '%s' \"$NJUTEST_TEST_CACHE_ROOT\" > '{}'; mkdir -p \"$NJUTEST_TEST_CACHE_ROOT/modules/late\"; printf work > \"$NJUTEST_TEST_CACHE_ROOT/modules/late/record\"",
+        named.display()
+    );
+    let said = tidy_over(&script);
+    let cache = match std::fs::read_to_string(&named) {
+        Ok(cache) => Some(std::path::PathBuf::from(cache)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => panic!("the receipt is readable: {error}"),
+    };
+    assert!(
+        said.status.success(),
+        "the producer exits successfully: {}",
+        said.text
+    );
+    let cache = cache.expect("tidy gives the producer a parent-owned cache root");
+    assert!(
+        !cache.try_exists().expect("the cache root is observable"),
+        "cleanup follows producer exit"
+    );
+}
+
+#[test]
+fn raw_temporary_cache_publication_is_refused_by_the_class_gate() {
+    let source = "fn cache() { let directory = tempfile::tempdir().unwrap(); SealedRunner::cached(&modules, deadline, directory.path()).unwrap(); }";
+    let findings = xtask::lints::scan_source("crates/planted/tests/cache.rs", source)
+        .expect("the planted Rust source parses");
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.kind.label() == "unowned-cache-directory"),
+        "the class gate refuses raw TempDir cache publication: {findings:?}"
+    );
+}
+
+#[test]
+fn the_cache_gate_keeps_parent_owned_and_durable_cache_controls() {
+    for source in [
+        "fn cache() { let directory = CacheDirectory::make(\"cache-\").unwrap(); SealedRunner::cached(&modules, deadline, directory.path()).unwrap(); }",
+        "fn cache(durable: &Path) { SealedRunner::cached(&modules, deadline, durable).unwrap(); }",
+    ] {
+        let findings = xtask::lints::scan_source("crates/planted/tests/cache.rs", source)
+            .expect("the control source parses");
+        assert!(
+            !findings
+                .iter()
+                .any(|finding| finding.kind.label() == "unowned-cache-directory"),
+            "the lifetime control remains available: {findings:?}"
+        );
+    }
+    for source in [
+        "fn cache() { let directory = tempfile::Builder::new().tempdir().unwrap(); let path = directory.path().join(\"cache\"); SealedRunner::cached(&modules, deadline, &path).unwrap(); }",
+        "fn cache() { let directory = Temporary::make(\"cache\").unwrap(); SealedRunner::configured(&modules, deadline, Settings { directory: directory.path() }).unwrap(); }",
+        "fn cache() { let directory = tempfile::tempdir().unwrap(); CompilationCache::retained(directory.path().to_path_buf()) }",
+    ] {
+        let findings = xtask::lints::scan_source("crates/planted/tests/cache.rs", source)
+            .expect("the planted source parses");
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.kind.label() == "unowned-cache-directory"),
+            "aliases and configured caches retain the refusal: {findings:?}"
+        );
+    }
+}
+
+#[test]
+fn the_cache_class_has_executable_planted_shapes() {
+    let kind = xtask::lints::Kind::UnownedCacheDirectory;
+    let shapes = xtask::sentinel::shapes(kind.planted()).expect("the real class sentinel parses");
+    assert!(!shapes.is_empty(), "the class must plant a gate input");
+    for shape in shapes {
+        match shape {
+            xtask::sentinel::Shape::Source { name, path, text } => {
+                let findings = xtask::lints::scan_source(&path, &text)
+                    .expect("the real planted source parses");
+                assert!(
+                    findings.iter().any(|finding| finding.kind == kind),
+                    "the executable class shape {name} must be refused: {findings:?}"
+                );
+            }
+            xtask::sentinel::Shape::Tree { name, .. } => {
+                panic!("the cache source gate cannot silently omit tree shape {name}")
+            }
+        }
+    }
+}
+
+#[test]
+fn the_cache_gate_keeps_the_actual_native_configured_closure() {
+    let source = repository("crates/rust-mutants/tests/touch_runtime.rs");
+    assert!(source.contains("let configured = |command: &mut Command|"));
+    let findings = xtask::lints::scan_source("crates/rust-mutants/tests/touch_runtime.rs", &source)
+        .expect("the unchanged actual native control parses");
+    let cache: Vec<_> = findings
+        .iter()
+        .filter(|finding| finding.kind == xtask::lints::Kind::UnownedCacheDirectory)
+        .collect();
+    assert!(
+        cache.is_empty(),
+        "a native configured closure is no cache API: {cache:?}"
+    );
+}
+
+#[test]
+fn the_cache_gate_binds_imported_types_and_constructor_values() {
+    for source in [
+        "use rust_mutants_sealed::SealedRunner as Host; fn cache() { let directory = tempfile::tempdir().unwrap(); Host::cached(&modules, deadline, directory.path()); }",
+        "use rust_mutants_sealed::CompilationCache as Cache; fn cache() { let directory = tempfile::tempdir().unwrap(); Cache::retained(directory.path().to_path_buf()); }",
+        "fn cache() { let build = SealedRunner::configured; let directory = tempfile::tempdir().unwrap(); build(&modules, deadline, Settings { directory: directory.path() }); }",
+        "fn cache() { let build = CompilationCache::retained; let aliased = build; let directory = tempfile::tempdir().unwrap(); aliased(directory.path().to_path_buf()); }",
+    ] {
+        let findings = xtask::lints::scan_source("crates/planted/tests/cache.rs", source)
+            .expect("the constructor binding shape parses");
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.kind == xtask::lints::Kind::UnownedCacheDirectory),
+            "actual cache constructor bindings retain the refusal: {findings:?}"
+        );
+    }
+}
+
+#[test]
+fn ordinary_configured_calls_and_shadowed_constructor_values_are_no_cache() {
+    for source in [
+        "fn native() { let directory = tempfile::tempdir().unwrap(); let configured = |command: &mut Command| { command.env(\"STATE\", directory.path()); }; let mut child = Command::new(directory.path().join(\"native\")); configured(&mut child); }",
+        "fn native() { let directory = tempfile::tempdir().unwrap(); NativeFactory::configured(directory.path()); }",
+        "fn native() { let build = SealedRunner::configured; { let build = |path: &Path| path; let directory = tempfile::tempdir().unwrap(); build(directory.path()); } }",
+    ] {
+        let findings = xtask::lints::scan_source("crates/planted/tests/native.rs", source)
+            .expect("the native control parses");
+        assert!(
+            !findings
+                .iter()
+                .any(|finding| finding.kind == xtask::lints::Kind::UnownedCacheDirectory),
+            "ordinary calls and value shadowing are preserved: {findings:?}"
+        );
+    }
+}
+
+#[test]
+fn tidy_refuses_a_leftover_nobody_marked() {
+    let said = tidy_over("mkdir \"$TMPDIR/.tmpUnowned\"; exit 0");
+    assert!(
+        !said.status.success(),
+        "a leftover nobody owns is refused: {}",
+        said.text
+    );
+    assert!(
+        said.text.contains(".tmpUnowned"),
+        "the refusal names the leftover: {}",
+        said.text
+    );
+}
+
+#[test]
+fn tidy_refuses_a_leftover_and_names_the_owner_its_marker_records() {
+    let said = tidy_over(
+        "mkdir \"$TMPDIR/.tmpPlanted\"; printf '%s' 'PLANTED_MARKER' > \"$TMPDIR/.tmpPlanted/owner.json\"; exit 3",
+    );
+    assert!(
+        !said.status.success(),
+        "a leftover with an owner marker is still refused: {}",
+        said.text
+    );
+    assert!(
+        said.text.contains(".tmpPlanted"),
+        "the refusal names the leftover: {}",
+        said.text
+    );
+    assert!(
+        said.text.contains("xtask::tasks: planted"),
+        "the refusal names the owner the marker records: {}",
+        said.text
+    );
+}
+
+/// What `cargo xtask tidy -- sh -c script` said, with its refusal as text.
+fn tidy_over(script: &str) -> TidySaid {
+    let sh = njutest_devkit::paths::posix_sh();
+    let planted = PLANTED_OWNER.replace('\'', "'\\''");
+    let script = script.replace("PLANTED_MARKER", &planted);
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .arg("tidy")
+        .arg("--")
+        .arg(&sh)
+        .arg("-c")
+        .arg(script)
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .unwrap_or_else(|error| panic!("the tidy gate ran: {error}"));
+    TidySaid {
+        status: output.status,
+        text: String::from_utf8(output.stderr).unwrap_or_else(|error| panic!("UTF-8: {error}")),
+    }
+}
+
+/// One tidy invocation's exit status and what it said.
+struct TidySaid {
+    status: std::process::ExitStatus,
+    text: String,
+}
+
+#[test]
+fn tidy_prevents_compiler_wrappers_from_retaining_its_temporary_context() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["tidy", "--"])
+        .arg(njutest_devkit::paths::posix_sh())
+        .args(["-c", "test -z \"$RUSTC_WRAPPER\" && test -z \"$RUSTC_WORKSPACE_WRAPPER\" && test -z \"$CARGO_BUILD_RUSTC_WRAPPER\" && test -z \"$CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER\" && test \"$WRAPPER_CONTROL\" = retained"])
+        .envs([
+            ("RUSTC_WRAPPER", "expired-rustc-wrapper"),
+            ("RUSTC_WORKSPACE_WRAPPER", "expired-workspace-wrapper"),
+            ("CARGO_BUILD_RUSTC_WRAPPER", "expired-cargo-wrapper"),
+            ("CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER", "expired-cargo-workspace-wrapper"),
+            ("WRAPPER_CONTROL", "retained"),
+        ])
+        .output()
+        .expect("the actual tidy child runs");
+    assert!(
+        output.status.success(),
+        "a nested compiler can retain an expiring wrapper context: {output:?}"
+    );
+}
+
+#[test]
+fn tidy_keeps_the_coverage_shim_and_clears_the_wrapper_it_chains_to() {
+    let shim = "/opt/cargo-llvm-cov/bin/cargo-llvm-cov";
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["tidy", "--"])
+        .arg(njutest_devkit::paths::posix_sh())
+        .args(["-c", "test \"$RUSTC_WRAPPER\" = \"$EXPECTED_SHIM\" && test -z \"${__CARGO_LLVM_COV_RUSTC_WRAPPER_PRE_EXISTING+chained}\" && test -z \"$RUSTC_WORKSPACE_WRAPPER\" && test -z \"$CARGO_BUILD_RUSTC_WRAPPER\" && test -z \"$CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER\""])
+        .envs([
+            ("CARGO_LLVM_COV", "1"),
+            ("__CARGO_LLVM_COV_RUSTC_WRAPPER", "1"),
+            ("RUSTC_WRAPPER", shim),
+            ("EXPECTED_SHIM", shim),
+            ("__CARGO_LLVM_COV_RUSTC_WRAPPER_PRE_EXISTING", "sccache"),
+            ("RUSTC_WORKSPACE_WRAPPER", "expired-workspace-wrapper"),
+            ("CARGO_BUILD_RUSTC_WRAPPER", "expired-cargo-wrapper"),
+            ("CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER", "expired-cargo-workspace-wrapper"),
+        ])
+        .output()
+        .expect("the actual tidy child runs");
+    assert!(
+        output.status.success(),
+        "a coverage run under tidy lost the shim that instruments its build, so the suite it \
+         measures is compiled without coverage, or kept the cache the shim chains to, which \
+         can retain an expiring temporary context: {output:?}"
     );
 }

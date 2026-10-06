@@ -10,7 +10,7 @@ The child runs unmutated and records nothing it enters, since the variables that
 Every mutant of `limit` is killed, by an execution a process ran inside without saying what it entered, so the union that execution records is not the whole of what it entered: every record a run keeps of it says `cut`, and no answer about it is carried across an edit (ADR 0041, P3).
 
 ```fates
-src/lib.rs:8:5 int-decrement killed
-src/lib.rs:8:5 int-increment killed
-src/lib.rs:8:5 return-default killed
+src/lib.rs:8:5 int-decrement unproven
+src/lib.rs:8:5 int-increment unproven
+src/lib.rs:8:5 return-default unproven
 ```

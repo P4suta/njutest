@@ -522,9 +522,10 @@ impl Sighting {
                 return format!("{}{withdrawn}", compared.identity.name());
             }
         };
-        let fallback = route
-            .fallback()
-            .map_or_else(String::new, |fallback| format!(" ({})", fallback.name()));
+        let fallback = match route.fallback() {
+            Some(fallback) => format!(" ({})", fallback.name()),
+            None => String::new(),
+        };
         let proofs: Vec<String> = route
             .discharged()
             .iter()
@@ -725,6 +726,7 @@ pub fn routing(options: &PrepareOptions) -> PrepareOptions {
         packages: _,
         skips: _,
         measurements: _,
+        transcripts: _,
         verify: _,
         touch,
         coverage,
@@ -739,6 +741,7 @@ pub fn routing(options: &PrepareOptions) -> PrepareOptions {
         harness_args: _,
         skip_targets: _,
         validation_filter: _,
+        sealing: _,
     } = options;
     let BuildConfig {
         features: _,
@@ -759,6 +762,7 @@ pub fn routing(options: &PrepareOptions) -> PrepareOptions {
         packages: Vec::new(),
         skips: Vec::new(),
         measurements: None,
+        transcripts: None,
         verify: true,
         touch: *touch,
         coverage: *coverage,
@@ -781,6 +785,7 @@ pub fn routing(options: &PrepareOptions) -> PrepareOptions {
         harness_args: Vec::new(),
         skip_targets: Vec::new(),
         validation_filter: None,
+        sealing: crate::sealed::Sealing::Off,
     }
 }
 

@@ -124,11 +124,11 @@ pub(super) fn cache(
     stdout: &mut dyn Write,
 ) -> Result<u8, CliError> {
     let parent = &environment.temp_directory;
-    let store = crate::outcomes::Store::new(
-        asked
-            .cache_dir
-            .unwrap_or(environment.cache_directory.as_path()),
-    );
+    let cache = match asked.cache_dir {
+        Some(named) => named,
+        None => environment.cache_directory.as_path(),
+    };
+    let store = crate::outcomes::Store::new(cache);
     if let Some(code) = transported(&store, asked.transport, stdout)? {
         return Ok(code);
     }
@@ -136,11 +136,7 @@ pub(super) fn cache(
         let (records, bytes) = store
             .clear()
             .map_err(|source| cache_unreadable(store.root(), source))?;
-        let killers = rust_mutants::killers::Killers::new(
-            asked
-                .cache_dir
-                .unwrap_or(environment.cache_directory.as_path()),
-        );
+        let killers = rust_mutants::killers::Killers::new(cache);
         let hints = killers
             .clear()
             .map_err(|source| cache_unreadable(killers.root(), source))?;

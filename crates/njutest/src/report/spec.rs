@@ -49,9 +49,10 @@ impl Sentence {
         } else {
             format!("{} on {}", self.asked, self.capability)
         };
-        let answers = self
-            .answered
-            .map_or_else(String::new, |status| format!(" answers {status}"));
+        let answers = match self.answered {
+            Some(status) => format!(" answers {status}"),
+            None => String::new(),
+        };
         let held = if self.guarded_by.is_empty() {
             "nobody holds this up".to_owned()
         } else {

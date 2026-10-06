@@ -18,7 +18,8 @@ struct Said {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
-        vars: njutest_devkit::paths::environment_for_a_run()
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
+        vars: njutest_devkit::paths::environment_for_a_toolchain_run(&[])
             .into_iter()
             .collect(),
         temp_directory: fixture.temp().to_path_buf(),

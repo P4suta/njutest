@@ -40,6 +40,30 @@ pub fn read_back(source: &str) -> Result<Option<usize>, crate::syntax::SyntaxErr
     .map(|(_, read)| read)
 }
 
+/// Discovers `source` with a planted grouping decision that accepts any parsed operator swap.
+///
+/// # Errors
+/// The source is not a file discovery reads.
+pub fn discover_with_planted_grouping(
+    source: &str,
+) -> Result<crate::syntax::FileDiscovery, crate::syntax::SyntaxError> {
+    let registry = crate::rule::Registry::canonical();
+    let selection = crate::syntax::Selection::tier(&registry, crate::rule::Tier::All);
+    crate::parsing::apart(|parsing| {
+        crate::syntax::discover_counting_planted(
+            parsing,
+            "src/lib.rs",
+            source.as_bytes(),
+            &selection,
+        )
+    })
+    .map_err(|unread| crate::syntax::SyntaxError::Unread {
+        path: "src/lib.rs".to_owned(),
+        source: unread,
+    })?
+    .map(|(discovery, _)| discovery)
+}
+
 /// How many items of `source` read alone as its file reads them, and the bytes of each that does not, past any byte order mark or shebang.
 ///
 /// # Errors
@@ -48,6 +72,14 @@ pub fn items_read_alone(
     source: &str,
 ) -> Result<(usize, Vec<std::ops::Range<usize>>), crate::syntax::SyntaxError> {
     crate::syntax::items_read_alone(source)
+}
+
+/// `text` read as a file on a reading thread that may spend only `ceiling` bytes of its locations, which is how a law holds a reading to spending exactly what it charges.
+///
+/// # Errors
+/// The text is not a file, or reading it would spend more than `ceiling`.
+pub fn file_within(ceiling: usize, text: &str) -> Result<(), crate::parsing::ReadingError> {
+    crate::parsing::apart_within(ceiling, |parsing| parsing.file(text).map(|_file| ()))?
 }
 
 /// `source` discovered on a reading thread that may spend only `ceiling` bytes of its locations, which is how a law reaches the refusal a file too large to read would meet.

@@ -52,6 +52,20 @@ disallowed-methods = [
   { path = "std::path::Path::exists", reason = "erases the difference between absent and unreadable; try the operation and match its error" },
   { path = "std::path::Path::is_file", reason = "erases the difference between absent and unreadable; try the operation and match its error" },
   { path = "std::path::Path::is_dir", reason = "erases the difference between absent and unreadable; try the operation and match its error" },
+  { path = "syn::parse_str", reason = "lexes into the location map of the calling thread; shipped code reads Rust through rust_mutants::parsing, and code that measures through njutest_devkit::lexed or xtask's lexed" },
+  { path = "syn::parse_file", reason = "see syn::parse_str" },
+  { path = "syn::parse::Parser::parse_str", reason = "see syn::parse_str" },
+  { path = "syn::LitStr::parse", reason = "lexes a literal's value again; see syn::parse_str" },
+  { path = "syn::LitStr::parse_with", reason = "lexes a literal's value again; see syn::parse_str" },
+  { path = "syn::LitInt::new", reason = "lexes its text; see syn::parse_str" },
+  { path = "syn::LitFloat::new", reason = "lexes its text; see syn::parse_str" },
+]
+
+disallowed-macros = [
+  { path = "quote::quote", reason = "lexes every literal it quotes into the location map of the calling thread; only the macros crate, which is handed the compiler's own tokens, quotes" },
+  { path = "quote::quote_spanned", reason = "see quote::quote" },
+  { path = "syn::parse_quote", allow-invalid = true, reason = "see quote::quote; syn declares it only with its printing feature, which only the macros crate turns on" },
+  { path = "syn::parse_quote_spanned", allow-invalid = true, reason = "see syn::parse_quote" },
 ]
 
 disallowed-types = [

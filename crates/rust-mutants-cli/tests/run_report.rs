@@ -10,7 +10,7 @@ use rust_mutants_cli::outcomes::Keyed;
 fn options(config: &Config) -> rust_mutants::session::PrepareOptions {
     rust_mutants::session::PrepareOptions {
         build: config.build.config(),
-        ..rust_mutants::session::PrepareOptions::default()
+        ..rust_mutants::session::PrepareOptions::new(rust_mutants::rule::Tier::Balanced)
     }
 }
 

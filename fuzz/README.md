@@ -28,7 +28,19 @@ every seed to the reader its target uses. **A seed the reader refuses is not
 a seed**: the target returns on the first line and the run explores what it
 explored before. Writing these found two of mine that did exactly that.
 
+A seed that copies something of this repository is recorded from it, never kept by hand: a hand-kept copy of the report said for weeks that doctests are not routed to mutants, after the document had come to say they are routed by the file they are in.
+`xtask/tests/fuzz_ledger.rs` records each seed its `COPIES` names from the file it copies, `report_document` from the report's golden among them, and `crates/njutest/tests/report_json.rs` records `carried_answers` from the same document, one line per answer as the store keeps it; `UPDATE_GOLDEN=1` records them all again, and the diff is the review.
+The ledger also refuses a seed byte for byte the same as a file of the repository that `COPIES` does not name, so a copy is recorded from the day it is added.
+
 A target whose input is bytes rather than a document needs none.
+
+## Regressions
+
+A crash a run found is kept under `fuzz/regressions/<target>/`, byte for byte and under the name libFuzzer gave it, in the change that answers it.
+`scripts/seed-fuzz-corpus.sh` copies it into the corpus beside the seeds, and libFuzzer runs its whole starting corpus before it mutates anything, so every later run asks first whether the crash came back.
+Unlike a seed, it need not be a document the reader accepts: a reader that was wrong to take it refuses it once it is fixed, and that refusal is what the file is kept to go on asking for.
+The weekly run gates nothing, so a kept crash is also the input of an ordinary test, which reads it with `include_bytes!` and states what the reader now does with it.
+`xtask/tests/fuzz_ledger.rs` refuses a kept crash of a target that no longer exists and one that no test reads.
 
 The runner's targets are here for a particular reason: three of the four
 read something a *test suite* can influence. A suite that printed its own
@@ -70,6 +82,5 @@ cargo +nightly fuzz run flatten         # one target, until interrupted
 cargo +nightly fuzz run flatten -- -runs=100000
 ```
 
-The crate is standalone (not a workspace member) because fuzzing needs
-nightly and a sanitizer. Corpora and artifacts are ignored by git; a
-reproducer worth keeping becomes a regular test.
+The crate is standalone (not a workspace member) because fuzzing needs nightly and a sanitizer.
+Corpora and artifacts are ignored by git; a reproducer worth keeping goes under `fuzz/regressions/` and becomes a regular test.

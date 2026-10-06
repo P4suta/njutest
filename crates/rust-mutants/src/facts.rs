@@ -205,8 +205,10 @@ impl<'a> Reading<'a> {
         self.blank();
         let rest: &'a str = self.rest;
         let (name, after) = rest.split_at(
-            rest.find(|next: char| !(next.is_ascii_alphanumeric() || next == '_'))
-                .unwrap_or(rest.len()),
+            match rest.find(|next: char| !(next.is_ascii_alphanumeric() || next == '_')) {
+                Some(ended) => ended,
+                None => rest.len(),
+            },
         );
         if !identifier(name) {
             return Err(self.refused("a name"));

@@ -10,7 +10,8 @@ use std::time::Duration;
 use rust_mutants::report::stream::{Line, MutantLine, SCHEMA};
 use rust_mutants::run::{Judged, Observer};
 use rust_mutants::session::Session;
-use rust_mutants::trace::{Event, Payload};
+use rust_mutants::trace::summary::SummaryError;
+use rust_mutants::trace::{Event, Payload, PhaseRecord};
 
 /// Writes one complete line or returns the exact encoding or output failure.
 ///
@@ -87,10 +88,7 @@ pub(crate) fn ended(
     )
 }
 
-/// How long the writer waits for the next line before looking again at whether there will be one.
-const LOOKING: Duration = Duration::from_millis(200);
-
-/// Writes each phase as it ends, for as long as `working` says there is work.
+/// Writes each phase until its producer completes, using the event and completion wakes subscribed to this thread.
 ///
 /// # Errors
 /// Returns the first output failure; no later event is claimed to have been written.
@@ -100,34 +98,88 @@ pub fn watch<F>(
     working: &F,
 ) -> Result<(), crate::error::CliError>
 where
+    F: crate::ui::Preparation,
+{
+    watch_waiting(events, stream, working)
+}
+
+/// Watches the actual preparation producer through a subscription registered before it started.
+///
+/// # Errors
+/// The producer observation, output or measured host wait could not be retained.
+pub fn watch_observed<F>(
+    events: &Receiver<Event>,
+    stream: &mut dyn Write,
+    working: &F,
+    (observed, recorder): (
+        &rust_mutants::observation::Observation,
+        &rust_mutants::trace::Recorder,
+    ),
+) -> Result<(), crate::error::CliError>
+where
     F: Fn() -> bool,
 {
+    watch(
+        events,
+        stream,
+        &crate::ui::ObservedPreparation::new(working, (observed, recorder)),
+    )
+}
+
+fn watch_waiting<F>(
+    events: &Receiver<Event>,
+    stream: &mut dyn Write,
+    working: &F,
+) -> Result<(), crate::error::CliError>
+where
+    F: crate::ui::Preparation,
+{
     loop {
-        match events.recv_timeout(LOOKING) {
+        match events.try_recv() {
             Ok(event) => {
-                if let Some(line) = phase_of(&event) {
+                working.received()?;
+                if let Some(line) = phase_of(&event)? {
                     say(stream, &line)?;
                 }
             }
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                if !working() {
-                    return Ok(());
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => return working.complete(),
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                if !working.active() {
+                    return working.complete();
                 }
+                working.wait()?;
             }
         }
     }
 }
 
+/// How long a phase took, which the end of one always carries.
+///
+/// # Errors
+/// [`crate::error::CliError::TraceSummary`] for an end that carries none, which the stream would otherwise have to say took nothing.
+fn took(phase: &PhaseRecord) -> Result<u64, crate::error::CliError> {
+    match phase.duration_ms {
+        Some(took) => Ok(took),
+        None => Err(crate::error::CliError::TraceSummary {
+            source: SummaryError::MissingPhaseDuration {
+                phase: phase.name.clone(),
+            },
+        }),
+    }
+}
+
 /// One phase event as a line of the stream, when it is one.
-fn phase_of(event: &Event) -> Option<Line> {
-    match &event.payload {
+///
+/// # Errors
+/// [`crate::error::CliError::TraceSummary`] for a phase's end that carries no duration.
+fn phase_of(event: &Event) -> Result<Option<Line>, crate::error::CliError> {
+    Ok(match &event.payload {
         Payload::PhaseStart { phase } => Some(Line::PhaseStart {
             phase: phase.name.clone(),
         }),
         Payload::PhaseEnd { phase } => Some(Line::PhaseEnd {
             phase: phase.name.clone(),
-            duration_ms: phase.duration_ms.unwrap_or_default(),
+            duration_ms: took(phase)?,
         }),
         Payload::RunStart { .. }
         | Payload::Open { .. }
@@ -150,9 +202,11 @@ fn phase_of(event: &Event) -> Option<Line> {
         | Payload::Identical { .. }
         | Payload::Evidence { .. }
         | Payload::MutantExec { .. }
+        | Payload::SealedControl { .. }
+        | Payload::SealedExec { .. }
         | Payload::Note { .. }
         | Payload::RunEnd { .. } => None,
-    }
+    })
 }
 
 /// The lines a run writes while it is happening.
@@ -205,9 +259,17 @@ impl<'a> Writer<'a> {
                 Payload::PhaseStart { phase } => Line::PhaseStart {
                     phase: phase.name.clone(),
                 },
-                Payload::PhaseEnd { phase } => Line::PhaseEnd {
-                    phase: phase.name.clone(),
-                    duration_ms: phase.duration_ms.unwrap_or_default(),
+                Payload::PhaseEnd { phase } => match took(phase) {
+                    Ok(duration_ms) => Line::PhaseEnd {
+                        phase: phase.name.clone(),
+                        duration_ms,
+                    },
+                    Err(untimed) => {
+                        if self.failure.is_none() {
+                            self.failure = Some(untimed);
+                        }
+                        continue;
+                    }
                 },
                 Payload::RunStart { .. }
                 | Payload::Open { .. }
@@ -230,6 +292,8 @@ impl<'a> Writer<'a> {
                 | Payload::Identical { .. }
                 | Payload::Evidence { .. }
                 | Payload::MutantExec { .. }
+                | Payload::SealedControl { .. }
+                | Payload::SealedExec { .. }
                 | Payload::Note { .. }
                 | Payload::RunEnd { .. } => continue,
             };

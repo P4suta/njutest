@@ -122,7 +122,7 @@ fn a_sample_is_stated_as_one_and_a_broken_schedule_is_a_defect_naming_its_guard(
     let limitations = limited(&records);
     let named: Vec<(&str, &str)> = limitations
         .iter()
-        .map(|one| (one.name.as_str(), one.detail.as_str()))
+        .map(|one| (one.name(), one.detail.as_str()))
         .collect();
     assert_eq!(
         named
@@ -165,7 +165,7 @@ fn a_binary_whose_delays_settled_nothing_is_neither_sampled_nor_broken() {
     let limitations = limited(&records);
     let named: Vec<(&str, &str)> = limitations
         .iter()
-        .map(|one| (one.name.as_str(), one.detail.as_str()))
+        .map(|one| (one.name(), one.detail.as_str()))
         .collect();
     assert!(
         named.iter().any(

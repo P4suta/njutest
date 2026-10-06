@@ -9,6 +9,8 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 Accepted, 2026-09-23.
 Bounds what `[mutation] timeout` means for an execution that counts its steps.
+Amended by [ADR 0046](0046-a-verdict-is-what-a-sealed-run-observed.md): a sealed run is bounded by fuel alone; the quiet window stays with native runs, which produce leads.
+Amended 2026-10-05: the runtime's lock moved off the state onto a file of its own, so the runner reads the state without meeting it.
 
 ## Context
 
@@ -45,7 +47,8 @@ It has to be long enough that a machine pausing a process does not read as quiet
 
 A content change is the signal rather than the parsed count, so a read torn by a write still counts as the write it is, and a process rewriting the same state is not taken for moving.
 A failed read is never a change: a process that is not writing cannot cause one.
-On Windows the runtime's lock over the state is mandatory, so a read that lands inside a take is refused; the runner tries it again for as long as a take holds the lock, so a process taking steps back to back is not read as quiet.
+The runtime takes its lock on a file of its own beside the state, never on the state, so no take refuses the runner's read on any platform.
+Windows makes a lock mandatory: while the lock was over the state, a read that landed inside a take was refused with os error 33, and the execution was errored rather than watched; trying the read again would have been a clock deciding whether the count was seen.
 The file is the supervised process's to replace, so it is read without following a link, without blocking on a pipe, as a regular file of at most 16 KiB, like the notice.
 
 The ceiling has a cost.

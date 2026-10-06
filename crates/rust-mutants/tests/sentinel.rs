@@ -73,7 +73,7 @@ fn a_session_over_the_planted_crate_keeps_what_routes_and_drops_what_describes_t
             ..rust_mutants::cargo::BuildConfig::default()
         },
         failing: rust_mutants::session::Failing::Exclude,
-        ..PrepareOptions::default()
+        ..PrepareOptions::new(rust_mutants::rule::Tier::Balanced)
     };
     let routing = rust_mutants::sentinel::routing(&caller);
     assert!(routing.touch && routing.coverage && routing.branch_proofs);

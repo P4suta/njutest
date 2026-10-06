@@ -50,7 +50,7 @@ fn a_tree_with_no_fuzz_directory_holds_no_targets() {
 #[test]
 fn targets_that_are_here_and_were_not_driven_are_said_to_be() {
     let limitation = found(&["parse".to_owned()]);
-    assert_eq!(limitation.name, "fuzz-not-executed");
+    assert_eq!(limitation.name(), "fuzz-not-executed");
     assert!(limitation.detail.contains("parse"), "{limitation:?}");
 }
 
@@ -128,6 +128,47 @@ mod driving {
         assert_eq!(done.ran, ["parse"]);
         assert!(done.crashes.is_empty(), "{done:?}");
         assert!(done.findings.is_empty(), "{done:?}");
+    }
+
+    #[test]
+    fn a_fuzzer_the_run_asked_to_stop_is_an_interrupted_run_and_not_an_undriven_target() {
+        for before in [true, false] {
+            let dir = tree(&["parse"]);
+            let mut env = saying("Done 1 runs", 0, None);
+            env.set("FAKE_CARGO_SLEEP", "5");
+            let cancel = Cancel::new();
+            if before {
+                cancel.cancel();
+            }
+            let trace = Recorder::disabled();
+            let cargo = cargo();
+            let stopped = std::thread::scope(|scope| {
+                let stopping = njutest_devkit::thread::ScopedThread::launch(scope, || {
+                    std::thread::sleep(Duration::from_millis(200));
+                    cancel.cancel();
+                });
+                let stopped = fuzz(
+                    &Fuzzing {
+                        root: dir.path(),
+                        cargo: rust_mutants::cargo::Selecting::named(&cargo),
+                        env,
+                        targets: &[],
+                        max_total_time: Duration::from_secs(1),
+                        timeout: Some(Duration::from_secs(30)),
+                    },
+                    Watch::new(&cancel, &trace),
+                );
+                stopping.join().expect("the thread that stops the run");
+                stopped
+            });
+            assert!(
+                matches!(stopped, Err(njutest::error::RunnerError::Interrupted)),
+                "a stop the run asked for, {} the fuzzer started, is the run being interrupted, \
+                 and neither a target nothing could drive nor a phase that quietly drove \
+                 nothing: {stopped:?}",
+                if before { "before" } else { "after" }
+            );
+        }
     }
 
     #[test]
@@ -213,6 +254,63 @@ mod driving {
     }
 
     #[test]
+    fn an_input_larger_than_a_corpus_keeps_is_a_crash_and_no_candidate() {
+        let dir = tree(&["parse"]);
+        let large = dir.path().join("large-input");
+        std::fs::write(&large, vec![0_u8; 2 << 20]).expect("a large input");
+        let mut env = saying(
+            "thread panicked",
+            77,
+            Some("fuzz/artifacts/parse/crash-large"),
+        );
+        env.set(
+            "FAKE_CARGO_ARTIFACT_FROM",
+            large.to_str().expect("a UTF-8 temporary path"),
+        );
+        let done = driven(env, dir.path(), &[]);
+        assert!(
+            done.crashes.is_empty(),
+            "an input past the bound a corpus keeps is read no further than the bound and \
+             offered to nothing: {} bytes were kept",
+            done.crashes
+                .iter()
+                .map(|one| one.content.len())
+                .sum::<usize>()
+        );
+        let found = done.findings.first().expect("a finding");
+        assert_eq!(
+            found.kind,
+            FindingKind::FailingTest,
+            "the crash is still one"
+        );
+        assert!(found.detail.contains("larger than"), "{}", found.detail);
+    }
+
+    #[test]
+    fn an_artifact_that_is_no_regular_file_is_never_read_as_an_input() {
+        let dir = tree(&["parse"]);
+        let mut env = saying(
+            "thread panicked",
+            77,
+            Some("fuzz/artifacts/parse/crash-pipe"),
+        );
+        env.set("FAKE_CARGO_ARTIFACT_FIFO", "1");
+        let done = driven(env, dir.path(), &[]);
+        assert!(
+            done.crashes.is_empty(),
+            "a pipe is no input: {:?}",
+            done.crashes
+        );
+        assert!(
+            done.findings
+                .iter()
+                .any(|one| one.kind == FindingKind::NotMeasured),
+            "what could not be read as an input is said to be: {:?}",
+            done.findings
+        );
+    }
+
+    #[test]
     fn an_artifact_that_was_already_there_is_not_a_crash_this_run_found() {
         let dir = tree(&["parse"]);
         std::fs::create_dir_all(dir.path().join("fuzz/artifacts/parse")).expect("mkdir");
@@ -235,7 +333,7 @@ mod driving {
         );
         assert!(done.ran.is_empty(), "{done:?}");
         assert_eq!(
-            done.limitations.first().map(|one| one.name.clone()),
+            done.limitations.first().map(|one| one.name().to_owned()),
             Some("cargo-fuzz-unavailable".to_owned())
         );
         assert_eq!(

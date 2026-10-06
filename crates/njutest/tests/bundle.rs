@@ -2,10 +2,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What goes into the bundle somebody sends when a run went wrong, and what the bundle says is missing.
-//!
-//! Every test here needs a published report, and `Store::keep` answers `NJ6004` on Windows because publication is rooted at a POSIX directory capability. `docs/limitations.md` says so; these say it by not existing there.
 
-#![cfg(unix)]
 #![expect(
     clippy::expect_used,
     clippy::indexing_slicing,
@@ -23,6 +20,7 @@ const RUN: &str = "20260101T000000Z-aaaaaa";
 
 fn environment(root: &Path) -> Environment {
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: rust_mutants::vars::Variables::empty(),
         working_directory: root.to_path_buf(),
         temp_directory: root.join("tmp"),
@@ -183,6 +181,7 @@ fn a_tree_that_holds_only_directories_is_carried_as_nothing() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn one_unreadable_entry_refuses_the_whole_tree_instead_of_claiming_a_partial_bundle() {
     use std::os::unix::fs::symlink;

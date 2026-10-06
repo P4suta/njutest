@@ -1,32 +1,36 @@
 # Mutation report — fixture-coverage <run>
 
-**96.6%** — 28 detected of 29 decided
+**87.5%** — 28 detected of 32 decided
 
-32 mutants were cataloged: 29 executed, 0 refused by the compiler, 4 places that produced no candidate.
+32 mutants were cataloged: 32 executed, 0 refused by the compiler, 4 places passed over.
 
 | outcome | how many |
 | --- | --- |
 | killed | 28 |
-| survived | 1 |
+| survived | 4 |
+| unproven | 0 |
 | step_limit_reached | 0 |
 | waited | 0 |
 | inconclusive | 0 |
 | errored | 0 |
-| not run | 3 |
+| not run | 0 |
 
-Those 7 add to the 32 cataloged. Within them, not run is 0 unreached, not run is 3 discharged, not run is 0 declined, survived is 0 expected.
+Those 8 add to the 32 cataloged. Within them, not run is 0 unreached, not run is 0 declined, survived is 0 expected, unproven is 0 killed natively, unproven is 0 survived natively, unproven is 0 unreached natively, unproven is 0 discharged by a native proof.
 
 ## Findings
 
-- **discharged-mutant** — every target that could have noticed d8a9939330496216a17d was removed by a proof, so no test could have: the mutation is in code the tests run and never observe
+- **surviving-mutant** — no test noticed d8a9939330496216a17d; 2 tests ran and passed
 - **surviving-mutant** — no test noticed 27e9c3f2d6bb568e5ef3; 1 test ran and passed
-- **discharged-mutant** — every target that could have noticed 7cfdea86ac571b743bd0 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe
-- **discharged-mutant** — every target that could have noticed 0a8ab9771954a24f9d25 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe
+- **surviving-mutant** — no test noticed 7cfdea86ac571b743bd0; 1 test ran and passed
+- **surviving-mutant** — no test noticed 0a8ab9771954a24f9d25; 1 test ran and passed
 
-## Survivors (1)
+## Survivors (4)
 
 | where | rule | change | id |
 | --- | --- | --- | --- |
+| `src/lib.rs:8:14` | `le-to-lt` | `<=` → `<` | `d8a9939330496216a17d` |
 | `src/lib.rs:16:10` | `le-to-lt` | `<=` → `<` | `27e9c3f2d6bb568e5ef3` |
+| `src/lib.rs:36:13` | `le-to-lt` | `<=` → `<` | `7cfdea86ac571b743bd0` |
+| `src/lib.rs:44:34` | `le-to-lt` | `<=` → `<` | `0a8ab9771954a24f9d25` |
 
 Each of these is a gap in the tests or a claim to write down: `rust-mutants explain <id>` says what it is, and `[[mutation.expect]]` accepts one with a reason.

@@ -46,13 +46,14 @@ fn killed() -> Value {
         "route": {"granularity": "block", "fallback": null,
             "reaching": [TARGET], "discharged": [], "executed": [TARGET], "tests": {}},
         "identical": "not-measured", "expected": false, "unreached": false,
-        "source_run_id": null
+        "source_run_id": null, "part_run_id": null,
+        "evidence": { "kind": "unproven", "reasons": ["test-absent"] }
     })
 }
 
 /// The row of the survivor a reviewer accepted.
 fn survived() -> Value {
-    json!({
+    let mut row = json!({
         "index": 1, "id": SURVIVED, "display_id": short(SURVIVED),
         "path": "src/lib.rs", "package": "demo",
         "family": "return-replacement", "rule": "return-default", "item": "larger",
@@ -67,11 +68,19 @@ fn survived() -> Value {
         "route": {"granularity": "block", "fallback": null,
             "reaching": [TARGET], "discharged": [], "executed": [TARGET], "tests": {}},
         "identical": "not-measured", "expected": true, "unreached": false,
-        "source_run_id": null
-    })
+        "source_run_id": null, "part_run_id": null
+    });
+    merge(
+        &mut row,
+        json!({ "evidence": { "kind": "sealed", "executions": [
+            { "target": TARGET, "test": "larger_works", "came_to": "passed" },
+            { "target": TARGET, "test": "smaller_works", "came_to": "passed" }
+        ] } }),
+    );
+    row
 }
 
-/// A run of three candidates: one killed, one accepted survivor, one the compiler refused.
+/// A run of three candidates: one a native run killed and nothing sealed decided, one sealed survivor a reviewer accepted, one the compiler refused.
 #[must_use]
 pub fn base() -> Value {
     json!({
@@ -84,7 +93,7 @@ pub fn base() -> Value {
             "finished_at": "2026-09-06T10:15:02Z",
             "duration_ms": 2000,
             "interrupted": false,
-            "exit_code": 0,
+            "exit_code": 2,
             "shard": null,
             "jobs": {"asked": "auto", "used": 1}
         },
@@ -100,23 +109,25 @@ pub fn base() -> Value {
             "build": [], "mutant_steps": 50_000_000
         },
         "targets": [{
-            "id": TARGET, "kind": "lib", "harness": true, "tests": 2, "limitations": []
+            "id": TARGET, "kind": "lib", "harness": true, "tests": 2, "limitations": [],
+            "sealed": { "state": "sealed", "remedy": null, "uncontrolled": [] }
         }],
         "established_tests": 0,
         "accounting": {
             "cataloged": 2, "refused": 1, "skipped": 0, "executed": 2,
-            "killed": 1, "survived": 1, "step_limit_reached": 0, "waited": 0,
+            "killed": 0, "survived": 1, "unproven": 1, "step_limit_reached": 0, "waited": 0,
             "inconclusive": 0, "errored": 0, "not_run": 0, "unreached": 0,
-            "discharged": 0, "declined": 0, "expected": 1
+            "declined": 0, "expected": 1, "unproven_killed": 1, "unproven_survived": 0,
+            "unproven_unreached": 0, "unproven_discharged": 0
         },
-        "score": { "detected": 1, "decided": 2, "value": 0.5 },
+        "score": { "detected": 0, "decided": 1, "value": 0.0 },
         "mutants": [killed(), survived()],
         "rejections": [
             {
                 "index": 2, "id": REFUSED, "display_id": short(REFUSED),
                 "path": "src/lib.rs", "rule": "add-to-sub",
                 "code": "E0369", "diagnostic": "error[E0369]: cannot subtract",
-                "isolated": true
+                "isolated": true, "reason": "compiler-refused"
             }
         ],
         "skips": [],
@@ -128,7 +139,8 @@ pub fn base() -> Value {
                 "standing": "met", "actual": "survived", "why": null, "where": null
             }
         ],
-        "findings": [],
+        "findings": [{ "kind": "unproven-mutant", "mutant": KILLED,
+                       "detail": "no sealed execution established a verdict about it" }],
         "facts": ["panic=\"unwind\"", "target_os=\"linux\"", "unix"]
     })
 }
@@ -149,7 +161,7 @@ pub fn recording() -> Vec<Value> {
         json!({"seq":4,"timestamp":"2026-09-06T10:15:00Z","elapsed_ms":20,
             "type":"validate-round","round":{"round":1,"condemned":0,"success":false,
             "attributed":[{"index":2,"code":"E0369","said":"cannot subtract"}],
-            "written":1,"unattributed":[]}}),
+            "carried":[],"written":1,"unattributed":[]}}),
         json!({"seq":5,"timestamp":"2026-09-06T10:15:01Z","elapsed_ms":30,
             "type":"build","build":{"targets":[TARGET],
             "details":[{"id":TARGET,"kind":"lib","harness":true,"limitations":[]}]}}),
@@ -161,9 +173,14 @@ pub fn recording() -> Vec<Value> {
     ];
     events.extend(judged((8, 9), 0, KILLED, "killed"));
     events.extend(judged((10, 11), 1, SURVIVED, "survived"));
-    events.push(json!({"seq":12,"timestamp":"2026-09-06T10:15:02Z",
+    for (seq, test) in [(12, "larger_works"), (13, "smaller_works")] {
+        events.push(json!({"seq":seq,"timestamp":"2026-09-06T10:15:02Z",
+            "elapsed_ms":65,"type":"sealed-exec","sealed":{"mutant":short(SURVIVED),
+            "index":1,"target":TARGET,"test":test,"came_to":"passed"}}));
+    }
+    events.push(json!({"seq":14,"timestamp":"2026-09-06T10:15:02Z",
         "elapsed_ms":70,"type":"run-end","run":{"outcome":"detected","error":null,
-        "events_emitted":12,"events_dropped":0}}));
+        "events_emitted":14,"events_dropped":0}}));
     events
 }
 
@@ -460,29 +477,42 @@ impl Perturbation {
     }
 }
 
+/// What every carried file holds before the body of its one function.
+const SIGNATURE: &str = "pub fn larger(a: u32, b: u32) -> u32 ";
+
+/// A body the carry specimens call sealed.
+const SEALED_BODY: &str = "{ if a > b { a } else { b } }";
+
+/// A body that invokes a macro off the page's list.
+const MACRO_BODY: &str = "{ foo!(a, b) }";
+
 /// A function whose body is `body`, as a file of the measured tree.
 fn carried_source(body: &str) -> String {
-    format!("pub fn larger(a: u32, b: u32) -> u32 {body}\n")
+    format!("{SIGNATURE}{body}\n")
 }
 
-/// The carry evidence for `source`: the guards' record of its one item's body span, and the skeletons document with `claims` laid over that item and `units` as the units.
+/// The file [`carried_source`] writes for `body`, and the bytes its body spans there, found by writing it rather than by searching it.
+fn carried_span(body: &str) -> (String, usize, usize) {
+    let mut source = String::from(SIGNATURE);
+    let start = source.len();
+    source.push_str(body);
+    let end = source.len();
+    source.push('\n');
+    (source, start, end)
+}
+
+/// The carry evidence for the file [`carried_source`] writes for `body`: the guards' record of its one item's body span, and the skeletons document with `claims` laid over that item and `units` as the units.
 fn carry_beside(
     path: &str,
-    source: &str,
+    body: &str,
     claims: &Value,
     units: &Value,
 ) -> Vec<(&'static str, Value)> {
-    let braces = source
-        .find('{')
-        .zip(source.rfind('}').and_then(|at| at.checked_add(1)));
-    let Some((start, end)) = braces else {
-        return Vec::new();
-    };
-    let body = source.as_bytes().get(start..end).unwrap_or_default();
+    let (source, start, end) = carried_span(body);
     let mut item = json!({
         "index": 0, "name": "larger",
         "item": { "package": "demo", "path": path, "ordinal": 0 },
-        "body_digest": crate::engineaudit::carry::digest_of(body),
+        "body_digest": crate::engineaudit::carry::digest_of(body.as_bytes()),
         "sealed": true, "unsealed": null,
         "start": { "line": 1, "column": start.checked_add(1) }
     });
@@ -503,8 +533,10 @@ fn carry_beside(
         (
             "skeletons-v1.json",
             json!({
-                "document_type": "rust-mutants/skeletons", "schema_version": 2,
-                "items": [item], "units": units
+                "document_type": "rust-mutants/skeletons", "schema_version": 4,
+                "items": [item],
+                "files": { path: crate::engineaudit::carry::digest_of(source.as_bytes()) },
+                "units": units
             }),
         ),
     ]
@@ -576,18 +608,11 @@ fn believed_beside(
     planted: fn(&mut Value),
 ) -> Perturbation {
     let path = "src/lib.rs";
-    let source = carried_source("{ if a > b { a } else { b } }");
-    let (Some(start), Some(site)) = (
-        source.find('{'),
-        source.find("a > b").and_then(|at| at.checked_add(2)),
-    ) else {
-        return Perturbation { name, ..clean() };
-    };
-    let Some(end) = source.rfind('}').and_then(|at| at.checked_add(1)) else {
-        return Perturbation { name, ..clean() };
-    };
-    let body = source.as_bytes().get(start..end).unwrap_or_default();
-    let digest = crate::engineaudit::carry::digest_of(body);
+    let (before, after) = ("{ if a ", "> b { a } else { b } }");
+    let body = format!("{before}{after}");
+    let (_, start, _) = carried_span(&body);
+    let (_, _, site) = carried_span(before);
+    let digest = crate::engineaudit::carry::digest_of(body.as_bytes());
     let item = json!({ "package": "demo", "path": path, "ordinal": 0 });
     let (rule, replacement) = if row == 0 {
         ("gt-to-ge@1", ">=")
@@ -621,14 +646,16 @@ fn believed_beside(
             "replacement": replacement, "source_run_id": "earlier-run"
         });
     }
-    let mut beside = carry_beside(path, &source, &json!({}), &json!([]));
+    let mut beside = carry_beside(path, &body, &json!({}), &json!([]));
     for (file, document) in &mut beside {
         if *file == "touched-v1.json" {
             merge(
                 document,
                 json!({ "targets": {
-                    TARGET: { "reached": { "loose": [0, 1] }, "ran": [] },
-                    other: { "reached": { "loose": [0, 1] }, "ran": [] }
+                    TARGET: { "reached": { "loose": [0, 1] }, "bodies": {}, "infected": {},
+                              "entered": {}, "ran": [] },
+                    other: { "reached": { "loose": [0, 1] }, "bodies": {}, "infected": {},
+                             "entered": {}, "ran": [] }
                 } }),
             );
         }
@@ -725,13 +752,34 @@ fn believed_plants() -> Vec<Perturbation> {
                 );
             },
         ),
+        unread_body_plant(),
     ]
+}
+
+/// The defect planted in a carried answer that rests on a body no unit of the run read: the skeletons keep no digest of it, so no locus names it and no read of it now is a read of what the run measured.
+fn unread_body_plant() -> Perturbation {
+    let mut unread = believed_beside(
+        "a carried answer resting on a body no unit of the run read",
+        (1, "survived", "demo/test/other"),
+        |_| {},
+    );
+    for (file, document) in &mut unread.beside {
+        if let ("skeletons-v1.json", Some(item)) = (
+            *file,
+            document
+                .pointer_mut("/items/0")
+                .and_then(Value::as_object_mut),
+        ) {
+            item.insert("body_digest".to_owned(), Value::Null);
+        }
+    }
+    unread
 }
 
 /// The defects planted in where the run places a body and where it says the compiler reads a position.
 fn placement_plants() -> Vec<Perturbation> {
     let clean = clean();
-    let sealed = carried_source("{ if a > b { a } else { b } }");
+    let sealed = carried_source(SEALED_BODY);
     vec![
         Perturbation {
             name: "an item placed where its body does not start, in the file the run measured",
@@ -741,7 +789,7 @@ fn placement_plants() -> Vec<Perturbation> {
             ] })),
             beside: carry_beside(
                 "src/lib.rs",
-                &sealed,
+                SEALED_BODY,
                 &json!({ "start": { "line": 3, "column": 1 } }),
                 &json!([]),
             ),
@@ -758,7 +806,7 @@ fn placement_plants() -> Vec<Perturbation> {
                 let folded = format!("$positions/$root/src/other.rs\0{digest}\n");
                 carry_beside(
                     "src/other.rs",
-                    &sealed,
+                    SEALED_BODY,
                     &json!({}),
                     &json!([{
                         "package": "demo", "target": "demo", "kind": "lib", "test": false,
@@ -773,18 +821,33 @@ fn placement_plants() -> Vec<Perturbation> {
     ]
 }
 
+/// The defect planted for the carry layer in a file no mutation of the run is in: a body digest its bytes do not hash to, in a file only a test compiles, which the skeletons' digest of the file proves the one measured.
+fn entered_only(clean: Perturbation, sealed: &str) -> Perturbation {
+    Perturbation {
+        name: "a body digest its bytes do not hash to, in a file only a test compiles",
+        beside: carry_beside(
+            "tests/it.rs",
+            SEALED_BODY,
+            &json!({ "body_digest": "0".repeat(64) }),
+            &json!([]),
+        ),
+        tree: vec![("tests/it.rs", sealed.to_owned())],
+        ..clean
+    }
+}
+
 /// The defects planted for the carry layer.
 fn carry_plants() -> Vec<Perturbation> {
     let clean = clean();
-    let sealed = carried_source("{ if a > b { a } else { b } }");
-    let macro_body = carried_source("{ foo!(a, b) }");
+    let sealed = carried_source(SEALED_BODY);
+    let macro_body = carried_source(MACRO_BODY);
     let mut plants = believed_plants();
     plants.extend(placement_plants());
     plants.extend([
         Perturbation {
             name: "a body called sealed that invokes a macro off the page's list",
-            beside: carry_beside("src/other.rs", &macro_body, &json!({}), &json!([])),
-            tree: vec![("src/other.rs", macro_body.clone())],
+            beside: carry_beside("src/other.rs", MACRO_BODY, &json!({}), &json!([])),
+            tree: vec![("src/other.rs", macro_body)],
             ..clean.clone()
         },
         Perturbation {
@@ -795,18 +858,19 @@ fn carry_plants() -> Vec<Perturbation> {
             ] })),
             beside: carry_beside(
                 "src/lib.rs",
-                &sealed,
+                SEALED_BODY,
                 &json!({ "body_digest": "0".repeat(64) }),
                 &json!([]),
             ),
             tree: vec![("src/lib.rs", sealed.clone())],
             ..clean.clone()
         },
+        entered_only(clean.clone(), &sealed),
         Perturbation {
             name: "an item named by another place than its own among its file's items",
             beside: carry_beside(
                 "src/other.rs",
-                &sealed,
+                SEALED_BODY,
                 &json!({ "item": { "ordinal": 1 } }),
                 &json!([]),
             ),
@@ -816,7 +880,7 @@ fn carry_plants() -> Vec<Perturbation> {
         Perturbation {
             name: "an item whose carry evidence omits whether its body is sealed",
             beside: {
-                let mut beside = carry_beside("src/other.rs", &sealed, &json!({}), &json!([]));
+                let mut beside = carry_beside("src/other.rs", SEALED_BODY, &json!({}), &json!([]));
                 for (file, document) in &mut beside {
                     if let ("skeletons-v1.json", Some(item)) = (
                         *file,
@@ -836,7 +900,7 @@ fn carry_plants() -> Vec<Perturbation> {
             name: "a skeleton that is not the fold of the entries it keeps",
             beside: carry_beside(
                 "src/other.rs",
-                &sealed,
+                SEALED_BODY,
                 &json!({}),
                 &json!([{
                     "package": "demo", "target": "demo", "kind": "lib", "test": false,
@@ -884,7 +948,7 @@ fn killed_by_a_stranger() -> Vec<Value> {
         );
     }
     if let Some(end) = events.last_mut() {
-        merge(end, json!({ "run": { "events_emitted": 13 } }));
+        merge(end, json!({ "run": { "events_emitted": 15 } }));
     }
     events
 }
@@ -899,12 +963,12 @@ fn inserted(at: usize, event: Value) -> Vec<Value> {
     events
 }
 
-/// A report whose second mutant a measurement discharged from the one target.
+/// A report whose second mutant a measurement discharged from the one target, which is a lead.
 fn discharged() -> Value {
-    with(json!({
-        "accounting": { "killed": 1, "survived": 0, "not_run": 1, "executed": 1, "discharged": 1,
-                        "expected": 0 },
-        "score": { "detected": 1, "decided": 1, "value": 1.0 },
+    let mut document = with(json!({
+        "accounting": { "killed": 0, "survived": 0, "unproven": 2, "not_run": 0, "executed": 2,
+                        "expected": 0, "unproven_discharged": 1 },
+        "score": null,
         "mutants": [
             {},
             {
@@ -920,10 +984,13 @@ fn discharged() -> Value {
                 }
             }
         ],
-        "findings": [{ "kind": "discharged-mutant", "mutant": SURVIVED, "detail": "d" }],
-        "expectations": [],
-        "run": { "exit_code": 1 }
-    }))
+        "findings": [{}, { "kind": "unproven-mutant", "mutant": SURVIVED, "detail": "d" }],
+        "expectations": []
+    }));
+    if let Some(evidence) = document.pointer_mut("/mutants/1/evidence") {
+        *evidence = json!({ "kind": "unproven", "reasons": ["test-absent"] });
+    }
+    document
 }
 
 /// The recording of [`discharged`]: the second mutant's route removed its one target, and nothing ran it.
@@ -1011,11 +1078,45 @@ pub fn entered(entered: &Value, measurable: bool) -> Value {
 impl Layer {
     /// The defects planted for this layer, each of which it must report as a violation.
     #[must_use]
+    pub fn planted(self) -> Vec<Perturbation> {
+        let mut planted = self.planted_natively();
+        planted.extend(self.sealed_planted());
+        planted
+    }
+
+    /// The defects planted for this layer that only a sealed execution shows, each of which it must report as a violation; none for a layer that reads no sealed execution.
+    #[must_use]
+    pub fn sealed_planted(self) -> Vec<Perturbation> {
+        match self {
+            Self::Trace => vec![Perturbation {
+                name: "a sealed survivor its recording says one execution of detected",
+                events: amended(11, json!({ "sealed": { "came_to": "failed" } })),
+                ..clean()
+            }],
+            Self::Identity
+            | Self::Accounting
+            | Self::Score
+            | Self::Findings
+            | Self::Expectations
+            | Self::Exit
+            | Self::Merge
+            | Self::Proofs
+            | Self::Sites
+            | Self::Ledger
+            | Self::Work
+            | Self::Touch
+            | Self::Entry
+            | Self::Carry
+            | Self::Sealed => Vec::new(),
+        }
+    }
+
+    /// The defects planted for this layer that any execution shows.
     #[expect(
         clippy::too_many_lines,
         reason = "one total match holds every layer's planted defects, so a layer added without one does not compile"
     )]
-    pub fn planted(self) -> Vec<Perturbation> {
+    fn planted_natively(self) -> Vec<Perturbation> {
         let clean = clean();
         match self {
             Self::Identity => vec![Perturbation {
@@ -1047,9 +1148,8 @@ impl Layer {
                 document: with(json!({
                     "accounting": { "expected": 0 },
                     "mutants": [{}, { "expected": false }],
-                    "findings": [{ "kind": "surviving-mutant", "mutant": short(SURVIVED),
-                                   "detail": "no test noticed it" }],
-                    "run": { "exit_code": 1 }
+                    "findings": [{}, { "kind": "surviving-mutant", "mutant": short(SURVIVED),
+                                       "detail": "no test noticed it" }]
                 })),
                 ..clean
             }],
@@ -1152,14 +1252,44 @@ impl Layer {
                 Perturbation {
                     name: "a kill named by a test its target's baseline never ran",
                     events: killed_by_a_stranger(),
+                    ..clean.clone()
+                },
+                Perturbation {
+                    name: "a row no sealed test reaches whose guard a sealed control reached",
+                    document: with(json!({ "mutants": [{}, {
+                        "outcome": "not_run", "not_run_reason": "unreached", "unreached": true,
+                        "evidence": { "kind": "sealed", "executions": [] }
+                    }] })),
+                    events: inserted(
+                        7,
+                        json!({
+                            "timestamp": "2026-09-06T10:15:01Z", "elapsed_ms": 55,
+                            "type": "sealed-control",
+                            "control": {
+                                "target": TARGET, "test": "larger_works",
+                                "standing": "controlled", "reached": [1]
+                            }
+                        }),
+                    ),
                     ..clean
                 },
             ],
-            Self::Ledger => vec![Perturbation {
-                name: "an acceptance the run does not hold",
-                ledger: Some(ledger(&[SURVIVED, &"d".repeat(64)])),
-                ..clean
-            }],
+            Self::Ledger => vec![
+                Perturbation {
+                    name: "an acceptance the run does not hold",
+                    ledger: Some(ledger(&[SURVIVED, &"d".repeat(64)])),
+                    ..clean.clone()
+                },
+                Perturbation {
+                    name: "an acceptance the run does not hold, named by where it is",
+                    ledger: Some(format!(
+                        "{}\n[[mutation.expect]]\npath = \"src/lib.rs\"\nitem = \"larger\"\n\
+                         rule = \"gt-to-ge\"\noriginal = \">\"\nline = 11\nreason = \"gone\"\n",
+                        ledger(&[SURVIVED])
+                    )),
+                    ..clean
+                },
+            ],
             Self::Work => vec![Perturbation {
                 name: "a row that ran a target its route never reached",
                 document: with(json!({
@@ -1197,7 +1327,7 @@ impl Layer {
                     ..clean.clone()
                 },
                 Perturbation {
-                    name: "a site reached inside an item nothing can record entering",
+                    name: "a record that says a test entered an item nothing can record entering",
                     beside: vec![(
                         "touched-v1.json",
                         entered(&json!({ "tests": { "larger_works": [0] } }), false),
@@ -1206,6 +1336,14 @@ impl Layer {
                 },
             ],
             Self::Carry => carry_plants(),
+            Self::Sealed => vec![Perturbation {
+                name: "a sealed survivor whose execution detected the mutation",
+                document: with(json!({
+                    "mutants": [{}, { "evidence": { "executions": [{ "came_to": "panicked" }] } }]
+                })),
+                events: amended(11, json!({ "sealed": { "came_to": "panicked" } })),
+                ..clean
+            }],
         }
     }
 }

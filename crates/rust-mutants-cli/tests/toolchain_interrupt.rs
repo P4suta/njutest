@@ -11,8 +11,9 @@
 )]
 
 use njutest_devkit::fixture::copy_tree;
+use njutest_devkit::process::{ReadyPath, ReadyState as MarkerWait};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Output, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
 include!("support/metadata.rs");
@@ -33,74 +34,103 @@ impl RunningChild {
         self.0.id().expect("the running child is still owned")
     }
 
-    fn try_wait(&mut self) -> Result<Option<ExitStatus>, njutest_devkit::process::ChildError> {
-        self.0.try_wait()
-    }
-
     fn wait_with_output(self) -> Result<Output, njutest_devkit::process::ChildError> {
         self.0.wait_with_output()
     }
 }
 
-/// Every observable process on Linux whose process group is `group`; other POSIX kernels expose no `/proc` assertion surface here.
-fn in_group(group: u32) -> Option<Vec<u32>> {
-    let mut found = Vec::new();
-    let Ok(entries) = std::fs::read_dir("/proc") else {
-        return None;
-    };
-    for entry in entries.map(|entry| entry.expect("read a /proc entry")) {
-        let name = njutest_devkit::paths::owned_utf8(entry.file_name());
-        let Ok(pid) = name.parse::<u32>() else {
-            continue;
-        };
-        let Ok(stat) = std::fs::read_to_string(entry.path().join("stat")) else {
-            continue;
-        };
-        let Some(after) = stat.rsplit_once(american_parenthesis()) else {
-            continue;
-        };
-        let fields: Vec<&str> = after.1.split_whitespace().collect();
-        let parsed_group = fields.get(2).and_then(|value| match value.parse::<u32>() {
-            Ok(group) => Some(group),
-            Err(_) => None,
-        });
-        if parsed_group == Some(group) && fields.first() != Some(&"Z") {
-            found.push(pid);
-        }
-    }
-    Some(found)
-}
-
-const fn american_parenthesis() -> char {
-    ')'
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum MarkerWait {
-    Ready,
-    ChildExited,
-}
-
 fn await_marker_or_child_exit(
-    child: &mut RunningChild,
-    marker: &Path,
+    child: &RunningChild,
+    observed: &ReadyPath,
     deadline: Instant,
 ) -> std::io::Result<MarkerWait> {
-    loop {
-        if test_regular_file(marker) {
-            return Ok(MarkerWait::Ready);
-        }
-        if child.try_wait().map_err(std::io::Error::other)?.is_some() {
-            return Ok(MarkerWait::ChildExited);
-        }
-        if Instant::now() >= deadline {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "the run never reached a mutant test",
-            ));
-        }
-        std::thread::sleep(Duration::from_millis(25));
-    }
+    observed.wait(&child.0, deadline)
+}
+
+#[test]
+fn observing_an_early_exit_keeps_the_child_owned_for_output_collection() {
+    let directory = tempfile::tempdir().expect("the owned marker directory");
+    let observed = ReadyPath::subscribe(&directory.path().join("never-published"))
+        .expect("the marker is subscribed before its producer starts");
+    let mut command = Command::new("sh");
+    command
+        .args(["-c", "printf completed"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let child = RunningChild::launch(&mut command);
+    let deadline = Instant::now()
+        .checked_add(Duration::from_secs(300))
+        .expect("the existing completion bound");
+    let observed = await_marker_or_child_exit(&child, &observed, deadline)
+        .expect("the real early exit is observed");
+    assert_eq!(observed, MarkerWait::ChildExited);
+    let output = child
+        .wait_with_output()
+        .expect("observing completion must retain ownership for output and final group settlement");
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(output.stdout, b"completed");
+}
+
+#[test]
+fn a_ready_marker_published_before_launch_keeps_its_producer_owned() {
+    use std::io::Write as _;
+
+    let directory = tempfile::tempdir().expect("the owned marker directory");
+    let marker = directory.path().join("ready");
+    let observed = ReadyPath::subscribe(&marker).expect("subscribe before publication");
+    std::fs::write(&marker, "ready").expect("the actual early publication");
+    let mut command = Command::new("sh");
+    command
+        .args(["-c", "read released; printf completed"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = RunningChild::launch(&mut command);
+    let deadline = Instant::now()
+        .checked_add(Duration::from_secs(300))
+        .expect("the existing ready bound");
+    assert_eq!(
+        await_marker_or_child_exit(&child, &observed, deadline).expect("the sticky marker"),
+        MarkerWait::Ready
+    );
+    let mut released = child.0.take_stdin().expect("the owned producer release");
+    released
+        .write_all(b"released\n")
+        .expect("release the producer");
+    drop(released);
+    let output = child
+        .wait_with_output()
+        .expect("the owned output and group settle");
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(output.stdout, b"completed");
+}
+
+#[test]
+fn a_nonfile_ready_marker_is_refused_without_consuming_its_producer() {
+    let directory = tempfile::tempdir().expect("the owned marker directory");
+    let marker = directory.path().join("not-a-file");
+    let observed = ReadyPath::subscribe(&marker).expect("subscribe before publication");
+    std::fs::create_dir_all(&marker).expect("the actual refused marker shape");
+    let mut command = Command::new("sh");
+    command
+        .args(["-c", "read released; printf completed"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = RunningChild::launch(&mut command);
+    let deadline = Instant::now()
+        .checked_add(Duration::from_secs(300))
+        .expect("the existing ready bound");
+    let refusal = await_marker_or_child_exit(&child, &observed, deadline)
+        .expect_err("a nonfile is never a ready publication");
+    assert_eq!(refusal.kind(), std::io::ErrorKind::InvalidData);
+    let release = child.0.take_stdin().expect("the owned producer release");
+    drop(release);
+    let output = child
+        .wait_with_output()
+        .expect("the refused observer still owns output");
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(output.stdout, b"completed");
 }
 
 /// An interrupted run still writes what it did establish, and says what it never reached.
@@ -132,6 +162,17 @@ fn what_it_established(root: &Path) {
     );
 }
 
+fn assert_started_before_exit(child: RunningChild, marker: &Path) {
+    let output = child.wait_with_output().expect("collect the ended command");
+    assert!(
+        test_regular_file(marker),
+        "the run ended before a mutant test began: status={:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        njutest_devkit::process::strict_utf8(&output.stdout),
+        njutest_devkit::process::strict_utf8(&output.stderr)
+    );
+}
+
 #[test]
 fn a_run_that_is_interrupted_exits_130_and_releases_its_snapshot() {
     let dir = tempfile::Builder::new()
@@ -149,10 +190,12 @@ fn a_run_that_is_interrupted_exits_130_and_releases_its_snapshot() {
     let cache = directory.join("cache");
     std::fs::create_dir_all(&cache).expect("mkdir");
     let mutant_started = directory.join("mutant-started");
+    let observed = ReadyPath::subscribe(&mutant_started)
+        .expect("the mutant marker is subscribed before the run starts");
 
     let mut command = njutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
     command
-        .args(["run", "--offline", "--locked", "--tier", "all"])
+        .args(["run", "--offline", "--locked", "--tier", "all", "--no-seal"])
         .args(["--root", njutest_devkit::paths::utf8(&root)])
         .env("NO_COLOR", "1")
         .envs(njutest_devkit::paths::temporary_directory(&temp))
@@ -161,25 +204,18 @@ fn a_run_that_is_interrupted_exits_130_and_releases_its_snapshot() {
         .env("FIXTURE_SIMPLE_MUTANT_STARTED", &mutant_started)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = RunningChild::launch(&mut command);
+    let child = RunningChild::launch(&mut command);
     let pid = child.id();
 
     let deadline = Instant::now()
         .checked_add(Duration::from_secs(300))
         .expect("a deadline five minutes out");
-    match await_marker_or_child_exit(&mut child, &mutant_started, deadline)
+    match await_marker_or_child_exit(&child, &observed, deadline)
         .expect("the run reaches a mutant test before the deadline")
     {
         MarkerWait::Ready => {}
         MarkerWait::ChildExited => {
-            let output = child.wait_with_output().expect("collect the ended command");
-            assert!(
-                test_regular_file(&mutant_started),
-                "the run ended before a mutant test began: status={:?}\nstdout:\n{}\nstderr:\n{}",
-                output.status,
-                njutest_devkit::process::strict_utf8(&output.stdout),
-                njutest_devkit::process::strict_utf8(&output.stderr)
-            );
+            assert_started_before_exit(child, &mutant_started);
             return;
         }
     }
@@ -200,7 +236,9 @@ fn a_run_that_is_interrupted_exits_130_and_releases_its_snapshot() {
 
     what_it_established(&root);
 
-    if let Some(stragglers) = in_group(pid) {
+    if let Some(stragglers) =
+        njutest_devkit::process::in_group(pid).expect("the processes of the run's group")
+    {
         assert!(
             stragglers.is_empty(),
             "the run left observable members {stragglers:?} in its inherited process group"
@@ -240,6 +278,8 @@ fn ctrl_c_during_a_compilation_exits_130_and_writes_no_rejection() {
     let cache = directory.join("cache");
     std::fs::create_dir_all(&cache).expect("mkdir");
     let marker = directory.join("compiling");
+    let observed = ReadyPath::subscribe(&marker)
+        .expect("the build marker is subscribed before the run starts");
 
     let mut command = njutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
     command
@@ -258,10 +298,12 @@ fn ctrl_c_during_a_compilation_exits_130_and_writes_no_rejection() {
     let deadline = Instant::now()
         .checked_add(Duration::from_secs(300))
         .expect("a deadline five minutes out");
-    while !test_regular_file(&marker) {
-        assert!(Instant::now() < deadline, "the run never reached a build");
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    assert_eq!(
+        await_marker_or_child_exit(&child, &observed, deadline)
+            .expect("the actual build marker or child completion"),
+        MarkerWait::Ready,
+        "the run ended before it reached a build"
+    );
     rustix::process::kill_process(
         rustix::process::Pid::from_raw(pid.try_into().expect("a pid fits")).expect("a live pid"),
         rustix::process::Signal::INT,
@@ -285,7 +327,9 @@ fn ctrl_c_during_a_compilation_exits_130_and_writes_no_rejection() {
         "a run that never got a session establishes nothing and writes nothing"
     );
 
-    if let Some(stragglers) = in_group(pid) {
+    if let Some(stragglers) =
+        njutest_devkit::process::in_group(pid).expect("the processes of the run's group")
+    {
         assert!(
             stragglers.is_empty(),
             "the run left observable members {stragglers:?} in its inherited process group"

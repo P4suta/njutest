@@ -1,0 +1,3 @@
+   Compiling fixture-coverage v0.1.0 (/Users/yasunobu/projects/github.com/P4suta/njutest-w18/target/fixture-build-cache/4f50221bc5f32e8569f4b8430d0d854a1657955856855e2cdb490c10fd2174bb/0/rust-mutants-snap-e8f4aca92b1a0a1a/tree)
+    Finished `test` profile [unoptimized] target(s) in 0.19s
+   Doc-tests fixture_coverage

@@ -20,8 +20,8 @@ Every test a run started is in it, including the ones it started to establish th
 
 The unit is a count and not a duration on purpose.
 A second is about this machine, this load, this job count; it cannot be compared between two runs and it cannot be ratcheted.
-A pair is the same number everywhere, so a change that makes the engine do less is a change a test can see —
-`xtask/work_ceiling.txt` holds each fixture's count, and like the seam allowlist it may shrink and never grow.
+A pair is the same number everywhere, so a change that makes the engine do less is a change a test can see.
+`xtask/work_ceiling.txt` holds a four-fixture sample of counts, and like the seam allowlist it may shrink and never grow.
 
 ```
 WORK  started=15 of 42 pairs across 3 targets; 64.3% removed
@@ -31,6 +31,7 @@ WORK  started=15 of 42 pairs across 3 targets; 64.3% removed
 ```
 
 `rust_mutants::work::Work` derives that from the stored report alone, so an audit re-derives it without the engine, and `engine-audit`'s `work` layer holds the total to the `mutant-exec` records the recording kept.
+A test is counted only where a baseline counted it: a target whose baseline ran no test counts none, and where a baseline did not run, as under `--no-verify`, the `tests=` line says `tests are not counted` rather than a number.
 Every removal is labelled with what kind it is:
 
 | Kind | What it means | Still the whole answer |
@@ -170,7 +171,72 @@ The record's `narrowing` is what makes an absence in it evidence:
 a mutant it does not name as compared is one `infected` says nothing about,
 however often a test ran it.
 
+An audit also states, for every layer it has, how far it got, and a layer whose subject the recording's own complete scope proves cannot be there says so rather than calling the evidence missing.
+Only a checked `Closed` scope can construct the private absence token.
+An empty inventory must reconcile its explicit accounting column with independently enumerated rows and retained execution or routing subjects.
+An unrequested observation is a separate typed decision derived from the complete request, rather than a zero substituted for missing evidence.
+Guard measurements close a configuration only when recorded and explicitly declined targets account for the entire requested inventory, without foreign targets or overlapping explanations.
+Acceptance absence also checks the expected-row flags and their explicit accounting, so an empty claim list cannot hide an accepted subject.
+The scope is derived, never defaulted from an absent value:
+a catalog whose own accounting carries no mutant owes no routing decision,
+a run that measured the whole catalog itself — its own `shard` field says — owes no merge against parts,
+a run whose guards measured routes by what they recorded owes no coverage measurement,
+a run that claims no acceptance owes no ledger an answer,
+and a run that claims no discharge and none of whose routes names one owes no proof.
+Nothing else may be read as absence:
+a part without its siblings, a claim without a ledger, a route without its recording, are missing evidence and are said as unaudited, which is neither a pass nor a failure.
+
 ## After the run
+
+A merged audit closes a shard's deferred hollow or drift scope only after every named shard, catalog row, sealed execution and baseline control has been independently read and reconciled.
+The deferral carries its scope as a private type; an unreadable input or another unfinished decision cannot be discharged by matching diagnostic text.
+A complete inventory that owes no subject proves absence, while a missing shard, engine recording or control leaves the layer partly audited.
+
+The committed engine and sharded recordings preserve the exact source and configuration copied before each real producer ran.
+Each original is a lossless regular-file archive with a strict complete inventory, byte digests and permissions.
+Readers verify every archive entry before extracting immutable bytes into a new owned directory.
+Missing, added, mismatched, repeated, linked or unsafe paths refuse the recording; the original source bytes remain unchanged.
+Their shape checks retain optional physical module work, compilation attempts and every field of each keyed module observation.
+Only a validated SHA-256 map key is normalized when comparing shape; the observation object's keys and value types remain mandatory.
+Updates run the actual compiler and product again, and the audit readers rederive the resulting reports against their preserved originals and traces.
+
+Reader tests bind the complete source, requested configuration, actual producer command, captured output, report and trace to the retained execution.
+The artifact and provenance inventories remain complete, and the actual producer metadata must reconcile its source revision, patch and stdout and stderr digests.
+Each family keeps the layer whose behavior it claims live.
+
+Host observations subscribe before their producer starts or their resource is first read.
+The engine and task runner reserve 64 counted event slots and one sticky refusal per subscription.
+This bounds the observer's retained memory while its producer continues; it is neither a work limit nor a proof threshold.
+Every counted event that does not fit refuses the subscription rather than truncating its evidence into success.
+A producer failure is sticky too, and the publication lock orders it against the final observation decision.
+The reader rechecks that refusal immediately before returning its decision, including completion.
+Each actual wait names its producer and cause and measures its monotonic duration and executing host.
+Semantic deadlines use an injected clock; host measurement stays independent of that clock.
+Completion, cancellation, resource change and deadline remain distinct decisions.
+Preparation and provider readers register their subscriptions before starting the producer.
+An exclusive reader may transfer threads while retaining the original registered producer and every queued wake.
+Reading the actual answer consumes its wake, and the reader checks retained refusals again before a successful result.
+Each displayed event acknowledges its wake before another frame is read, so continuous successful progress cannot accumulate already consumed notifications.
+Protocol EOF is published after the answer channel closes, while the actual process and reader threads are still joined by their owner.
+Presentation wait notes remain in the durable trace and never wake the same presentation channel again.
+
+Host observations retain counted product events through `Signal` and latest-resource wakes through `Invalidation`.
+A filesystem subscription is registered before the first resource read, and every native change retains one pending invalidation until the reader receives it.
+That wake permits rereading the actual resource; it proves no process, writer, group, pipe or collector completed.
+Each subscription owns its native stream, so another subscriber having seen a change says nothing about this one.
+A native event that arrives after the reader consumed its wake raises a new one, because the subscription cannot tell a change the reader already read from one made after it.
+`Observation::fence` creates one of the subscription's excluded file names and returns once that subscription's own stream delivers it, so every change made before it has already raised its wake and none of their events arrives after it.
+That rests on one native stream delivering a directory's events in the order they occurred: one inotify queue, one FSEvents stream, one ReadDirectoryChangesW buffer.
+Counted events preserve their bounded overflow refusal, and both endpoints retain the first producer failure independently of cancellation and completion.
+The original native filesystem burst and explicit overflow controls hold these distinct contracts.
+
+| Family | Live layer | Actual recording holding the other layers |
+| --- | --- | --- |
+| CLI reports | CLI projection, diagnostics and serialization | `reports-simple`, `reports-coverage` |
+| CLI projections | CLI document projection | `projections-unicode` |
+| CLI explanation | Explanation reader; printed-command reproduction remains a real run | `explain-simple` |
+| Run-report schema, accounting and identity readers | Published schema, complete accounting, ID re-minting and live CLI report/merge refusals | `run-report-default`, `run-report-alltiers` |
+| Assurance documents | Document and bundle readers; cache, rerun, shard and acceptance controls remain real runs | `documents-baseline` |
 
 `--equivalence` asks the compiler whether each survivor's mutation is one it renders at all: the tree the user wrote is built once, the mutation is spliced in, and the two builds' executables are compared byte for byte.
 An answer of `identical` says the compiler produced the same program, and the control is built again to check that the tree builds reproducibly at all — a tree whose build is not reproducible proves nothing, and one such answer withdraws every answer afterwards.
@@ -178,6 +244,12 @@ An answer of `identical` says the compiler produced the same program, and the co
 It never says `equivalent`.
 Two binaries being the same bytes is a fact about what the compiler produced under the profile the tests run; whether the mutation could change behaviour is a question about the program, and a comparison of binaries does not answer it ([ADR 0013](../adr/0013-codegen-identity-is-the-equivalence-proof.md)).
 A mutation the compiler refuses establishes nothing either: the question is about two programs, and there is only one.
+
+A comparison speaks only for a build that compiled the spliced file again.
+Cargo decides whether a unit is fresh from the times of the files it read, and where it says a unit that read the spliced file is fresh, the executable it hands back is the one it built before the splice, so comparing it with the original compares the original with itself.
+The layer's build directory is what makes cargo compile such a unit: it forgets the units of a member whose bytes moved and dates that member's files back to when they moved, never forward.
+A member's bytes are its own files and every file outside its directory its units read, which a `#[path]` can name and which the record keeps from the dep-info of the build before, so a splice there moves the member too, and fixture-shared-path holds it: `a_file_a_member_reads_from_outside_its_directory_is_compiled_again_whatever_its_time`, whose cargo dates the file back to 2000, is answered `differs`.
+A clock that disagrees with a file's time is still one more way for cargo to reuse what it built, so the build's own word is read as well: a mutated build in which a unit that read the spliced file was reused is not established, and neither is one in which no unit read it; a control in which a unit that read the restored file was reused withdraws the layer, as one that builds to other bytes does.
 
 ## Where a layer is silent
 

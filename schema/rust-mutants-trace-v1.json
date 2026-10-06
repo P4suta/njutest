@@ -234,6 +234,18 @@
           ],
           "properties": {
             "kind": {
+              "const": "unconfirmed"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
               "const": "notice-missing"
             }
           }
@@ -521,6 +533,26 @@
               "properties": {
                 "protocol": {
                   "const": "libtest"
+                },
+                "tests_run": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "minimum": 0
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "protocol",
+                "tests_run"
+              ],
+              "properties": {
+                "protocol": {
+                  "const": "rustdoc"
                 },
                 "tests_run": {
                   "type": [
@@ -1215,6 +1247,7 @@
                           "E",
                           "S",
                           "M",
+                          "B",
                           null
                         ]
                       },
@@ -1321,6 +1354,7 @@
               "additionalProperties": false,
               "required": [
                 "attributed",
+                "carried",
                 "condemned",
                 "round",
                 "success",
@@ -1369,6 +1403,13 @@
                         "type": "string"
                       }
                     }
+                  }
+                },
+                "carried": {
+                  "type": "array",
+                  "description": "The errors a const fn that goes without its const from the next round on accounts for, each the first line of what the compiler said (ADR 0047).",
+                  "items": {
+                    "type": "string"
                   }
                 },
                 "unattributed": {
@@ -1893,6 +1934,7 @@
                     "outside-blocks",
                     "coverage-incomplete",
                     "touch-incomplete",
+                    "compile-time",
                     null
                   ]
                 },
@@ -1941,6 +1983,129 @@
                     "null"
                   ],
                   "minLength": 1
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "control",
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "const": "sealed-control"
+            },
+            "control": {
+              "description": "One test of one sealed module run with nothing active, alone in a fresh instance: whether a mutant's execution can be judged against it, and every guard it reached (ADR 0046).",
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "target",
+                "test",
+                "standing",
+                "reached"
+              ],
+              "properties": {
+                "target": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "test": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "standing": {
+                  "enum": [
+                    "controlled",
+                    "panicked",
+                    "failed",
+                    "trapped",
+                    "fuel-exceeded",
+                    "memory-exceeded",
+                    "declined",
+                    "exited-early",
+                    "stack-overflow",
+                    "refused",
+                    "unaccounted",
+                    "unmatched",
+                    "unbuilt",
+                    "not-held"
+                  ]
+                },
+                "reached": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "sealed",
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "const": "sealed-exec"
+            },
+            "sealed": {
+              "description": "One test of one sealed module run with one mutant active, alone in a fresh instance, and what it came to (ADR 0046).",
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "mutant",
+                "index",
+                "target",
+                "test",
+                "came_to"
+              ],
+              "properties": {
+                "mutant": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "index": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "target": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "test": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "came_to": {
+                  "enum": [
+                    "passed",
+                    "panicked",
+                    "failed",
+                    "trapped",
+                    "fuel-exceeded",
+                    "memory-exceeded",
+                    "declined",
+                    "exited-early",
+                    "stack-overflow",
+                    "refused",
+                    "unaccounted",
+                    "unmatched",
+                    "set-aside"
+                  ]
+                },
+                "transcript": {
+                  "type": "string",
+                  "description": "The digest of the transcript the verdict rests on: everything the invocation was a function of and everything it did, which one execution of one tree is named by wherever it is remembered. Optional because a recording made before transcripts were named says none."
                 }
               }
             }
@@ -2153,6 +2318,7 @@
                     "skeleton-changed",
                     "item-changed",
                     "unsealed",
+                    "item-moved",
                     "entry-incomplete",
                     "route-grew",
                     "filter-differs",
@@ -2353,6 +2519,82 @@
                 "events_dropped": {
                   "type": "integer",
                   "minimum": 0
+                },
+                "sealed": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "answered",
+                    "compiles",
+                    "instances"
+                  ],
+                  "description": "What the host spent on sealed executions, where the run assembled a bench. Optional because a run that assembled none says nothing.",
+                  "properties": {
+                    "compiles": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Modules prepared for the sealed target, including compiled-module cache hits."
+                    },
+                    "instances": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Instances started on the host."
+                    },
+                    "answered": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Invocations a remembered transcript answered instead."
+                    },
+                    "modules": {
+                      "type": "object",
+                      "minProperties": 1,
+                      "propertyNames": { "pattern": "^[0-9a-f]{64}$" },
+                      "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["module", "configuration", "requests", "attempts", "cold", "disk", "process", "failures", "failed_cold", "failed_disk", "duration_ns"],
+                        "properties": {
+                          "module": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                          "configuration": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                          "requests": { "type": "integer", "minimum": 1 },
+                          "attempts": { "type": "integer", "minimum": 0 },
+                          "cold": { "type": "integer", "minimum": 0 },
+                          "disk": { "type": "integer", "minimum": 0 },
+                          "process": { "type": "integer", "minimum": 0 },
+                          "failures": { "type": "integer", "minimum": 0 },
+                          "failed_cold": { "type": "integer", "minimum": 0 },
+                          "failed_disk": { "type": "integer", "minimum": 0 },
+                          "duration_ns": { "type": "integer", "minimum": 0 }
+                        }
+                      },
+                      "description": "Observed physical requests keyed by module bytes and semantic engine configuration, host and Wasmtime version; absent when no keyed observation exists."
+                    },
+                    "compilation": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["hits", "misses", "duration_ns"],
+                      "properties": {
+                        "hits": { "type": "integer", "minimum": 0 },
+                        "misses": { "type": "integer", "minimum": 0 },
+                        "duration_ns": { "type": "integer", "minimum": 0 },
+                        "process": { "type": "integer", "minimum": 0 },
+                        "attempts": { "type": "integer", "minimum": 0 },
+                        "failed_cold": { "type": "integer", "minimum": 0 },
+                        "failed_disk": { "type": "integer", "minimum": 0 }
+                      },
+                      "description": "Measured compiled-module cache hits, misses and module preparation time; absent in older recordings."
+                    },
+                    "failures": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Refused preparation requests; absent in older recordings and when none occurred."
+                    },
+                    "execution_ns": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Measured host time spent executing sealed invocations; absent when no invocation executed or in older recordings."
+                    }
+                  }
                 }
               }
             }

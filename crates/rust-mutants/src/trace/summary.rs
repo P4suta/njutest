@@ -35,6 +35,9 @@ pub enum SummaryError {
         /// The phase whose end was incomplete.
         phase: String,
     },
+    /// An exec record whose command line names no program, which no recorder writes and the reader refuses.
+    #[error("an exec record's command line names no program")]
+    UnnamedCommand,
 }
 
 /// How long one phase took, by the path a reader would follow to it.
@@ -180,6 +183,8 @@ fn counted(
         | Payload::Select { .. }
         | Payload::Identical { .. }
         | Payload::Evidence { .. }
+        | Payload::SealedControl { .. }
+        | Payload::SealedExec { .. }
         | Payload::Note { .. } => {}
     }
     Ok(())
@@ -190,8 +195,10 @@ fn count_exec(
     commands: &mut Vec<CommandTiming>,
     exec: &super::ExecRecord,
 ) -> Result<(), SummaryError> {
-    let command = said(&exec.argv);
-    let program = program_of(&exec.argv);
+    let Some(program) = program_of(&exec.argv) else {
+        return Err(SummaryError::UnnamedCommand);
+    };
+    let command = said(&program, &exec.argv);
     let spent = summary.programs.entry(program.clone()).or_default();
     *spent = spent
         .checked_add(exec.duration_ms)
@@ -264,10 +271,13 @@ pub fn render(summary: &Summary) -> String {
         );
     }
     for (program, started) in &summary.invocations {
-        let duration = summary.programs.get(program).copied().unwrap_or_default();
+        let spent = match summary.programs.get(program) {
+            Some(duration) => format!("{duration}ms"),
+            None => "no time recorded".to_owned(),
+        };
         line(
             &mut out,
-            format_args!("PROGRAM\t{program}\t{started} started\t{duration}ms"),
+            format_args!("PROGRAM\t{program}\t{started} started\t{spent}"),
         );
     }
     for command in &summary.slowest {
@@ -310,8 +320,14 @@ pub fn diff(before: &Summary, after: &Summary) -> Vec<Change> {
         names.dedup();
         for name in names {
             let (from, to) = (
-                was.get(name).copied().unwrap_or_default(),
-                is.get(name).copied().unwrap_or_default(),
+                match was.get(name) {
+                    Some(counted) => *counted,
+                    None => 0,
+                },
+                match is.get(name) {
+                    Some(counted) => *counted,
+                    None => 0,
+                },
             );
             if from != to {
                 changes.push(Change {
@@ -348,8 +364,8 @@ fn path_of(open: &[String], name: &str) -> String {
 }
 
 /// The program a command line starts with, by file name, without the suffix a platform puts on an executable.
-fn program_of(argv: &[String]) -> String {
-    argv.first().map_or_else(String::new, |first| {
+fn program_of(argv: &[String]) -> Option<String> {
+    let named = |first: &String| {
         let name = match std::path::Path::new(first)
             .file_name()
             .and_then(std::ffi::OsStr::to_str)
@@ -370,12 +386,13 @@ fn program_of(argv: &[String]) -> String {
         } else {
             name
         }
-    })
+    };
+    argv.first().map(named)
 }
 
-/// The command line as a reader would quote it: the program by name, then its arguments.
-fn said(argv: &[String]) -> String {
-    let mut parts = vec![program_of(argv)];
+/// The command line as a reader would quote it: `program` by name, then its arguments.
+fn said(program: &str, argv: &[String]) -> String {
+    let mut parts = vec![program.to_owned()];
     parts.extend(argv.iter().skip(1).cloned());
     parts.join(" ")
 }

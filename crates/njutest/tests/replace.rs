@@ -74,7 +74,10 @@ fn put_record(root: &Path, round: u64) -> Option<String> {
     let record = njutest::evidence::store::record(
         digest(1),
         &format!("run-{round}"),
-        njutest::evidence::store::Outcome::Survived { targets },
+        (
+            njutest::evidence::store::Outcome::Survived { targets },
+            rust_mutants::sealed::record::Evidence::not_sealed(),
+        ),
     );
     match njutest::evidence::store::write(root, &record) {
         Ok(_written) => None,
@@ -101,6 +104,9 @@ fn put_checkpoint(root: &Path, round: u64) -> Option<String> {
                 by: format!("demo/lib/demo tests::round_{round}"),
                 before: Vec::new(),
             },
+            evidence: njutest::testkit::reports::sealed_kill(&format!(
+                "demo/lib/demo tests::round_{round}"
+            )),
             duration_ms: 3,
         })
         .collect();
@@ -141,7 +147,7 @@ fn put_report(root: &Path, round: u64) -> Option<String> {
     "2026-01-01T00:00:00Z".clone_into(&mut source.timing.started);
     "2026-01-01T00:00:00Z".clone_into(&mut source.timing.finished);
     source.limitations.push(Limitation::new(
-        "git-metadata-unavailable",
+        njutest::limitation::Limitation::GitMetadataUnavailable,
         "the tree a test builds is not a git repository",
     ));
     source.targets = (0..MEMBERS)

@@ -11,7 +11,7 @@
 use rust_mutants::probe::{PROBED, Question, is_effect_free, is_probed};
 
 fn effect_free(source: &str) -> bool {
-    let expr: syn::Expr = syn::parse_str(source).expect("the expression parses");
+    let expr: syn::Expr = njutest_devkit::lexed::parse(source).expect("the expression parses");
     is_effect_free(&expr)
 }
 

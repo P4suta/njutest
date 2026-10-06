@@ -24,8 +24,8 @@ pub enum Verdict {
     Detected,
     /// The run found something a reader has to act on.
     Found,
-    /// The run itself failed rather than answered.
-    Failed,
+    /// Something is unproven, or the run could not measure something it ran.
+    Unproven,
     /// The run was interrupted.
     Interrupted,
 }
@@ -43,7 +43,7 @@ impl Verdict {
         match self {
             Self::Detected => run::EXIT_DETECTED,
             Self::Found => run::EXIT_FOUND,
-            Self::Failed => run::EXIT_FAILED,
+            Self::Unproven => run::EXIT_UNESTABLISHED,
             Self::Interrupted => run::EXIT_INTERRUPTED,
         }
     }
@@ -54,7 +54,7 @@ impl Verdict {
         match self {
             Self::Detected => "detected",
             Self::Found => "found",
-            Self::Failed => "failed",
+            Self::Unproven => "unproven",
             Self::Interrupted => "interrupted",
         }
     }
@@ -217,9 +217,16 @@ pub fn gate(gated: &Gated<'_>, host: &CiHost, stdout: &mut dyn Write) -> Result<
                     format_args!("\n{}", untouched(elsewhere.len())),
                 );
             }
+            let unforked = gated.changed.and_then(unforked);
+            if let Some(read) = &unforked {
+                crate::text::line(&mut markdown, format_args!("\n{read}"));
+            }
             append(summary, &markdown)?;
             append(output, &outputs)?;
             let mut said = lines;
+            if let Some(read) = &unforked {
+                crate::text::line(&mut said, format_args!("{read}"));
+            }
             for mutant in annotated.into_iter().take(shown) {
                 crate::text::line(
                     &mut said,
@@ -253,6 +260,20 @@ pub fn untouched(survivors: usize) -> String {
         format!(
             "{survivors} more survivors are on lines this change did not touch; they are in the report."
         )
+    }
+}
+
+/// The sentence that says the changed lines were read against their base itself, where git named no commit it and `HEAD` share, and nothing where it named one.
+#[must_use]
+pub fn unforked(lines: &Lines) -> Option<String> {
+    match lines.merge_base {
+        Some(_) => None,
+        None => Some(format!(
+            "The changed lines were read against {} itself: git named no commit it and HEAD \
+             share, so what it changed since counts as changed too, and more survivors are \
+             annotated rather than fewer.",
+            lines.base
+        )),
     }
 }
 

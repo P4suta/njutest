@@ -52,6 +52,9 @@ pub struct ExplainDocument {
     /// Whether a first timeout was retried serially before the outcome was believed.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub retried: bool,
+    /// What the outcome rests on, when a run answered for the mutant (ADR 0046).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<crate::sealed::record::Evidence>,
     /// The command that puts this one mutation back to the tests.
     pub reproduce: String,
     /// The configuration block that records this mutation as one a reason is written for.
@@ -180,12 +183,13 @@ pub fn explain(asked: &Asked<'_>) -> Result<ExplainDocument, ExplainError> {
         target: row
             .map(|one| one.target.clone())
             .filter(|target| !target.is_empty()),
-        killed_by: row.map(|one| one.killed_by.clone()).unwrap_or_default(),
+        killed_by: killers(row),
         diff,
         source,
         route: row.and_then(|one| one.route.clone()),
         duration_ms: row.map(|one| one.duration_ms),
         retried: row.is_some_and(|one| one.retried),
+        evidence: row.map(|one| one.evidence.clone()),
         reproduce: reproduce(&mutant, row),
         accept: accept(&mutant),
         mutant,
@@ -231,6 +235,14 @@ pub fn names(mutant: &MutantDocument) -> String {
         "{}:{}:{}@{}",
         mutant.path, mutant.item, mutant.rule, mutant.line
     )
+}
+
+/// Every test the run's row says noticed the mutant, and none where the run holds no row of it.
+fn killers(row: Option<&RunMutantDocument>) -> Vec<String> {
+    match row {
+        Some(one) => one.killed_by.clone(),
+        None => Vec::new(),
+    }
 }
 
 /// The `[[mutation.expect]]` a reader pastes to record this mutation with a reason.

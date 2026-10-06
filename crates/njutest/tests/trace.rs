@@ -655,6 +655,11 @@ fn the_published_v1_schema_accepts_every_closed_specimen_and_refuses_ambiguity()
 
     let documents: Vec<serde_json::Value> = njutest::testkit::every_payload()
         .into_iter()
+        .chain(rust_mutants::session::Fallback::ALL.iter().map(|fallback| {
+            let mut route = a_route();
+            route.fallback = Some(*fallback);
+            Payload::Route { route }
+        }))
         .enumerate()
         .map(|(at, payload)| {
             serde_json::to_value(Event {
@@ -929,6 +934,47 @@ fn a_stage_and_the_work_inside_it_do_not_answer_to_one_name() {
         "while a recording that opens one name twice is one whose phase durations are \
          summed by name, so that phase is reported at the sum of the two and a person \
          reading it goes looking for time the run never spent there: {problems:?}"
+    );
+}
+
+#[test]
+fn a_route_can_record_every_word_a_carry_refusal_has_and_the_contract_names_each() {
+    let path = njutest_devkit::paths::workspace_root().join("schema/njutest-trace-v1.json");
+    let text = fs::read_to_string(&path).expect("the published schema");
+    let schema: serde_json::Value =
+        njutest_devkit::strictjson::decode_str(&text).expect("the schema is JSON");
+    let listed: Vec<serde_json::Value> = schema["properties"]["payload"]["oneOf"]
+        .as_array()
+        .expect("one branch per type")
+        .iter()
+        .find(|branch| branch["properties"]["type"]["const"] == "route")
+        .and_then(|branch| {
+            branch["properties"]["route"]["properties"]["carry_refused"]["enum"].as_array()
+        })
+        .expect("a route closes the words a carry is refused with")
+        .clone();
+    let mut known: Vec<serde_json::Value> = rust_mutants::carry::Refusal::ALL
+        .iter()
+        .map(|refusal| serde_json::Value::from(refusal.name()))
+        .collect();
+    known.push(serde_json::Value::Null);
+    assert_eq!(
+        listed, known,
+        "the route records the word the engine refused a carried answer with, so the schema a \
+         recording is audited against lists every one"
+    );
+    let contract = fs::read_to_string(
+        njutest_devkit::paths::workspace_root().join("docs/assurance-contract.md"),
+    )
+    .expect("the contract");
+    let unnamed: Vec<&str> = rust_mutants::carry::Refusal::ALL
+        .iter()
+        .map(|refusal| refusal.name())
+        .filter(|name| !contract.contains(&format!("`{name}`")))
+        .collect();
+    assert!(
+        unnamed.is_empty(),
+        "the contract says which word a carried answer is refused with, and names none of {unnamed:?}"
     );
 }
 

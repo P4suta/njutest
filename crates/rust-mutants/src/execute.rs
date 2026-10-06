@@ -9,6 +9,13 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use rust_mutants_adapt::confinement;
+pub use rust_mutants_adapt::confinement::Home;
+pub use rust_mutants_adapt::decline::Reading;
+use rust_mutants_decision::confinement::{
+    CONFINED_HOME, Escape, GIT_GLOBAL_CONFIG, RUNTIME_UNDER_HOME,
+};
+
 use crate::cargo::{
     CargoError, CargoErrorKind, CompileKind, CompileOptions, Driver, Message, Package, Target,
     compile,
@@ -16,8 +23,8 @@ use crate::cargo::{
 use crate::id::{is_digest, is_id};
 use crate::instrument::{
     ACTIVE_ENV, CATALOG_ENV, CRASH_NONCE_ENV, CRASH_NOTICE_ENV, DELAY_ENV, FAULT_ENV,
-    STEP_BEAT_ENV, STEP_NONCE_ENV, STEP_NOTICE_ENV, STEP_NOTICE_SCHEMA, STEP_PROTOCOL_EXIT,
-    STEP_STATE_ENV, STEP_STATE_SCHEMA, STEPS_ENV, STOP_SCHEMA, TOUCH_ENV,
+    FAULT_FATE_ENV, STEP_BEAT_ENV, STEP_NONCE_ENV, STEP_NOTICE_ENV, STEP_NOTICE_SCHEMA,
+    STEP_PROTOCOL_EXIT, STEP_STATE_ENV, STEP_STATE_SCHEMA, STEPS_ENV, STOP_SCHEMA, TOUCH_ENV,
 };
 use crate::outcome::Outcome;
 use crate::runner::{
@@ -28,11 +35,12 @@ use crate::workspace::SessionError;
 
 /// Every variable the engine owns.
 /// A test process sees exactly the ones this run set, never one an outer run left behind.
-pub const RESERVED_ENV: [&str; 13] = [
+pub const RESERVED_ENV: [&str; 14] = [
     ACTIVE_ENV,
     CRASH_NOTICE_ENV,
     CRASH_NONCE_ENV,
     FAULT_ENV,
+    FAULT_FATE_ENV,
     DELAY_ENV,
     CATALOG_ENV,
     TOUCH_ENV,
@@ -45,11 +53,12 @@ pub const RESERVED_ENV: [&str; 13] = [
 ];
 
 /// The variables a run composes for every test process it starts, which it therefore never lets one inherit.
-pub const COMPOSED_ENV: [&str; 15] = [
+pub const COMPOSED_ENV: [&str; 16] = [
     ACTIVE_ENV,
     CRASH_NOTICE_ENV,
     CRASH_NONCE_ENV,
     FAULT_ENV,
+    FAULT_FATE_ENV,
     DELAY_ENV,
     CATALOG_ENV,
     TOUCH_ENV,
@@ -166,12 +175,12 @@ pub enum Schedule {
 }
 
 impl Schedule {
-    /// The harness arguments that ask for it, which only libtest takes.
+    /// The options of libtest's own that ask for it, which only libtest takes.
     #[must_use]
-    pub const fn arguments(self) -> &'static [&'static str] {
+    pub const fn owns(self) -> &'static [crate::libtest::Own] {
         match self {
             Self::AsConfigured => &[],
-            Self::OneThread => &["--test-threads=1"],
+            Self::OneThread => &[crate::libtest::Own::OneThread],
         }
     }
 }
@@ -219,10 +228,10 @@ impl TargetKind {
         Self::ALL.into_iter().find(|kind| kind.name() == name)
     }
 
-    /// The kind of a cargo target, or `None` for one that carries no tests the engine runs (a build script, a bench).
+    /// The kind of a cargo target, or `None` for one that carries no tests the engine runs: a build script, a bench, and a target its manifest says `test = false` of, which `cargo test --all-targets` builds as a test binary all the same.
     #[must_use]
     pub fn of(target: &Target) -> Option<Self> {
-        if target.is_custom_build() || target.is_bench() {
+        if !target.test || target.is_custom_build() || target.is_bench() {
             None
         } else if target.is_proc_macro() {
             Some(Self::ProcMacro)
@@ -250,14 +259,10 @@ pub fn target_id(package: &str, kind: TargetKind, name: &str) -> String {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct TestTarget {
-    /// `package/kind/name`.
-    pub id: String,
-    /// The package that owns it.
-    pub package: String,
-    /// What kind of target it is.
-    pub kind: TargetKind,
-    /// The target's name.
-    pub name: String,
+    id: String,
+    package: String,
+    kind: TargetKind,
+    name: String,
     /// The binary cargo built.
     pub executable: PathBuf,
     /// The directory it runs in: the package's manifest directory, which is what cargo uses and what a test reading a relative path expects.
@@ -267,7 +272,7 @@ pub struct TestTarget {
     /// Whether the target is built with the libtest harness.
     pub harness: bool,
     /// What a run could not establish about this target, each named.
-    pub limitations: Vec<String>,
+    pub limitations: Vec<crate::limitation::Limitation>,
     /// The arguments before the harness's own, for a target cargo runs rather than one the engine starts itself.
     /// Empty for a binary, and then `executable` is the binary.
     pub through: Vec<OsString>,
@@ -276,8 +281,7 @@ pub struct TestTarget {
 impl TestTarget {
     /// One built test binary, by everything cargo says about it that is not optional.
     ///
-    /// The identity is derived rather than given: it was a sixth argument that had to equal `target_id(package, kind, name)` and nothing checked it,
-    /// so a report could name a target that no run could route to.
+    /// The identity is derived rather than given: it was a sixth argument that had to equal `target_id(package, kind, name)` and nothing checked it, so a report could name a target that no run could route to.
     #[must_use]
     #[expect(
         clippy::too_many_arguments,
@@ -308,6 +312,30 @@ impl TestTarget {
         }
     }
 
+    /// The target's stable `package/kind/name` identity.
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// The package that owns this target.
+    #[must_use]
+    pub fn package(&self) -> &str {
+        &self.package
+    }
+
+    /// The kind of target.
+    #[must_use]
+    pub const fn kind(&self) -> TargetKind {
+        self.kind
+    }
+
+    /// The target's name within its package.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     /// Whether the target is built with the libtest harness, which decides how its silence is read.
     #[must_use]
     pub const fn with_harness(mut self, harness: bool) -> Self {
@@ -317,7 +345,7 @@ impl TestTarget {
 
     /// What a run could not establish about this target.
     #[must_use]
-    pub fn with_limitations(mut self, limitations: Vec<String>) -> Self {
+    pub fn with_limitations(mut self, limitations: Vec<crate::limitation::Limitation>) -> Self {
         self.limitations = limitations;
         self
     }
@@ -383,6 +411,8 @@ pub struct Lines {
     pub failed: Vec<String>,
     /// Every test that was ignored.
     pub ignored: Vec<String>,
+    /// Every test the harness said should panic, whatever came of it, which is not part of its name.
+    pub should_panic: Vec<String>,
 }
 
 impl Lines {
@@ -410,9 +440,12 @@ pub fn parse_lines(output: &[u8]) -> Result<Lines, LibtestOutputError> {
 fn parse_lines_text(text: &str) -> Lines {
     let mut lines = Lines::default();
     for line in text.lines() {
-        let Some((name, verdict)) = verdict_of(line) else {
+        let Some((name, verdict, should_panic)) = verdict_of(line) else {
             continue;
         };
+        if should_panic {
+            lines.should_panic.push(name.to_owned());
+        }
         match verdict {
             "ok" => lines.passed.push(name.to_owned()),
             "FAILED" => lines.failed.push(name.to_owned()),
@@ -426,12 +459,16 @@ fn parse_lines_text(text: &str) -> Lines {
 /// What libtest writes after the name of a test that expects a panic, which is not part of the name.
 const SHOULD_PANIC: &str = " - should panic";
 
-/// The name and verdict of one `test <name> ... <verdict>` line.
-fn verdict_of(line: &str) -> Option<(&str, &str)> {
+/// The name and verdict of one `test <name> ... <verdict>` line, and whether the harness said the test should panic.
+fn verdict_of(line: &str) -> Option<(&str, &str, bool)> {
     let rest = line.trim_end().strip_prefix("test ")?;
     let (name, verdict) = rest.rsplit_once(" ... ")?;
-    let name = name.strip_suffix(SHOULD_PANIC).unwrap_or(name).trim();
-    (!name.is_empty()).then_some((name, verdict.trim()))
+    let (name, should_panic) = match name.strip_suffix(SHOULD_PANIC) {
+        Some(expecting_a_panic) => (expecting_a_panic, true),
+        None => (name, false),
+    };
+    let name = name.trim();
+    (!name.is_empty()).then_some((name, verdict.trim(), should_panic))
 }
 
 /// Reads the last `test result:` line of a captured output.
@@ -443,11 +480,27 @@ pub fn parse_summary(output: &[u8]) -> Result<Option<Summary>, LibtestOutputErro
     Ok(parse_summary_text(text))
 }
 
+/// Every summary line of `text` counted together, as rustdoc's reports are one run: nothing where there is none or the counts do not fit.
+fn summed_summaries(text: &str) -> Option<Summary> {
+    let mut summaries = text.lines().filter_map(parse_summary_line);
+    let first = summaries.next()?;
+    summaries.try_fold(first, |sum, one| {
+        Some(Summary {
+            ok: sum.ok && one.ok,
+            passed: sum.passed.checked_add(one.passed)?,
+            failed: sum.failed.checked_add(one.failed)?,
+            ignored: sum.ignored.checked_add(one.ignored)?,
+            measured: sum.measured.checked_add(one.measured)?,
+            filtered_out: sum.filtered_out.checked_add(one.filtered_out)?,
+        })
+    })
+}
+
 fn parse_summary_text(text: &str) -> Option<Summary> {
     text.lines().rev().find_map(parse_summary_line)
 }
 
-fn parse_summary_line(line: &str) -> Option<Summary> {
+pub(crate) fn parse_summary_line(line: &str) -> Option<Summary> {
     let rest = line.trim().strip_prefix("test result: ")?;
     let (verdict, counts) = rest.split_once('.')?;
     let mut summary = Summary {
@@ -565,15 +618,17 @@ pub enum StepProtocolFailure {
         /// The operating-system diagnostic.
         detail: String,
     },
-    /// The generated runtime exited for a failed protocol and said nothing this release can read.
+    /// The process exited with the step-protocol code but no readable stop record.
     Publication {},
-    /// The generated runtime exited for a failed protocol and named the check that failed.
+    /// The process exited with the step-protocol code and a recognized stop record.
     Stated {
         /// The check, as the runtime names it.
         check: String,
         /// The operating system's code where a call the runtime made is what failed, and `0` where none did.
         os: i32,
     },
+    /// The process exited with the step-protocol code, and the run's reading of its stop record disagreed with that record decided again, so no check is named.
+    Unconfirmed {},
     /// A monitor stop had no completed notice.
     NoticeMissing {},
     /// The opened notice was not a regular file.
@@ -648,17 +703,19 @@ impl StepProtocolFailure {
             Self::MonitorInspect { path, detail } => {
                 format!("the notice path {path} could not be inspected: {detail}")
             }
-            Self::Publication {} => "the step protocol's status came with no word of which check \
-                                     failed, which only a runtime this release did not generate \
-                                     leaves: a stale build is linked into the tree"
+            Self::Publication {} => "the process exited with the step-protocol status but no complete stop record named which check failed"
                 .to_owned(),
             Self::Stated { check, os: 0 } => {
-                format!("the generated runtime stopped at its step-protocol check `{check}`")
+                format!("a step-protocol stop record named check `{check}`")
             }
             Self::Stated { check, os } => format!(
-                "the generated runtime stopped at its step-protocol check `{check}`, where the \
+                "a step-protocol stop record named check `{check}`, where the \
                  operating system answered {os}"
             ),
+            Self::Unconfirmed {} => "the process exited with the step-protocol status, and the \
+                                     run's reading of its stop record disagreed with the record \
+                                     read again, so no check is named"
+                .to_owned(),
             Self::NoticeMissing {} => "the runtime stopped for its allowance and no complete \
                                        notice was there"
                 .to_owned(),
@@ -800,7 +857,8 @@ impl StartFailure {
             | RunnerError::DeadlineOverflow { .. }
             | RunnerError::ProcessControlFailed { .. }
             | RunnerError::ProcessControlSequenceFailed { .. }
-            | RunnerError::SupervisorReleaseFailed { .. } => Self::Other {
+            | RunnerError::SupervisorReleaseFailed { .. }
+            | RunnerError::AnsweredStopInconsistent => Self::Other {
                 detail: error.to_string(),
             },
         }
@@ -895,7 +953,7 @@ pub struct StepLimitNotice {
 /// A computation that enters either without re-entering an instrumented function or closure can therefore end only by itself or by the wall-clock supervisor, whose outcome is [`crate::outcome::Outcome::Waited`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StepBoundaryScope {
-    /// Non-const function entries, loop bodies, async blocks, and every closure invocation in mutable workspace source.
+    /// Non-const function entries, loop bodies, async blocks, and every closure invocation in every workspace file that carries the runtime, test code included.
     InstrumentedWorkspaceSource,
 }
 
@@ -1072,8 +1130,8 @@ impl StepProtocolFailure {
 pub struct Observation {
     /// Its single terminal fact.
     pub stopped: Stopped,
-    /// Whether the process itself was refused by its runtime for carrying another catalog: it exited with the refusal's code and said so, which a test relaying a child's refusal does not.
-    pub stale_catalog: bool,
+    /// Whether the process's own runtime ended it because the run could not be done as asked, which is the apparatus and never the program: it exited with the status the runtime reserves for that and said so in the runtime's words, which a test relaying a child's refusal does not.
+    pub refused: bool,
 }
 
 impl Observation {
@@ -1081,12 +1139,33 @@ impl Observation {
         let stopped = observed_stop(result, step);
         Self {
             stopped,
-            stale_catalog: matches!(
-                result.termination,
-                Termination::Exited(ProcessExit::Code(crate::instrument::STALE_CATALOG_EXIT))
-            ) && said(&result.output, crate::instrument::STALE_CATALOG_MARKER),
+            refused: refused(result),
         }
     }
+}
+
+/// Whether the runtime ended the process for the apparatus: built from another catalog, unable to write what its guards reached, or named a fault it does not hold or a step protocol it could not keep.
+fn refused(result: &RunResult) -> bool {
+    let ended = |status: i32| {
+        matches!(
+            result.termination,
+            Termination::Exited(ProcessExit::Code(code)) if code == status
+        )
+    };
+    let recorded = |status: i32, known: fn(&str) -> bool| {
+        ended(status)
+            && rust_mutants_decision::said::record(&result.output)
+                .is_some_and(|record| record.status == status && known(record.check))
+    };
+    (ended(crate::instrument::STALE_CATALOG_EXIT)
+        && said(&result.output, crate::instrument::STALE_CATALOG_MARKER))
+        || recorded(crate::instrument::TOUCH_UNAVAILABLE_EXIT, touch_stop_check)
+        || recorded(STEP_PROTOCOL_EXIT, rust_mutants_decision::said::step_check)
+}
+
+/// Whether `check` is one the runtime ends a process with when it cannot record what its guards reached.
+fn touch_stop_check(check: &str) -> bool {
+    check.starts_with("touch: ") || check.starts_with("orphan: ")
 }
 
 /// Whether `output` holds `needle`.
@@ -1101,6 +1180,7 @@ fn said(output: &[u8], needle: &str) -> bool {
 struct ExpectedStep {
     path: PathBuf,
     state_path: PathBuf,
+    lock_path: PathBuf,
     beat_path: PathBuf,
     nonce: String,
     catalog: String,
@@ -1141,6 +1221,12 @@ enum StepSetupError {
     },
     #[error("could not sync fresh step state {path}: {source}")]
     StateSync {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("could not create the fresh step lock {path}: {source}")]
+    LockCreate {
         path: PathBuf,
         #[source]
         source: std::io::Error,
@@ -1292,9 +1378,20 @@ impl ExpectedStep {
                 path: state_path.clone(),
                 source,
             })?;
+        let lock_path = crate::instrument::step_lock_path(&state_path);
+        let empty_until_a_take_locks_it = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_path)
+            .map_err(|source| StepSetupError::LockCreate {
+                path: lock_path.clone(),
+                source,
+            })?;
+        drop(empty_until_a_take_locks_it);
         Ok(Some(Self {
             path,
             state_path,
+            lock_path,
             beat_path,
             nonce,
             catalog: catalog.to_owned(),
@@ -1439,6 +1536,7 @@ impl ExpectedStep {
         let partial = self.path.with_extension("notice.partial");
         remove_notice(&partial)?;
         remove_notice(&self.state_path)?;
+        remove_notice(&self.lock_path)?;
         remove_notice(&self.beat_path)
     }
 }
@@ -1512,8 +1610,7 @@ fn observed_stop(result: &RunResult, step: Option<&ExpectedStep>) -> Stopped {
         };
     }
     match notice {
-        Ok(Some(notice)) => Stopped::StepLimitReached { notice },
-        Ok(None)
+        Ok(_)
             if matches!(
                 result.termination,
                 Termination::Exited(ProcessExit::Code(STEP_PROTOCOL_EXIT))
@@ -1523,6 +1620,7 @@ fn observed_stop(result: &RunResult, step: Option<&ExpectedStep>) -> Stopped {
                 reason: stated(&result.output),
             }
         }
+        Ok(Some(notice)) => Stopped::StepLimitReached { notice },
         Ok(None) if matches!(result.termination, Termination::StoppedByMonitor) => {
             Stopped::StepProtocolFailed {
                 reason: StepProtocolFailure::NoticeMissing {},
@@ -1541,39 +1639,60 @@ fn observed_stop(result: &RunResult, step: Option<&ExpectedStep>) -> Stopped {
     }
 }
 
-/// What the generated runtime said on its way out of a failed step protocol: the last line it wrote in the shape it writes, or that it said nothing this release reads.
+/// What the generated runtime said on its way out of a failed step protocol, as [`rust_mutants_decision::said::stated`] reads it, where the output confirms that reading, and [`StepProtocolFailure::Unconfirmed`] where it does not.
 fn stated(output: &[u8]) -> StepProtocolFailure {
-    let said = output.split(|byte| *byte == b'\n').rev().find_map(|line| {
-        let line = match std::str::from_utf8(line) {
-            Ok(line) => line,
-            Err(_not_a_line_the_runtime_wrote) => return None,
-        };
-        let line = match line.strip_suffix('\r') {
-            Some(line) => line,
-            None => line,
-        };
-        let mut fields = line
-            .strip_prefix(STOP_SCHEMA)?
-            .strip_prefix('\t')?
-            .split('\t');
-        let (status, check, os, rest) = (
-            fields.next()?,
-            fields.next()?,
-            fields.next()?,
-            fields.next(),
-        );
-        let protocol = STEP_PROTOCOL_EXIT.to_string();
-        match (status == protocol, os.parse::<i32>(), rest) {
-            (true, Ok(os), None) => Some(StepProtocolFailure::Stated {
-                check: check.to_owned(),
-                os,
-            }),
-            (false, _, _) | (true, Err(_), _) | (true, Ok(_), Some(_)) => None,
-        }
-    });
-    match said {
-        Some(stated) => stated,
+    let reading = rust_mutants_decision::said::stated(output, STEP_PROTOCOL_EXIT);
+    if !stop_said_agrees(output, reading.map(|record| (record.check, record.os))) {
+        return StepProtocolFailure::Unconfirmed {};
+    }
+    match reading {
+        Some(record) => StepProtocolFailure::Stated {
+            check: record.check.to_owned(),
+            os: record.os,
+        },
         None => StepProtocolFailure::Publication {},
+    }
+}
+
+/// Whether `reading` is what the runtime's last line says, decided again apart from [`rust_mutants_decision::said::stated`]: a check it names is a known one whose stop line, written as the runtime writes it, is that line, and a reading that names none meets no known check's line there.
+fn stop_said_agrees(output: &[u8], reading: Option<(&str, i32)>) -> bool {
+    let Some(body) = output.strip_suffix(b"\n") else {
+        return reading.is_none();
+    };
+    let last = match body.iter().rposition(|byte| *byte == b'\n') {
+        Some(newline) => body.get(newline..).and_then(|line| line.get(1..)),
+        None => Some(body),
+    };
+    let Some(last) = last else {
+        return reading.is_none();
+    };
+    let last = match last.strip_suffix(b"\r") {
+        Some(without) => without,
+        None => last,
+    };
+    let opening = |check: &str| format!("{STOP_SCHEMA}\t{STEP_PROTOCOL_EXIT}\t{check}\t");
+    match reading {
+        Some((check, os)) => {
+            rust_mutants_decision::said::STEP_CHECKS.contains(&check)
+                && last == format!("{}{os}", opening(check)).as_bytes()
+        }
+        None => !rust_mutants_decision::said::STEP_CHECKS
+            .iter()
+            .any(|check| {
+                last.strip_prefix(opening(check).as_bytes())
+                    .is_some_and(|code| written_code(code).is_some())
+            }),
+    }
+}
+
+/// The code `bytes` spell where they spell it as the runtime writes one, which is how Rust formats an `i32`.
+fn written_code(bytes: &[u8]) -> Option<i32> {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return None;
+    };
+    match text.parse::<i32>() {
+        Ok(code) if code.to_string() == text => Some(code),
+        Ok(_) | Err(_) => None,
     }
 }
 
@@ -1603,7 +1722,7 @@ pub fn outcome_of(
         Stopped::StepLimitReached { .. } => return Outcome::StepLimitReached,
         Stopped::Exited { exit } => *exit,
     };
-    if observed.stale_catalog {
+    if observed.refused {
         return Outcome::Errored;
     }
     let code = match exit {
@@ -1729,6 +1848,9 @@ pub fn environment(
         );
         env.set(OsString::from(CRASH_NONCE_ENV), OsString::from(crash.nonce));
     }
+    if let Some(fate) = context.fate {
+        env.set(OsString::from(FAULT_FATE_ENV), fate.as_os_str().to_owned());
+    }
     if let Some(touch) = context.touch {
         env.set(OsString::from(TOUCH_ENV), touch.log.as_os_str().to_owned());
         env.set(OsString::from(CATALOG_ENV), OsString::from(touch.catalog));
@@ -1773,54 +1895,48 @@ pub fn environment(
 
 /// Points `env`'s temporary directories at `scratch`'s, and its home at `scratch`'s own where it has one.
 fn scratched(env: &mut crate::vars::Variables, scratch: &Scratch) {
-    for name in ["TMPDIR", "TMP", "TEMP"] {
-        env.set(name, scratch.tmp.as_os_str().to_owned());
-    }
-    if let Some(home) = &scratch.home {
-        confine(env, home);
+    changed(env, confinement::temporary(scratch.tmp()));
+    if let Some(home) = scratch.layout.home_directory() {
+        let given = env.var(confinement::GIVEN_HOME).map(PathBuf::from);
+        let changes = confinement::confining(
+            home,
+            given.as_deref(),
+            |name| env.holds(name),
+            drive_of(home),
+        );
+        changed(env, changes);
     }
 }
 
-/// The home the run was given, as the platform names it.
-const GIVEN_HOME: &str = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
-
-/// Gives `env` the home at `home`, with the homes a build needs pinned where the given home keeps them and nothing left that names the given home's git identity.
-fn confine(env: &mut crate::vars::Variables, home: &Path) {
-    let given = env.var(GIVEN_HOME).map(PathBuf::from);
-    for (name, beside) in PINNED_HOMES {
-        if env.holds(name) {
-            continue;
-        }
-        if let Some(given) = &given {
-            env.set(name, given.join(beside).into_os_string());
+/// Makes each of `changes` to `env`, in order.
+fn changed(env: &mut crate::vars::Variables, changes: Vec<confinement::Change>) {
+    for change in changes {
+        match change {
+            confinement::Change::Set { name, value } => env.set(name, value),
+            confinement::Change::Remove { name } => env.remove(name),
         }
     }
-    env.remove(GIT_GLOBAL_CONFIG);
-    for (name, under) in CONFINED_HOME {
-        env.set(name, home.join(under).into_os_string());
-    }
-    drive_and_rest(env, home);
 }
 
-/// Gives `env` `home` as Windows spells a home in two variables, `HOMEDRIVE` and a `HOMEPATH` under it, where it has a drive.
-fn drive_and_rest(env: &mut crate::vars::Variables, home: &Path) {
+/// The drive `home` is on and its parts after it, where it has one, as the platform reads the path.
+fn drive_of(home: &Path) -> Option<(&std::ffi::OsStr, std::path::Components<'_>)> {
     let mut parts = home.components();
-    let Some(std::path::Component::Prefix(prefix)) = parts.next() else {
-        return;
-    };
-    let rest: PathBuf = parts.collect();
-    let mut under = OsString::from(std::path::MAIN_SEPARATOR_STR);
-    under.push(rest.as_os_str());
-    env.set("HOMEDRIVE", prefix.as_os_str().to_owned());
-    env.set("HOMEPATH", under);
+    match parts.next() {
+        Some(std::path::Component::Prefix(prefix)) => Some((prefix.as_os_str(), parts)),
+        Some(
+            std::path::Component::RootDir
+            | std::path::Component::CurDir
+            | std::path::Component::ParentDir
+            | std::path::Component::Normal(_),
+        )
+        | None => None,
+    }
 }
 
 /// The directories one execution is given, none inside another (ADR 0044): the temporary directory its process sees, the engine's own files about it, and a home of its own where its home is confined.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Scratch {
-    tmp: PathBuf,
-    engine: PathBuf,
-    home: Option<PathBuf>,
+    layout: confinement::Layout,
     /// What making the home put in it, each by its path under the home, a directory with a trailing `/`, with the digest of a file's bytes.
     made: BTreeMap<String, Option<String>>,
 }
@@ -1830,12 +1946,7 @@ impl Scratch {
     #[must_use]
     pub fn under(own: &Path, home: Home) -> Self {
         Self {
-            tmp: own.join("tmp"),
-            engine: own.join("engine"),
-            home: match home {
-                Home::Confined => Some(own.join("home")),
-                Home::Given => None,
-            },
+            layout: confinement::Layout::under(own, home),
             made: BTreeMap::new(),
         }
     }
@@ -1850,38 +1961,37 @@ impl Scratch {
         base: &crate::vars::Variables,
     ) -> Result<Self, SessionError> {
         let mut scratch = Self::under(own, home);
-        for directory in [&scratch.tmp, &scratch.engine] {
+        for directory in [scratch.layout.tmp(), scratch.layout.engine()] {
             std::fs::create_dir_all(directory).map_err(|source| {
                 SessionError::ScratchCreateFailed {
-                    path: directory.clone(),
+                    path: directory.to_path_buf(),
                     source,
                 }
             })?;
         }
-        if let Some(home) = &scratch.home {
+        if let Some(home) = scratch.layout.home_directory() {
+            let mut made = BTreeMap::new();
             for (_, under) in CONFINED_HOME {
                 made_directory(&home.join(under))?;
-                let mut directory = String::new();
-                for part in under.split('/').filter(|part| !part.is_empty()) {
-                    directory.push_str(part);
-                    directory.push('/');
-                    scratch.made.insert(directory.clone(), None);
+                for directory in confinement::directories(under) {
+                    made.insert(directory, None);
                 }
             }
             owner_only(&home.join(RUNTIME_UNDER_HOME))?;
-            for (from, under) in identity(base) {
+            let identity = confinement::identity(
+                base.var(confinement::GIVEN_HOME).map(Path::new),
+                base.var(GIT_GLOBAL_CONFIG),
+                base.var("XDG_CONFIG_HOME"),
+            );
+            for (from, under) in identity {
                 if let Some(digest) = copied_if_present(&from, &home.join(under))? {
-                    if let Some((parent, _)) = under.rsplit_once('/') {
-                        let mut directory = String::new();
-                        for part in parent.split('/') {
-                            directory.push_str(part);
-                            directory.push('/');
-                            scratch.made.insert(directory.clone(), None);
-                        }
+                    for directory in confinement::holding(under) {
+                        made.insert(directory, None);
                     }
-                    scratch.made.insert(under.to_owned(), Some(digest));
+                    made.insert(under.to_owned(), Some(digest));
                 }
             }
+            scratch.made = made;
         }
         Ok(scratch)
     }
@@ -1889,34 +1999,34 @@ impl Scratch {
     /// This layout, keeping the engine's own files in `engine` instead: a run over what another left in the rest.
     #[must_use]
     pub fn with_engine(self, engine: PathBuf) -> Self {
-        Self { engine, ..self }
+        Self {
+            layout: self.layout.with_engine(engine),
+            ..self
+        }
     }
 
     /// The temporary directory the process sees.
     #[must_use]
     pub fn tmp(&self) -> &Path {
-        &self.tmp
+        self.layout.tmp()
     }
 
     /// Where the engine keeps its own files about the process.
     #[must_use]
     pub fn engine(&self) -> &Path {
-        &self.engine
+        self.layout.engine()
     }
 
     /// The home the process is given where it is its own, with what making it put there, each by its path under it, a directory with a trailing `/`, with the digest of a file's bytes.
     #[must_use]
     pub fn made_in_home(&self) -> Option<(&Path, &BTreeMap<String, Option<String>>)> {
-        self.home.as_deref().map(|home| (home, &self.made))
+        self.layout.home_directory().map(|home| (home, &self.made))
     }
 
     /// Which home the process is given.
     #[must_use]
     pub const fn home(&self) -> Home {
-        match self.home {
-            Some(_) => Home::Confined,
-            None => Home::Given,
-        }
+        self.layout.home()
     }
 }
 
@@ -1957,25 +2067,20 @@ fn confinement_held(
     env: &crate::vars::Variables,
     scratch: &Scratch,
 ) -> Result<(), ConfinementError> {
-    let Some(home) = &scratch.home else {
+    let Some(home) = scratch.layout.home_directory() else {
         return Ok(());
     };
-    for (name, under) in CONFINED_HOME {
-        let expected = home.join(under);
-        let found = env.var(name);
-        if found != Some(expected.as_os_str()) {
-            return Err(ConfinementError::Escaped {
-                name,
-                found: found.map(std::ffi::OsStr::to_owned),
-                expected,
-            });
-        }
-    }
-    match env.var(GIT_GLOBAL_CONFIG) {
-        Some(found) => Err(ConfinementError::GitGlobal {
-            found: found.to_owned(),
-        }),
+    match rust_mutants_decision::confinement::escape(
+        |name| env.var(name).map(std::ffi::OsStr::to_owned),
+        |under| home.join(under).into_os_string(),
+    ) {
         None => Ok(()),
+        Some(Escape::Escaped { name, under, found }) => Err(ConfinementError::Escaped {
+            name,
+            found,
+            expected: home.join(under),
+        }),
+        Some(Escape::GitGlobal { found }) => Err(ConfinementError::GitGlobal { found }),
     }
 }
 
@@ -2007,31 +2112,6 @@ fn owner_only(directory: &Path) -> Result<(), SessionError> {
 )]
 const fn owner_only(_directory: &Path) -> Result<(), SessionError> {
     Ok(())
-}
-
-/// The files git reads a user's identity from under the home the run was given, each with where a confined home keeps it: `GIT_CONFIG_GLOBAL` in place of `~/.gitconfig` where it is set, and `$XDG_CONFIG_HOME/git/config`, or `~/.config/git/config` where that is unset.
-fn identity(base: &crate::vars::Variables) -> Vec<(PathBuf, &'static str)> {
-    let given = base.var(GIVEN_HOME).map(PathBuf::from);
-    let named = |name: &str| {
-        base.var(name)
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from)
-    };
-    let mut found = Vec::new();
-    match (named(GIT_GLOBAL_CONFIG), &given) {
-        (Some(global), _) => found.push((global, ".gitconfig")),
-        (None, Some(given)) => found.push((given.join(".gitconfig"), ".gitconfig")),
-        (None, None) => {}
-    }
-    let configuration =
-        named("XDG_CONFIG_HOME").or_else(|| given.map(|given| given.join(".config")));
-    if let Some(configuration) = configuration {
-        found.push((
-            configuration.join("git").join("config"),
-            ".config/git/config",
-        ));
-    }
-    found
 }
 
 /// Copies `from` to `to`, making `to`'s directory first, where `from` is a regular file, and answers the digest of what it copied: an absent source, or one that is no regular file as `/dev/null` is when git is told to read no global configuration, is nothing to copy, and every other failure is one.
@@ -2244,7 +2324,10 @@ impl<'a> ExecRequest<'a> {
     /// Every named test is passed as a filter with `--exact`, so a name that is a prefix of another cannot drag it in.
     #[must_use]
     pub fn argv(&self) -> Vec<OsString> {
-        let mut argv = self.launcher.and_then(Launcher::argv).unwrap_or_default();
+        let mut argv = match self.launcher.and_then(Launcher::argv) {
+            Some(launching) => launching,
+            None => Vec::new(),
+        };
         argv.push(self.target.executable.clone().into_os_string());
         if !self.target.through.is_empty() {
             argv.extend(self.target.through.iter().cloned());
@@ -2291,39 +2374,10 @@ pub struct Context<'a> {
     /// Where the runtime publishes that a crash stopped the process, and the nonce that ties the notice to this execution.
     /// `None` runs a process whose crash, if it has one, says nothing it can be told by.
     pub crash: Option<Crashing<'a>>,
+    /// Where the runtime records what became of each failure the active fault made (ADR 0032).
+    /// `None` runs a process whose failures record nothing.
+    pub fate: Option<&'a Path>,
 }
-
-/// Which home a test process is given (ADR 0044).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum Home {
-    /// A home of the execution's own, beside its temporary directory, which the scratch's emptying takes with it.
-    Confined,
-    /// The home the run was given, for a target whose tests pass only with it.
-    Given,
-}
-
-/// The variables a confined home replaces, each as a path under the execution's home, in the order they are set.
-const CONFINED_HOME: [(&str, &str); 9] = [
-    ("HOME", ""),
-    ("XDG_CONFIG_HOME", ".config"),
-    ("XDG_CACHE_HOME", ".cache"),
-    ("XDG_STATE_HOME", ".local/state"),
-    ("XDG_DATA_HOME", ".local/share"),
-    ("XDG_RUNTIME_DIR", RUNTIME_UNDER_HOME),
-    ("USERPROFILE", ""),
-    ("APPDATA", "AppData/Roaming"),
-    ("LOCALAPPDATA", "AppData/Local"),
-];
-
-/// Where a confined home keeps the runtime directory, which only its owner may enter.
-const RUNTIME_UNDER_HOME: &str = ".local/run";
-
-/// The homes a build needs where they are, each with the directory it defaults to under the home the run was given.
-const PINNED_HOMES: [(&str, &str); 2] = [("CARGO_HOME", ".cargo"), ("RUSTUP_HOME", ".rustup")];
-
-/// The variable naming the file git reads a user's global configuration from in place of `~/.gitconfig`.
-const GIT_GLOBAL_CONFIG: &str = "GIT_CONFIG_GLOBAL";
 
 /// A fresh 128-bit nonce in lowercase hexadecimal, which ties a notice the runtime publishes to exactly one execution.
 ///
@@ -2491,6 +2545,8 @@ pub struct MutantResult {
     pub passed_tests: Vec<String>,
     /// Every test the harness was told to skip.
     pub ignored_tests: Vec<String>,
+    /// Every test the harness said should panic, by name without what it appends to say so.
+    pub should_panic_tests: Vec<String>,
     /// The items the whole process entered, when the execution was asked to record them and could.
     pub entered: Option<crate::touch::Entered>,
     /// The one way the process ended, which is what an account of it can claim to be whole on.
@@ -2508,21 +2564,12 @@ pub struct MutantResult {
 pub enum Protocol {
     /// libtest, which names every test's result and closes with a summary counting them.
     Libtest,
+    /// rustdoc, which prints the libtest report of each merged doctest binary it ran and then one of its own, each closing with a summary.
+    Rustdoc,
     /// A harness that answers by its exit code and names no test.
     Custom,
     /// No process answered, so no protocol was spoken.
     Unanswered,
-}
-
-/// Whether the tests a run was read as passing are the harness's answer rather than the parser's.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
-pub enum Reading {
-    /// libtest's named passing tests come to its own summary's count.
-    Whole,
-    /// libtest's named passing tests do not come to its summary's count, or it printed no summary: a line the suite wrote past the capture read as a result, or split one.
-    Short,
-    /// The protocol names no tests and prints no summary, so there is nothing to fall short of.
-    Unspoken,
 }
 
 impl MutantResult {
@@ -2536,7 +2583,7 @@ impl MutantResult {
     #[must_use]
     pub fn reading(&self) -> Reading {
         match self.protocol {
-            Protocol::Libtest => {
+            Protocol::Libtest | Protocol::Rustdoc => {
                 let whole = self.tests_run().is_some_and(|ran| {
                     usize::try_from(ran).is_ok_and(|ran| ran == self.passed_tests.len())
                 });
@@ -2547,6 +2594,26 @@ impl MutantResult {
                 }
             }
             Protocol::Custom | Protocol::Unanswered => Reading::Unspoken,
+        }
+    }
+
+    /// What the harness's own report establishes about this run of `asked`, where the target answers in a report at all.
+    #[must_use]
+    pub fn harness_report(
+        &self,
+        asked: crate::libtest::Asked<'_>,
+    ) -> Option<Result<crate::libtest::HarnessReport, crate::libtest::Unaccounted>> {
+        match self.protocol {
+            Protocol::Libtest => Some(crate::libtest::harness_report(
+                &self.output,
+                asked,
+                self.signal.is_none().then_some(self.exit_code),
+            )),
+            Protocol::Rustdoc => Some(crate::libtest::harness_reports(
+                &self.output,
+                self.signal.is_none().then_some(self.exit_code),
+            )),
+            Protocol::Custom | Protocol::Unanswered => None,
         }
     }
 
@@ -2568,6 +2635,7 @@ impl MutantResult {
             failed_tests: Vec::new(),
             passed_tests: Vec::new(),
             ignored_tests: Vec::new(),
+            should_panic_tests: Vec::new(),
             leader: None,
             lingered: false,
             declines: crate::decline::Declines::none(),
@@ -2661,6 +2729,9 @@ fn concluded(
     output: &[u8],
 ) -> (MutantConclusion, Option<Summary>, Lines) {
     let (summary, lines, protocol_exact) = match (target.harness, std::str::from_utf8(output)) {
+        (true, Ok(text)) if target.kind() == TargetKind::Doc => {
+            (summed_summaries(text), parse_lines_text(text), true)
+        }
         (true, Ok(text)) => (parse_summary_text(text), parse_lines_text(text), true),
         (true, Err(_not_utf8)) => (None, Lines::default(), false),
         (false, _) => (None, Lines::default(), true),
@@ -2702,7 +2773,7 @@ pub fn exec(
     spec.leaders = context.leaders.cloned();
     spec.stop_at_first_failure = answered_by_one_failure(target, context);
     spec.dir = Some(match (&request.scratch, request.scratch_cwd) {
-        (Some(scratch), true) => scratch.tmp.clone(),
+        (Some(scratch), true) => scratch.tmp().to_path_buf(),
         _ => target.cwd.clone(),
     });
     let mut env = match environment(context, target, request.scratch.as_ref()) {
@@ -2771,31 +2842,45 @@ fn finished(
         exit_code: result.conventional_exit_code(),
         duration: result.duration,
         output: result.output,
-        protocol: if target.harness {
-            Protocol::Libtest
-        } else {
-            Protocol::Custom
+        protocol: match (target.kind(), target.harness) {
+            (TargetKind::Doc, _) => Protocol::Rustdoc,
+            (
+                TargetKind::Lib
+                | TargetKind::Bin
+                | TargetKind::Test
+                | TargetKind::Example
+                | TargetKind::ProcMacro,
+                true,
+            ) => Protocol::Libtest,
+            (
+                TargetKind::Lib
+                | TargetKind::Bin
+                | TargetKind::Test
+                | TargetKind::Example
+                | TargetKind::ProcMacro,
+                false,
+            ) => Protocol::Custom,
         },
         summary,
         signal,
         failed_tests: lines.failed,
         passed_tests: lines.passed,
         ignored_tests: lines.ignored,
+        should_panic_tests: lines.should_panic,
         leader: result.leader,
         lingered,
         stopped: observation.stopped,
         declines: crate::decline::Declines::none(),
     };
-    answered.declines =
-        crate::decline::Declines::of(notice, answered.reading(), &answered.passed_tests);
+    answered.declines = crate::decline::of(notice, answered.reading(), &answered.passed_tests);
     answered
 }
 
 /// Configures [`build`].
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct BuildOptions {
     /// `--target-dir`, with the members a build into it may compile.
-    pub target_dir: Option<crate::cargo::BuildDir>,
+    pub target_dir: crate::cargo::BuildDir,
     /// Pass `--locked`.
     pub locked: bool,
     /// Pass `--offline`.
@@ -2829,20 +2914,16 @@ pub fn build(
             build: options.build.clone(),
         },
     )?;
-    if !compiled.success {
-        return Err(CargoError::new(
-            CargoErrorKind::CommandFailed,
-            "the test binaries could not be built",
-        ));
+    match compiled.completion() {
+        crate::cargo::Completion::Built => {}
+        crate::cargo::Completion::Refused => {
+            return Err(CargoError::new(
+                CargoErrorKind::CommandFailed,
+                "the test binaries could not be built",
+            ));
+        }
     }
-    targets_of(
-        &compiled.messages,
-        packages,
-        options
-            .target_dir
-            .as_ref()
-            .map(crate::cargo::BuildDir::path),
-    )
+    targets_of(&compiled.messages, packages, options.target_dir.path())
 }
 
 /// The targets a run may start, which is every one `skipped` does not name.
@@ -2859,17 +2940,17 @@ pub fn startable(targets: &[TestTarget], skipped: &[String]) -> Vec<TestTarget> 
         .collect()
 }
 
-/// The test binaries a build produced, in target id order.
+/// The test binaries a build produced, in target id order, laid out in `target_dir`: the target directory, or a named target's own inside it.
 ///
 /// # Errors
 /// Refuses a cargo message stream that names two different executable paths for the same package target.
 pub fn targets_of(
     messages: &[Message],
     packages: &[Package],
-    target_dir: Option<&Path>,
+    target_dir: &Path,
 ) -> Result<Vec<TestTarget>, CargoError> {
     let binaries = binaries_built(messages)?;
-    let mut harnesses: BTreeMap<String, BTreeMap<(String, String), bool>> = BTreeMap::new();
+    let mut harnesses: BTreeMap<String, crate::cargo::manifest::Harnesses> = BTreeMap::new();
     let mut targets = Vec::new();
     for message in messages {
         let Message::CompilerArtifact(artifact) = message else {
@@ -2899,17 +2980,11 @@ pub fn targets_of(
         env.overlay(&built_by_a_script(messages, &artifact.package_id));
         let held = match harnesses.entry(package.id.clone()) {
             std::collections::btree_map::Entry::Occupied(held) => held.into_mut(),
-            std::collections::btree_map::Entry::Vacant(empty) => {
-                empty.insert(crate::cargo::manifest::harnesses(&package.manifest_path)?)
-            }
+            std::collections::btree_map::Entry::Vacant(empty) => empty.insert(
+                crate::cargo::manifest::harnesses(package.manifest_path.as_path())?,
+            ),
         };
-        let harness = held
-            .get(&(kind.name().to_owned(), artifact.target.name.clone()))
-            .copied();
-        let harness = match harness {
-            Some(harness) => harness,
-            None => true,
-        };
+        let harness = held.of(&artifact.target);
         targets.push(
             TestTarget::new(
                 package.name.clone(),
@@ -2922,7 +2997,7 @@ pub fn targets_of(
             .with_limitations(if harness {
                 Vec::new()
             } else {
-                vec![crate::limitation::CUSTOM_HARNESS.to_owned()]
+                vec![crate::limitation::Limitation::CustomHarness]
             })
             .with_cargo_env(env),
         );
@@ -2983,7 +3058,7 @@ pub fn documentation_targets(
                     package.manifest_dir().to_path_buf(),
                 )
                 .with_through(through)
-                .with_limitations(vec![crate::limitation::DOCTESTS_ROUTED_BY_FILE.to_owned()]),
+                .with_limitations(vec![crate::limitation::Limitation::DoctestsRoutedByFile]),
             );
         }
     }
@@ -2996,14 +3071,12 @@ pub fn documentation_targets(
 fn cargo_environment(
     package: &Package,
     kind: TargetKind,
-    target_dir: Option<&Path>,
+    target_dir: &Path,
     binaries: &BTreeMap<String, PathBuf>,
 ) -> crate::vars::Variables {
     let mut env = package_environment(package);
     if matches!(kind, TargetKind::Test | TargetKind::Example) {
-        if let Some(target_dir) = target_dir {
-            env.set("CARGO_TARGET_TMPDIR", target_dir.join("tmp"));
-        }
+        env.set("CARGO_TARGET_TMPDIR", target_dir.join("tmp"));
         for target in &package.targets {
             if !target.is_bin() {
                 continue;
@@ -3020,9 +3093,14 @@ fn cargo_environment(
 #[must_use]
 pub fn package_environment(package: &Package) -> crate::vars::Variables {
     let (major, minor, patch, pre) = version_parts(&package.version);
-    let said = |value: Option<&str>| OsString::from(value.unwrap_or_default());
-    let named =
-        |value: Option<&Path>| value.map_or_else(OsString::new, |one| one.as_os_str().to_owned());
+    let said = |value: Option<&str>| match value {
+        Some(told) => OsString::from(told),
+        None => OsString::new(),
+    };
+    let named = |value: Option<&Path>| match value {
+        Some(one) => one.as_os_str().to_owned(),
+        None => OsString::new(),
+    };
     crate::vars::Variables::of([
         (
             OsString::from("CARGO_MANIFEST_DIR"),
@@ -3030,7 +3108,7 @@ pub fn package_environment(package: &Package) -> crate::vars::Variables {
         ),
         (
             OsString::from("CARGO_MANIFEST_PATH"),
-            package.manifest_path.as_os_str().to_owned(),
+            package.manifest_path.as_path().as_os_str().to_owned(),
         ),
         (
             OsString::from("CARGO_PKG_NAME"),
@@ -3090,18 +3168,20 @@ pub fn package_environment(package: &Package) -> crate::vars::Variables {
 
 /// A semantic version cut the way cargo cuts it: three numbers and whatever follows the first hyphen.
 fn version_parts(version: &str) -> (&str, &str, &str, &str) {
-    let (numbers, pre) = version.split_once('-').unwrap_or((version, ""));
+    let (numbers, pre) = match version.split_once('-') {
+        Some((numbers, pre)) => (numbers, pre),
+        None => (version, ""),
+    };
     let numbers = match numbers.split_once('+') {
         Some((without_build, _)) => without_build,
         None => numbers,
     };
     let mut parts = numbers.split('.');
-    (
-        parts.next().unwrap_or_default(),
-        parts.next().unwrap_or_default(),
-        parts.next().unwrap_or_default(),
-        pre,
-    )
+    let mut next = || match parts.next() {
+        Some(part) => part,
+        None => "",
+    };
+    (next(), next(), next(), pre)
 }
 
 #[cfg(test)]
@@ -3180,6 +3260,7 @@ mod tests {
 
     use std::ffi::OsString;
     use std::path::Path;
+    use std::process::Command;
     use std::time::Duration;
 
     use njutest_devkit::result::{
@@ -3227,6 +3308,7 @@ mod tests {
         ExpectedStep {
             path: directory.join("step.notice"),
             state_path: directory.join("step.state"),
+            lock_path: crate::instrument::step_lock_path(&directory.join("step.state")),
             beat_path: directory.join("step.beat"),
             nonce: hex::encode(bytes),
             catalog: CATALOG_A.to_owned(),
@@ -3243,7 +3325,328 @@ mod tests {
             stdout: Vec::new(),
             stdout_truncated: false,
             leader: None,
+            waits: Vec::new(),
+            reader_waits: Vec::new(),
         }
+    }
+
+    fn generated_protocol_stop(
+        directory: &Path,
+        name: &str,
+        corrupt: impl FnOnce(String) -> String,
+    ) -> RunResult {
+        let module = crate::instrument::render(&crate::instrument::Rendering {
+            module: "__rm",
+            catalog_digest: CATALOG_A,
+            placements: &[],
+            markers: &[],
+            first_item: 0,
+            item_count: 0,
+            newline: "\n",
+            watched: "/unwatched-step-stop",
+        })
+        .expect("render generated runtime");
+        let source = directory.join(format!("{name}.rs"));
+        std::fs::write(
+            &source,
+            format!("{}\nfn main() {{ __rm::checkpoint(); }}\n", corrupt(module)),
+        )
+        .expect("write generated source");
+        let built = Command::new("rustc")
+            .args(["--edition", "2024", "--crate-type", "bin"])
+            .arg("--out-dir")
+            .arg(directory)
+            .arg(&source)
+            .output()
+            .expect("rustc runs");
+        assert!(built.status.success(), "{:?}", built.stderr);
+        let ran = Command::new(directory.join(format!("{name}{}", std::env::consts::EXE_SUFFIX)))
+            .env(crate::instrument::STEPS_ENV, "1")
+            .env(crate::instrument::WATCHED_ENV, "/unwatched-step-stop")
+            .env_remove(STEP_STATE_ENV)
+            .output()
+            .expect("run generated runtime");
+        assert_eq!(ran.status.code(), Some(STEP_PROTOCOL_EXIT));
+        assert!(ran.stdout.is_empty());
+        let mut result = result(Termination::Exited(ProcessExit::Code(STEP_PROTOCOL_EXIT)));
+        result.output = ran.stderr;
+        result
+    }
+
+    #[test]
+    fn a_planted_missing_or_misrecorded_runtime_stop_is_refused() {
+        let directory = returned!(tempfile::tempdir(), "tempdir");
+        let expected_line = format!("{STOP_SCHEMA}\t{STEP_PROTOCOL_EXIT}\tno state path\t0\n");
+        let normal = generated_protocol_stop(directory.path(), "normal", |module| module);
+        assert_eq!(normal.output, expected_line.as_bytes());
+        assert_eq!(
+            observed_stop(&normal, Some(&expected(directory.path()))),
+            Stopped::StepProtocolFailed {
+                reason: StepProtocolFailure::Stated {
+                    check: "no state path".to_owned(),
+                    os: 0,
+                },
+            }
+        );
+        let unheard = Command::new(
+            directory
+                .path()
+                .join(format!("normal{}", std::env::consts::EXE_SUFFIX)),
+        )
+        .env(crate::instrument::STEPS_ENV, "1")
+        .env(crate::instrument::WATCHED_ENV, "/unwatched-step-stop")
+        .env_remove(STEP_STATE_ENV)
+        .stderr(std::process::Stdio::null())
+        .output()
+        .expect("run generated runtime without captured stderr");
+        assert_eq!(unheard.status.code(), Some(STEP_PROTOCOL_EXIT));
+        assert!(unheard.stderr.is_empty());
+        let mut unheard_result = result(Termination::Exited(ProcessExit::Code(STEP_PROTOCOL_EXIT)));
+        unheard_result.output = unheard.stderr;
+        assert_eq!(
+            observed_stop(&unheard_result, Some(&expected(directory.path()))),
+            Stopped::StepProtocolFailed {
+                reason: StepProtocolFailure::Publication {},
+            }
+        );
+        assert_eq!(
+            StepProtocolFailure::Publication {}.sentence(),
+            "the process exited with the step-protocol status but no complete stop record named which check failed"
+        );
+        let competing = expected(directory.path());
+        publish(
+            &competing,
+            &notice_record(
+                ("rust-mutants-step-notice-v1", competing.nonce.as_str()),
+                (CATALOG_A, MUTANT_A),
+                (10, 11),
+            ),
+        );
+        assert_eq!(
+            observed_stop(&normal, Some(&competing)),
+            Stopped::StepProtocolFailed {
+                reason: StepProtocolFailure::Stated {
+                    check: "no state path".to_owned(),
+                    os: 0,
+                },
+            }
+        );
+        let missing = generated_protocol_stop(directory.path(), "missing", |module| {
+            module.replace(STOP_SCHEMA, "rust-mutants-stoX-v1")
+        });
+        assert_eq!(
+            observed_stop(&missing, Some(&expected(directory.path()))),
+            Stopped::StepProtocolFailed {
+                reason: StepProtocolFailure::Publication {},
+            }
+        );
+        let misrecorded = generated_protocol_stop(directory.path(), "misrecorded", |module| {
+            module.replace("status, error.check, error.os", "status, \"\", error.os")
+        });
+        assert_eq!(
+            observed_stop(&misrecorded, Some(&expected(directory.path()))),
+            Stopped::StepProtocolFailed {
+                reason: StepProtocolFailure::Publication {},
+            }
+        );
+    }
+
+    /// A binary of the generated runtime with one guard at catalog index 0 and `body` as its `main`, run with `env` and with no step protocol, as a result the way a supervisor reads one.
+    fn generated_binary(
+        directory: &Path,
+        (name, body): (&str, &str),
+        env: &[(&str, &str)],
+    ) -> RunResult {
+        let span = crate::span::Span::new(0, 1).expect("a span");
+        let placement = crate::instrument::Placement {
+            index: 0,
+            id: MUTANT_A.to_owned(),
+            edit: span,
+            original: b"a".to_vec(),
+            replacement: b"b".to_vec(),
+            hint: crate::syntax::SiteHint {
+                form: crate::syntax::Form::S,
+                site: span,
+                site_text: "a".to_owned(),
+                super_depth: 0,
+                const_fn: None,
+            },
+            carried: false,
+        };
+        let module = crate::instrument::render(&crate::instrument::Rendering {
+            module: "__rm",
+            catalog_digest: CATALOG_A,
+            placements: std::slice::from_ref(&placement),
+            markers: &[],
+            first_item: 0,
+            item_count: 0,
+            newline: "\n",
+            watched: "/unwatched-runtime-stop",
+        })
+        .expect("render generated runtime");
+        let source = directory.join(format!("{name}.rs"));
+        std::fs::write(&source, format!("{module}\nfn main() {{ {body} }}\n"))
+            .expect("write generated source");
+        let built = Command::new("rustc")
+            .args(["--edition", "2024", "--crate-type", "bin"])
+            .arg("--out-dir")
+            .arg(directory)
+            .arg(&source)
+            .output()
+            .expect("rustc runs");
+        assert!(built.status.success(), "{:?}", built.stderr);
+        let mut command =
+            Command::new(directory.join(format!("{name}{}", std::env::consts::EXE_SUFFIX)));
+        command
+            .env(crate::instrument::WATCHED_ENV, "/unwatched-runtime-stop")
+            .env_remove(crate::instrument::STEPS_ENV)
+            .env_remove(STEP_STATE_ENV);
+        for (key, value) in env {
+            command.env(key, value);
+        }
+        let ran = command.output().expect("run generated runtime");
+        let code = ran
+            .status
+            .code()
+            .expect("the runtime ends the process with a status");
+        let mut ended = result(Termination::Exited(ProcessExit::Code(code)));
+        ended.output = ran.stderr;
+        ended.stdout = ran.stdout;
+        ended
+    }
+
+    /// The `main` that reaches the one guard.
+    const REACHES_THE_GUARD: &str = "let _reached = __rm::active(0);";
+
+    /// The `main` that makes each error a fault can make and prints what each says.
+    const MAKES_EVERY_FAILURE: &str = r#"
+        let io: std::io::Error = __rm::injected();
+        let utf8: std::str::Utf8Error = __rm::injected();
+        let owned: std::string::FromUtf8Error = __rm::injected();
+        let integer: std::num::ParseIntError = __rm::injected();
+        let float: std::num::ParseFloatError = __rm::injected();
+        let narrowed: std::num::TryFromIntError = __rm::injected();
+        println!("{:?}", io.kind());
+        println!("{utf8}");
+        println!("{}", owned.utf8_error());
+        println!("{:?}", integer.kind());
+        println!("{float}");
+        println!("{narrowed}");
+    "#;
+
+    #[test]
+    fn every_error_a_fault_can_make_is_made_and_there_are_exactly_six() {
+        let directory = returned!(tempfile::tempdir(), "tempdir");
+        let made = generated_binary(directory.path(), ("injected", MAKES_EVERY_FAILURE), &[]);
+        let said = std::str::from_utf8(&made.stdout).expect("the binary prints UTF-8");
+        assert_eq!(
+            said.lines().collect::<Vec<&str>>(),
+            [
+                "Other",
+                "invalid utf-8 sequence of 1 bytes from index 0",
+                "invalid utf-8 sequence of 1 bytes from index 0",
+                "Empty",
+                "cannot parse float from empty string",
+                "out of range integral type conversion attempted",
+            ],
+            "each of the six error types a fault can make is made, as the failure the call it \
+             replaces returns (ADR 0032 decision 2): {}",
+            std::str::from_utf8(&made.output).expect("the runtime speaks UTF-8")
+        );
+        let module = crate::instrument::render(&crate::instrument::Rendering {
+            module: "__rm",
+            catalog_digest: CATALOG_A,
+            placements: &[],
+            markers: &[],
+            first_item: 0,
+            item_count: 0,
+            newline: "\n",
+            watched: "/unwatched-runtime-stop",
+        })
+        .expect("render generated runtime");
+        let implemented: std::collections::BTreeSet<&str> = module
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix("impl Injectable for "))
+            .filter_map(|rest| rest.strip_suffix(" {"))
+            .collect();
+        assert_eq!(
+            implemented,
+            std::collections::BTreeSet::from([
+                "__rm_std::io::Error",
+                "__rm_std::num::ParseFloatError",
+                "__rm_std::num::ParseIntError",
+                "__rm_std::num::TryFromIntError",
+                "__rm_std::str::Utf8Error",
+                "__rm_std::string::FromUtf8Error",
+            ]),
+            "the runtime makes exactly the error types the engine can make without guessing, and \
+             no other"
+        );
+        assert_eq!(
+            module.matches("impl Injectable for ").count(),
+            12,
+            "and the native module and the sealed one make the same six"
+        );
+    }
+
+    #[test]
+    fn a_process_its_runtime_ended_for_the_apparatus_is_never_a_kill() {
+        let directory = returned!(tempfile::tempdir(), "tempdir");
+        let log = directory.path().join("absent").join("touch.log");
+        let unrecorded = generated_binary(
+            directory.path(),
+            ("unrecorded", REACHES_THE_GUARD),
+            &[
+                (
+                    crate::instrument::TOUCH_ENV,
+                    log.to_str().expect("a UTF-8 temporary path"),
+                ),
+                (crate::instrument::CATALOG_ENV, CATALOG_A),
+            ],
+        );
+        let said = std::str::from_utf8(&unrecorded.output).expect("the runtime speaks UTF-8");
+        assert!(
+            matches!(
+                unrecorded.termination,
+                Termination::Exited(ProcessExit::Code(crate::instrument::TOUCH_UNAVAILABLE_EXIT))
+            ),
+            "{:?}: {said}",
+            unrecorded.termination
+        );
+        assert_eq!(
+            outcome_of(&Observation::of(&unrecorded, None), None, (true, &[])),
+            Outcome::Errored,
+            "a process that could not write what its guards reached was stopped by the run's \
+             own apparatus, and reading its status as a failing test makes a kill of a \
+             recording that failed: {said}"
+        );
+        let unknown = generated_binary(
+            directory.path(),
+            ("unknown", REACHES_THE_GUARD),
+            &[
+                (crate::instrument::ACTIVE_ENV, MUTANT_A),
+                (crate::instrument::CATALOG_ENV, CATALOG_A),
+                (crate::instrument::FAULT_ENV, MUTANT_B),
+            ],
+        );
+        assert!(
+            matches!(
+                unknown.termination,
+                Termination::Exited(ProcessExit::Code(STEP_PROTOCOL_EXIT))
+            ),
+            "a process named a fault its tree does not hold stops rather than run the \
+             mutation alone (ADR 0032 decision 6)"
+        );
+        assert_eq!(
+            unknown.output,
+            format!("{STOP_SCHEMA}\t{STEP_PROTOCOL_EXIT}\tunstated\t0\n").into_bytes(),
+            "and says so in the runtime's own words"
+        );
+        assert_eq!(
+            outcome_of(&Observation::of(&unknown, None), None, (true, &[])),
+            Outcome::Errored,
+            "and that stop is the apparatus refusing the request, never the mutation's kill"
+        );
     }
 
     #[test]
@@ -3310,6 +3713,7 @@ mod tests {
             touch: None,
             profile: None,
             crash: None,
+            fate: None,
         };
 
         assert!(matches!(
@@ -3318,12 +3722,12 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn step_setup_creates_one_exact_private_state_and_clear_removes_it() {
-        let scratch = returned!(tempfile::tempdir(), "scratch");
+    /// The step files a bounded execution of mutant A under an allowance of ten is set up with in `scratch`.
+    fn set_up(scratch: &Path) -> Result<Option<ExpectedStep>, StepSetupError> {
+        let base_env = crate::vars::Variables::empty();
         let context = Context {
             leaders: None,
-            base_env: &crate::vars::Variables::empty(),
+            base_env: &base_env,
             cargo: None,
             sysroot: None,
             active: Some((MUTANT_A, CATALOG_A)),
@@ -3332,8 +3736,15 @@ mod tests {
             touch: None,
             profile: None,
             crash: None,
+            fate: None,
         };
-        let step = returned!(ExpectedStep::new(&context, Some(scratch.path())), "setup");
+        ExpectedStep::new(&context, Some(scratch))
+    }
+
+    #[test]
+    fn step_setup_creates_one_exact_private_state_and_clear_removes_it() {
+        let scratch = returned!(tempfile::tempdir(), "scratch");
+        let step = returned!(set_up(scratch.path()), "setup");
         let step = present!(step, "bounded execution");
         let state = returned!(std::fs::read_to_string(&step.state_path), "state");
         assert_eq!(
@@ -3342,6 +3753,16 @@ mod tests {
                 "{STEP_STATE_SCHEMA}\t{}\t{CATALOG_A}\t{MUTANT_A}\t10\tdormant\t0\n",
                 step.nonce
             )
+        );
+        let lock = returned!(std::fs::symlink_metadata(&step.lock_path), "lock");
+        assert!(
+            lock.file_type().is_file() && lock.len() == 0,
+            "the lock is an empty regular file of its own: {lock:?}"
+        );
+        assert_eq!(
+            step.lock_path,
+            crate::instrument::step_lock_path(&step.state_path),
+            "and it is the one the runtime finds beside the state it is told"
         );
         let mut environment = crate::vars::Variables::empty();
         step.add_environment(&mut environment);
@@ -3354,6 +3775,47 @@ mod tests {
         assert_absent(&step.path);
         assert_absent(&step.path.with_extension("notice.partial"));
         assert_absent(&step.state_path);
+        assert_absent(&step.lock_path);
+    }
+
+    #[test]
+    fn a_take_holding_the_step_lock_leaves_the_state_readable_to_the_runner() {
+        let scratch = returned!(tempfile::tempdir(), "scratch");
+        let step = returned!(set_up(scratch.path()), "setup");
+        let step = present!(step, "bounded execution");
+        let lock = returned!(
+            std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&step.lock_path),
+            "the step lock"
+        );
+        let taken = lock.lock();
+        assert_eq!(result_state(&taken), Returned, "a take: {taken:?}");
+        let read = crate::runner::read_side_channel(&step.state_path);
+        assert_eq!(
+            result_state(&read),
+            Returned,
+            "Windows makes a lock mandatory, so a take that locked the state itself refused the \
+             runner's read of it with os error 33 and the execution was errored: {read:?}"
+        );
+        let Ok(read) = read else { return };
+        assert_eq!(
+            read,
+            format!(
+                "{STEP_STATE_SCHEMA}\t{}\t{CATALOG_A}\t{MUTANT_A}\t10\tdormant\t0\n",
+                step.nonce
+            )
+            .into_bytes(),
+            "and it reads whole"
+        );
+        assert_eq!(
+            step.raised(),
+            Some(0),
+            "and the count read after a stop is read whole"
+        );
+        let released = lock.unlock();
+        assert_eq!(result_state(&released), Returned, "release: {released:?}");
     }
 
     #[test]
@@ -3715,15 +4177,71 @@ mod tests {
             String::new(),
             "running 1 test\n".to_owned(),
             line("96", "touch: open", "5"),
+            line(&protocol, "", "0"),
+            line(&protocol, "invented check", "0"),
             line(&protocol, "lock", "not a code"),
+            line(&protocol, "lock", "+33"),
             format!("{STOP_SCHEMA}\t{protocol}\tlock\t33\tmore\n"),
             format!("said: {}", line(&protocol, "lock", "33")),
+            format!(
+                "{}{}",
+                line(&protocol, "open", "2"),
+                line(&protocol, "", "0")
+            ),
         ] {
             assert_eq!(
                 super::stated(unread.as_bytes()),
                 StepProtocolFailure::Publication {},
                 "a line for another stop, or one out of shape, names nothing: {unread:?}"
             );
+        }
+    }
+
+    #[test]
+    fn a_planted_misreading_of_a_stop_record_is_refused_by_the_check() {
+        let output = format!("running 1 test\n{STOP_SCHEMA}\t{STEP_PROTOCOL_EXIT}\tlock\t33\n");
+        assert!(super::stop_said_agrees(
+            output.as_bytes(),
+            Some(("lock", 33))
+        ));
+        for planted in [
+            Some(("open", 33)),
+            Some(("lock", 2)),
+            Some(("invented check", 33)),
+            None,
+        ] {
+            assert!(
+                !super::stop_said_agrees(output.as_bytes(), planted),
+                "a reading of {planted:?} passed for a record that says lock, 33"
+            );
+        }
+        for silent in ["", "running 1 test\n", "running 1 test"] {
+            assert!(super::stop_said_agrees(silent.as_bytes(), None));
+            assert!(
+                !super::stop_said_agrees(silent.as_bytes(), Some(("lock", 0))),
+                "a check read out of an output that names none: {silent:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_stop_the_runtime_can_say_is_named_and_confirmed() {
+        for check in rust_mutants_decision::said::STEP_CHECKS {
+            for os in [0, 2, 33, -5] {
+                for ending in ["\n", "\r\n"] {
+                    let output = format!(
+                        "running 1 test\n{STOP_SCHEMA}\t{STEP_PROTOCOL_EXIT}\t{check}\t{os}{ending}"
+                    );
+                    assert_eq!(
+                        super::stated(output.as_bytes()),
+                        StepProtocolFailure::Stated {
+                            check: check.to_owned(),
+                            os
+                        },
+                        "{output:?}"
+                    );
+                }
+            }
         }
     }
 
@@ -3814,7 +4332,7 @@ mod tests {
         let exited = result(Termination::Exited(ProcessExit::Code(95)));
         let observed = Observation {
             stopped: observed_stop(&exited, Some(&step)),
-            stale_catalog: false,
+            refused: false,
         };
 
         assert_eq!(

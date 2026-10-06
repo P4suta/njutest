@@ -31,7 +31,7 @@ fn prepared(fixture: &Fixture) -> Session {
             tier: Tier::All,
             coverage: false,
             branch_proofs: false,
-            ..PrepareOptions::default()
+            ..PrepareOptions::new(Tier::Balanced)
         },
         &Cancel::new(),
     )
@@ -116,13 +116,15 @@ fn a_target_the_run_could_not_record_is_named_as_unmeasured_rather_than_read_as_
     let session = prepared(&fixture);
     let touched = session.touched();
     for target in session.targets() {
-        let id = target.id.as_str();
+        let id = target.id();
         assert!(
             touched.targets.contains_key(id)
-                || touched
-                    .limitations
-                    .iter()
-                    .any(|limitation| limitation.ends_with(id)),
+                || touched.limitations.iter().any(|limitation| {
+                    limitation
+                        .target
+                        .as_ref()
+                        .is_some_and(|target| target.as_str() == id)
+                }),
             "{id} is neither measured nor accounted for: {touched:?}"
         );
     }
@@ -322,10 +324,13 @@ fn a_process_that_cannot_record_costs_its_target_the_measurement_and_not_the_run
         "no target could record, so nothing was measured: {touched:?}"
     );
     assert!(
-        session.targets().iter().all(|target| touched
-            .limitations
+        session
+            .targets()
             .iter()
-            .any(|one| one.ends_with(target.id.as_str()))),
+            .all(|target| touched.limitations.iter().any(|one| one
+                .target
+                .as_ref()
+                .is_some_and(|id| id.as_str() == target.id()))),
         "and every one of them says why: {touched:?}"
     );
     let one = session
@@ -551,10 +556,13 @@ fn a_run_whose_parsed_tests_do_not_come_to_its_own_summary_is_not_compared() {
          the parser raise a finding about the suite"
     );
     assert!(
-        session.touched().limitations.contains(&format!(
-            "{}:{target}",
-            rust_mutants::limitation::BASELINE_PASSED_UNPARSED
-        )),
+        session.touched().limitations.iter().any(|limited| {
+            limited.limitation == rust_mutants::limitation::Limitation::BaselinePassedUnparsed
+                && limited
+                    .target
+                    .as_ref()
+                    .is_some_and(|id| id.as_str() == target)
+        }),
         "and the baseline says so against the target's name: {:?}",
         session.touched().limitations
     );
@@ -568,7 +576,8 @@ fn a_harness_with_no_summary_is_not_said_to_have_fallen_short_of_one() {
     assert!(
         !limitations
             .iter()
-            .any(|one| one.starts_with(rust_mutants::limitation::BASELINE_PASSED_UNPARSED)),
+            .any(|one| one.limitation
+                == rust_mutants::limitation::Limitation::BaselinePassedUnparsed),
         "a custom harness prints no summary to be short of, and says `custom-harness` already; \
          telling a reader its named tests did not come to a count it never gave is false: \
          {limitations:?}"

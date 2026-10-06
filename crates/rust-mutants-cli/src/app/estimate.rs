@@ -6,8 +6,8 @@
 use std::collections::BTreeSet;
 
 use rust_mutants::count::{Count, Mutants, Pairs, Targets, Tests, Unit};
-use rust_mutants::run;
 use rust_mutants::session::{self, Route, Session};
+use rust_mutants::{EngineError, run};
 
 /// What a run would cost, from what preparing established and before a mutant is executed.
 ///
@@ -33,8 +33,7 @@ pub fn estimate(session: &Session, filter: &run::Filter) -> Result<String, crate
             session.accepted().binary_search(&mutant.index).is_ok(),
             "a validated candidate is either accepted or rejected"
         );
-        let at = session.position(mutant);
-        let line = at.map_or(0, |one| one.line);
+        let line = session.placed(mutant).map_err(EngineError::from)?.line;
         if !filter.is_empty() && !filter.selects(mutant, line, session.item_of(mutant.index)) {
             add(&mut counted.unselected, 1, "the unselected-mutant count")?;
             continue;
@@ -125,7 +124,7 @@ fn rejected(session: &Session) -> BTreeSet<u32> {
 fn held_tests(session: &Session) -> Result<u64, crate::error::CliError> {
     session.targets().iter().try_fold(0u64, |total, target| {
         total
-            .checked_add(u64::from(session.tests_of(&target.id)))
+            .checked_add(u64::from(session.tests_of(target.id())))
             .ok_or(crate::error::CliError::ProjectionOverflow {
                 projection: "dry-run",
                 field: "the total tests in all targets",
@@ -256,9 +255,10 @@ fn priced(
 ) -> Result<std::time::Duration, session::RouteAccountingError> {
     route.costing(|target| {
         session::Timing::new(
-            session
-                .baseline(target)
-                .unwrap_or_else(|| session.slowest_baseline()),
+            match session.baseline(target) {
+                Some(timed) => timed,
+                None => session.slowest_baseline(),
+            },
             session.tests_of(target),
         )
     })

@@ -44,6 +44,7 @@ fn environment() -> Environment {
         Err(error) => panic!("the test process has no working directory: {error}"),
     };
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: njutest_devkit::paths::environment_for_a_run()
             .into_iter()
             .collect(),
@@ -121,9 +122,12 @@ fn every_subcommand_has_its_own_recorded_help() {
 }
 
 #[test]
-fn no_arguments_prints_the_usage_to_stderr_and_exits_2() {
+fn no_arguments_prints_the_usage_to_stderr_and_fails() {
     let output = rust_mutants(&[]);
-    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(rust_mutants_cli::EXIT_USAGE))
+    );
     assert!(output.stdout.is_empty());
     assert!(njutest_devkit::process::strict_utf8(&output.stderr).contains("Usage:"));
 }
@@ -131,7 +135,10 @@ fn no_arguments_prints_the_usage_to_stderr_and_exits_2() {
 #[test]
 fn an_unknown_subcommand_is_a_usage_error() {
     let output = rust_mutants(&["frobnicate"]);
-    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(rust_mutants_cli::EXIT_USAGE))
+    );
     let stderr = njutest_devkit::process::strict_utf8(&output.stderr);
     assert!(
         stderr.contains("frobnicate"),
@@ -411,6 +418,7 @@ fn with(switch: Option<&str>, root: &Path) -> (rust_mutants_cli::config::Config,
         panic!("`list` parses as List")
     };
     let environment = Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: rust_mutants::vars::Variables::empty(),
         temp_directory: PathBuf::from("/tmp"),
         program: PathBuf::from("this test never runs it"),

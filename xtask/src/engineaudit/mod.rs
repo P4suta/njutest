@@ -17,9 +17,9 @@ mod recording;
 pub mod sentinel;
 mod wire;
 
-use arithmetic::{accounting, exit, expectations, findings, identity, score};
+use arithmetic::{accounting, exit, expectations, findings, identity, score, sealed};
 use evidence::{entry, merge, proofs, sites, touch};
-use ledger::ledger;
+use ledger::{Ledger, Named, ledger};
 use recording::{trace, work};
 
 use serde_json::Value;
@@ -31,7 +31,7 @@ pub const REPORT_FILE: &str = "run-report-v1.json";
 pub const DOCUMENT_TYPE: &str = "rust-mutants/run-report";
 
 /// The current report shape this audit independently re-decides.
-pub const SCHEMA_VERSION: u64 = 3;
+pub const SCHEMA_VERSION: u64 = 5;
 
 /// The current engine recording shape paired with [`SCHEMA_VERSION`].
 pub const TRACE_SCHEMA: &str = "rust-mutants-trace-v1";
@@ -63,7 +63,9 @@ const SURVIVING_MUTANT: &str = "surviving-mutant";
 const STEP_LIMIT_REACHED_MUTANT: &str = "step-limit-reached-mutant";
 const WAITED_MUTANT: &str = "waited-mutant";
 const UNREACHED_MUTANT: &str = "unreached-mutant";
-const DISCHARGED_MUTANT: &str = "discharged-mutant";
+const UNPROVEN_MUTANT: &str = "unproven-mutant";
+const UNPROVEN: &str = "unproven";
+const UNPROVEN_DISCHARGED: &str = "unproven_discharged";
 const INCONCLUSIVE_MUTANT: &str = "inconclusive-mutant";
 const ERRORED_MUTANT: &str = "errored-mutant";
 const NOT_RUN_MUTANT: &str = "not-run-mutant";
@@ -236,6 +238,8 @@ pub enum Layer {
     Entry,
     /// Every body the run calls sealed and every body digest it kept, read again from the tree under `docs/engine/carry.md`.
     Carry,
+    /// Every verdict a row says sealed executions established, decided again from the executions it records (ADR 0046).
+    Sealed,
 }
 
 impl Layer {
@@ -258,6 +262,30 @@ impl Layer {
             Self::Touch => "touch",
             Self::Entry => "entry",
             Self::Carry => "carry",
+            Self::Sealed => "sealed",
+        }
+    }
+
+    /// What this layer reads of the executions the recording holds, which says whether a defect only a sealed execution shows is owed to it.
+    #[must_use]
+    pub const fn reads(self) -> crate::route::Reads {
+        use crate::route::Reads;
+        match self {
+            Self::Trace => Reads::Both,
+            Self::Proofs | Self::Work => Reads::Native,
+            Self::Identity
+            | Self::Accounting
+            | Self::Score
+            | Self::Findings
+            | Self::Expectations
+            | Self::Exit
+            | Self::Merge
+            | Self::Sites
+            | Self::Ledger
+            | Self::Touch
+            | Self::Entry
+            | Self::Carry
+            | Self::Sealed => Reads::Nothing,
         }
     }
 }
@@ -415,12 +443,12 @@ pub struct Evidence<'a> {
 struct CheckedEvidence<'a> {
     recorded: Option<CheckedRecording>,
     shards: Vec<(&'a str, Report)>,
-    ledger: Option<toml::Table>,
+    ledger: Option<Ledger>,
     sites: bool,
-    reached: Option<Value>,
+    reached: Option<wire::Measurement>,
     catalog: Option<Value>,
     probe_logs: &'a [String],
-    touched: Option<Value>,
+    touched: Option<wire::Guarded>,
     skeletons: Option<Value>,
     carried: Option<Value>,
     root: Option<&'a std::path::Path>,
@@ -475,17 +503,19 @@ impl<'a> Evidence<'a> {
             .iter()
             .map(|source| parse_report_evidence(*source).map(|report| (source.path, report)))
             .collect::<Result<Vec<_>, _>>()?;
-        let ledger =
-            self.ledger
-                .map(|source| {
-                    source.text.parse::<toml::Table>().map_err(|error| {
-                        AuditError::MalformedLedger {
-                            path: source.path.to_owned(),
-                            source: error,
-                        }
+        let ledger = self
+            .ledger
+            .map(|source| {
+                source
+                    .text
+                    .parse::<toml::Table>()
+                    .and_then(|document| Ledger::read(&document))
+                    .map_err(|error| AuditError::MalformedLedger {
+                        path: source.path.to_owned(),
+                        source: error,
                     })
-                })
-                .transpose()?;
+            })
+            .transpose()?;
         Ok(CheckedEvidence {
             recorded,
             shards,
@@ -493,13 +523,13 @@ impl<'a> Evidence<'a> {
             sites: self.sites,
             reached: self
                 .reached
-                .map(|source| parse_typed_evidence(source, wire::validate_reached))
+                .map(|source| parse_typed_evidence(source, wire::read_reached))
                 .transpose()?,
             catalog: self.catalog.map(parse_evidence).transpose()?,
             probe_logs: &self.probe_logs,
             touched: self
                 .touched
-                .map(|source| parse_typed_evidence(source, wire::validate_touched))
+                .map(|source| parse_typed_evidence(source, wire::read_touched))
                 .transpose()?,
             skeletons: self.skeletons.map(parse_evidence).transpose()?,
             carried: self.carried.map(parse_evidence).transpose()?,
@@ -535,16 +565,16 @@ fn parse_evidence(source: Source<'_>) -> Result<Value, AuditError> {
     })
 }
 
-fn parse_typed_evidence(
+/// The evidence document at `source`, read in the exact owned shape `read` gives it.
+fn parse_typed_evidence<T>(
     source: Source<'_>,
-    validate: fn(&Value) -> Result<(), serde_json::Error>,
-) -> Result<Value, AuditError> {
+    read: fn(&Value) -> Result<T, serde_json::Error>,
+) -> Result<T, AuditError> {
     let value = parse_evidence(source)?;
-    validate(&value).map_err(|error| AuditError::MalformedEvidence {
+    read(&value).map_err(|error| AuditError::MalformedEvidence {
         path: source.path.to_owned(),
         source: error,
-    })?;
-    Ok(value)
+    })
 }
 
 /// What a layer hands back to show it said how far it got, which only [`Notes::looked`] and [`Notes::absent`] make.
@@ -675,6 +705,7 @@ pub fn audit(
             Layer::Touch => touch(&report, evidence.touched.as_ref(), &mut audit),
             Layer::Entry => entry(&report, evidence.touched.as_ref(), &mut audit),
             Layer::Carry => carry::layer(&report, &evidence, &mut audit),
+            Layer::Sealed => sealed(&report, &mut audit),
         };
     }
     audit.remarks.sort();
@@ -713,7 +744,96 @@ struct Row {
     unreached: bool,
     not_run_reason: Option<NotRunReason>,
     source_run_id: Option<String>,
+    /// The run of the part that decided the row, where the report merges parts.
+    part_run_id: Option<String>,
     declined: Vec<Decline>,
+    evidence: Resting,
+}
+
+/// What a row's verdict rests on, as the report records it (ADR 0046).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+enum Resting {
+    /// Sealed executions, in the order they ran.
+    Sealed { executions: Vec<SealedRun> },
+    /// No verdict, and every reason why.
+    Unproven { reasons: Vec<String> },
+}
+
+/// One sealed execution a row records.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SealedRun {
+    target: String,
+    test: String,
+    came_to: Came,
+}
+
+/// What one sealed execution came to, as the report spells it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum Came {
+    Passed,
+    Panicked,
+    Failed,
+    Trapped,
+    FuelExceeded,
+    MemoryExceeded,
+    Declined,
+    ExitedEarly,
+    StackOverflow,
+    Refused,
+    Unaccounted,
+    Unmatched,
+    SetAside,
+}
+
+/// What one sealed execution says about a verdict: it passed, it detected the mutant, it established neither, or it measured nothing, declining as its control did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Said {
+    Passed,
+    Detected,
+    Doubted,
+    SetAside,
+}
+
+impl Came {
+    /// The name a report and a recording spell it with.
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Passed => "passed",
+            Self::Panicked => "panicked",
+            Self::Failed => "failed",
+            Self::Trapped => "trapped",
+            Self::FuelExceeded => "fuel-exceeded",
+            Self::MemoryExceeded => "memory-exceeded",
+            Self::Declined => "declined",
+            Self::ExitedEarly => "exited-early",
+            Self::StackOverflow => "stack-overflow",
+            Self::Refused => "refused",
+            Self::Unaccounted => "unaccounted",
+            Self::Unmatched => "unmatched",
+            Self::SetAside => "set-aside",
+        }
+    }
+
+    const fn said(self) -> Said {
+        match self {
+            Self::Passed => Said::Passed,
+            Self::Panicked
+            | Self::Failed
+            | Self::Trapped
+            | Self::FuelExceeded
+            | Self::MemoryExceeded
+            | Self::Declined => Said::Detected,
+            Self::ExitedEarly
+            | Self::StackOverflow
+            | Self::Refused
+            | Self::Unaccounted
+            | Self::Unmatched => Said::Doubted,
+            Self::SetAside => Said::SetAside,
+        }
+    }
 }
 
 /// One test a row or a recorded execution says declined to measure, and its words (ADR 0043).
@@ -866,22 +986,39 @@ impl Row {
         self.not_run_reason.is_some_and(|held| held == reason)
     }
 
+    /// Whether sealed executions established this row's verdict.
+    const fn sealed(&self) -> bool {
+        matches!(self.evidence, Resting::Sealed { .. })
+    }
+
+    /// Whether this row is a lead: what a native run said, where no sealed execution decided the mutant, which is what an unproven finding names.
+    fn lead(&self) -> bool {
+        self.not_run(DISCHARGED)
+            || (!self.sealed()
+                && (self.outcome == KILLED
+                    || self.outcome == SURVIVED
+                    || (self.outcome == NOT_RUN && self.not_run(UNREACHED))))
+    }
+
     const fn complete(&self) -> bool {
         !self.source_digest.is_empty() && !self.path.is_empty() && !self.rule.is_empty()
     }
 }
 
-/// One refused candidate, as a reader sees it.
+/// One candidate the run left out, as a reader sees it.
 #[derive(Debug, Clone)]
 struct Refusal {
     index: u64,
     display_id: String,
+    /// Whether the compiler refused the edit, rather than evaluating the function it is in before the program runs.
+    refused: bool,
 }
 
 /// One claim a reviewer declared, as the run left it.
 #[derive(Debug, Clone)]
 struct Claim {
     id: String,
+    named: Named,
     mutant: Option<String>,
     standing: ClaimStanding,
     why: Option<String>,
@@ -936,7 +1073,7 @@ enum FindingKind {
     ErroredMutant,
     NotRunMutant,
     UnreachedMutant,
-    DischargedMutant,
+    UnprovenMutant,
     StaleExpectation,
     UnmatchedExpectation,
     UnmatchedSkip,
@@ -952,7 +1089,7 @@ impl FindingKind {
             Self::ErroredMutant => ERRORED_MUTANT,
             Self::NotRunMutant => NOT_RUN_MUTANT,
             Self::UnreachedMutant => UNREACHED_MUTANT,
-            Self::DischargedMutant => DISCHARGED_MUTANT,
+            Self::UnprovenMutant => UNPROVEN_MUTANT,
             Self::StaleExpectation => STALE_EXPECTATION,
             Self::UnmatchedExpectation => UNMATCHED_EXPECTATION,
             Self::UnmatchedSkip => "unmatched-skip",
@@ -976,6 +1113,8 @@ impl fmt::Display for FindingKind {
 #[derive(Debug)]
 struct Report {
     run_id: String,
+    /// The part of the catalog this run measured, when it measured one; nothing for a run that measured the whole catalog itself.
+    shard: Option<String>,
     targets: Vec<String>,
     tool_version: String,
     workspace_digest: String,
@@ -1015,28 +1154,21 @@ impl Report {
     }
 }
 
-/// One array field, empty when it is absent.
-fn array<'a>(value: &'a Value, key: &str) -> Vec<&'a Value> {
-    value
-        .get(key)
-        .and_then(Value::as_array)
-        .map(|entries| entries.iter().collect())
-        .unwrap_or_default()
+/// One array field, or nothing where it is absent or not an array.
+fn array<'a>(value: &'a Value, key: &str) -> Option<&'a [Value]> {
+    value.get(key)?.as_array().map(Vec::as_slice)
 }
 
-/// One array of numbers, empty when it is absent.
-fn numbers(value: &Value, key: &str) -> Vec<u64> {
-    array(value, key)
-        .into_iter()
-        .filter_map(Value::as_u64)
-        .collect()
+/// One array of indices, or nothing where it is absent, not an array, or holds anything that is not an index.
+fn numbers(value: &Value, key: &str) -> Option<Vec<u64>> {
+    array(value, key)?.iter().map(Value::as_u64).collect()
 }
 
-/// One array of strings, empty when it is absent.
-fn strings(value: &Value, key: &str) -> Vec<String> {
-    array(value, key)
-        .into_iter()
-        .filter_map(|entry| entry.as_str().map(str::to_owned))
+/// One array of strings, or nothing where it is absent, not an array, or holds anything but strings.
+fn strings(value: &Value, key: &str) -> Option<Vec<String>> {
+    array(value, key)?
+        .iter()
+        .map(|entry| entry.as_str().map(str::to_owned))
         .collect()
 }
 

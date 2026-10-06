@@ -188,6 +188,7 @@ impl Standing {
         match blind {
             crate::report::Blind::Unnoticed => Self::Blind(Blindness::Ran),
             crate::report::Blind::Unreached => Self::Blind(Blindness::Never),
+            crate::report::Blind::Unproven => Self::Unsettled(Unsettled::Unproven),
             crate::report::Blind::StepLimitReached => Self::Unsettled(Unsettled::StepLimitReached),
             crate::report::Blind::Waited => Self::Unsettled(Unsettled::Waited),
             crate::report::Blind::Errored => Self::Unsettled(Unsettled::Errored),
@@ -315,6 +316,9 @@ pub fn projected_label(rule: &str, decision: crate::report::Decision) -> String 
         }
         Decision::Unnoticed => format!("{rule} here, and at least one build noticed nothing"),
         Decision::Unreached => format!("{rule} here, and at least one build never reached it"),
+        Decision::Unproven => {
+            format!("{rule} here, and at least one build decided it only natively, which is a lead")
+        }
         Decision::StepLimitReached => {
             format!("{rule} here, and at least one build reached its step boundary")
         }
@@ -390,6 +394,8 @@ impl Blindness {
 /// A gap in the run: what somebody investigates rather than writes a test for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Unsettled {
+    /// No sealed execution decided it, so what a native run said of it is a lead (ADR 0046).
+    Unproven,
     /// The deterministic guard boundary was reached, but no control comparison established that the mutation caused divergence.
     StepLimitReached,
     /// It ran out of time rather than answering.
@@ -403,6 +409,7 @@ impl Unsettled {
     #[must_use]
     pub const fn word(self) -> &'static str {
         match self {
+            Self::Unproven => "unproven",
             Self::StepLimitReached => "step limit reached",
             Self::Waited => "timed out",
             Self::Errored => "not measured",
@@ -413,6 +420,7 @@ impl Unsettled {
     #[must_use]
     pub const fn counted(self) -> &'static str {
         match self {
+            Self::Unproven => "unproven",
             Self::StepLimitReached => "step limit reached",
             Self::Waited => "timed out",
             Self::Errored => "not measured",
@@ -423,6 +431,7 @@ impl Unsettled {
     #[must_use]
     pub const fn find_out(self) -> &'static str {
         match self {
+            Self::Unproven => "seal the tests that reach it, which the run's reasons name",
             Self::StepLimitReached => "compare the same target without the mutation",
             Self::Waited => "find out why nothing finished",
             Self::Errored => "find out why nothing could be measured",

@@ -18,6 +18,7 @@ use std::time::Duration;
 use jiff::Timestamp;
 use sha2::{Digest as _, Sha256};
 
+mod frozen;
 mod layout;
 
 pub use layout::{Layout, Placed, Placement};
@@ -37,16 +38,16 @@ pub const DIR_PREFIX: &str = "rust-mutants-snap-";
 /// The subdirectory of a snapshot directory that holds the copy.
 pub const TREE_NAME: &str = "tree";
 
-/// How much of the source root's digest [`stable_name`] spells out.
+/// How much of the source root's digest `stable_name` spells out.
 pub const STABLE_NAME_HEX_LENGTH: usize = 16;
 
-/// How many times [`Snapshot::cleanup`] tries the removal before giving up.
+/// How many removals the explicitly injected cleanup clock can model.
 pub const CLEANUP_ATTEMPTS: usize = 5;
 
-/// The pause before the second removal attempt; it doubles for each attempt after that, so the ladder is 20, 40, 80, 160 ms and the whole loop costs at most a third of a second.
+/// The first advance of the explicitly injected cleanup clock, followed by 40, 80 and 160 ms.
 pub const CLEANUP_BACKOFF: Duration = Duration::from_millis(20);
 
-/// The complete bounded retry schedule.
+/// The complete bounded schedule for the injected cleanup clock.
 /// Its array length is checked against [`CLEANUP_ATTEMPTS`] by the compiler.
 const CLEANUP_DELAYS: [Option<Duration>; CLEANUP_ATTEMPTS] = [
     None,
@@ -94,7 +95,8 @@ impl Options {
 }
 
 /// One regular file in a snapshot's manifest.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Entry {
     /// The path relative to the snapshot root, with forward slashes on every platform.
     pub rel_path: String,
@@ -105,7 +107,8 @@ pub struct Entry {
 }
 
 /// One entry the snapshot did not copy because it is not a regular file.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PassedOver {
     /// The path relative to the tree, with forward slashes.
     pub rel_path: String,
@@ -210,7 +213,7 @@ impl Drift {
 }
 
 /// The failure modes of this module, each with a stable code.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum SnapshotErrorKind {
     /// [`Options`] that cannot be honoured, such as a report directory that is absolute or climbs out of the source root.
     InvalidOptions,
@@ -230,6 +233,8 @@ pub enum SnapshotErrorKind {
     Destination,
     /// A failure while copying the tree into the snapshot.
     Copy,
+    /// This process could not be made to adopt the processes a run starts, so the census of what works in the snapshot could not later tell a process the run started from one it did not.
+    Adoption,
     /// A cleanup that was refused because the recorded directory does not look like one this module created.
     /// It is the guard that stands between a bug in rust-mutants and a user's source tree.
     CleanupRefused,
@@ -253,6 +258,7 @@ impl SnapshotErrorKind {
             Self::UnsupportedName => error::SNAPSHOT_UNSUPPORTED_NAME,
             Self::Destination => error::SNAPSHOT_DESTINATION,
             Self::Copy => error::SNAPSHOT_COPY,
+            Self::Adoption => error::SNAPSHOT_ADOPTION,
             Self::CleanupRefused => error::SNAPSHOT_CLEANUP_REFUSED,
             Self::CleanupFailed => error::SNAPSHOT_CLEANUP_FAILED,
             Self::Layout => error::SNAPSHOT_LAYOUT,
@@ -272,6 +278,7 @@ impl SnapshotErrorKind {
             Self::UnsupportedName => "unsupported-name",
             Self::Destination => "destination",
             Self::Copy => "copy",
+            Self::Adoption => "adoption",
             Self::CleanupRefused => "cleanup-refused",
             Self::CleanupFailed => "cleanup-failed",
             Self::Layout => "layout",
@@ -350,8 +357,8 @@ impl fmt::Display for SnapshotError {
 
 /// The three ways a tree entry can fail to be a regular file or a directory.
 ///
-/// Its own set rather than a `SnapshotErrorKind`, because only three of that enum's eleven can reach the walk, and the sentence a reader is given here is only true of those three.
-/// Passing the wider type meant a catch-all handing eight other kinds a description of a thing they are not — wrong the moment any of them arrived, and unable to arrive only by an argument nothing in the code made.
+/// Its own set rather than a `SnapshotErrorKind`, because only three of that enum's thirteen can reach the walk, and the sentence a reader is given here is only true of those three.
+/// Passing the wider type meant a catch-all handing ten other kinds a description of a thing they are not — wrong the moment any of them arrived, and unable to arrive only by an argument nothing in the code made.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NotARegularFile {
     /// A symbolic link.
@@ -401,6 +408,18 @@ enum State {
     Released,
 }
 
+/// The private retained representation of one immutable complete source graph.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FrozenGraph {
+    directory: PathBuf,
+    root: PathBuf,
+    beside: Vec<PathBuf>,
+    manifest: Vec<Entry>,
+    passed_over: Vec<PassedOver>,
+    inventory: Survey,
+}
+
 /// A disposable copy of a source tree.
 #[derive(Debug)]
 pub struct Snapshot {
@@ -413,15 +432,24 @@ pub struct Snapshot {
     workspace_digest: String,
     stable_dir: bool,
     owner: Option<Owner>,
+    adoption: crate::escaped::Adoption,
     state: State,
 }
 
-/// Copies the tree the options lay out into a directory named after its root, inside [`Options::dest_parent`].
+/// Copies the tree the options lay out into a directory named after what the tree holds, inside [`Options::dest_parent`], so the same tree gets the same name wherever it was checked out.
 ///
 /// # Errors
 /// Every failure is a [`SnapshotError`] naming the path it is about.
 pub fn create(options: &Options, now: Timestamp) -> Result<Snapshot, SnapshotError> {
     let source_root = options.layout.source_root();
+    let adoption = crate::escaped::adopt().map_err(|source| {
+        SnapshotError::new(
+            SnapshotErrorKind::Adoption,
+            options.dest_parent.display().to_string(),
+            "cannot make this process adopt the processes that will work in the snapshot",
+        )
+        .with_source(source)
+    })?;
     let info = fs::metadata(source_root).map_err(|source| {
         SnapshotError::new(
             SnapshotErrorKind::SourceRoot,
@@ -450,19 +478,26 @@ pub fn create(options: &Options, now: Timestamp) -> Result<Snapshot, SnapshotErr
     } = walker;
     passed_over.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
 
-    let (dir, stable) = destination(&options.dest_parent, source_root, now)?;
-    let owner = claim_destination(&dir, now)?;
+    let (dir, owner) = provisional(&options.dest_parent, source_root, now)?;
     let placement = options.layout.under(dir.join(TREE_NAME));
+    let Some(dest_parent) = dir.parent().map(Path::to_path_buf) else {
+        return Err(SnapshotError::new(
+            SnapshotErrorKind::Destination,
+            dir.display().to_string(),
+            "the snapshot directory names no directory it was created in",
+        ));
+    };
     let mut snapshot = Snapshot {
         source_root: placement.source_root().to_path_buf(),
         root: placement.root().to_path_buf(),
-        dest_parent: dir.parent().map(Path::to_path_buf).unwrap_or_default(),
+        dest_parent,
         dir,
         manifest: Vec::new(),
         workspace_digest: digest_of(&[], &passed_over)?,
         passed_over,
-        stable_dir: stable,
+        stable_dir: false,
         owner: Some(owner),
+        adoption,
         state: State::Live,
     };
     match scaffold(&placement)
@@ -472,6 +507,7 @@ pub fn create(options: &Options, now: Timestamp) -> Result<Snapshot, SnapshotErr
         Ok(manifest) => {
             snapshot.workspace_digest = digest_of(&manifest, &snapshot.passed_over)?;
             snapshot.manifest = manifest;
+            settled(&mut snapshot, options, now)?;
             Ok(snapshot)
         }
         Err(cause) => match snapshot.cleanup() {
@@ -479,6 +515,126 @@ pub fn create(options: &Options, now: Timestamp) -> Result<Snapshot, SnapshotErr
             Err(cleanup) => Err(cleanup),
         },
     }
+}
+
+/// Places a finished snapshot at the name its content pins, under a new claim before moving its payload: neither claim's open lock moves, so Windows can move the copied trees and no sweep can take either directory in between.
+/// A run that finds the name held, by a live run of the same tree or one kept on purpose, keeps the provisional name: what it holds is no less a copy, only one another run cannot name again.
+fn settled(
+    snapshot: &mut Snapshot,
+    options: &Options,
+    now: Timestamp,
+) -> Result<(), SnapshotError> {
+    let wanted = snapshot
+        .dest_parent
+        .join(content_name(&snapshot.workspace_digest));
+    if wanted == snapshot.dir {
+        snapshot.stable_dir = true;
+        return Ok(());
+    }
+    if path_holds(&wanted, now)? {
+        return Ok(());
+    }
+    match fs::create_dir(&wanted) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => return Ok(()),
+        Err(source) => {
+            return Err(SnapshotError::new(
+                SnapshotErrorKind::Destination,
+                wanted.display().to_string(),
+                "cannot create the snapshot directory its content pins",
+            )
+            .with_source(source));
+        }
+    }
+    let moved = options.layout.under(wanted.join(TREE_NAME));
+    let placed = Snapshot {
+        source_root: moved.source_root().to_path_buf(),
+        root: moved.root().to_path_buf(),
+        dest_parent: snapshot.dest_parent.clone(),
+        manifest: snapshot.manifest.clone(),
+        passed_over: snapshot.passed_over.clone(),
+        workspace_digest: snapshot.workspace_digest.clone(),
+        stable_dir: true,
+        owner: Some(claim_destination(&wanted, now)?),
+        adoption: snapshot.adoption,
+        dir: wanted,
+        state: State::Live,
+    };
+    let move_payload = || -> io::Result<()> {
+        for entry in fs::read_dir(&snapshot.dir)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            if name == tempowner::LOCK_NAME || name == tempowner::MARKER_NAME {
+                continue;
+            }
+            fs::rename(entry.path(), placed.dir.join(name))?;
+        }
+        Ok(())
+    };
+    move_payload().map_err(|source| {
+        SnapshotError::new(
+            SnapshotErrorKind::Destination,
+            placed.dir.display().to_string(),
+            "cannot move the snapshot's payload to the name its content pins",
+        )
+        .with_source(source)
+    })?;
+    std::mem::replace(snapshot, placed).cleanup()
+}
+
+/// Whether `dir` is still there after a sweep of its name: held by a live run or preserved on purpose, both of which a sweep leaves alone.
+fn path_holds(dir: &Path, now: Timestamp) -> Result<bool, SnapshotError> {
+    tempowner::sweep(
+        dir.parent().ok_or_else(|| {
+            SnapshotError::new(
+                SnapshotErrorKind::Destination,
+                dir.display().to_string(),
+                "the snapshot destination names no directory it was created in",
+            )
+        })?,
+        &[dir
+            .file_name()
+            .ok_or_else(|| {
+                SnapshotError::new(
+                    SnapshotErrorKind::Destination,
+                    dir.display().to_string(),
+                    "the snapshot destination names no directory it was created in",
+                )
+            })?
+            .to_str()
+            .ok_or_else(|| {
+                SnapshotError::new(
+                    SnapshotErrorKind::Destination,
+                    dir.display().to_string(),
+                    "the snapshot destination name is not UTF-8",
+                )
+            })?],
+        now,
+    )
+    .map_err(|source| {
+        SnapshotError::new(
+            SnapshotErrorKind::Destination,
+            dir.display().to_string(),
+            "cannot inspect the snapshot destination for abandoned owners",
+        )
+        .with_source(source)
+    })?;
+    match fs::symlink_metadata(dir) {
+        Ok(_held) => Ok(true),
+        Err(gone) if gone.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(source) => Err(SnapshotError::new(
+            SnapshotErrorKind::Destination,
+            dir.display().to_string(),
+            "cannot read the snapshot destination",
+        )
+        .with_source(source)),
+    }
+}
+
+/// The name a snapshot of the tree whose workspace digest is `digest` is pinned by: [`DIR_PREFIX`] followed by the first [`STABLE_NAME_HEX_LENGTH`] lowercase hex characters of the digest.
+fn content_name(digest: &str) -> String {
+    let pinned: String = digest.chars().take(STABLE_NAME_HEX_LENGTH).collect();
+    format!("{DIR_PREFIX}{pinned}")
 }
 
 /// Creates the directories between the stage and what it holds, each exactly once.
@@ -579,7 +735,13 @@ pub fn digest_of(entries: &[Entry], passed_over: &[PassedOver]) -> Result<String
     for entry in passed_over {
         write_length_prefixed(&mut hasher, &entry.rel_path)?;
         write_length_prefixed(&mut hasher, entry.kind.name())?;
-        write_length_prefixed(&mut hasher, entry.target.as_deref().unwrap_or(""))?;
+        write_length_prefixed(
+            &mut hasher,
+            match entry.target.as_deref() {
+                Some(target) => target,
+                None => "",
+            },
+        )?;
     }
     Ok(hex::encode(hasher.finalize()))
 }
@@ -1080,13 +1242,7 @@ fn to_u64(n: usize) -> io::Result<u64> {
     u64::try_from(n).map_err(|_overflow| io::Error::other("file size exceeds u64"))
 }
 
-/// The name of the snapshot directory of `abs_source_root`: [`DIR_PREFIX`] followed by the first [`STABLE_NAME_HEX_LENGTH`] lowercase hex characters of the SHA-256 of the path's bytes.
-#[must_use]
-pub fn stable_name(abs_source_root: &Path) -> String {
-    format!("{DIR_PREFIX}{}", stable_key(abs_source_root))
-}
-
-/// The digest component shared by the stable snapshot and build-cache names.
+/// The digest component of a build-cache name, which a cache keyed to a source root is spelled with.
 #[must_use]
 pub(crate) fn stable_key(abs_source_root: &Path) -> String {
     let digest = Sha256::digest(abs_source_root.as_os_str().as_encoded_bytes());
@@ -1094,12 +1250,12 @@ pub(crate) fn stable_key(abs_source_root: &Path) -> String {
     hex.chars().take(STABLE_NAME_HEX_LENGTH).collect()
 }
 
-/// Creates the directory a snapshot of `abs_src` will own inside `parent`, and reports whether it got the stable name or a fresh one.
-fn destination(
+/// Creates and claims a freshly named directory for a snapshot of `abs_src` inside `parent`, until the finished copy can be placed at the name its content pins.
+fn provisional(
     parent: &Path,
     abs_src: &Path,
     now: Timestamp,
-) -> Result<(PathBuf, bool), SnapshotError> {
+) -> Result<(PathBuf, Owner), SnapshotError> {
     if !parent.is_absolute() {
         return Err(SnapshotError::new(
             SnapshotErrorKind::InvalidOptions,
@@ -1107,33 +1263,9 @@ fn destination(
             "destination parent must be an absolute path",
         ));
     }
-    let name = stable_name(abs_src);
-    let dir = parent.join(&name);
-    match fs::create_dir(&dir) {
-        Ok(()) => return Ok((dir, true)),
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-        Err(source) => {
-            return Err(SnapshotError::new(
-                SnapshotErrorKind::Destination,
-                dir.display().to_string(),
-                "cannot create the snapshot directory",
-            )
-            .with_source(source));
-        }
-    }
-    let sweep_observation = tempowner::sweep(parent, &[name.as_str()], now).map_err(|source| {
-        SnapshotError::new(
-            SnapshotErrorKind::Destination,
-            parent.display().to_string(),
-            "cannot inspect the snapshot destination for abandoned owners",
-        )
-        .with_source(source)
-    })?;
-    drop(sweep_observation);
-    if fs::create_dir(&dir).is_ok() {
-        return Ok((dir, true));
-    }
-    fallback_destination(parent, abs_src, now).map(|dir| (dir, false))
+    let dir = fallback_destination(parent, abs_src, now)?;
+    let owner = claim_destination(&dir, now)?;
+    Ok((dir, owner))
 }
 
 /// A fresh name under `parent`: [`DIR_PREFIX`] plus sixteen hex characters that no other directory carries, proven by the exclusive `create_dir`.
@@ -1149,7 +1281,7 @@ fn fallback_destination(
         hasher.update(std::process::id().to_be_bytes());
         hasher.update(attempt.to_be_bytes());
         let hex = hex::encode(hasher.finalize());
-        let suffix = hex.get(..STABLE_NAME_HEX_LENGTH).unwrap_or(&hex);
+        let suffix: String = hex.chars().take(STABLE_NAME_HEX_LENGTH).collect();
         let dir = parent.join(format!("{DIR_PREFIX}{suffix}"));
         match fs::create_dir(&dir) {
             Ok(()) => return Ok(dir),
@@ -1171,7 +1303,7 @@ fn fallback_destination(
     ))
 }
 
-/// Takes ownership of the directory [`destination`] just made, and decides what happens to that directory when it cannot.
+/// Takes ownership of the directory [`provisional`] just made, and decides what happens to that directory when it cannot.
 fn claim_destination(dir: &Path, now: Timestamp) -> Result<Owner, SnapshotError> {
     match tempowner::claim(dir, now) {
         Ok(owner) => Ok(owner),
@@ -1197,6 +1329,12 @@ fn claim_destination(dir: &Path, now: Timestamp) -> Result<Owner, SnapshotError>
 }
 
 impl Snapshot {
+    /// The proof, taken before the copy existed, that this process adopts every process that will work in it.
+    #[must_use]
+    pub const fn adoption(&self) -> crate::escaped::Adoption {
+        self.adoption
+    }
+
     /// The absolute path of the tree that was copied.
     #[must_use]
     pub fn source_root(&self) -> &Path {
@@ -1243,7 +1381,7 @@ impl Snapshot {
         &self.workspace_digest
     }
 
-    /// Whether the directory carries the [`stable_name`] of the source root rather than a fresh fallback name.
+    /// Whether the directory carries the `stable_name` of the source root rather than a fresh fallback name.
     #[must_use]
     pub const fn stable_dir(&self) -> bool {
         self.stable_dir
@@ -1253,6 +1391,41 @@ impl Snapshot {
     #[must_use]
     pub fn kept(&self) -> bool {
         self.state == State::Kept
+    }
+
+    /// Records each of `rel_paths` as it stands now, a file of the copy the run wrote on purpose, so a later look at the tree does not take it for a change somebody else made.
+    ///
+    /// # Errors
+    /// A file that cannot be read.
+    pub fn absorb(&mut self, rel_paths: &[String]) -> Result<(), SnapshotError> {
+        for rel_path in rel_paths {
+            let (size, sha256) = hash_file(&path_of(&self.root, rel_path)).map_err(|source| {
+                SnapshotError::new(
+                    SnapshotErrorKind::Walk,
+                    rel_path.clone(),
+                    "cannot read the file the run wrote in the snapshot",
+                )
+                .with_source(source)
+            })?;
+            match self
+                .manifest
+                .iter_mut()
+                .find(|entry| entry.rel_path == *rel_path)
+            {
+                Some(entry) => {
+                    entry.size = size;
+                    entry.sha256 = sha256;
+                }
+                None => self.manifest.push(Entry {
+                    rel_path: rel_path.clone(),
+                    size,
+                    sha256,
+                }),
+            }
+        }
+        self.manifest.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
+        self.workspace_digest = digest_of(&self.manifest, &self.passed_over)?;
+        Ok(())
     }
 
     /// Re-walks the snapshot and reports every way it no longer matches the manifest, sorted by path.
@@ -1363,15 +1536,16 @@ impl Snapshot {
     /// Removes the snapshot directory.
     ///
     /// # Errors
-    /// [`SnapshotErrorKind::CleanupRefused`] when the guard fires, and [`SnapshotErrorKind::CleanupFailed`] when the directory survived every attempt or its lock could not be released.
-    pub fn cleanup(self) -> Result<(), SnapshotError> {
-        self.cleanup_with(
-            &|dir: &Path| tempowner::remove_tree(dir),
-            &std::thread::sleep,
-        )
+    /// [`SnapshotErrorKind::CleanupRefused`] when the guard fires, and [`SnapshotErrorKind::CleanupFailed`] when producer completion, lock release or the single removal fails.
+    pub fn cleanup(mut self) -> Result<(), SnapshotError> {
+        if self.state != State::Live {
+            return Ok(());
+        }
+        self.state = State::Released;
+        self.settled_removal()?.once(&tempowner::remove_tree)
     }
 
-    /// [`Snapshot::cleanup`] with the removal and the pause as arguments, so the retry ladder can be tested without a filesystem persuaded into failing.
+    /// Settles producers before modelling removal with the caller's explicitly injected clock.
     ///
     /// # Errors
     /// See [`Snapshot::cleanup`].
@@ -1384,15 +1558,22 @@ impl Snapshot {
             return Ok(());
         }
         self.state = State::Released;
-        self.remove(remove, sleep)
+        self.settled_removal()?.with_clock(remove, sleep)
     }
 
-    fn remove(
-        &mut self,
-        remove: &dyn Fn(&Path) -> io::Result<()>,
-        sleep: &dyn Fn(Duration),
-    ) -> Result<(), SnapshotError> {
+    fn settled_removal(&mut self) -> Result<SettledRemoval<'_>, SnapshotError> {
         cleanup_guard(&self.dir, &self.dest_parent)?;
+        let began = std::time::Instant::now();
+        let producers =
+            crate::escaped::end_working_under(self.adoption, &[&self.dir]).map_err(|source| {
+                SnapshotError::new(
+                    SnapshotErrorKind::CleanupFailed,
+                    self.dir.display().to_string(),
+                    "cannot establish completion of every observed snapshot producer",
+                )
+                .with_source(source)
+            })?;
+        let elapsed = began.elapsed();
         if let Some(owner) = &mut self.owner {
             owner.release().map_err(|source| {
                 SnapshotError::new(
@@ -1403,13 +1584,54 @@ impl Snapshot {
                 .with_source(source)
             })?;
         }
+        Ok(SettledRemoval {
+            directory: &self.dir,
+            producers,
+            elapsed,
+        })
+    }
+}
+
+struct SettledRemoval<'a> {
+    directory: &'a Path,
+    producers: Vec<u32>,
+    elapsed: Duration,
+}
+
+impl SettledRemoval<'_> {
+    fn once(self, remove: &dyn Fn(&Path) -> io::Result<()>) -> Result<(), SnapshotError> {
+        platform::clear_read_only(self.directory);
+        match remove(self.directory) {
+            Ok(()) => Ok(()),
+            Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(source) => Err(self.failed("the completed snapshot removal was refused", source)),
+        }
+    }
+
+    fn failed(&self, message: &str, source: io::Error) -> SnapshotError {
+        SnapshotError::new(
+            SnapshotErrorKind::CleanupFailed,
+            self.directory.display().to_string(),
+            format!(
+                "{message}; settled producers {:?} in {:?}",
+                self.producers, self.elapsed
+            ),
+        )
+        .with_source(source)
+    }
+
+    fn with_clock(
+        self,
+        remove: &dyn Fn(&Path) -> io::Result<()>,
+        clock: &dyn Fn(Duration),
+    ) -> Result<(), SnapshotError> {
         let mut last = None;
         for delay in CLEANUP_DELAYS {
             if let Some(delay) = delay {
-                platform::clear_read_only(&self.dir);
-                sleep(delay);
+                platform::clear_read_only(self.directory);
+                clock(delay);
             }
-            match remove(&self.dir) {
+            match remove(self.directory) {
                 Ok(()) => return Ok(()),
                 Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
                 Err(error) => last = Some(error),
@@ -1417,8 +1639,8 @@ impl Snapshot {
         }
         let mut error = SnapshotError::new(
             SnapshotErrorKind::CleanupFailed,
-            self.dir.display().to_string(),
-            format!("the snapshot directory survived {CLEANUP_ATTEMPTS} removal attempts"),
+            self.directory.display().to_string(),
+            format!("the snapshot directory survived {CLEANUP_ATTEMPTS} injected-clock attempts"),
         );
         if let Some(source) = last {
             error = error.with_source(source);
@@ -1432,14 +1654,11 @@ impl Drop for Snapshot {
     fn drop(&mut self) {
         if self.state == State::Live {
             self.state = State::Released;
-            if let Err(unswept) = crate::escaped::end_working_under(&[&self.dir]) {
-                drop(unswept);
-            }
-            if let Err(cleanup_failure) = self.remove(
-                &|dir: &Path| tempowner::remove_tree(dir),
-                &std::thread::sleep,
-            ) {
-                drop(cleanup_failure);
+            if let Err(cleanup_failure) = self
+                .settled_removal()
+                .and_then(|removal| removal.once(&tempowner::remove_tree))
+            {
+                eprintln!("snapshot: {cleanup_failure}");
                 std::process::abort();
             }
         }

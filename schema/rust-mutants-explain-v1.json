@@ -62,6 +62,10 @@
     "retried": {
       "type": "boolean"
     },
+    "evidence": {
+      "description": "What the outcome rests on: the sealed executions that established it, or no verdict and every reason why, in which case the outcome is a lead (ADR 0046).",
+      "type": "object"
+    },
     "reproduce": {
       "type": "string",
       "minLength": 1

@@ -93,7 +93,7 @@ fn reported(decide: impl Fn(&Fault) -> SeamDecision) -> Report {
     source.timing.started = "2026-09-18T09:00:00Z".to_owned();
     source.timing.finished = "2026-09-18T09:00:01Z".to_owned();
     source.limitations.push(njutest::report::Limitation::new(
-        "git-metadata-unavailable",
+        njutest::limitation::Limitation::GitMetadataUnavailable,
         "the wire gallery fixture is not a git repository",
     ));
     let seen = observed();

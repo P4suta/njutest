@@ -167,11 +167,11 @@ impl ScheduleError {
 
 /// What a panic said, where it said it as text.
 fn said(panic: &(dyn std::any::Any + Send)) -> String {
-    panic
-        .downcast_ref::<&str>()
-        .map(|text| (*text).to_owned())
-        .or_else(|| panic.downcast_ref::<String>().cloned())
-        .unwrap_or_else(|| "a panic whose payload is not text".to_owned())
+    match (panic.downcast_ref::<&str>(), panic.downcast_ref::<String>()) {
+        (Some(text), _) => (*text).to_owned(),
+        (None, Some(text)) => text.clone(),
+        (None, None) => "a panic whose payload is not text".to_owned(),
+    }
 }
 
 /// Marks, while a worker unwinds from `at`, that it panicked there, and moves the cursor past `end` so no other worker takes another item for a measurement that is already a refusal.
@@ -282,10 +282,9 @@ where
         for worker in &handles {
             worker.open();
         }
-        let named = || {
-            items
-                .get(cursor.panicked_at.load(Ordering::SeqCst))
-                .map_or_else(|| "nothing it had taken".to_owned(), Named::named)
+        let named = || match items.get(cursor.panicked_at.load(Ordering::SeqCst)) {
+            Some(item) => item.named(),
+            None => "nothing it had taken".to_owned(),
         };
         let joined: Vec<_> = handles
             .into_iter()

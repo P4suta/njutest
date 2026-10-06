@@ -31,11 +31,13 @@ fn asked(root: &str) -> Request {
             .expect("a canonical run identity"),
         started: jiff::Timestamp::from_second(1_800_000_000).expect("in range"),
         engine_trace: rust_mutants::trace::Recorder::disabled(),
+        carried_evidence: None,
         evidence: Evidence::default(),
         changed: None,
         checkpoints: None,
         evidence_store: None,
         shard: None,
+        trace: None,
     }
 }
 
@@ -45,6 +47,66 @@ fn known() -> Evidence {
         tree: "t".repeat(64),
         keying: None,
     }
+}
+
+#[test]
+fn an_allowed_outside_tree_is_an_input_even_when_its_file_time_stays_the_same() {
+    let directory = tempfile::tempdir().expect("a tree and its sibling");
+    let root = directory.path().join("workspace");
+    let outside = directory.path().join("outside");
+    std::fs::create_dir_all(&root).expect("the workspace");
+    std::fs::create_dir_all(&outside).expect("the outside tree");
+    let source = outside.join("lib.rs");
+    std::fs::write(&source, "pub fn value() -> u32 { 1 }\n").expect("the dependency");
+    let modified = std::fs::metadata(&source)
+        .expect("the dependency's metadata")
+        .modified()
+        .expect("the dependency's file time");
+    let config = Config::parse(
+        "version = 1\n[project]\nallow_outside = [\"../outside\"]\n",
+        &root.join(".njutest.toml"),
+    )
+    .expect("an explicitly allowed source tree");
+    let machine = njutest::assure::identity::Machine {
+        toolchain: "rustc",
+        platform: "platform",
+        engine: "engine",
+    };
+    let vars = rust_mutants::vars::Variables::default();
+    let read = || {
+        njutest::assure::identity::inputs(
+            &njutest::assure::identity::Asked {
+                root: &root,
+                config: &config,
+                machine: &machine,
+                vars: &vars,
+                elsewhere: &[],
+            },
+            njutest::evidence::digest::Mode::Full,
+            &[],
+            None,
+        )
+        .expect("the complete inputs")
+    };
+    let before = read();
+    std::fs::write(&source, "pub fn value() -> u32 { 2 }\n").expect("the changed dependency");
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&source)
+        .expect("the dependency is writable")
+        .set_times(std::fs::FileTimes::new().set_modified(modified))
+        .expect("the original file time");
+    let after = read();
+    assert_eq!(before.tree, after.tree, "the workspace itself did not move");
+    assert_ne!(
+        before.dependencies, after.dependencies,
+        "dependency bytes bind target caches as well as the whole report"
+    );
+    assert_ne!(
+        njutest::evidence::digest::identity(&before),
+        njutest::evidence::digest::identity(&after),
+        "an outside edit cannot read back an answer about the previous dependency"
+    );
 }
 
 #[test]
@@ -109,7 +171,7 @@ fn a_tree_no_number_could_be_read_from_says_so_and_names_no_digest() {
         report
             .limitations
             .iter()
-            .any(|limitation| limitation.name == WORKSPACE_DIGEST_NOT_COMPUTED),
+            .any(|limitation| limitation.name() == WORKSPACE_DIGEST_NOT_COMPUTED),
         "and the run says why, because a result nothing can be keyed to is one no later \
          run may reuse: {:?}",
         report.limitations
@@ -202,6 +264,7 @@ fn a_run_that_could_not_ask_git_says_so_before_it_compiles_anything() {
     let cancel = rust_mutants::runner::Cancel::new();
     let trace = njutest::trace::Recorder::disabled();
     let environment = njutest::cli::Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: njutest_devkit::paths::environment_for_a_run()
             .into_iter()
             .collect(),
@@ -230,7 +293,7 @@ fn a_run_that_could_not_ask_git_says_so_before_it_compiles_anything() {
         report
             .limitations
             .iter()
-            .any(|limitation| limitation.name == njutest::limitation::GIT_METADATA_UNAVAILABLE),
+            .any(|limitation| limitation.name() == njutest::limitation::GIT_METADATA_UNAVAILABLE),
         "and the run says so here, before it compiles anything, because a report that \
          cannot name the commit it verified is one nobody can go back to: {:?}",
         report.limitations
@@ -239,7 +302,7 @@ fn a_run_that_could_not_ask_git_says_so_before_it_compiles_anything() {
         !report
             .limitations
             .iter()
-            .any(|limitation| limitation.name == njutest::limitation::TEMP_DIRECTORY_UNCLAIMED),
+            .any(|limitation| limitation.name() == njutest::limitation::TEMP_DIRECTORY_UNCLAIMED),
         "the directory it works in was claimed, so nothing is said about a sweep taking \
          it: {:?}",
         report.limitations
@@ -265,7 +328,7 @@ fn a_run_that_could_not_ask_git_says_so_before_it_compiles_anything() {
         !committed
             .limitations
             .iter()
-            .any(|limitation| limitation.name == njutest::limitation::GIT_METADATA_UNAVAILABLE),
+            .any(|limitation| limitation.name() == njutest::limitation::GIT_METADATA_UNAVAILABLE),
         "and states nothing, because there is nothing it could not do: {:?}",
         committed.limitations
     );
@@ -286,6 +349,7 @@ fn every_limitation_a_report_states_before_it_runs_is_a_finished_sentence() {
     let cancel = rust_mutants::runner::Cancel::new();
     let trace = njutest::trace::Recorder::disabled();
     let environment = njutest::cli::Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: rust_mutants::vars::Variables::empty(),
         working_directory: root.path().to_owned(),
         temp_directory: parent.path().to_owned(),
@@ -312,7 +376,7 @@ fn every_limitation_a_report_states_before_it_runs_is_a_finished_sentence() {
     );
     for limitation in &report.limitations {
         assert!(
-            !limitation.name.trim().is_empty(),
+            !limitation.name().trim().is_empty(),
             "a limitation with no name is one nobody can look up: {limitation:?}"
         );
         assert!(

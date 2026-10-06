@@ -42,9 +42,17 @@ fn identity(path: &Path) -> io::Result<Identity> {
 }
 
 fn names(directory: &Path) -> io::Result<BTreeSet<OsString>> {
-    std::fs::read_dir(directory)?
+    let mut found: BTreeSet<OsString> = std::fs::read_dir(directory)?
         .map(|entry| entry.map(|entry| entry.file_name()))
-        .collect()
+        .collect::<io::Result<_>>()?;
+    found.retain(|name| {
+        !Path::new(name).extension().is_some_and(|extension| {
+            ["rlib", "rmeta", "d"]
+                .iter()
+                .any(|compile_only| extension == std::ffi::OsStr::new(compile_only))
+        })
+    });
+    Ok(found)
 }
 
 /// How a file the run executes, or one beside it, changed after the run built it.
@@ -98,7 +106,7 @@ pub fn alongside(beside: &[String]) -> String {
     }
 }
 
-/// Every test executable the run starts, and every name in the directories they run from, as the build left them.
+/// Every test executable and sibling runtime file as the build left them, excluding static Cargo outputs.
 #[derive(Debug, Default)]
 pub struct Apparatus {
     executables: Vec<(PathBuf, Identity)>,
@@ -108,8 +116,7 @@ pub struct Apparatus {
 }
 
 impl Apparatus {
-    /// What the executables among `executables` that live under `within` are now, with every name beside them: executables anywhere else, a toolchain's own, are not the run's to watch.
-    /// One that cannot be read now is not watched, since the run that just built and verified it would already have failed to start it.
+    /// Surveys readable executables and sibling runtime names under `within`, excluding compile-only archives, metadata and dep-info.
     #[must_use]
     pub fn survey<'a>(executables: impl IntoIterator<Item = &'a Path>, within: &Path) -> Self {
         let mut surveyed = Self::default();
@@ -196,5 +203,34 @@ impl Running {
         beside.extend(self.started.iter().skip(began.from).cloned());
         beside.remove(mutant);
         beside.into_iter().collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Apparatus, Change};
+
+    #[test]
+    fn cargo_can_collect_static_build_outputs_while_runtime_files_stay_guarded() {
+        let directory = tempfile::tempdir().expect("the execution directory");
+        let executable = directory.path().join("program");
+        std::fs::write(&executable, b"the executable").expect("an executable");
+        for name in ["old.rlib", "old.rmeta", "old.d", "runtime.dll"] {
+            std::fs::write(directory.path().join(name), b"built").expect("a build output");
+        }
+        let apparatus = Apparatus::survey([executable.as_path()], directory.path());
+        for name in ["old.rlib", "old.rmeta", "old.d"] {
+            std::fs::remove_file(directory.path().join(name)).expect("Cargo collects old outputs");
+        }
+        assert!(
+            apparatus.changed().is_empty(),
+            "static build outputs cannot be loaded by a running harness: {:?}",
+            apparatus.changed()
+        );
+        let runtime = directory.path().join("runtime.dll");
+        std::fs::remove_file(&runtime).expect("a runtime file is removed");
+        assert!(apparatus.changed().contains(&Change::Missing(runtime)));
+        std::fs::remove_file(&executable).expect("the executable is removed");
+        assert!(apparatus.changed().contains(&Change::Missing(executable)));
     }
 }

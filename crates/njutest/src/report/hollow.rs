@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use super::{Blind, Decision, Finding, FindingKind, MutantRecord};
+use super::{Blind, Decision, Finding, FindingKind, MutantRecord, Resting, RowVerdict};
 
 /// How many mutations one target answered, and whether it ever noticed one.
 #[derive(Debug, Clone, Default)]
@@ -23,7 +23,7 @@ struct Answering {
 /// A target that is absent from every `killed_by` is not thereby a target that notices nothing — a run records the first detection and asks the cheapest targets first, so one that is outranked every time never appears there.
 /// What `answered` says is who was actually put to a mutation, which is the only ground on which a run may say a target noticed nothing.
 ///
-/// Only an answer somebody decided counts.
+/// Only an answer somebody decided counts, which is a sealed execution's (ADR 0046).
 /// A target whose harness would not start, or whose pair did not agree, did not notice nothing — the run established nothing about it, and counting those as chances it failed to take would accuse a broken harness of asserting nothing, with the count as the weight of the accusation.
 ///
 /// `records` must be the whole catalog.
@@ -32,11 +32,19 @@ struct Answering {
 pub fn found(records: &[MutantRecord]) -> Vec<Finding> {
     let mut answering: BTreeMap<&str, Answering> = BTreeMap::new();
     for record in records {
+        if record.verdict().resting != Resting::Sealed {
+            continue;
+        }
         let Some(routing) = record.routing.as_ref() else {
             continue;
         };
         for answered in &routing.answered {
-            let decision = answered.outcome.decision();
+            let decision = RowVerdict {
+                outcome: answered.outcome,
+                accepted: false,
+                resting: Resting::Sealed,
+            }
+            .decision();
             if decision.blind().is_some_and(Blind::is_unanswered) {
                 continue;
             }

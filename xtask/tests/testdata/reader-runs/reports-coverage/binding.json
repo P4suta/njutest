@@ -1,0 +1,72 @@
+{
+  "schema": "njutest-reader-recording-v1",
+  "fixture": "fixture-coverage",
+  "arguments": [
+    "run",
+    "--offline",
+    "--locked",
+    "--ui",
+    "quiet",
+    "--jobs",
+    "1"
+  ],
+  "recording_arguments": [
+    "--trace"
+  ],
+  "command": [
+    "/Users/yasunobu/projects/github.com/P4suta/njutest-w18/target/debug/rust-mutants",
+    "run",
+    "--offline",
+    "--locked",
+    "--ui",
+    "quiet",
+    "--jobs",
+    "1",
+    "--trace",
+    "--root",
+    "/Users/yasunobu/njutest-oc/evidence/batch/phase3/package-C/reader-recording-products/reports-coverage/trees/fixture-coverage"
+  ],
+  "source_root": "/Users/yasunobu/njutest-oc/evidence/batch/phase3/package-C/reader-recording-products/reports-coverage/trees/fixture-coverage",
+  "program": "/Users/yasunobu/projects/github.com/P4suta/njutest-w18/target/debug/rust-mutants",
+  "producer_revision": "38bba9e90ba9df4bc8dee4e1c3e8e999eed4d669",
+  "exit_code": 1,
+  "sources": {
+    "Cargo.lock": "2026c8c31c6d86b7152381362486a85e5c3d8fc330d87f0d08d8a51fcdeb513c",
+    "Cargo.toml": "fa46f06d5309ba7a952844d1c8206749628ad50d588a9f750023fa778e9776bd",
+    "README.md": "d93692c963232621eda6c720a4f270b2e2697227a0db37ddb5dddfc3d9bcdbaf",
+    "src/lib.rs": "6f9522ab8ab6b0b82653a0847a0265f0006e0307ccfa44e99fec548ffb5d061b",
+    "tests/upper.rs": "e9fd32fdf7b5fab630cbde54d765d54a85869bb4d108b586d42ee4e2dbbedac2"
+  },
+  "artifacts": {
+    "reports/mutation/.gitignore": "cdbcae15105d6b781e620813c79c7e868740d4e9cc53ce6f5fcbbc12387adf4b",
+    "reports/mutation/20261002t125722975z/carried-v1.json": "eaef98655bfbbf7920f7c78908d258f3d02536fb1d820caad9aab766f48dbe4f",
+    "reports/mutation/20261002t125722975z/catalog-v1.json": "4cd992ddad3fe45ab6f6e6ac06cbae3ba9afa695fe791bc46d2fa2673d545fc6",
+    "reports/mutation/20261002t125722975z/reached-v1.json": "d77c1d7db0f396354fd4d4452ebb966d883214ffd12e44f64c4da9727d66227f",
+    "reports/mutation/20261002t125722975z/run-report-v1.json": "7c290d1f43eeb2ae1f09228f7c899366ae22f3f115715b397958f759fe6f238c",
+    "reports/mutation/20261002t125722975z/skeletons-v1.json": "3e303ab6ec674f424e3262c319f725d4c319513f7d749f4ab109c0ae29c2e373",
+    "reports/mutation/20261002t125722975z/touched-v1.json": "651402a5a40cbcf4484d991be4e7531d8348dfd3a36d36e421f62112c7b9d432",
+    "reports/mutation/20261002t125722975z/trace/output/28.txt": "4bad9d983e7a74bef410786c09fa7470529a425dca6bbec28594133f00e56379",
+    "reports/mutation/20261002t125722975z/trace/output/42.txt": "7d81b18510255e184a3a7d0a11a9599f323868a034207dc00fd86f32220c0676",
+    "reports/mutation/20261002t125722975z/trace/output/51.txt": "4bad9d983e7a74bef410786c09fa7470529a425dca6bbec28594133f00e56379",
+    "reports/mutation/20261002t125722975z/trace/output/68.txt": "78fe6162988e35de012570fb393ccd4a61edef6f82ee35c7ae4299c61fe13e6b",
+    "reports/mutation/20261002t125722975z/trace/output/75.txt": "23fdc8d93524107a3d9f081ea549cab894e7c6545b6e035f92f10867fb972906",
+    "reports/mutation/20261002t125722975z/trace/output/78.txt": "65ffedbb05a5387fc84f2138b007d790b11a1680b01b97ae4ffbc7ce65e9fa0c",
+    "reports/mutation/20261002t125722975z/trace/output/81.txt": "6bbd77fcb72530b0143666bd1b640673a0580219f5e07caf86af34ee4ccb7f48",
+    "reports/mutation/20261002t125722975z/trace/output/95.txt": "725494d73a4edb64aff300b6f693246323c0b0d0ba0d3891722c5906d3856c48",
+    "reports/mutation/20261002t125722975z/trace/output/98.txt": "0d13a0a3974cdc63642d1fa422e44e9d63638f6dfd593cc62cf889e6abbcb2a1",
+    "reports/mutation/20261002t125722975z/trace/trace.jsonl": "752d71f7bae501e151c6edbffb64b5855ac862e80b84b8af98ecc21d52b2f419",
+    "reports/mutation/latest.json": "d40c294e96ab88f2f2b924b4bb5d38ca9c242f7bd63716b5794c76552994053a"
+  },
+  "provenance": {
+    "producer.json": "29f08edd24aef277003ef80a95fecae6b0a3f8ae4039068113038158d6f7be18",
+    "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stdout": "74edb6c9b85c2a0962e382d54b521b35398076afcc36b35801055113d27116a0",
+    "producer-source.tar": "a029984508aa567d44cb6f22d61bfe4541e680667f40b30b32eb3b90f5e772f0"
+  },
+  "subjects": [
+    {
+      "report": "reports/mutation/20261002t125722975z/run-report-v1.json",
+      "trace": "reports/mutation/20261002t125722975z/trace/trace.jsonl"
+    }
+  ]
+}

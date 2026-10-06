@@ -14,7 +14,7 @@ use crate::id::RunId;
 pub const SCHEMA: &str = "rust-mutants-trace-v1";
 
 /// Every type a recording can hold, in the order [`Payload::type_name`] answers with.
-pub const EVERY_TYPE: [&str; 25] = [
+pub const EVERY_TYPE: [&str; 27] = [
     "run-start",
     "phase-start",
     "phase-end",
@@ -38,6 +38,8 @@ pub const EVERY_TYPE: [&str; 25] = [
     "evidence",
     "kept",
     "mutant-exec",
+    "sealed-control",
+    "sealed-exec",
     "note",
     "run-end",
 ];
@@ -183,6 +185,16 @@ pub enum Payload {
     MutantExec {
         /// The record.
         mutant: MutantExecRecord,
+    },
+    /// One test of one sealed module was run with nothing active, alone in a fresh instance: its control, which every sealed execution of it is judged against (ADR 0046).
+    SealedControl {
+        /// The record.
+        control: SealedControlRecord,
+    },
+    /// One test of one sealed module was run with one mutant active, alone in a fresh instance (ADR 0046).
+    SealedExec {
+        /// The record.
+        sealed: SealedExecRecord,
     },
     /// A free-form note: progress, a decision, a limitation.
     Note {
@@ -370,6 +382,19 @@ impl TryFrom<NjutestBuildWire> for NjutestBuild {
     }
 }
 
+/// Reads a command line, refusing one that names no program, which no recorder writes.
+fn command_line<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<String>, D::Error> {
+    let argv = Vec::<String>::deserialize(deserializer)?;
+    if argv.is_empty() {
+        return Err(serde::de::Error::custom(
+            "an exec record's command line names no program",
+        ));
+    }
+    Ok(argv)
+}
+
 fn nested_run_id(final_run_id: &RunId, ordinal: u32) -> Result<RunId, NjutestBuildError> {
     RunId::try_from(format!("{final_run_id}-b{ordinal:010}")).map_err(|source| {
         NjutestBuildError::RunId {
@@ -408,6 +433,8 @@ impl Payload {
             Self::Identical { .. } => "identical",
             Self::Evidence { .. } => "evidence",
             Self::MutantExec { .. } => "mutant-exec",
+            Self::SealedControl { .. } => "sealed-control",
+            Self::SealedExec { .. } => "sealed-exec",
             Self::Note { .. } => "note",
             Self::RunEnd { .. } => "run-end",
         }
@@ -484,7 +511,8 @@ pub struct SnapshotRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExecRecord {
-    /// The command line, verbatim.
+    /// The command line, verbatim, which names at least its program.
+    #[serde(deserialize_with = "command_line")]
     pub argv: Vec<String>,
     /// The working directory.
     #[serde(deserialize_with = "crate::strictjson::required_option")]
@@ -596,6 +624,8 @@ pub struct ValidateRoundRecord {
     pub written: u32,
     /// The mutants an error was inside of, and what the compiler said.
     pub attributed: Vec<AttributionRecord>,
+    /// The errors a `const fn` that goes without its `const` from the next round on accounts for, each the first line of what the compiler said (ADR 0047).
+    pub carried: Vec<String>,
     /// The errors no branch accounts for, rendered.
     pub unattributed: Vec<String>,
 }
@@ -807,6 +837,11 @@ pub enum SummaryRecord {
         /// The summary's count.
         tests_run: Option<u32>,
     },
+    /// rustdoc, with how many doctests its summaries together said ran, or nothing where it printed none.
+    Rustdoc {
+        /// The summaries' count.
+        tests_run: Option<u32>,
+    },
     /// A harness that answers by exit code, names no test, and prints no summary.
     Custom,
     /// No process answered.
@@ -821,6 +856,9 @@ impl SummaryRecord {
     pub fn of(result: &crate::execute::MutantResult) -> Self {
         match result.protocol {
             crate::execute::Protocol::Libtest => Self::Libtest {
+                tests_run: result.tests_run(),
+            },
+            crate::execute::Protocol::Rustdoc => Self::Rustdoc {
                 tests_run: result.tests_run(),
             },
             crate::execute::Protocol::Custom => Self::Custom,
@@ -946,6 +984,39 @@ pub struct MutantExecRecord {
     pub declined: Vec<crate::decline::Decline>,
 }
 
+/// One sealed control: one test of one module run with nothing active, whether a mutant's execution can be judged against it, and every guard it reached.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SealedControlRecord {
+    /// The target whose module ran.
+    pub target: String,
+    /// The test it ran.
+    pub test: String,
+    /// `controlled`, or why no mutant's execution can be judged against it, as a report spells it.
+    pub standing: String,
+    /// Every guard it reached, by dense catalog index, in order; none where it has no control.
+    pub reached: Vec<u32>,
+}
+
+/// One sealed execution: one test of one module with one mutant active, and what it came to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SealedExecRecord {
+    /// The mutant's display identity.
+    pub mutant: String,
+    /// The mutant's dense catalog index.
+    pub index: u32,
+    /// The target whose module ran.
+    pub target: String,
+    /// The test it ran.
+    pub test: String,
+    /// What it came to, as a report spells it.
+    pub came_to: String,
+    /// The digest of the transcript the verdict rests on: everything the invocation was a function of and everything it did, which one execution of one tree is named by wherever it is remembered.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transcript: Option<String>,
+}
+
 /// What the outcome store was asked about one mutant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1056,4 +1127,7 @@ pub struct RunRecord {
     pub events_emitted: u64,
     /// Events the sink could not keep before this one.
     pub events_dropped: u64,
+    /// What the host spent on sealed executions, where the run assembled a bench: the modules it compiled, the instances it started, and the invocations a remembered transcript answered instead.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sealed: Option<rust_mutants_sealed::Spent>,
 }

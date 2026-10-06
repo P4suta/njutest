@@ -113,6 +113,8 @@ mod table {
         CacheCorrupt,
         /// No port could be listened on in front of a seam, so nothing could be recorded about it.
         WireCannotListen,
+        /// A stored answer's sealed executions did not come out the same when they ran again.
+        CacheUnreproduced,
         /// The reports offered are not the parts of one catalog.
         MergeRefused,
     }
@@ -403,6 +405,12 @@ mod table {
                     remedy: "check this machine allows a listener on the loopback interface, and that nothing has taken every port",
                     sealed: Sealed,
                 },
+                Self::CacheUnreproduced => ErrorCode {
+                    code: "NJ8006",
+                    summary: "a stored answer's sealed executions did not come out the same when they ran again",
+                    remedy: "nothing: the run establishes everything again and stores what it finds, since a stored answer is reissued only when every sealed execution it rests on comes out the same; one that keeps coming out differently on an unchanged tree is a defect in the sealed host, to report with the execution the message names",
+                    sealed: Sealed,
+                },
                 Self::MergeRefused => ErrorCode {
                     code: "NJ9001",
                     summary: "the reports offered are not the parts of one catalog",
@@ -446,6 +454,7 @@ pub(crate) const MEASUREMENT_UNREADABLE: ErrorCode = NjCode::MeasurementUnreadab
 pub(crate) const CACHE_UNUSABLE: ErrorCode = NjCode::CacheUnusable.error_code();
 pub(crate) const CACHE_CORRUPT: ErrorCode = NjCode::CacheCorrupt.error_code();
 pub(crate) const WIRE_CANNOT_LISTEN: ErrorCode = NjCode::WireCannotListen.error_code();
+pub(crate) const CACHE_UNREPRODUCED: ErrorCode = NjCode::CacheUnreproduced.error_code();
 pub(crate) const SCRATCH_UNUSABLE: ErrorCode = NjCode::ScratchUnusable.error_code();
 pub(crate) const MERGE_REFUSED: ErrorCode = NjCode::MergeRefused.error_code();
 pub(crate) const PROVIDER_UNSTARTABLE: ErrorCode = NjCode::ProviderUnstartable.error_code();
@@ -506,6 +515,16 @@ pub enum RunnerError {
         #[source]
         source: rust_mutants::outcomes::StoreError,
     },
+    /// What an audit re-derives a build's carried answers from could not be kept beside its engine recording (ADR 0041).
+    #[error(
+        "{}: what this build's carried answers rest on could not be kept beside its recording: {source}",
+        OUTPUT_UNWRITABLE.code
+    )]
+    CarriedEvidence {
+        /// Why the engine could not write it.
+        #[source]
+        source: rust_mutants::report::evidence::EvidenceError,
+    },
     /// Coverage could not be read.
     #[error(transparent)]
     Coverage(#[from] crate::coverage::CoverageError),
@@ -552,6 +571,15 @@ pub enum RunnerError {
     Model {
         /// The typed internal failure, rendered only at this outer error boundary.
         message: String,
+    },
+    /// A Rust source could not be read at all, which the engine's reading says in its own code.
+    #[error("{code}: {doing}: {source}", code = source.code().code)]
+    Unread {
+        /// What the run was reading it for.
+        doing: &'static str,
+        /// Why the reading failed.
+        #[source]
+        source: rust_mutants::parsing::ReadingError,
     },
     /// Measurements could not be scheduled without trusting state interrupted by a panic.
     #[error(transparent)]
@@ -628,7 +656,7 @@ impl RunnerError {
     pub const fn code(&self) -> ErrorCode {
         match self {
             Self::Interrupted => INTERRUPTED,
-            Self::Output { .. } => OUTPUT_UNWRITABLE,
+            Self::Output { .. } | Self::CarriedEvidence { .. } => OUTPUT_UNWRITABLE,
             Self::Config(error) => error.code(),
             Self::Target(error) => error.code(),
             Self::Evidence(error) => error.code(),
@@ -647,6 +675,7 @@ impl RunnerError {
             Self::MiriMissing { .. } => MIRI_MISSING,
             Self::PhaseOutput { .. } => PHASE_OUTPUT_UNREADABLE,
             Self::Model { .. } => MODEL_PHASE_FAILED,
+            Self::Unread { source, .. } => ErrorCode::carried(source.code()),
             Self::Schedule(error) => error.code(),
             Self::Sources(error) => error.code(),
             Self::Blind { .. } => SENTINEL_BLIND,
@@ -685,9 +714,15 @@ const ERROR_CODES: [ErrorCode; NjCode::ALL.len()] = {
 };
 
 impl From<crate::assure::model::ModelError> for RunnerError {
-    fn from(source: crate::assure::model::ModelError) -> Self {
-        Self::Model {
-            message: source.to_string(),
+    fn from(failed: crate::assure::model::ModelError) -> Self {
+        match failed.unread() {
+            Ok(source) => Self::Unread {
+                doing: "reading a catalogued source to generate its harness",
+                source,
+            },
+            Err(other) => Self::Model {
+                message: other.to_string(),
+            },
         }
     }
 }

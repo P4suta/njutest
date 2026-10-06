@@ -3,7 +3,7 @@
 
 //! The pre-push gate: the exact commit being pushed, checked in the repository's one reusable tree, one whole-workspace run at a time.
 
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
@@ -12,14 +12,14 @@ use std::time::{Duration, Instant};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
+mod inputs;
+
+use crate::environment::{Environment, Spelling};
 use crate::lanes::{self, Held, Holder, Lane, LaneError, Lanes, Request};
 use crate::work::{self, Ended, Stops, WorkError};
 
 /// The object id Git gives a ref that is being deleted, or one the remote does not have yet.
 const ZERO: &str = "0000000000000000000000000000000000000000";
-
-/// How long a pass answers for a second push of the same commit against the same base.
-const REMEMBERED: Duration = Duration::from_secs(3600);
 
 /// What the gate is handed by the process that runs it.
 #[derive(Debug, Clone, Copy)]
@@ -27,7 +27,7 @@ pub struct Surroundings<'a> {
     /// The checkout the push was started in.
     pub directory: &'a Path,
     /// The environment the gate was started with; no `GIT_*` variable in it reaches anything the gate starts.
-    pub environment: &'a [(OsString, OsString)],
+    pub environment: &'a Environment,
     /// The program running the gate, whose bytes are part of what a remembered pass is about.
     pub executable: &'a Path,
 }
@@ -35,9 +35,9 @@ pub struct Surroundings<'a> {
 /// How a push the gate let through was answered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Passed {
-    /// The check ran on this commit and passed.
+    /// The warm and cold checks ran on this commit and passed.
     Checked,
-    /// This commit against this base passed this same gate within the hour.
+    /// Both complete checks were remembered under every unchanged proof input.
     Remembered,
 }
 
@@ -361,9 +361,9 @@ fn decide(
     };
     let here = surroundings.directory;
     let head = tools.answer(here, &["rev-parse", "--verify", "HEAD"])?;
-    verify(&tools, here, &head, &read_updates(updates)?)?;
+    verify(tools, here, &head, &read_updates(updates)?)?;
     let settings = Settings::from_environment(surroundings.environment)?;
-    let place = Place::of(&tools, here, &settings.cache)?;
+    let place = Place::of(tools, here, &settings.cache)?;
     let base = tools.maybe(
         here,
         &[
@@ -373,17 +373,6 @@ fn decide(
             &format!("{}^{{commit}}", settings.base_ref),
         ],
     )?;
-    let memory = place.memory(&head, base.as_deref(), &identity(surroundings)?);
-    let passed = || {
-        format!(
-            "pre-push: {head} against {} already passed this gate within the hour; it is not run again",
-            base.as_deref().unwrap_or("no base")
-        )
-    };
-    if remembered(&memory)? {
-        say(progress, &passed())?;
-        return Ok(Passed::Remembered);
-    }
     let stops = Stops::arm()?;
     let holder = Holder {
         worktree: here.to_path_buf(),
@@ -398,12 +387,7 @@ fn decide(
     };
     let (turn, tree) = take_lanes(&lanes, &place, asking, progress)?;
     let owner = place.own()?;
-    if remembered(&memory)? {
-        say(progress, &passed())?;
-        return Ok(Passed::Remembered);
-    }
-    serve_the_cache(&tools, &settings, progress)?;
-    place.prepare(&tools, here, &head)?;
+    place.prepare(tools, here, &head)?;
     let run = Run {
         tools,
         place: &place,
@@ -413,7 +397,51 @@ fn decide(
         stops: &stops,
         held: [&turn, &tree],
     };
-    let checked = check(&run, progress);
+    let passed = prove(&run, surroundings, base.as_deref(), progress)?;
+    drop(owner);
+    drop(tree);
+    drop(turn);
+    Ok(passed)
+}
+
+fn prove(
+    run: &Run<'_>,
+    surroundings: &Surroundings<'_>,
+    base: Option<&str>,
+    progress: &mut dyn Write,
+) -> Result<Passed, PrePushError> {
+    let Run {
+        tools,
+        place,
+        head,
+        settings,
+        stops,
+        ..
+    } = run;
+    let proof_inputs = Surroundings {
+        directory: &place.tree,
+        executable: surroundings.executable,
+        environment: surroundings.environment,
+    };
+    let identity = inputs::fingerprint(&proof_inputs, &place.target)?;
+    let memory = place.memory(head, base, &identity);
+    let pair_remembered = remembered(&memory, head, &identity)?;
+    if pair_remembered {
+        say(
+            progress,
+            &format!(
+                "pre-push: {head} against {} already passed complete cold and warm checks under unchanged inputs",
+                base.unwrap_or("no base")
+            ),
+        )?;
+    } else {
+        serve_the_cache(*tools, settings, progress)?;
+    }
+    let checked = if pair_remembered {
+        place.require_exact(*tools, head)
+    } else {
+        check(run, progress)
+    };
     let restored = tools.restore(&place.tree);
     checked?;
     if let Err(failure) = restored {
@@ -427,11 +455,22 @@ fn decide(
     if let Some(signal) = stops.raised() {
         return Err(PrePushError::Interrupted { signal });
     }
-    remember(&memory, &head)?;
-    drop(owner);
-    drop(tree);
-    drop(turn);
-    Ok(Passed::Checked)
+    if !pair_remembered {
+        let finished_identity = inputs::fingerprint(&proof_inputs, &place.target)?;
+        if finished_identity == identity {
+            remember(&memory, head, &identity)?;
+        } else {
+            say(
+                progress,
+                "pre-push: proof inputs changed while checking; no reusable receipt was published",
+            )?;
+        }
+    }
+    Ok(if pair_remembered {
+        Passed::Remembered
+    } else {
+        Passed::Checked
+    })
 }
 
 /// Takes this machine's heavy lane, then this repository's tree lane, which is taken whatever the environment says is already held.
@@ -448,7 +487,7 @@ fn take_lanes(
         },
         progress,
     )?;
-    let tree = Lanes::at(place.home.clone()).hold(
+    let tree = Lanes::at(place.home.clone(), lanes.quiet()).hold(
         &Request {
             lane: Lane::Tree,
             ..asking
@@ -470,17 +509,24 @@ struct Run<'a> {
     held: [&'a Held; 2],
 }
 
+struct Stage<'a> {
+    command: &'a mut Command,
+    log: PathBuf,
+    ceiling: Duration,
+}
+
 impl Run<'_> {
-    /// Runs the check once, its output passed on as it arrives, stopped when it goes quiet for too long or runs past the ceiling.
-    fn pass(&self, progress: &mut dyn Write) -> Result<Ended, PrePushError> {
-        let log = self.place.home.join("check.log");
-        let written = std::fs::File::create(&log).map_err(|source| io_error(&log, source))?;
-        let also = written
-            .try_clone()
-            .map_err(|source| io_error(&log, source))?;
-        let mut command = self.place.check_command(&self.tools, self.head, self.lanes);
-        command.stdin(Stdio::null()).stdout(written).stderr(also);
-        let mut reading = std::fs::File::open(&log).map_err(|source| io_error(&log, source))?;
+    /// Runs one stage, passing its output on as it arrives and stopping it at the remaining ceiling or quiet limit.
+    fn pass(&self, stage: Stage<'_>, progress: &mut dyn Write) -> Result<Ended, PrePushError> {
+        let Stage {
+            command,
+            log,
+            ceiling,
+        } = stage;
+        let log = log.as_path();
+        let output = crate::tools::log(log).map_err(|source| io_error(log, source))?;
+        command.stdin(Stdio::null());
+        let mut reading = std::fs::File::open(log).map_err(|source| io_error(log, source))?;
         let mut heard = || -> std::io::Result<bool> {
             let mut said = Vec::new();
             std::io::Read::read_to_end(&mut reading, &mut said)?;
@@ -488,14 +534,21 @@ impl Run<'_> {
             Ok(!said.is_empty())
         };
         let mut bound = work::Bound {
-            ceiling: self.settings.budget,
+            ceiling,
             quiet: self.settings.quiet,
             heard: &mut heard,
         };
         let held = self.held;
-        let ran = work::run(&mut command, Some(&mut bound), self.stops, |leader| {
-            held.iter().try_for_each(|lane| lane.working_on(leader))
-        });
+        let ran = crate::tools::run(
+            crate::tools::Request {
+                command,
+                bound: Some(&mut bound),
+                stops: self.stops,
+                environment: self.tools.environment,
+                output,
+            },
+            |leader| held.iter().try_for_each(|lane| lane.working_on(leader)),
+        );
         if ran.is_err() {
             for lane in held {
                 lane.left_work_running();
@@ -503,12 +556,96 @@ impl Run<'_> {
         }
         ran.map_err(|source| PrePushError::Work { source })
     }
+
+    fn cold_command(&self, target: &Path) -> Result<Command, PrePushError> {
+        let cargo = crate::tools::cargo(&self.place.tree, self.tools.environment)
+            .map_err(|source| io_error(&self.place.tree, std::io::Error::other(source)))?;
+        let mut command = Command::new(cargo);
+        command.envs(self.tools.environment.pairs());
+        for name in self.tools.environment.beginning("GIT_") {
+            command.env_remove(name);
+        }
+        command
+            .args(["check", "--locked", "--workspace"])
+            .current_dir(&self.place.tree)
+            .env("CARGO_TARGET_DIR", target)
+            .env("CARGO_BUILD_TARGET_DIR", target)
+            .env("CARGO_INCREMENTAL", "0")
+            .env("RUSTC_WRAPPER", "")
+            .env("RUSTC_WORKSPACE_WRAPPER", "")
+            .env("CARGO_BUILD_RUSTC_WRAPPER", "")
+            .env("CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER", "")
+            .env("NJUTEST_COMMITTED_HEAD", self.head)
+            .env(lanes::HELD, self.lanes.held_with(Lane::Heavy));
+        Ok(command)
+    }
 }
 
 fn check(run: &Run<'_>, progress: &mut dyn Write) -> Result<(), PrePushError> {
-    run.place.require_exact(&run.tools, run.head)?;
+    run.place.require_exact(run.tools, run.head)?;
     let started = Instant::now();
-    match run.pass(progress)? {
+    {
+        let mut command = run.place.check_command(run.tools, run.head, run.lanes);
+        let ended = run.pass(
+            Stage {
+                command: &mut command,
+                log: run.place.home.join("check.log"),
+                ceiling: run.settings.budget,
+            },
+            progress,
+        )?;
+        check_ended(ended, run, started)?;
+        run.place.require_exact(run.tools, run.head)?;
+    }
+    let cold = tempfile::Builder::new()
+        .prefix("cold-")
+        .tempdir_in(&run.place.home)
+        .map_err(|source| io_error(&run.place.home, source))?;
+    let mut command = run.cold_command(cold.path())?;
+    say(
+        progress,
+        "pre-push: checking the workspace in a fresh target directory",
+    )?;
+    let remaining = run
+        .settings
+        .budget
+        .checked_sub(started.elapsed())
+        .unwrap_or_default();
+    if remaining.is_zero() {
+        return Err(PrePushError::Budget {
+            budget: run.settings.budget.as_secs(),
+            elapsed: started.elapsed().as_secs(),
+        });
+    }
+    let ended = run.pass(
+        Stage {
+            command: &mut command,
+            log: run.place.home.join("cold.log"),
+            ceiling: remaining,
+        },
+        progress,
+    );
+    let cold_path = cold.path().to_path_buf();
+    let removed = cold.close().map_err(|source| io_error(&cold_path, source));
+    check_ended(ended?, run, started)?;
+    removed?;
+    run.place.require_exact(run.tools, run.head)?;
+    let elapsed = started.elapsed();
+    if elapsed >= run.settings.expected {
+        say(
+            progress,
+            &format!(
+                "pre-push: the gate passed in {}s, over its {}s expected time\npre-push: inspect which complete proof stage stayed slow",
+                elapsed.as_secs(),
+                run.settings.expected.as_secs()
+            ),
+        )?;
+    }
+    Ok(())
+}
+
+fn check_ended(ended: Ended, run: &Run<'_>, started: Instant) -> Result<(), PrePushError> {
+    match ended {
         Ended::Exited(status) if status.success() => {}
         Ended::Exited(status) => {
             return Err(PrePushError::Failed {
@@ -524,23 +661,12 @@ fn check(run: &Run<'_>, progress: &mut dyn Write) -> Result<(), PrePushError> {
         Ended::OverBudget { elapsed } => {
             return Err(PrePushError::Budget {
                 budget: run.settings.budget.as_secs(),
-                elapsed: elapsed.as_secs(),
+                elapsed: started.elapsed().max(elapsed).as_secs(),
             });
         }
         Ended::Interrupted { signal } => return Err(PrePushError::Interrupted { signal }),
     }
-    let elapsed = started.elapsed();
-    if elapsed >= run.settings.expected {
-        say(
-            progress,
-            &format!(
-                "pre-push: the gate passed in {}s, over the {}s a warm run should beat\npre-push: a first run after a merge is expected here; a second one that is still slow means something stopped being cached",
-                elapsed.as_secs(),
-                run.settings.expected.as_secs()
-            ),
-        )?;
-    }
-    run.place.require_exact(&run.tools, run.head)
+    Ok(())
 }
 
 /// A command started in a process group of its own, so no signal meant for whoever started it reaches what it leaves running.
@@ -564,7 +690,7 @@ impl Apart for Command {
 
 /// Starts the compilation cache's server apart from the check and from the terminal, when the check compiles through it, so stopping the check's group never stops a server every session shares.
 fn serve_the_cache(
-    tools: &Tools<'_>,
+    tools: Tools<'_>,
     settings: &Settings,
     progress: &mut dyn Write,
 ) -> Result<(), PrePushError> {
@@ -623,7 +749,7 @@ fn read_updates(input: &mut dyn BufRead) -> Result<Vec<Update>, PrePushError> {
 }
 
 fn verify(
-    tools: &Tools<'_>,
+    tools: Tools<'_>,
     here: &Path,
     head: &str,
     updates: &[Update],
@@ -679,28 +805,29 @@ struct Settings {
 }
 
 impl Settings {
-    fn from_environment(environment: &[(OsString, OsString)]) -> Result<Self, PrePushError> {
+    fn from_environment(environment: &Environment) -> Result<Self, PrePushError> {
         Ok(Self {
             budget: seconds(environment, "NJUTEST_PUSH_BUDGET_SECONDS", 3600)?,
             quiet: seconds(environment, "NJUTEST_PUSH_QUIET_SECONDS", 600)?,
             expected: seconds(environment, "NJUTEST_PUSH_EXPECTED_SECONDS", 420)?,
-            base_ref: match lanes::variable(environment, "NJUTEST_COMMITTED_BASE_REF") {
+            base_ref: match environment.value("NJUTEST_COMMITTED_BASE_REF") {
                 Some(named) => text_of("NJUTEST_COMMITTED_BASE_REF", named)?.to_owned(),
                 None => "origin/main".to_owned(),
             },
             cache: cache_root(environment).ok_or(PrePushError::Nowhere)?,
-            cached: lanes::variable(environment, "RUSTC_WRAPPER")
-                .is_none_or(|wrapper| Path::new(wrapper).ends_with("sccache")),
+            cached: environment
+                .value("RUSTC_WRAPPER")
+                .is_some_and(|wrapper| Path::new(wrapper).ends_with("sccache")),
         })
     }
 }
 
 fn seconds(
-    environment: &[(OsString, OsString)],
+    environment: &Environment,
     name: &'static str,
     default: u64,
 ) -> Result<Duration, PrePushError> {
-    let Some(value) = lanes::variable(environment, name) else {
+    let Some(value) = environment.value(name) else {
         return Ok(Duration::from_secs(default));
     };
     let text = text_of(name, value)?;
@@ -713,8 +840,8 @@ fn seconds(
     }
 }
 
-fn cache_root(environment: &[(OsString, OsString)]) -> Option<PathBuf> {
-    if let Some(named) = lanes::variable(environment, "NJUTEST_PRE_PUSH_CACHE") {
+fn cache_root(environment: &Environment) -> Option<PathBuf> {
+    if let Some(named) = environment.value("NJUTEST_PRE_PUSH_CACHE") {
         return Some(PathBuf::from(named));
     }
     let caches = platform_caches(environment)?;
@@ -722,19 +849,21 @@ fn cache_root(environment: &[(OsString, OsString)]) -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "macos")]
-fn platform_caches(environment: &[(OsString, OsString)]) -> Option<PathBuf> {
-    lanes::variable(environment, "HOME").map(|home| Path::new(home).join("Library").join("Caches"))
+fn platform_caches(environment: &Environment) -> Option<PathBuf> {
+    environment
+        .value("HOME")
+        .map(|home| Path::new(home).join("Library").join("Caches"))
 }
 
 #[cfg(not(target_os = "macos"))]
-fn platform_caches(environment: &[(OsString, OsString)]) -> Option<PathBuf> {
-    if let Some(caches) = lanes::variable(environment, "XDG_CACHE_HOME") {
+fn platform_caches(environment: &Environment) -> Option<PathBuf> {
+    if let Some(caches) = environment.value("XDG_CACHE_HOME") {
         return Some(PathBuf::from(caches));
     }
-    if let Some(home) = lanes::variable(environment, "HOME") {
+    if let Some(home) = environment.value("HOME") {
         return Some(Path::new(home).join(".cache"));
     }
-    lanes::variable(environment, "LOCALAPPDATA").map(PathBuf::from)
+    environment.value("LOCALAPPDATA").map(PathBuf::from)
 }
 
 /// Where one repository's gate keeps its tree, its build, and what it has passed.
@@ -768,7 +897,7 @@ struct Owned {
 }
 
 impl Place {
-    fn of(tools: &Tools<'_>, here: &Path, cache: &Path) -> Result<Self, PrePushError> {
+    fn of(tools: Tools<'_>, here: &Path, cache: &Path) -> Result<Self, PrePushError> {
         let common = tools.answer(
             here,
             &["rev-parse", "--path-format=absolute", "--git-common-dir"],
@@ -821,7 +950,7 @@ impl Place {
             .join(hex::encode(digest.finalize()))
     }
 
-    fn prepare(&self, tools: &Tools<'_>, here: &Path, head: &str) -> Result<(), PrePushError> {
+    fn prepare(&self, tools: Tools<'_>, here: &Path, head: &str) -> Result<(), PrePushError> {
         std::fs::create_dir_all(&self.home).map_err(|source| io_error(&self.home, source))?;
         tools.run(here, &[OsStr::new("worktree"), OsStr::new("prune")])?;
         if !self.moved_to(tools, head)? {
@@ -846,7 +975,7 @@ impl Place {
         self.link_target()
     }
 
-    fn moved_to(&self, tools: &Tools<'_>, head: &str) -> Result<bool, PrePushError> {
+    fn moved_to(&self, tools: Tools<'_>, head: &str) -> Result<bool, PrePushError> {
         let marker = self.tree.join(".git");
         let present = marker
             .try_exists()
@@ -889,7 +1018,7 @@ impl Place {
         std::fs::create_dir_all(&self.target).map_err(|source| io_error(&self.target, source))
     }
 
-    fn check_command(&self, tools: &Tools<'_>, head: &str, lanes: &Lanes) -> Command {
+    fn check_command(&self, tools: Tools<'_>, head: &str, lanes: &Lanes) -> Command {
         let mut command = tools.command("mise");
         command
             .args(["run", "check"])
@@ -902,7 +1031,7 @@ impl Place {
         command
     }
 
-    fn require_exact(&self, tools: &Tools<'_>, head: &str) -> Result<(), PrePushError> {
+    fn require_exact(&self, tools: Tools<'_>, head: &str) -> Result<(), PrePushError> {
         let now = tools.answer(&self.tree, &["rev-parse", "--verify", "HEAD"])?;
         if now != head {
             return Err(PrePushError::Moved {
@@ -926,26 +1055,33 @@ impl Place {
 /// Git and the check, started without any `GIT_*` variable a hook was handed, so each answers about the directory it is started in.
 #[derive(Debug, Clone, Copy)]
 struct Tools<'a> {
-    environment: &'a [(OsString, OsString)],
+    environment: &'a Environment,
 }
 
 impl Tools<'_> {
-    fn command(&self, program: &str) -> Command {
+    fn command(self, program: &str) -> Command {
         let mut command = Command::new(program);
-        for (name, _value) in self.environment {
-            if name.as_encoded_bytes().starts_with(b"GIT_") {
-                command.env_remove(name);
-            }
+        for name in self.environment.beginning("GIT_") {
+            command.env_remove(name);
+        }
+        command
+    }
+
+    /// Git in `here`, through the one door that has it read the tree itself rather than a file-system monitor that may not have seen a write yet.
+    fn git(self, here: &Path) -> Command {
+        let mut command = crate::repository::git(here);
+        for name in self.environment.beginning("GIT_") {
+            command.env_remove(name);
         }
         command
     }
 
     fn output(
-        &self,
+        self,
         here: &Path,
         arguments: &[&OsStr],
     ) -> Result<std::process::Output, PrePushError> {
-        self.command("git")
+        self.git(here)
             .args(arguments)
             .current_dir(here)
             .stdin(Stdio::null())
@@ -956,7 +1092,7 @@ impl Tools<'_> {
             })
     }
 
-    fn run(&self, here: &Path, arguments: &[&OsStr]) -> Result<String, PrePushError> {
+    fn run(self, here: &Path, arguments: &[&OsStr]) -> Result<String, PrePushError> {
         let output = self.output(here, arguments)?;
         let rendered = || {
             arguments
@@ -980,23 +1116,23 @@ impl Tools<'_> {
         })
     }
 
-    fn answer(&self, here: &Path, arguments: &[&str]) -> Result<String, PrePushError> {
+    fn answer(self, here: &Path, arguments: &[&str]) -> Result<String, PrePushError> {
         self.run(here, &spelled(arguments))
     }
 
-    fn maybe(&self, here: &Path, arguments: &[&str]) -> Result<Option<String>, PrePushError> {
+    fn maybe(self, here: &Path, arguments: &[&str]) -> Result<Option<String>, PrePushError> {
         if !self.succeeds(here, arguments)? {
             return Ok(None);
         }
         self.answer(here, arguments).map(Some)
     }
 
-    fn succeeds(&self, here: &Path, arguments: &[&str]) -> Result<bool, PrePushError> {
+    fn succeeds(self, here: &Path, arguments: &[&str]) -> Result<bool, PrePushError> {
         Ok(self.output(here, &spelled(arguments))?.status.success())
     }
 
-    fn restore(&self, tree: &Path) -> Result<ExitStatus, PrePushError> {
-        self.command("git")
+    fn restore(self, tree: &Path) -> Result<ExitStatus, PrePushError> {
+        self.git(tree)
             .args(["restore", "--staged", "--worktree", ":/"])
             .current_dir(tree)
             .stdin(Stdio::null())
@@ -1017,32 +1153,15 @@ fn spelled<'a>(arguments: &[&'a str]) -> Vec<&'a OsStr> {
         .collect()
 }
 
-/// The gate that answers and the build settings it answers under: the gate binary's bytes, and every variable that changes what cargo builds.
-fn identity(surroundings: &Surroundings<'_>) -> Result<String, PrePushError> {
-    let executable = surroundings.executable;
-    let bytes = std::fs::read(executable).map_err(|source| io_error(executable, source))?;
-    let mut digest = Sha256::new();
-    digest.update(&bytes);
-    let mut building: Vec<&(OsString, OsString)> = surroundings
-        .environment
-        .iter()
-        .filter(|(name, _value)| shapes_the_build(name))
-        .collect();
-    building.sort();
-    for (name, value) in building {
-        digest.update(name.as_encoded_bytes());
-        digest.update(b"=");
-        digest.update(value.as_encoded_bytes());
-        digest.update(b"\n");
-    }
-    Ok(hex::encode(digest.finalize()))
-}
+/// The prefixes of every variable that changes what cargo builds.
+const BUILD_SHAPING: [&str; 2] = ["CARGO_", "RUST"];
 
-/// Whether a variable is one that changes what cargo builds, and so part of what a remembered pass answers for.
+/// Whether a variable, its name read under `spelling`, is one that changes what cargo builds, and so part of what a remembered pass answers for.
 #[must_use]
-pub fn shapes_the_build(name: &OsStr) -> bool {
-    let name = name.as_encoded_bytes();
-    name.starts_with(b"CARGO_") || name.starts_with(b"RUST")
+pub fn shapes_the_build(spelling: Spelling, name: &OsStr) -> bool {
+    BUILD_SHAPING
+        .iter()
+        .any(|prefix| spelling.begins(name, prefix))
 }
 
 fn short(bytes: &[u8]) -> String {
@@ -1052,22 +1171,63 @@ fn short(bytes: &[u8]) -> String {
         .collect()
 }
 
-fn remembered(memory: &Path) -> Result<bool, PrePushError> {
-    let written = match std::fs::metadata(memory) {
-        Ok(metadata) => metadata
-            .modified()
-            .map_err(|source| io_error(memory, source))?,
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CompleteProof {
+    schema: String,
+    head: String,
+    inputs: String,
+    warm: SuccessfulStage,
+    cold: SuccessfulStage,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum SuccessfulStage {
+    Passed,
+}
+
+fn remembered(memory: &Path, head: &str, inputs: &str) -> Result<bool, PrePushError> {
+    let text = match std::fs::read_to_string(memory) {
+        Ok(text) => text,
         Err(missing) if missing.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(source) => return Err(io_error(memory, source)),
     };
-    Ok(written.elapsed().is_ok_and(|age| age < REMEMBERED))
+    let receipt: CompleteProof = crate::strictjson::decode_str(&text)
+        .map_err(|source| io_error(memory, std::io::Error::other(source)))?;
+    Ok(receipt.schema == "njutest-complete-proof-v1"
+        && receipt.head == head
+        && receipt.inputs == inputs)
 }
 
-fn remember(memory: &Path, head: &str) -> Result<(), PrePushError> {
+fn remember(memory: &Path, head: &str, inputs: &str) -> Result<(), PrePushError> {
     if let Some(passed) = memory.parent() {
         std::fs::create_dir_all(passed).map_err(|source| io_error(passed, source))?;
     }
-    std::fs::write(memory, format!("{head}\n")).map_err(|source| io_error(memory, source))
+    let receipt = CompleteProof {
+        schema: "njutest-complete-proof-v1".to_owned(),
+        head: head.to_owned(),
+        inputs: inputs.to_owned(),
+        warm: SuccessfulStage::Passed,
+        cold: SuccessfulStage::Passed,
+    };
+    let text = serde_json::to_string(&receipt)
+        .map_err(|source| io_error(memory, std::io::Error::other(source)))?;
+    let parent = memory.parent().ok_or_else(|| {
+        io_error(
+            memory,
+            std::io::Error::other("the complete proof has no publication directory"),
+        )
+    })?;
+    let mut staged =
+        tempfile::NamedTempFile::new_in(parent).map_err(|source| io_error(parent, source))?;
+    staged
+        .write_all(text.as_bytes())
+        .map_err(|source| io_error(memory, source))?;
+    staged
+        .persist(memory)
+        .map_err(|source| io_error(memory, source.error))?;
+    Ok(())
 }
 
 fn text_of<'a>(name: &str, value: &'a OsStr) -> Result<&'a str, PrePushError> {

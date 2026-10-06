@@ -3,26 +3,26 @@
 
 //! One site for each guard form.
 
-/// A boolean position: Form C, no block and so no temporary scope.
+macro_rules! __rm_value { ($value:expr) => { $value }; } /// A boolean position: Form C, no block and so no temporary scope.
 pub fn compare(a: i32, b: i32) -> bool {
-    __rm::item(0); __rm::checkpoint(); if __rm::value!(__rm::active(0) && __rm::value!(!(a > b)) || __rm::active(1) && __rm::value!(true) || __rm::active(2) && __rm::value!(false) || __rm::active(3) && __rm::value!(a >= b) || !__rm::active(0) && !__rm::active(1) && !__rm::active(2) && !__rm::active(3) && __rm::differing(3, __rm::value!(a > b), || __rm::value!(a >= b))) {
-        return __rm::value!(if __rm::active(4) { false } else { true });
+    __rm::item(0); __rm::checkpoint(); if __rm_value!(__rm::active(0) && __rm_value!(!(a > b)) || __rm::active(1) && __rm_value!(true) || __rm::active(2) && __rm_value!(false) || __rm::active(3) && __rm_value!(a >= b) || !__rm::active(0) && !__rm::active(1) && !__rm::active(2) && !__rm::active(3) && __rm::differing(3, __rm_value!(a > b), || __rm_value!(a >= b))) {
+        return __rm_value!(if __rm::active(4) { false } else { true });
     }
-    __rm::value!(if __rm::active(5) { true } else if __rm::active(6) { a > b } else { a >= b })
+    __rm_value!(if __rm::active(5) { true } else if __rm::active(6) { a > b } else { a >= b })
 }
 
 /// A value position: Form E, an if-expression whose branches unify.
 pub fn pick(a: i32, b: i32) -> i32 {
-    __rm::item(1); __rm::checkpoint(); let larger = if __rm::value!(__rm::active(7) && __rm::value!(!(a > b)) || __rm::active(8) && __rm::value!(true) || __rm::active(9) && __rm::value!(false) || __rm::active(10) && __rm::value!(a >= b) || !__rm::active(7) && !__rm::active(8) && !__rm::active(9) && !__rm::active(10) && __rm::differing(10, __rm::value!(a > b), || __rm::value!(a >= b))) { a } else { b };
-    __rm::value!(if __rm::active(11) { Default::default() } else if __rm::active(12) { larger - 1 } else { larger + __rm::value!(if __rm::active(13) { 2 } else if __rm::active(14) { 0 } else { 1 }) })
+    __rm::item(1); __rm::checkpoint(); let larger = if __rm_value!(__rm::active(7) && __rm_value!(!(a > b)) || __rm::active(8) && __rm_value!(true) || __rm::active(9) && __rm_value!(false) || __rm::active(10) && __rm_value!(a >= b) || !__rm::active(7) && !__rm::active(8) && !__rm::active(9) && !__rm::active(10) && __rm::differing(10, __rm_value!(a > b), || __rm_value!(a >= b))) { a } else { b };
+    __rm_value!(if __rm::active(11) { Default::default() } else if __rm::active(12) { larger - 1 } else { larger + __rm_value!(if __rm::active(13) { 2 } else if __rm::active(14) { 0 } else { 1 }) })
 }
 
 /// A returned expression, and a match arm body.
 pub fn classify(n: i32) -> Option<&'static str> {
-    __rm::item(2); __rm::checkpoint(); if __rm::active(15) { Default::default() } else if __rm::active(16) { Some(Default::default()) } else { __rm::value!(match n {
-        0 if __rm::value!(__rm::active(17) && __rm::value!(false) || !__rm::active(17) && __rm::value!(true)) => __rm::value!(if __rm::active(18) { Some(Default::default()) } else { None }),
-        n if __rm::value!(__rm::active(19) && __rm::value!(false) || __rm::active(20) && __rm::value!(true) || __rm::active(21) && __rm::value!(n <= 0) || !__rm::active(19) && !__rm::active(20) && !__rm::active(21) && __rm::value!(n < __rm::value!(if __rm::active(22) { 1 } else { 0 }))) => __rm::value!(if __rm::active(23) { Default::default() } else if __rm::active(24) { Some(Default::default()) } else { Some(__rm::value!(if __rm::active(25) { "" } else { "negative" })) }),
-        _ => __rm::value!(if __rm::active(26) { Default::default() } else if __rm::active(27) { Some(Default::default()) } else { Some(__rm::value!(if __rm::active(28) { "" } else { "positive" })) }),
+    __rm::item(2); __rm::checkpoint(); if __rm::active(15) { Default::default() } else if __rm::active(16) { Some(Default::default()) } else { __rm_value!(match n {
+        0 if __rm_value!(__rm::active(17) && __rm_value!(false) || !__rm::active(17) && __rm_value!(true)) => __rm_value!(if __rm::active(18) { Some(Default::default()) } else { None }),
+        n if __rm_value!(__rm::active(19) && __rm_value!(false) || __rm::active(20) && __rm_value!(true) || __rm::active(21) && __rm_value!(n <= 0) || !__rm::active(19) && !__rm::active(20) && !__rm::active(21) && __rm_value!(n < __rm_value!(if __rm::active(22) { 1 } else { 0 }))) => __rm_value!(if __rm::active(23) { Default::default() } else if __rm::active(24) { Some(Default::default()) } else { Some(__rm_value!(if __rm::active(25) { "" } else { "negative" })) }),
+        _ => __rm_value!(if __rm::active(26) { Default::default() } else if __rm::active(27) { Some(Default::default()) } else { Some(__rm_value!(if __rm::active(28) { "" } else { "positive" })) }),
     }) }
 }
 #[doc(hidden)]
@@ -114,63 +114,116 @@ mod __rm {
             }
         }
     }
-#[derive(Debug, Clone, Copy, PartialEq, Eq)] enum StepAction
-{ Activate, Checkpoint, } #[derive(Debug, Clone, Copy, PartialEq, Eq)] enum
-StepPhase { Dormant, Counting(usize), Active(usize), Stopping(usize), }
-#[derive(Debug, Clone, Copy, PartialEq, Eq)] enum StepAdvance
-{ Continue, Park, Reached { allowed : usize, observed : usize }, }
-#[derive(Debug, Clone, Copy, PartialEq, Eq)] enum StepMachineError
-{ Limit, Count, } const fn
-step_transition(phase : StepPhase, action : StepAction, allowed : usize,) ->
-Result < (StepPhase, StepAdvance), StepMachineError >
-{
-    if allowed == 0 || allowed == usize :: MAX
-    { return Err(StepMachineError :: Limit); } match (phase, action)
-    {
-        (StepPhase :: Dormant, StepAction :: Activate) =>
-        { Ok((StepPhase :: Active(1), StepAdvance :: Continue)) }
-        (StepPhase :: Dormant, StepAction :: Checkpoint) =>
-        { Ok((StepPhase :: Dormant, StepAdvance :: Continue)) }
-        (StepPhase :: Counting(seen), StepAction :: Checkpoint) =>
-        {
-            match seen.checked_add(1)
-            {
-                Some(next) =>
-                Ok((StepPhase :: Counting(next), StepAdvance :: Continue)),
-                None => Err(StepMachineError :: Count),
+    // The step machine, as rust-mutants-decision compiles and tests it,
+    // with what that crate exports kept to this one.
+    mod step {
+// SPDX-FileCopyrightText: 2026 njutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! How an execution spends its step allowance, one boundary at a time; this crate compiles and tests it, and every generated runtime holds this file as its module `step`.
+
+/// What the runtime asks of the machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StepAction {
+    /// The selected mutant's guard was taken.
+    Activate,
+    /// A function or loop boundary was raised.
+    Checkpoint,
+}
+
+/// Where an execution's allowance stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StepPhase {
+    /// No mutant has activated, and a boundary costs nothing.
+    Dormant,
+    /// Every boundary is counted, and none stops the execution.
+    Counting(usize),
+    /// The mutant is active and this many boundaries are spent.
+    Active(usize),
+    /// The allowance was passed at this boundary, and the execution is stopping.
+    Stopping(usize),
+}
+
+/// What the runtime does after a transition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StepAdvance {
+    /// It carries on.
+    Continue,
+    /// It waits for the stop already under way.
+    Park,
+    /// The allowance is spent: `allowed` boundaries were, and this one is `observed`.
+    Reached {
+        /// The allowance.
+        allowed: usize,
+        /// The boundary past it.
+        observed: usize,
+    },
+}
+
+/// Why a transition cannot be made.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StepMachineError {
+    /// The allowance is none the machine can spend: zero, or one with no boundary past it.
+    Limit,
+    /// The phase is not one the allowance can reach, or a count has no room left.
+    Count,
+}
+
+/// The phase `action` moves `phase` to under an allowance of `allowed`, and what the runtime does next.
+///
+/// # Errors
+/// An allowance of zero or of `usize::MAX`, and a phase or a count the allowance cannot reach.
+pub(crate) const fn step_transition(
+    phase: StepPhase,
+    action: StepAction,
+    allowed: usize,
+) -> Result<(StepPhase, StepAdvance), StepMachineError> {
+    if allowed == 0 || allowed == usize::MAX {
+        return Err(StepMachineError::Limit);
+    }
+    match (phase, action) {
+        (StepPhase::Dormant, StepAction::Activate) => {
+            Ok((StepPhase::Active(1), StepAdvance::Continue))
+        }
+        (StepPhase::Dormant, StepAction::Checkpoint) => {
+            Ok((StepPhase::Dormant, StepAdvance::Continue))
+        }
+        (StepPhase::Counting(seen), StepAction::Checkpoint) => match seen.checked_add(1) {
+            Some(next) => Ok((StepPhase::Counting(next), StepAdvance::Continue)),
+            None => Err(StepMachineError::Count),
+        },
+        (StepPhase::Counting(seen), StepAction::Activate) => {
+            Ok((StepPhase::Counting(seen), StepAdvance::Continue))
+        }
+        (StepPhase::Active(spent), StepAction::Activate) if spent > 0 && spent <= allowed => {
+            Ok((StepPhase::Active(spent), StepAdvance::Continue))
+        }
+        (StepPhase::Active(spent), StepAction::Checkpoint) if spent > 0 && spent < allowed => {
+            match spent.checked_add(1) {
+                Some(next) => Ok((StepPhase::Active(next), StepAdvance::Continue)),
+                None => Err(StepMachineError::Count),
             }
-        } (StepPhase :: Counting(seen), StepAction :: Activate) =>
-        { Ok((StepPhase :: Counting(seen), StepAdvance :: Continue)) }
-        (StepPhase :: Active(spent), StepAction :: Activate) if spent > 0 &&
-        spent <= allowed =>
-        { Ok((StepPhase :: Active(spent), StepAdvance :: Continue)) }
-        (StepPhase :: Active(spent), StepAction :: Checkpoint) if spent > 0 &&
-        spent < allowed =>
-        {
-            match spent.checked_add(1)
-            {
-                Some(next) =>
-                Ok((StepPhase :: Active(next), StepAdvance :: Continue)), None
-                => Err(StepMachineError :: Count),
+        }
+        (StepPhase::Active(spent), StepAction::Checkpoint) if spent == allowed => {
+            match allowed.checked_add(1) {
+                Some(observed) => Ok((
+                    StepPhase::Stopping(observed),
+                    StepAdvance::Reached { allowed, observed },
+                )),
+                None => Err(StepMachineError::Count),
             }
-        } (StepPhase :: Active(spent), StepAction :: Checkpoint) if spent ==
-        allowed =>
-        {
-            match allowed.checked_add(1)
-            {
-                Some(observed) =>
-                Ok((StepPhase :: Stopping(observed), StepAdvance :: Reached
-                { allowed, observed },)), None =>
-                Err(StepMachineError :: Count),
+        }
+        (StepPhase::Stopping(spent), _) => match allowed.checked_add(1) {
+            Some(observed) if spent == observed => {
+                Ok((StepPhase::Stopping(spent), StepAdvance::Park))
             }
-        } (StepPhase :: Stopping(spent), _) => match allowed.checked_add(1)
-        {
-            Some(observed) if spent == observed =>
-            { Ok((StepPhase :: Stopping(spent), StepAdvance :: Park)) }
-            Some(_) | None => Err(StepMachineError :: Count),
-        }, (StepPhase :: Active(_), _) => Err(StepMachineError :: Count),
+            Some(_) | None => Err(StepMachineError::Count),
+        },
+        (StepPhase::Active(_), _) => Err(StepMachineError::Count),
     }
 }
+    }
+    use self::step::{StepAction, StepAdvance, StepPhase, step_transition};
     // Which check of the step protocol failed, and the operating system's
     // code where a call it made is what failed: the process says both
     // before it stops, so a run names the check rather than only a status.
@@ -249,22 +302,17 @@ Result < (StepPhase, StepAdvance), StepMachineError >
     // name at every boundary paid an open and a close per function entry and
     // loop turn. A child made by fork without exec shares the parent's open
     // file description and so its lock, which is why the process is recorded.
+    // The lock is taken on a file of its own and never on the state: Windows
+    // makes a lock mandatory, and one over the state would refuse the
+    // runner's read of it whenever that read landed inside a take.
     struct BoundStepState {
         pid: u32,
         file: __rm_std::fs::File,
+        lock: __rm_std::fs::File,
     }
     static STEP_STATE: __rm_std::sync::OnceLock<
         __rm_std::sync::Mutex<__rm_std::option::Option<BoundStepState>>,
     > = __rm_std::sync::OnceLock::new();
-
-    // The invocation is an expression boundary before expansion, while the
-    // expansion is exactly the user's expression. That groups generated
-    // boolean chains without adding lint-producing parentheses, a temporary
-    // scope, a call boundary, or a new generic type-inference boundary.
-    macro_rules! value {
-        ($value:expr) => { $value };
-    }
-    pub(crate) use value;
 
 
     // The failures a fault can make without guessing: an error type the
@@ -276,7 +324,48 @@ Result < (StepPhase, StepAdvance), StepMachineError >
     }
     impl Injectable for __rm_std::io::Error {
         fn injected() -> Self {
-            __rm_std::io::Error::other("a failure rust-mutants injected")
+            fated("made");
+            __rm_std::io::Error::other(Injected)
+        }
+    }
+    // The failure an io::Error a fault makes carries, which says what became
+    // of it: read by whatever formatted it, and dropped. A failure dropped
+    // unread went nowhere a person or a test could read it (ADR 0032).
+    struct Injected;
+    impl __rm_std::fmt::Display for Injected {
+        fn fmt(&self, formatter: &mut __rm_std::fmt::Formatter<'_>) -> __rm_std::fmt::Result {
+            fated("read");
+            formatter.write_str("a failure rust-mutants injected")
+        }
+    }
+    impl __rm_std::fmt::Debug for Injected {
+        fn fmt(&self, formatter: &mut __rm_std::fmt::Formatter<'_>) -> __rm_std::fmt::Result {
+            fated("read");
+            formatter.write_str("a failure rust-mutants injected")
+        }
+    }
+    impl __rm_std::error::Error for Injected {}
+    impl __rm_std::ops::Drop for Injected {
+        fn drop(&mut self) {
+            fated("dropped");
+        }
+    }
+    // One line per event, where a run asked for them. A line that cannot be
+    // written stops the process, so no run is read as one whose failure
+    // nothing read because the record of the reading was lost.
+    fn fated(event: &str) {
+        let path = match __rm_std::env::var_os("RUST_MUTANTS_FAULT_FATE") {
+            __rm_std::option::Option::Some(path) if !path.is_empty() => path,
+            _ => return,
+        };
+        let line = __rm_std::format!("rust-mutants-fate-v1\t{}\t{}\n", CATALOG, event);
+        let written = __rm_std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .and_then(|mut file| __rm_std::io::Write::write_all(&mut file, line.as_bytes()));
+        if let __rm_std::result::Result::Err(error) = written {
+            protocol_failed(Why::os("fate: write", &error));
         }
     }
     impl Injectable for __rm_std::str::Utf8Error {
@@ -325,7 +414,14 @@ Result < (StepPhase, StepAdvance), StepMachineError >
     // A crash lets the call that writes finish and then stops the process
     // with nothing after it: no destructor, flush or unwinding, so what the
     // call wrote is on disk and nothing later is.
-    pub(crate) fn crashed_after<T>(_written: T) -> T {
+    // A call whose value is a future has written nothing when it returns,
+    // so a stop after it would stop before the write. Every value is
+    // `Written<()>` and a future is `Written<u8>` as well, so for a future
+    // the compiler cannot choose, refuses the stop, and the crash is not put.
+    pub(crate) trait Written<Which> {}
+    impl<T> Written<()> for T {}
+    impl<F: __rm_std::future::Future> Written<u8> for F {}
+    pub(crate) fn crashed_after<T: Written<Which>, Which>(_written: T) -> T {
         let _published = publish_crash_notice();
         stop(93, Why::said("crash"))
     }
@@ -568,20 +664,23 @@ Result < (StepPhase, StepAdvance), StepMachineError >
             __rm_std::option::Option::None => true,
         };
         if reopen {
-            let opened = open_step_state(path)?;
-            let metadata = opened.metadata().map_err(|error| Why::os("metadata", &error))?;
-            if !metadata.file_type().is_file() {
-                return __rm_std::result::Result::Err(Why::said("not a regular file"));
-            }
-            *bound = __rm_std::option::Option::Some(BoundStepState { pid, file: opened });
+            let file = bound_step_file(path, "open", "metadata", "not a regular file")?;
+            let lock_path = __rm_std::format!("{}.lock", path);
+            let lock = bound_step_file(
+                &lock_path,
+                "lock: open",
+                "lock: metadata",
+                "lock: not a regular file",
+            )?;
+            *bound = __rm_std::option::Option::Some(BoundStepState { pid, file, lock });
         }
-        let file = match &mut *bound {
-            __rm_std::option::Option::Some(state) => &mut state.file,
+        let (file, lock) = match &mut *bound {
+            __rm_std::option::Option::Some(BoundStepState { file, lock, .. }) => (file, &*lock),
             __rm_std::option::Option::None => {
                 return __rm_std::result::Result::Err(Why::said("open"));
             }
         };
-        file.lock().map_err(|error| Why::os("lock", &error))?;
+        lock.lock().map_err(|error| Why::os("lock", &error))?;
         let transitioned = (|| {
             let phase = read_step_state(file, nonce, mutant, limit)?;
             let (mut next, advanced) = step_transition(phase, action, limit.value())
@@ -619,7 +718,7 @@ Result < (StepPhase, StepAdvance), StepMachineError >
             }
             __rm_std::result::Result::Ok(advanced)
         })();
-        let unlocked = file.unlock().map_err(|error| Why::os("unlock", &error));
+        let unlocked = lock.unlock().map_err(|error| Why::os("unlock", &error));
         match (transitioned, unlocked) {
             (__rm_std::result::Result::Err(error), _) => {
                 __rm_std::result::Result::Err(error)
@@ -633,36 +732,54 @@ Result < (StepPhase, StepAdvance), StepMachineError >
         }
     }
 
+    // One file of the step protocol, opened without following a link and
+    // refused unless it is a regular file, each refusal in its own words.
+    fn bound_step_file(
+        path: &str,
+        open: &'static str,
+        metadata: &'static str,
+        irregular: &'static str,
+    ) -> __rm_std::result::Result<__rm_std::fs::File, Why> {
+        let opened = open_step_state(path, open)?;
+        let read = opened.metadata().map_err(|error| Why::os(metadata, &error))?;
+        if !read.file_type().is_file() {
+            return __rm_std::result::Result::Err(Why::said(irregular));
+        }
+        __rm_std::result::Result::Ok(opened)
+    }
+
     #[cfg(unix)]
     fn open_step_state(
         path: &str,
+        check: &'static str,
     ) -> __rm_std::result::Result<__rm_std::fs::File, Why> {
-        use __rm_std::os::unix::fs::OpenOptionsExt as _;
+        use self::__rm_std::os::unix::fs::OpenOptionsExt as _;
 
         __rm_std::fs::OpenOptions::new()
             .read(true)
             .write(true)
             .custom_flags(no_follow_flag())
             .open(path)
-            .map_err(|error| Why::os("open", &error))
+            .map_err(|error| Why::os(check, &error))
     }
 
     #[cfg(windows)]
     fn open_step_state(
         path: &str,
+        check: &'static str,
     ) -> __rm_std::result::Result<__rm_std::fs::File, Why> {
-        use __rm_std::os::windows::fs::OpenOptionsExt as _;
+        use self::__rm_std::os::windows::fs::OpenOptionsExt as _;
 
         // FILE_FLAG_OPEN_REPARSE_POINT makes the final component itself the
-        // opened object. The regular-file check below then rejects links and
-        // junctions instead of following them.
+        // opened object. The regular-file check of bound_step_file then
+        // rejects links and junctions instead of following them.
         const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
         __rm_std::fs::OpenOptions::new()
             .read(true)
             .write(true)
             .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
             .open(path)
-            .map_err(|error| Why::os("open", &error))
+            .map_err(|error| Why::os(check, &error))
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -975,10 +1092,6 @@ Result < (StepPhase, StepAdvance), StepMachineError >
         stop(94, error)
     }
 
-    // The one way this module ends the process: it says why first, as one
-    // line whose first field is the schema, then the status, the check that
-    // failed and the operating system's code, so a run that reads the
-    // status alone is never all there is.
     #[cold]
     fn stop(status: i32, error: Why) -> ! {
         let said = __rm_std::format!("rust-mutants-stop-v1\t{}\t{}\t{}\n", status, error.check, error.os);

@@ -23,6 +23,7 @@ contract = "whole-v1"  # "whole-v1" | "standard-v1" | "deep-v1" | "verified-v1"
 packages = []                   # cargo package names; empty = every workspace member
 include = []                    # workspace-relative globs a file must match to be mutated
 exclude = ["**/generated/**"]   # workspace-relative globs; the files are not mutated
+allow_outside = []              # directories copied beside the workspace for path dependencies
 
 [execution]
 features = []                   # cargo features
@@ -46,6 +47,7 @@ target = ""                     # target triple; empty = the host
 
 [mutation]
 equivalence = false             # ask the compiler whether it renders each survivor identically
+seal = true                     # decide each mutation from sealed executions; --no-seal turns it off
 
 [faults]
 inject = false                  # fail each call a `?` asks about and ask what noticed; --faults sets it
@@ -78,7 +80,7 @@ explore = 0                    # guards to delay per test binary not proven sing
 
 [soundness]                     # deep-v1 only
 miri_flags = []
-sanitizers = []                 # e.g. ["thread"] on nightly
+sanitizers = []                 # address, leak, memory, thread; each once, on nightly
 
 [resources.postgres]
 command = ["./tools/postgres-provider"]
@@ -106,6 +108,15 @@ owner = "quality-team"
 ticket = "QA-123"
 ```
 
+`project.allow_outside` names directories a path dependency reads outside the workspace.
+Relative paths resolve from the workspace root, and the engine copies the allowed directories in their original relative positions.
+The dependency digest binds every declared directory's source bytes, corpus and lock file to both the whole-report identity and target cache keys, independently of file times.
+These directories remain dependencies of the selected workspace rather than additional mutation scope.
+
+`[mutation] seal`, true by default, builds the instrumented tree a second time for `wasm32-wasip1` and decides each mutation from its sealed executions ([ADR 0046](adr/0046-a-verdict-is-what-a-sealed-run-observed.md)); `rustup target add wasm32-wasip1` installs what it needs.
+`false`, which `--no-seal` writes for one run of `verify` or `watch`, builds nothing for the sealed target, so every answer is a native lead and the run concludes `INSUFFICIENT` ([the assurance contract](assurance-contract.md#what-a-verdict-rests-on)).
+It is part of what a run is keyed on, so an answer a run sealed is never read back by one that sealed nothing, or the other way round.
+
 `[schedules] explore` asks for up to that many schedules of every test binary not proven to run one thread whose baseline passed: each delays one guard its baseline reached by 100 ms, the first time each thread reaches it, and a delay that makes the tests fail twice more while they pass without it is `schedule-dependent`, a defect ([ADR 0034](adr/0034-a-binary-is-single-threaded-only-where-nothing-says-otherwise.md)).
 Empty by default, because each schedule is one more run of the binary.
 
@@ -124,7 +135,8 @@ Both `unwind` (the nonzero loop-unwind bound) and `timeout` (the verifier proces
 and they are not interchangeable.
 `timeout` is a clock, and what a clock measures is partly the machine: two runs of one catalogue on one commit can disagree about the same mutation because one was on a busy laptop.
 A mutation a bound expires on is `waited`, which establishes nothing — neither that the tests noticed nor that they did not — so it is not counted in the score.
-`steps` is how many times the mutation's own guard may be taken; the guard sits where the mutation is, so a loop whose condition was mutated takes it once an iteration and the number is the same everywhere.
+`steps` is how many boundaries of the workspace's instrumented source an execution may pass once the mutation's guard has first been taken: function entries, loop turns, async blocks and closure invocations, test code included, as [the contract](assurance-contract.md#what-a-step-counts) says.
+A loop the mutation keeps going passes one a turn wherever it is, in the code under test or in a test, so the number is the same everywhere.
 Crossing the allowance is `step-limit-reached`: a nonce-correlated fact that this execution reached the first count outside the configured bound.
 It is **not** a detection.
 A finite computation on the original code can cross the same count, so without a matched control the run has established neither that the mutation diverges nor that it survives.

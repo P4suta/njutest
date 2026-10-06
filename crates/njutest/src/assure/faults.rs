@@ -13,8 +13,10 @@ use crate::report::faults::{
     BesideRecord, BesideRun, Failed, FaultAccounting, FaultDecision, FaultRecord,
 };
 use crate::report::{CatalogIndex, Finding, FindingKind};
+use crate::trace::FaultFateRecord;
 use crate::ui::Notes;
 use crate::watch::Watch;
+use rust_mutants::fate::{Fate, Fated};
 use rust_mutants::outcome::Outcome;
 
 /// The one rule a faulted session is discovered by.
@@ -58,6 +60,7 @@ pub fn put(
         return Ok(());
     }
     let before = written(&session)?;
+    baselined(&session, watch)?;
     let judged = mutation::run_resuming(
         Subject {
             session: &session,
@@ -77,12 +80,17 @@ pub fn put(
         },
         Reporting { notes, watch },
     )?;
-    let root = request.root.display().to_string();
-    let records: Vec<FaultRecord> = judged
-        .judged
-        .iter()
-        .map(|judged| recorded(judged, &root))
-        .collect();
+    let mut records = records_of(
+        &session,
+        &judged.judged,
+        &request.root.display().to_string(),
+    )?;
+    absorbed(
+        &session,
+        (&judged.judged, &mut records),
+        &request.test_args,
+        watch,
+    )?;
     for record in &records {
         watch.trace.fault(record.clone());
     }
@@ -102,7 +110,7 @@ pub fn put(
         .extend(crate::report::faults::limited(&records));
     if records.is_empty() {
         report.limitations.push(crate::report::Limitation::new(
-            crate::limitation::FAULT_NO_SITE,
+            crate::limitation::Limitation::FaultNoSite,
             "no measured file has a `?`, so there was no call a fault could fail",
         ));
     }
@@ -188,6 +196,54 @@ fn beside(
     Ok(found)
 }
 
+/// Each fault every reaching test passed, run again on those targets in name order with its runtime recording what became of the failures it made: absorbed where every run passed and dropped every failure it made unread, and left unnoticed at the first that did not (ADR 0032 decision 5).
+fn absorbed(
+    session: &rust_mutants::session::Session,
+    (judged, records): (&[Judged], &mut [FaultRecord]),
+    test_args: &[String],
+    watch: Watch<'_>,
+) -> Result<(), RunnerError> {
+    for (one, record) in judged.iter().zip(records.iter_mut()) {
+        if record.decision != FaultDecision::Unnoticed {
+            continue;
+        }
+        let Some(routing) = &one.routing else {
+            continue;
+        };
+        let mut reaching = routing.reaching.clone();
+        reaching.sort();
+        let mut absorbing = !reaching.is_empty();
+        for target in reaching {
+            if watch.cancel.is_cancelled() {
+                return Err(RunnerError::Interrupted);
+            }
+            let request = rust_mutants::session::Request::new(one.id.as_str())
+                .with_args(test_args.to_vec())
+                .with_target(target.clone());
+            let (result, fated) = session.exec_fated(&request, watch.cancel)?;
+            let fate = match fated {
+                Fated::Recorded(fate) => Some(fate),
+                Fated::Absent | Fated::Unreadable => None,
+            };
+            let outcome = result.outcome();
+            watch.trace.fault_fate(FaultFateRecord {
+                fault: record.display_id.clone(),
+                target,
+                outcome: outcome.name().to_owned(),
+                fate,
+            });
+            if outcome != Outcome::Survived || !fate.is_some_and(Fate::absorbed) {
+                absorbing = false;
+                break;
+            }
+        }
+        if absorbing {
+            record.decision = FaultDecision::Absorbed;
+        }
+    }
+    Ok(())
+}
+
 /// Which run of a pair failed, where exactly one did and the other passed.
 const fn told(pair: (Outcome, Outcome)) -> Option<Failed> {
     match pair {
@@ -227,6 +283,66 @@ fn written(
         .collect())
 }
 
+/// What each target's faulted baseline reached, recorded before any fault is routed over it, so a route's reaching is held to the baseline and not to the route's own word (ADR 0032 decision 4).
+///
+/// # Errors
+/// An unknown target in the session's baseline cannot be recorded as a known target.
+fn baselined(
+    session: &rust_mutants::session::Session,
+    watch: Watch<'_>,
+) -> Result<(), RunnerError> {
+    let sites: Vec<u32> = session
+        .catalog()
+        .mutants()
+        .iter()
+        .filter(|mutant| mutant.candidate.rule.family == rust_mutants::rule::Family::Fault)
+        .map(|mutant| mutant.index)
+        .collect();
+    let doc: std::collections::BTreeMap<&str, bool> = session
+        .targets()
+        .iter()
+        .map(|target| {
+            (
+                target.id(),
+                target.kind() == rust_mutants::execute::TargetKind::Doc,
+            )
+        })
+        .collect();
+    for target in session.touched().targets.keys() {
+        let Some(doc) = doc.get(target.as_str()).copied() else {
+            return Err(rust_mutants::EngineError::from(
+                rust_mutants::workspace::SessionError::UnknownTarget {
+                    name: target.to_owned(),
+                    available: session
+                        .targets()
+                        .iter()
+                        .map(|one| one.id().to_owned())
+                        .collect(),
+                },
+            )
+            .into());
+        };
+        let reached = sites
+            .iter()
+            .copied()
+            .filter(|index| {
+                session
+                    .touched()
+                    .reaching(target.as_str(), *index)
+                    .is_some_and(|reached| reached != rust_mutants::touch::Reaching::Nothing)
+            })
+            .collect();
+        watch
+            .trace
+            .fault_baseline(crate::trace::FaultBaselineRecord {
+                target: target.to_owned(),
+                doc,
+                reached,
+            });
+    }
+    Ok(())
+}
+
 /// What the tree says the faults wrote: a `broken-under-fault` finding for each path one fault is tied to, and one `not-measured` finding naming the rest.
 fn writes(
     session: &rust_mutants::session::Session,
@@ -236,6 +352,10 @@ fn writes(
 ) -> Result<Vec<Finding>, RunnerError> {
     let mut found = Vec::new();
     let after = written(session)?;
+    watch.trace.fault_writes(crate::trace::FaultWritesRecord {
+        before: before.iter().cloned().collect(),
+        after: after.iter().cloned().collect(),
+    });
     let broke: Vec<&String> = after.difference(before).collect();
     let added = added(session)?;
     let mut unattributed: Vec<&str> = Vec::new();
@@ -422,32 +542,94 @@ fn prepared(
                         .map(|rule| rule.name.to_owned()),
                 )
                 .collect(),
+            sealing: rust_mutants::sealed::Sealing::Off,
             ..crate::assure::run::preparing(request)?
         },
         watch.cancel,
     )?)
 }
 
-/// What one judged fault site comes to, with the tree's own location taken out of anything the compiler said.
-fn recorded(judged: &Judged, root: &str) -> FaultRecord {
-    FaultRecord {
+/// What every judged fault site of `session` comes to, as [`recorded`] records each.
+///
+/// # Errors
+/// [`crate::assure::run::RunInvariantError::FaultSiteUncataloged`] for a judged fault the session's catalog does not hold, and [`crate::assure::run::RunInvariantError::FaultTextNotText`] where its site's text is not UTF-8.
+fn records_of(
+    session: &rust_mutants::session::Session,
+    judged: &[Judged],
+    root: &str,
+) -> Result<Vec<FaultRecord>, RunnerError> {
+    let mut records: Vec<FaultRecord> = Vec::with_capacity(judged.len());
+    for one in judged {
+        let site = session
+            .catalog()
+            .mutants()
+            .iter()
+            .find(|mutant| mutant.index == one.catalog_index)
+            .ok_or_else(|| {
+                RunnerError::from(
+                    crate::assure::run::RunInvariantError::FaultSiteUncataloged {
+                        fault: one.display_id.clone(),
+                    },
+                )
+            })?;
+        records.push(recorded(one, site, root)?);
+    }
+    Ok(records)
+}
+
+/// What one judged fault site comes to, with everything its identity is minted from, which is `site`'s candidate, and the tree's own location taken out of anything the compiler said.
+///
+/// # Errors
+/// [`crate::assure::run::RunInvariantError::FaultTextNotText`] where the site's text is not UTF-8.
+fn recorded(
+    judged: &Judged,
+    site: &rust_mutants::catalog::Mutant,
+    root: &str,
+) -> Result<FaultRecord, RunnerError> {
+    let candidate = &site.candidate;
+    let original = std::str::from_utf8(&candidate.original)
+        .map_err(
+            |source| crate::assure::run::RunInvariantError::FaultTextNotText {
+                fault: judged.display_id.clone(),
+                which: "original",
+                source,
+            },
+        )?
+        .to_owned();
+    let replacement = std::str::from_utf8(&candidate.replacement)
+        .map_err(
+            |source| crate::assure::run::RunInvariantError::FaultTextNotText {
+                fault: judged.display_id.clone(),
+                which: "replacement",
+                source,
+            },
+        )?
+        .to_owned();
+    Ok(FaultRecord {
         catalog_index: CatalogIndex::new(judged.catalog_index),
         id: judged.id.clone(),
         display_id: judged.display_id.clone(),
         path: judged.path.clone(),
+        rule: candidate.rule.name.to_owned(),
+        rule_version: candidate.rule.version,
+        span: candidate.span,
+        source_digest: candidate.source_digest.clone(),
+        original,
+        replacement,
         item: judged.item.clone(),
-        position: judged.position,
+        position: Some(judged.position),
         decision: match decided(&judged.disposition) {
             FaultDecision::NotPut { diagnostic } => FaultDecision::NotPut {
                 diagnostic: diagnostic.replace(root, "."),
             },
             other @ (FaultDecision::Noticed { .. }
             | FaultDecision::Unnoticed
+            | FaultDecision::Absorbed
             | FaultDecision::Unreached
             | FaultDecision::Waited { .. }
             | FaultDecision::Undecided { .. }) => other,
         },
-    }
+    })
 }
 
 /// The decision a disposition of the shared judging comes to for a fault.

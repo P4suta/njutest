@@ -1,0 +1,47 @@
+# SPDX-FileCopyrightText: 2026 njutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+[package]
+name = "rust-mutants-sealed"
+description = "A deterministic WASI preview1 host and wasmtime runner: one guest invocation as a pure function of content-addressed inputs. Published because the rust-mutants engine depends on it; install rust-mutants-cli."
+keywords = ["mutation-testing", "wasi", "wasmtime", "deterministic"]
+categories = ["development-tools::testing", "wasm"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+homepage.workspace = true
+readme.workspace = true
+autotests = false
+
+[package.metadata.njutest]
+surface = "public"
+
+[dependencies]
+njutest-macros = { workspace = true }
+hex = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tempfile = { workspace = true }
+thiserror = { workspace = true }
+wasmparser = { workspace = true }
+wasmtime = { workspace = true }
+
+[dev-dependencies]
+njutest-devkit = { workspace = true }
+proptest = { workspace = true }
+wat = { workspace = true }
+
+[lints]
+workspace = true
+
+[[test]]
+name = "suite"
+path = "tests/suite.rs"
+
+[[test]]
+name = "toolchain_guests"
+path = "tests/toolchain_guests.rs"

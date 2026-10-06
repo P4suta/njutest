@@ -135,6 +135,7 @@ fn benchmarks(criterion: &mut Criterion) {
                 path: "src/lib.rs",
                 source: std::hint::black_box(one.as_bytes()),
                 placements: std::hint::black_box(&placements),
+                carriers: &[],
                 markers: &[],
                 comparable: &BTreeSet::default(),
                 probed: &BTreeMap::default(),

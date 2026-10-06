@@ -13,9 +13,13 @@ use crate::gates::GateError;
 use crate::kaniaudit::Harness;
 
 /// Everything a proof of the production laws rests on, by path from the workspace root: the prover reads the crate and its locked graph with the pinned toolchain, and the audit pins the prover.
-pub const INPUTS: [&str; 6] = [
+pub const INPUTS: [&str; 10] = [
     "crates/rust-mutants/src",
     "crates/rust-mutants/Cargo.toml",
+    "crates/rust-mutants-decision/src",
+    "crates/rust-mutants-decision/Cargo.toml",
+    "crates/rust-mutants-adapt/src",
+    "crates/rust-mutants-adapt/Cargo.toml",
     "Cargo.toml",
     "Cargo.lock",
     "rust-toolchain.toml",
@@ -35,6 +39,8 @@ pub fn arguments(export: &Path) -> Vec<OsString> {
         "kani",
         "-p",
         "rust-mutants",
+        "-p",
+        "rust-mutants-decision",
         "--lib",
         "--exact",
         "--no-assertion-reach-checks",

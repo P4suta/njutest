@@ -43,7 +43,7 @@ impl Told {
                 .limitations
                 .iter()
                 .map(|limitation| Stated {
-                    name: limitation.name.clone(),
+                    name: limitation.name().to_owned(),
                     detail: limitation.detail.clone(),
                 })
                 .collect(),
@@ -367,6 +367,11 @@ const fn about(kind: FindingKind, unreached: bool) -> (Severity, &'static str, &
             Severity::Limitation,
             "NJ-STEP-LIMIT",
             "the step boundary was reached without a matched control verdict",
+        ),
+        FindingKind::UnprovenMutant => (
+            Severity::Limitation,
+            "NJ-UNPROVEN",
+            "no sealed execution decided this change, so what a native run said of it is a lead",
         ),
         FindingKind::NotMeasured => (
             Severity::Limitation,

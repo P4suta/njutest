@@ -28,6 +28,16 @@ pub(super) fn open_dir(dir: &File, name: Name<'_>) -> io::Result<File> {
         .map_err(io::Error::from)
 }
 
+pub(super) fn open_file_at(path: &Path) -> io::Result<File> {
+    rustix::fs::open(
+        path,
+        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
+        Mode::empty(),
+    )
+    .map(File::from)
+    .map_err(io::Error::from)
+}
+
 pub(super) fn open_file(dir: &File, name: Name<'_>) -> io::Result<File> {
     rustix::fs::openat(
         dir,
@@ -140,6 +150,10 @@ pub(super) fn remove(dir: &File, name: Name<'_>, directory: bool) -> io::Result<
 
 pub(super) fn sync(dir: &File) -> io::Result<()> {
     rustix::fs::fsync(dir).map_err(io::Error::from)
+}
+
+pub(super) fn sync_file(file: &File) -> io::Result<()> {
+    file.sync_all()
 }
 
 pub(super) fn entries(dir: &File) -> io::Result<Vec<String>> {
@@ -320,6 +334,13 @@ mod tests {
             "our own open directory is one to tighten"
         );
         assert_eq!(privacy_of(42, 42, Mode::RWXU), Privacy::OwnerOnly);
+        for mode in [0o500, 0o1700, 0o2700, 0o750, 0o701] {
+            assert_eq!(
+                privacy_of(42, 42, Mode::from_raw_mode(mode)),
+                Privacy::Loose,
+                "mode {mode:o} is not exactly owner read, write and enter"
+            );
+        }
     }
 
     #[test]

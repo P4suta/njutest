@@ -13,9 +13,9 @@ use std::time::Duration;
 
 #[cfg(feature = "testkit")]
 use rust_mutants::cargo::units_of;
-use rust_mutants::cargo::{CargoError, Message, Toolchain, parse_messages};
+use rust_mutants::cargo::{CargoError, Completion, Exited, Message, Toolchain, parse_messages};
 use rust_mutants::execute::targets_of;
-use rust_mutants::runner::{EXIT_CODE_UNAVAILABLE, run};
+use rust_mutants::runner::run;
 
 use crate::error::{self, ErrorCode};
 use crate::rustflags::{self, COVERAGE_FLAG};
@@ -182,35 +182,34 @@ pub fn build(
 
     let built = run(&spec, watch.cancel);
     watch.trace.exec_result(ExecRecord::of(&spec, &built));
-    if let Some(refusal) = never_ran(&built, options.timeout)? {
-        return Err(refusal);
-    }
+    let Some(exited) = Exited::of(&built.termination) else {
+        return Err(never_ran(&built, options.timeout)?);
+    };
     let messages =
         parse_messages(&built.stdout).map_err(|source| BuildError::Unreadable { source })?;
-    let finished: Vec<bool> = messages
-        .iter()
-        .filter_map(|message| match message {
-            Message::BuildFinished { success } => Some(*success),
-            _ => None,
-        })
-        .collect();
-    let [success] = finished.as_slice() else {
-        return Err(BuildError::Protocol {
-            message: format!(
-                "the message stream has {} build-finished records instead of one",
-                finished.len()
-            ),
-        });
+    rust_mutants::cargo::record_build(
+        toolchain.env(),
+        &options.root,
+        rust_mutants::cargo::DirectBuild {
+            context: "the workspace's native baseline build",
+            duration: built.duration,
+            messages: &messages,
+        },
+    )
+    .map_err(|source| BuildError::Unreadable { source })?;
+    let completion = match Completion::of(&messages, exited) {
+        Ok(completion) => completion,
+        Err(unread) => {
+            return Err(BuildError::Protocol {
+                message: with_output(&unread.to_string(), &built.output)?,
+            });
+        }
     };
-    if *success != (built.conventional_exit_code() == 0) {
-        return Err(BuildError::Protocol {
-            message: format!(
-                "build-finished says success={success}, but cargo exited with {}",
-                built.conventional_exit_code()
-            ),
-        });
-    }
-    let units = targets_of(&messages, packages, Some(&options.target_dir))
+    let failure = match completion {
+        Completion::Built => None,
+        Completion::Refused => Some(failure_of(&messages, &built.output)?),
+    };
+    let units = targets_of(&messages, packages, &options.target_dir)
         .map_err(|error| BuildError::Protocol {
             message: error.to_string(),
         })?
@@ -220,9 +219,9 @@ pub fn build(
             env.overlay(&target.cargo_env);
             env.set("CARGO", toolchain.cargo().as_os_str());
             Unit {
-                package: target.package,
-                kind: UnitKind::of(target.kind),
-                name: target.name,
+                package: target.package().to_owned(),
+                kind: UnitKind::of(target.kind()),
+                name: target.name().to_owned(),
                 harness: target.harness,
                 executable: target.executable,
                 cwd: target.cwd,
@@ -239,7 +238,7 @@ pub fn build(
         library_sources,
         #[cfg(feature = "testkit")]
         env: spec.env.take().unwrap_or_default(),
-        failure: failure_of(&messages, &built.output)?,
+        failure,
         #[cfg(feature = "testkit")]
         limitations,
     })
@@ -338,14 +337,8 @@ fn environment(
     Ok(env)
 }
 
-/// What the compiler said when it refused, or nothing when it did not.
-fn failure_of(messages: &[Message], output: &[u8]) -> Result<Option<String>, BuildError> {
-    let finished_badly = messages
-        .iter()
-        .any(|message| matches!(message, Message::BuildFinished { success: false }));
-    if !finished_badly {
-        return Ok(None);
-    }
+/// What the compiler said when it refused the build.
+fn failure_of(messages: &[Message], output: &[u8]) -> Result<String, BuildError> {
     let rendered: Vec<String> = messages
         .iter()
         .filter_map(|message| match message {
@@ -367,20 +360,20 @@ fn failure_of(messages: &[Message], output: &[u8]) -> Result<Option<String>, Bui
             source,
         })?;
         let output = output.trim();
-        return Ok(Some(if output.is_empty() {
+        return Ok(if output.is_empty() {
             "cargo reported an unsuccessful build without a diagnostic".to_owned()
         } else {
             output.to_owned()
-        }));
+        });
     }
-    Ok(Some(rendered.join("\n")))
+    Ok(rendered.join("\n"))
 }
 
-/// Why cargo produced nothing to read, when it did not.
+/// Why cargo, which did not end with an exit code of its own, left no build to read.
 fn never_ran(
     built: &rust_mutants::runner::RunResult,
     timeout: Option<Duration>,
-) -> Result<Option<BuildError>, BuildError> {
+) -> Result<BuildError, BuildError> {
     let said = if let Some(error) = built.error() {
         error.to_string()
     } else if built.timed_out() {
@@ -388,14 +381,14 @@ fn never_ran(
             "cargo did not finish within {} milliseconds",
             timeout.unwrap_or_default().as_millis()
         )
-    } else if built.conventional_exit_code() == EXIT_CODE_UNAVAILABLE {
-        String::from("cargo was stopped before it reported an exit status")
+    } else if let Some(signal) = built.signal() {
+        format!("cargo was ended by signal {signal}")
     } else {
-        return Ok(None);
+        String::from("cargo was stopped before it reported an exit status")
     };
-    Ok(Some(BuildError::NotRun {
+    Ok(BuildError::NotRun {
         message: with_output(&said, &built.output)?,
-    }))
+    })
 }
 
 /// What went wrong, with what cargo said about it.

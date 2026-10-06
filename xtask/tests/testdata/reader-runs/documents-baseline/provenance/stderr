@@ -1,0 +1,27 @@
+== open
+== soundness
+== sentinel
+== baseline
+   [1/2] fixture-baseline/lib/fixture_baseline
+   [2/2] fixture-baseline/test/doubling
+== repeatable
+== mutation
+   [1/14] src/lib.rs:sign return-default killed
+   [2/14] src/lib.rs:sign negate-condition killed
+   [3/14] src/lib.rs:sign condition-to-true killed
+   [4/14] src/lib.rs:sign condition-to-false killed
+   [5/14] src/lib.rs:sign gt-to-ge survived
+   [6/14] src/lib.rs:sign return-default killed
+   [7/14] src/lib.rs:sign negate-condition killed
+   [8/14] src/lib.rs:sign condition-to-true survived
+   [9/14] src/lib.rs:sign condition-to-false killed
+   [10/14] src/lib.rs:sign lt-to-le survived
+   [11/14] src/lib.rs:sign return-default killed
+   [12/14] src/lib.rs:sign return-default unreached
+   [13/14] src/lib.rs:double return-default killed
+   [14/14] src/lib.rs:double mul-to-div killed
+== faults
+   [1/2] fixture-baseline/lib/fixture_baseline
+   [2/2] fixture-baseline/test/doubling
+== crashes
+   report: reports/runs/20261002t125737471z-006769/njutest-assurance-report-v1.json

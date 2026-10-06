@@ -86,6 +86,7 @@ fn report_varying(findings: Vec<Finding>, vary: &dyn Fn(&mut BuildReport)) -> Re
         item: "demo".to_owned(),
         original: ">".to_owned(),
         replacement: ">=".to_owned(),
+        evidence: njutest::testkit::reports::sealed_as(&njutest::report::Decided::Survived),
         outcome: njutest::report::Decided::Survived,
         accepted: false,
         reuse: njutest::report::Reuse(njutest::report::Established::Here),
@@ -107,11 +108,11 @@ fn report_varying(findings: Vec<Finding>, vary: &dyn Fn(&mut BuildReport)) -> Re
     njutest::testkit::raise_what_the_records_decide(&mut source);
     source.limitations = vec![
         Limitation::new(
-            rust_mutants::limitation::DOCTESTS_ROUTED_BY_FILE,
+            rust_mutants::limitation::Limitation::DoctestsRoutedByFile,
             "doctests run once",
         ),
         Limitation::new(
-            "git-metadata-unavailable",
+            njutest::limitation::Limitation::GitMetadataUnavailable,
             "the fixture is not a git repository",
         ),
     ];
@@ -410,6 +411,10 @@ fn a_moved_baseline_is_told_as_a_measurement_the_proofs_cannot_stand_on() {
                 bodies: nothing(),
                 infected: nothing(),
                 entered: nothing(),
+            }];
+            source.repaired = vec![njutest::report::drift::Repaired {
+                target: "core/lib/core tests::works".to_owned(),
+                again: 0,
             }];
         },
     );

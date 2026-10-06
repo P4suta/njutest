@@ -10,6 +10,33 @@ A change that needs nothing is not listed.
 
 ## Unreleased
 
+**A body no unit read carries no digest.** The skeletons document is `schema_version` 4: an item's `body_digest` is `null` where no unit read its file or its body could not be located in what a unit read, where version 3 wrote the digest of empty bytes, so a document of version 3 is refused.
+Two unread bodies can no longer collide on one digest: a run writes no carried answer about such a body, and one an earlier run wrote is refused as resting on a body nobody read.
+
+**A target's test count is the one its own baseline counted, and `null` where its baseline did not run.** The run report is `schema_version` 5: `targets[].tests` is nullable, where version 4 wrote `1` for a target no baseline had counted and `1` for one whose baseline ran no test, so a report of version 4 is refused.
+The work a report states counts a target that ran no test as none, and says `tests are not counted` where a baseline did not run, as under `--no-verify`, rather than a number of tests nothing counted.
+
+**A merged report says which part's run decided each row.** Each mutant of the run report gains `part_run_id`: null in a run's own report, and in one `merge` wrote the run of the part that decided the row, whose bench its sealed executions ran on.
+A report written before it lacks the field and is refused; merge the parts again with this release.
+
+**The body of a `const fn` is mutated wherever nothing evaluates it before the program runs.** The instrumented tree writes a `const fn` holding a guard without its `const`, and validation gives it back to a function the compiler evaluates, from the `E0015` it refuses the tree with ([ADR 0047](../adr/0047-a-const-fn-is-mutated-where-nothing-evaluates-it-early.md)).
+A crate written the way `clippy::missing_const_for_fn` asks has more mutants than it had, and the first run after upgrading is longer by them.
+The skip reason `const-fn-body` is gone; `evaluated-before-run` counts the candidates of a function the compiler evaluates, one place each, and the limitation a report states for it is `skipped-evaluated-before-run`.
+`unvalidated-const-use` counts const-body candidates discovery conservatively leaves unchanged because a linked doctest, conditional early use or opaque expansion is outside native validation.
+Its limitation is `skipped-unvalidated-const-use`, and its trace decisions name the source files that required keeping `const`.
+Every rejection row gains `reason`, `compiler-refused` or `evaluated-before-run`, and `refused` counts only the first.
+The trace's `validate-round` gains `carried`.
+A documented example that evaluates such a function before its program runs no longer compiles against the instrumented tree; mark the function, and every `const fn` it calls, with `rust-mutants: skip`.
+
+**A verdict is what a sealed run observed.** The engine builds the instrumented tree a second time for `wasm32-wasip1` and runs each test alone in a fresh WebAssembly instance on a deterministic host; only those executions decide a mutant ([ADR 0046](../adr/0046-a-verdict-is-what-a-sealed-run-observed.md), [sealed execution](sealed.md)).
+What a native run says is a lead: such a mutant's finding is `unproven-mutant`, its row's `evidence` says every reason there is no verdict, and the run exits 2.
+Install the target with `rustup target add wasm32-wasip1`; a toolchain without it leaves every mutant unproven.
+The run report is `schema_version` 4: each mutant carries `evidence`, the accounting gains `unproven` and the four counts of what the native run said of them, and `killed`, `survived` and `unreached` count only sealed verdicts, so the score does too.
+A report of version 3 is refused rather than read as sealed.
+`discharged-mutant` is gone: a discharge is a proof over what a native run recorded, so it is a lead, counted in `unproven_discharged`.
+`inconclusive-mutant` exits 2 rather than 1, since a mutation the run could not decide either way is unproven.
+A command that fails, or is used wrongly, exits 3 rather than 2, which now means something is unproven; `ci gate` says `verdict=unproven` for 2 where it said `failed`.
+
 **A variable a claim's `where.env` names keys every stored answer.** The configuration declares with it that an answer may depend on the variable, so an answer measured under one value is never read back where the tests are given another ([ADR 0042](../adr/0042-a-claim-holds-where-its-facts-do.md)).
 Records move to `rust-mutants-outcome-v3` under `rust-mutants/outcomes-v3`, each carrying the declared names beside one digest of their values; the old store is not read, so the first run after upgrading starts cold, and `cache --clear-outcomes` of the release before removes what it left.
 

@@ -45,7 +45,7 @@ pub fn run(
     match &request.command {
         Command::Init(arguments) => init::run(*arguments, environment, stdout, stderr),
         Command::Cache(arguments) => cache::run(arguments, environment, stdout, stderr),
-        Command::Merge(arguments) => merge::run(arguments, stdout, stderr),
+        Command::Merge(arguments) => merge::run(arguments, environment, stdout, stderr),
         Command::Watch(arguments) => watch::run(arguments, environment, stdout, stderr),
         Command::Lsp(arguments) => Ok(lsp::run(arguments, environment)),
         Command::Doctor(arguments) => {

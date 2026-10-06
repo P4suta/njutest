@@ -5,6 +5,7 @@
 
 #![expect(
     clippy::expect_used,
+    clippy::panic,
     reason = "a test reports a setup failure by panicking"
 )]
 
@@ -14,9 +15,10 @@ use std::process::Command;
 use njutest_devkit::cargo_double::{Document, Package, PathDependency, Target};
 use njutest_devkit::fixture::Fixture;
 use rust_mutants::cargo::Metadata;
+use serde_json::Value;
 
 /// What cargo itself says about the workspace rooted at `root`.
-fn real(root: &Path) -> Metadata {
+fn real(root: &Path) -> (Metadata, Value) {
     let output = Command::new(njutest_devkit::paths::cargo_binary())
         .args(["metadata", "--locked", "--offline", "--format-version", "1"])
         .current_dir(root)
@@ -28,11 +30,14 @@ fn real(root: &Path) -> Metadata {
         "cargo metadata: {}",
         njutest_devkit::process::strict_utf8(&output.stderr)
     );
-    Metadata::parse(&output.stdout).expect("the document this engine reads every run")
+    (
+        Metadata::parse(&output.stdout).expect("the document this engine reads every run"),
+        rust_mutants::strictjson::from_slice(&output.stdout).expect("cargo prints JSON"),
+    )
 }
 
 /// The same workspace as a double built from what cargo said about it.
-fn doubled(root: &Path, said: &Metadata) -> Metadata {
+fn doubled(root: &Path, said: &Metadata) -> (Metadata, Value) {
     let mut document = Document::of(root);
     for package in &said.packages {
         let directory = package.manifest_dir();
@@ -57,15 +62,78 @@ fn doubled(root: &Path, said: &Metadata) -> Metadata {
         document = document.holding(held);
     }
     document.target_directory.clone_from(&said.target_directory);
-    Metadata::parse(document.json().as_bytes()).expect("a double this engine reads")
+    document
+        .workspace_default_members
+        .clone_from(&said.workspace_default_members);
+    let value = document.json();
+    (
+        Metadata::parse(value.as_bytes()).expect("a double this engine reads"),
+        rust_mutants::strictjson::from_slice(value.as_bytes()).expect("the double prints JSON"),
+    )
+}
+
+fn matching<'a>(expected: &Value, actual: &'a [Value]) -> Option<&'a Value> {
+    if let Some(id) = expected.get("id") {
+        return actual
+            .iter()
+            .find(|candidate| candidate.get("id") == Some(id));
+    }
+    if let Some(name) = expected.get("name") {
+        return actual.iter().find(|candidate| {
+            candidate.get("name") == Some(name)
+                && expected
+                    .get("path")
+                    .is_none_or(|path| candidate.get("path") == Some(path))
+        });
+    }
+    actual.iter().find(|candidate| *candidate == expected)
+}
+
+fn assert_shape_subset(expected: &Value, actual: &Value, at: &str) {
+    match (expected, actual) {
+        (Value::Object(expected), Value::Object(actual)) => {
+            for (key, value) in expected {
+                let next = format!("{at}.{key}");
+                let actual = actual
+                    .get(key)
+                    .unwrap_or_else(|| panic!("{next}: cargo has no such key"));
+                assert_shape_subset(value, actual, &next);
+            }
+        }
+        (Value::Array(expected), Value::Array(actual)) => {
+            for value in expected {
+                let matched = matching(value, actual)
+                    .unwrap_or_else(|| panic!("{at}: cargo has no matching {value}"));
+                assert_shape_subset(value, matched, at);
+            }
+        }
+        (Value::Null, Value::Null)
+        | (Value::Bool(_), Value::Bool(_))
+        | (Value::Number(_), Value::Number(_))
+        | (Value::String(_), Value::String(_)) => {}
+        _ => panic!("{at}: double has {expected}, cargo has {actual}"),
+    }
+}
+
+#[test]
+fn a_typed_metadata_document_serializes_to_cargos_field_shapes() {
+    for name in ["fixture-simple", "fixture-macros"] {
+        let fixture = Fixture::copy(name);
+        let (said, real_value) = real(fixture.root());
+        let serialized = serde_json::to_value(&said).expect("typed cargo metadata serializes");
+        assert_shape_subset(&real_value, &serialized, name);
+    }
 }
 
 #[test]
 fn a_double_of_a_metadata_document_parses_to_what_cargo_parses_to() {
     for name in ["fixture-simple", "fixture-macros"] {
         let fixture = Fixture::copy(name);
-        let said = real(fixture.root());
-        let double = doubled(fixture.root(), &said);
+        let (said, real_value) = real(fixture.root());
+        let (double, double_value) = doubled(fixture.root(), &said);
+        assert_shape_subset(&double_value, &real_value, name);
+        let serialized = serde_json::to_value(&double).expect("typed double serializes");
+        assert_shape_subset(&double_value, &serialized, name);
         assert_eq!(
             double.workspace_root, said.workspace_root,
             "{name}: the reader is handed a different tree"
@@ -108,7 +176,7 @@ fn a_double_of_a_metadata_document_parses_to_what_cargo_parses_to() {
 #[test]
 fn cargo_reports_a_path_dependency_by_an_absolute_path() {
     let fixture = Fixture::copy("fixture-macros");
-    let said = real(fixture.root());
+    let (said, _) = real(fixture.root());
     let paths: Vec<&std::path::PathBuf> = said
         .packages
         .iter()

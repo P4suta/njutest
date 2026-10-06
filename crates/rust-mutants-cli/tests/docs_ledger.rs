@@ -143,12 +143,15 @@ fn the_engine_ledger_of_this_repository_is_one_the_reader_accepts() {
         config.project.packages,
         vec![
             "rust-mutants".to_owned(),
+            "rust-mutants-decision".to_owned(),
+            "rust-mutants-adapt".to_owned(),
             "rust-mutants-cli".to_owned(),
             "njutest".to_owned(),
             "xtask".to_owned(),
         ],
-        "the ledger measures every package of this workspace: the engine, the command line it \
-         ships behind, the runner built on it, and the audit that re-decides its runs. A \
+        "the ledger measures every package of this workspace: the engine, the decisions it rests \
+         on, the adapters that write and read for it, the command line it ships behind, the \
+         runner built on it, and the audit that re-decides its runs. A \
          repository that says it measures itself and leaves half of itself out is one whose \
          scope does not match its claim"
     );
@@ -178,7 +181,7 @@ fn the_exit_codes_the_page_documents_are_the_ones_the_run_returns() {
         .collect();
     assert_eq!(
         returned.len(),
-        5,
+        rust_mutants::run::Exit::ALL.len(),
         "every code a run can end with is in the table `--help` prints: {printed}"
     );
 
@@ -210,7 +213,7 @@ fn the_exit_codes_the_page_documents_are_the_ones_the_run_returns() {
                  whose script saw it has nowhere to look it up"
             );
         }
-        for invented in [3u8, 4, 5, 101, 131, 142] {
+        for invented in [4u8, 5, 101, 131, 142] {
             let named = table.contains(&format!("`{invented}`"))
                 || table.contains(&format!("| {invented} |"));
             assert!(

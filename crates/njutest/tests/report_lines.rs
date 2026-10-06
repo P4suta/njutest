@@ -64,6 +64,7 @@ fn report_varying(vary: &dyn Fn(&mut BuildReport)) -> Report {
         item: "demo".to_owned(),
         original: ">".to_owned(),
         replacement: ">=".to_owned(),
+        evidence: njutest::testkit::reports::sealed_as(&njutest::report::Decided::Survived),
         outcome: njutest::report::Decided::Survived,
         accepted: false,
         reuse: njutest::report::Reuse(njutest::report::Established::Here),
@@ -85,8 +86,23 @@ fn report_varying(vary: &dyn Fn(&mut BuildReport)) -> Report {
         "cccccccccccccccccccc",
         "no test noticed the edit at crates/core/src/lib.rs:12",
     )];
+    let fault = njutest::testkit::reports::fault(
+        0,
+        njutest::report::faults::FaultDecision::Noticed {
+            by: "core/lib/adds::rounds".to_owned(),
+        },
+    );
+    source.faults = vec![fault.clone()];
+    source.accounting.faults = njutest::report::faults::FaultAccounting::of(&source.faults)
+        .expect("one exact fault accounting");
+    source.beside = vec![njutest::report::faults::BesideRecord {
+        mutant: "cccccccccccccccccccc".to_owned(),
+        fault: fault.display_id,
+        target: "core/lib/adds::rounds".to_owned(),
+        failed: njutest::report::faults::Failed::Alone,
+    }];
     source.limitations.push(Limitation::new(
-        "git-metadata-unavailable",
+        njutest::limitation::Limitation::GitMetadataUnavailable,
         "the stream fixture is not a git repository",
     ));
     njutest::testkit::read_every_named_file(&mut source);
@@ -343,4 +359,92 @@ fn a_finding_detail_cannot_forge_a_verdict() {
         "the one the report reached, and no more: {text}"
     );
     assert!(text.ends_with("VERDICT\tINSUFFICIENT\n"), "{text}");
+}
+
+#[test]
+fn every_drawing_states_the_evidence_a_fault_gave_about_a_survivor() {
+    let report = report();
+    let fault = njutest::testkit::reports::fault(
+        0,
+        njutest::report::faults::FaultDecision::Noticed {
+            by: "core/lib/adds::rounds".to_owned(),
+        },
+    );
+    let text = lines::stream(&report).expect("the checked report streams");
+    let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/report.golden.lines");
+    njutest_devkit::golden::golden(&golden, text.as_bytes()).expect("the recorded stream");
+    let evidence = records(&text, "MUTANT")
+        .into_iter()
+        .filter(|row| row.contains("observable_under_fault"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        evidence,
+        vec![format!(
+            "MUTANT\tunnoticed\tcccccccccccccccccccc\tcrates/core/src/lib.rs:12:9\tlt-to-le@1\t\
+             observable_under_fault={} failed=alone by=core/lib/adds::rounds",
+            fault.display_id
+        )],
+        "the stream states the evidence under the survivor it belongs to"
+    );
+    let html = njutest::report::html::document(&report).expect("the checked report draws");
+    assert!(
+        html.contains("Evidence under a fault")
+            && html.contains(&fault.display_id)
+            && html.contains("failed alone"),
+        "the HTML drawing states it too: {html}"
+    );
+    let sarif = njutest::report::sarif::document(&report).expect("the checked report draws");
+    let notes: Vec<&str> = sarif["runs"][0]["results"]
+        .as_array()
+        .expect("the results")
+        .iter()
+        .filter(|result| result["ruleId"] == "observable-under-fault")
+        .map(|result| result["message"]["text"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        notes.len(),
+        1,
+        "the SARIF drawing carries it as a note a code-scanning reader sees: {sarif:#}"
+    );
+    assert!(
+        notes[0].contains("cccccccccccccccccccc") && notes[0].contains(&fault.display_id),
+        "the note names the survivor and the fault: {notes:?}"
+    );
+    let junit = njutest::report::junit::document(&report).expect("the checked report draws");
+    assert!(
+        junit.contains("evidence-under-fault") && junit.contains(&fault.display_id),
+        "the JUnit drawing carries it as a passing testcase beside the findings: {junit}"
+    );
+    assert!(
+        junit.contains("tests=\"4\"") && junit.contains("failures=\"2\""),
+        "the evidence counts as a test and not as a failure: {junit}"
+    );
+    let mut sarif = serde_json::to_string_pretty(&sarif).expect("the SARIF drawing serializes");
+    sarif.push('\n');
+    for (name, text) in [
+        ("report.golden.html", html),
+        ("report.golden.sarif.json", sarif),
+        ("report.golden.junit.xml", junit),
+    ] {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/testdata")
+            .join(name);
+        njutest_devkit::golden::golden(&path, text.as_bytes())
+            .expect("the complete drawing keeps the evidence beside its survivor");
+    }
+}
+
+#[test]
+fn the_junit_evidence_names_which_run_failed_and_the_target_that_told_them_apart() {
+    for failed in njutest::report::faults::Failed::ALL {
+        let report = report_varying(&|source| source.beside[0].failed = failed);
+        let junit = njutest::report::junit::document(&report).expect("the checked report draws");
+        assert!(
+            junit.contains(&format!(
+                "failed={} by=core/lib/adds::rounds",
+                failed.name()
+            )),
+            "the evidence names the failing side and the target without counting a kill: {junit}"
+        );
+    }
 }

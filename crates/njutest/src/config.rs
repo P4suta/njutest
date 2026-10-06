@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 use std::num::{NonZeroU32, NonZeroU64};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -168,6 +168,17 @@ impl Default for Contract {
 impl Contract {
     const PROTOCOL_DEFAULT: Self = Self::WholeV1;
 
+    /// The name a document, a report and a key spell it by.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::StandardV1 => "standard-v1",
+            Self::DeepV1 => "deep-v1",
+            Self::VerifiedV1 => "verified-v1",
+            Self::WholeV1 => "whole-v1",
+        }
+    }
+
     /// Whether the soundness phase runs Miri, where an inventory alone would be a limitation.
     #[must_use]
     pub const fn runs_miri(self) -> bool {
@@ -276,9 +287,27 @@ pub struct Project {
     pub include: Vec<String>,
     /// Workspace-relative globs whose files are left out of the mutations, which the report carries as an explicit limitation.
     pub exclude: Vec<String>,
+    /// Directories copied beside the workspace for explicitly allowed outside dependencies.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub allow_outside: Vec<PathBuf>,
 }
 
 impl Project {
+    /// The allowed outside directories, resolved from the workspace root and canonicalized where present.
+    #[must_use]
+    pub fn outside(&self, root: &Path) -> Vec<PathBuf> {
+        self.allow_outside
+            .iter()
+            .map(|path| {
+                let path = root.join(path);
+                match rust_mutants::canonical::canonical(&path) {
+                    Ok(present) => present,
+                    Err(_the_engine_will_refuse_a_missing_directory) => path,
+                }
+            })
+            .collect()
+    }
+
     /// The inclusions, compiled.
     #[must_use]
     pub fn included(&self) -> Vec<rust_mutants::glob::Pattern> {
@@ -325,7 +354,7 @@ pub struct Execution {
     /// The upper bound on one measurement, which is one test binary run against one mutation.
     #[serde(deserialize_with = "duration", serialize_with = "as_millis")]
     pub timeout: Duration,
-    /// How many times a mutation's guard may be taken before its process is stopped.
+    /// How many boundaries of the workspace's instrumented source, test code included, an execution may pass once its mutation's guard has been taken, before its process is stopped.
     /// `0` counts nothing and leaves `timeout` as the only thing that can end a mutation that does not end.
     ///
     /// A clock measures partly the machine, so two runs of one catalogue on one commit can disagree about a mutation that never returns.
@@ -386,12 +415,35 @@ impl Default for Execution {
 }
 
 /// How mutants are proved about before they are executed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Mutation {
     /// Ask the compiler whether it renders each surviving mutation identically to the code it mutates.
     /// It costs two builds of a tree of its own for every survivor whose premises hold, and it removes a finding only where no test could have noticed the mutation.
     pub equivalence: bool,
+    /// Build the tree for the sealed target too, and decide each mutation from its sealed executions; without it every answer is a native lead (ADR 0046).
+    pub seal: bool,
+}
+
+impl Default for Mutation {
+    fn default() -> Self {
+        Self {
+            equivalence: false,
+            seal: true,
+        }
+    }
+}
+
+impl Mutation {
+    /// Whether a preparation for this configuration builds the sealed modules.
+    #[must_use]
+    pub const fn sealing(self) -> rust_mutants::sealed::Sealing {
+        if self.seal {
+            rust_mutants::sealed::Sealing::On
+        } else {
+            rust_mutants::sealed::Sealing::Off
+        }
+    }
 }
 
 /// Whether a run fails, one at a time, every call a `?` asks about, and asks the suite what it noticed (ADR 0032).
@@ -411,7 +463,7 @@ pub const WHOLE_SCHEDULES: u32 = 8;
 #[serde(deny_unknown_fields, default)]
 pub struct Durability {
     /// Stop after the calls.
-    /// It costs a third instrumented build and baseline, and three executions for every call that writes a test reaches.
+    /// It costs a third instrumented build and baseline, and two executions for every call that writes a test reaches, eleven where the next run fails.
     pub crash: bool,
 }
 
@@ -560,8 +612,8 @@ impl Default for Reports {
 pub struct Soundness {
     /// Flags for Miri.
     pub miri_flags: Vec<String>,
-    /// Sanitizers to run under, on a toolchain that has them.
-    pub sanitizers: Vec<String>,
+    /// Sanitizers to run under, on a toolchain that has them, each named once from the closed set.
+    pub sanitizers: Vec<crate::assure::sanitize::Sanitizer>,
 }
 
 /// What a run sets differently for one more control of each target: nothing unless asked, since each knob is one more run of every target.
@@ -735,6 +787,29 @@ fn named_once(configurations: &[Configuration], path: &Path) -> Result<(), Confi
     Ok(())
 }
 
+/// Whether every sanitizer is asked for once, since two runs of one question are two answers to reconcile.
+fn sanitizers_once(
+    sanitizers: &[crate::assure::sanitize::Sanitizer],
+    path: &Path,
+) -> Result<(), ConfigError> {
+    for (at, one) in sanitizers.iter().enumerate() {
+        if sanitizers
+            .get(..at)
+            .is_some_and(|before| before.contains(one))
+        {
+            return Err(ConfigError::new(
+                ConfigErrorKind::Invalid,
+                path,
+                format!(
+                    "[soundness] sanitizers names {} more than once; each is asked for once",
+                    one.name()
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// One surviving mutant a reviewer accepted.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -881,16 +956,12 @@ impl Config {
     /// Returns a typed error when a `verified-v1` bound is absent or zero, or when another contract carries verifier-only keys.
     /// This rechecks public fields so a caller that constructs or mutates [`Config`] cannot bypass the same boundary enforced by [`Config::parse`].
     pub fn verified(&self) -> Result<Option<Verified>, VerificationError> {
-        match self.contract {
-            Contract::VerifiedV1 => self.verification.checked().map(Some),
-            Contract::StandardV1 | Contract::DeepV1 | Contract::WholeV1
-                if self.verification.is_empty() =>
-            {
-                Ok(None)
-            }
-            Contract::StandardV1 | Contract::DeepV1 | Contract::WholeV1 => {
-                Err(VerificationError::WrongContract)
-            }
+        if self.contract.proves_models() {
+            self.verification.checked().map(Some)
+        } else if self.verification.is_empty() {
+            Ok(None)
+        } else {
+            Err(VerificationError::WrongContract)
         }
     }
 
@@ -944,14 +1015,17 @@ impl Config {
                 .and_then(|table| table.get(key))
                 .is_some()
         };
-        let every: Vec<crate::report::knobs::Knob> = crate::report::knobs::Knob::ALL.to_vec();
         let refused = if said("faults", "inject") && !self.faults.inject {
             Some("[faults] inject = false")
         } else if said("durability", "crash") && !self.durability.crash {
             Some("[durability] crash = false")
         } else if said("schedules", "explore") && self.schedules.explore == 0 {
             Some("[schedules] explore = 0")
-        } else if said("repeatable", "knobs") && self.repeatable.knobs != every {
+        } else if said("repeatable", "knobs")
+            && !crate::report::knobs::Knob::ALL
+                .iter()
+                .all(|knob| self.repeatable.knobs.contains(knob))
+        {
             Some("[repeatable] knobs naming fewer than every knob")
         } else {
             None
@@ -1042,6 +1116,7 @@ impl Config {
         {
             check_environment_name(name).map_err(|error| invalid(error.to_string()))?;
         }
+        sanitizers_once(&self.soundness.sanitizers, path)?;
         for (name, resource) in &self.resources {
             if resource.command.is_empty() {
                 return Err(invalid(format!("resource {name:?} has no command to run")));
@@ -1147,6 +1222,7 @@ contract = \"whole-v1\"           # \"whole-v1\" | \"standard-v1\" | \"deep-v1\"
 # packages = []                  # cargo package names; empty = every member
 # include = []                   # workspace-relative globs a file must match to be mutated
 # exclude = []                   # workspace-relative globs; the files are not mutated
+# allow_outside = []             # directories copied beside the workspace for path dependencies
 
 [execution]
 # features = []
@@ -1170,6 +1246,7 @@ contract = \"whole-v1\"           # \"whole-v1\" | \"standard-v1\" | \"deep-v1\"
 
 [mutation]
 # equivalence = false            # ask the compiler about every survivor
+# seal = true                    # decide each mutation from sealed executions; false leaves every answer a lead
 
 [verification]                   # verified-v1 only; both keys are mandatory and nonzero
 # unwind = 8                     # maximum loop unwind for every proof harness
@@ -1192,7 +1269,7 @@ contract = \"whole-v1\"           # \"whole-v1\" | \"standard-v1\" | \"deep-v1\"
 
 [soundness]                      # deep-v1 only
 # miri_flags = []
-# sanitizers = []                # e.g. [\"thread\"] on nightly
+# sanitizers = []                # address, leak, memory, thread; each once, on nightly
 
 # [resources.postgres]
 # command = [\"./tools/postgres-provider\"]

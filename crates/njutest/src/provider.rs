@@ -6,11 +6,14 @@
 use std::collections::BTreeMap;
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::path::Path;
-use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
+use std::process::{ChildStdin, Command, Stdio};
+use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use rust_mutants::observation::{Clock, Event, Observation, Signal, Waiting, WallClock};
+
+use rust_mutants::runner::GroupChild;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::error::{self, ErrorCode};
@@ -297,101 +300,6 @@ impl ProviderError {
     }
 }
 
-/// An owned child process that kills and reaps itself even on an early return.
-#[derive(Debug)]
-struct SupervisedChild {
-    child: Child,
-    reaped: bool,
-}
-
-impl SupervisedChild {
-    fn launch(command: &mut Command) -> std::io::Result<Self> {
-        command.spawn().map(|child| Self {
-            child,
-            reaped: false,
-        })
-    }
-
-    const fn take_stdin(&mut self) -> Option<ChildStdin> {
-        self.child.stdin.take()
-    }
-
-    const fn take_stdout(&mut self) -> Option<std::process::ChildStdout> {
-        self.child.stdout.take()
-    }
-
-    fn try_wait(&mut self) -> std::io::Result<bool> {
-        match self.child.try_wait()? {
-            Some(_status) => {
-                self.reaped = true;
-                Ok(true)
-            }
-            None => Ok(false),
-        }
-    }
-
-    fn wait(&mut self) -> std::io::Result<()> {
-        self.child.wait().map(|_status| {
-            self.reaped = true;
-        })
-    }
-
-    fn terminate_and_wait(&mut self) -> std::io::Result<()> {
-        let killed = kill_tree(&mut self.child);
-        let waited = self.wait();
-        match (killed, waited) {
-            (Ok(()), Ok(())) => Ok(()),
-            (Err(stopping), Ok(())) => Err(stopping),
-            (Ok(()), Err(wait)) => Err(wait),
-            (Err(stopping), Err(wait)) => Err(std::io::Error::new(
-                wait.kind(),
-                format!("cannot kill the provider tree: {stopping}; cannot reap it: {wait}"),
-            )),
-        }
-    }
-
-    fn finish(&mut self, timeout: Duration) -> std::io::Result<()> {
-        let deadline = Instant::now().checked_add(timeout).ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "the provider shutdown deadline is outside Instant's range",
-            )
-        })?;
-        loop {
-            match self.try_wait() {
-                Ok(true) => return Ok(()),
-                Ok(false) => {}
-                Err(poll) => {
-                    return match self.terminate_and_wait() {
-                        Ok(()) => Err(poll),
-                        Err(cleanup) => Err(std::io::Error::new(
-                            poll.kind(),
-                            format!(
-                                "cannot inspect the provider: {poll}; cleanup also failed: {cleanup}"
-                            ),
-                        )),
-                    };
-                }
-            }
-            if Instant::now() >= deadline {
-                return self.terminate_and_wait();
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-    }
-}
-
-impl Drop for SupervisedChild {
-    fn drop(&mut self) {
-        if self.reaped {
-            return;
-        }
-        if let Err(cleanup) = self.terminate_and_wait() {
-            drop(cleanup);
-        }
-    }
-}
-
 /// A join handle whose destructor cannot detach its thread.
 #[derive(Debug)]
 struct JoinedThread {
@@ -401,44 +309,42 @@ struct JoinedThread {
 /// A one-shot provider and the reader whose lifetime it owns.
 #[derive(Debug)]
 struct OneShot {
-    child: SupervisedChild,
-    answer: Option<Receiver<ReadAnswer>>,
+    child: GroupChild,
+    answer: Option<Answers>,
     reader: Option<JoinedThread>,
 }
 
 impl OneShot {
-    fn receive(&self, timeout: Duration) -> Result<String, ProviderError> {
-        let answer = self.answer.as_ref().ok_or_else(|| {
+    fn receive(
+        &mut self,
+        timeout: Duration,
+        trace: &crate::trace::Recorder,
+    ) -> Result<String, ProviderError> {
+        let answer = self.answer.as_mut().ok_or_else(|| {
             ProviderError::new(
                 ProviderErrorKind::Protocol,
                 "the provider output reader is no longer available",
             )
         })?;
-        match answer.recv_timeout(timeout) {
-            Ok(Ok(all)) => Ok(all),
-            Ok(Err(source)) => Err(ProviderError::new(
-                ProviderErrorKind::Protocol,
-                source.to_string(),
-            )),
-            Err(RecvTimeoutError::Timeout) => Err(ProviderError::new(
-                ProviderErrorKind::Timeout,
-                format!(
+        answer.receive(
+            AnswerWait {
+                timeout,
+                trace,
+                quiet: format!(
                     "the provider did not end in {}",
                     rust_mutants::duration::render(timeout)
                 ),
-            )),
-            Err(RecvTimeoutError::Disconnected) => Err(ProviderError::new(
-                ProviderErrorKind::Protocol,
-                "the provider output reader ended without an answer",
-            )),
-        }
+                ended: "the provider output reader ended without an answer".to_owned(),
+            },
+            &WallClock,
+        )
     }
 
     fn finish(mut self, timeout: Duration, terminate: bool) -> Result<(), ProviderError> {
         let answer = self.answer.take();
         drop(answer);
         let process = if terminate {
-            self.child.terminate_and_wait()
+            self.child.stop()
         } else {
             self.child.finish(timeout)
         }
@@ -507,16 +413,131 @@ enum ProviderReadError {
 
 type ReadAnswer = Result<String, ProviderReadError>;
 
-fn send_answer(sender: &SyncSender<ReadAnswer>, answer: ReadAnswer) -> bool {
-    match sender.send(answer) {
-        Ok(()) => true,
-        Err(_closed) => false,
+/// The retained reader and its observation, registered before the provider started.
+#[derive(Debug)]
+struct Answers {
+    received: Receiver<ReadAnswer>,
+    observed: Observation,
+}
+
+/// One semantic response window and its exact protocol diagnostics.
+struct AnswerWait<'a> {
+    timeout: Duration,
+    trace: &'a crate::trace::Recorder,
+    quiet: String,
+    ended: String,
+}
+
+impl Answers {
+    fn receive(
+        &mut self,
+        waiting: AnswerWait<'_>,
+        clock: &impl Clock,
+    ) -> Result<String, ProviderError> {
+        let refused = |source: std::io::Error| {
+            ProviderError::new(ProviderErrorKind::Protocol, source.to_string())
+        };
+        self.observed.bind_current_thread().map_err(refused)?;
+        let deadline = clock.now().checked_add(waiting.timeout).ok_or_else(|| {
+            ProviderError::new(
+                ProviderErrorKind::Protocol,
+                "the provider response deadline cannot be represented",
+            )
+        })?;
+        loop {
+            self.observed.ensure_complete().map_err(refused)?;
+            match self.received.try_recv() {
+                Ok(Ok(answer)) => {
+                    self.observed.acknowledge().map_err(refused)?;
+                    return Ok(answer);
+                }
+                Ok(Err(source)) => {
+                    return Err(ProviderError::new(
+                        ProviderErrorKind::Protocol,
+                        source.to_string(),
+                    ));
+                }
+                Err(TryRecvError::Disconnected) => {
+                    return Err(ProviderError::new(
+                        ProviderErrorKind::Protocol,
+                        waiting.ended,
+                    ));
+                }
+                Err(TryRecvError::Empty) => {}
+            }
+            let waited = self
+                .observed
+                .wait_with(
+                    Waiting {
+                        owner: "provider-output-reader",
+                        cause: "complete protocol answer, reader EOF or response deadline",
+                        deadline: Some(deadline),
+                    },
+                    clock,
+                )
+                .map_err(refused)?;
+            waiting.trace.note(
+                "host-wait",
+                &serde_json::to_string(&waited.note)
+                    .map_err(|source| refused(std::io::Error::other(source)))?,
+            );
+            match waited.event.map_err(refused)? {
+                Event::Changed | Event::Completed | Event::Cancelled => {}
+                Event::Deadline => {
+                    return Err(ProviderError::new(
+                        ProviderErrorKind::Timeout,
+                        waiting.quiet,
+                    ));
+                }
+            }
+        }
+    }
+}
+
+/// Publishes answers before wakes and closes the answer channel before its terminal reader event.
+struct AnswerPublisher {
+    sent: Option<SyncSender<ReadAnswer>>,
+    signal: Signal,
+}
+
+impl AnswerPublisher {
+    fn send(&self, answer: ReadAnswer) -> bool {
+        let Some(sender) = &self.sent else {
+            std::process::abort()
+        };
+        match sender.send(answer) {
+            Ok(()) => {
+                self.signal.publish(Event::Changed);
+                true
+            }
+            Err(_closed) => false,
+        }
+    }
+
+    /// Finishes one reader's last answer, including an owner that already disposed its receiver.
+    fn finish(self, answer: ReadAnswer) {
+        let Some(sender) = &self.sent else {
+            std::process::abort()
+        };
+        match sender.send(answer) {
+            Ok(()) => self.signal.publish(Event::Changed),
+            Err(_disposed_receiver) => {}
+        }
+    }
+}
+
+impl Drop for AnswerPublisher {
+    fn drop(&mut self) {
+        let sender = self.sent.take();
+        drop(sender);
+        self.signal.publish(Event::Completed);
     }
 }
 
 fn spawn_line_reader(
     stdout: std::process::ChildStdout,
-) -> Result<(Receiver<ReadAnswer>, JoinedThread), ProviderError> {
+    observed: Observation,
+) -> Result<(Answers, JoinedThread), ProviderError> {
     let limit = u64::try_from(LINE_LIMIT)
         .map_err(|source| {
             ProviderError::new(
@@ -532,6 +553,10 @@ fn spawn_line_reader(
             )
         })?;
     let (sender, lines) = sync_channel(ANSWER_CAPACITY);
+    let sender = AnswerPublisher {
+        sent: Some(sender),
+        signal: observed.signal(),
+    };
     let reader = JoinedThread::launch("njutest-provider-lines", move || {
         let mut input = BufReader::new(stdout);
         loop {
@@ -540,10 +565,7 @@ fn spawn_line_reader(
             match read {
                 Ok(0) => return,
                 Ok(_read) if bytes.len() > LINE_LIMIT => {
-                    let sent = send_answer(
-                        &sender,
-                        Err(ProviderReadError::TooLong { limit: LINE_LIMIT }),
-                    );
+                    let sent = sender.send(Err(ProviderReadError::TooLong { limit: LINE_LIMIT }));
                     if !sent {
                         return;
                     }
@@ -552,12 +574,12 @@ fn spawn_line_reader(
                 Ok(_read) => {
                     let answer = String::from_utf8(bytes).map_err(ProviderReadError::from);
                     let terminal = answer.is_err();
-                    if !send_answer(&sender, answer) || terminal {
+                    if !sender.send(answer) || terminal {
                         return;
                     }
                 }
                 Err(source) => {
-                    let sent = send_answer(&sender, Err(ProviderReadError::Io(source)));
+                    let sent = sender.send(Err(ProviderReadError::Io(source)));
                     if !sent {
                         return;
                     }
@@ -572,13 +594,20 @@ fn spawn_line_reader(
             format!("cannot start the provider output reader: {source}"),
         )
     })?;
-    Ok((lines, reader))
+    Ok((
+        Answers {
+            received: lines,
+            observed,
+        },
+        reader,
+    ))
 }
 
 fn spawn_all_reader(
     stdout: std::process::ChildStdout,
     limit: usize,
-) -> Result<(Receiver<ReadAnswer>, JoinedThread), ProviderError> {
+    observed: Observation,
+) -> Result<(Answers, JoinedThread), ProviderError> {
     let capacity = u64::try_from(limit)
         .map_err(|source| {
             ProviderError::new(
@@ -594,6 +623,10 @@ fn spawn_all_reader(
             )
         })?;
     let (sender, answer) = sync_channel(ANSWER_CAPACITY);
+    let sender = AnswerPublisher {
+        sent: Some(sender),
+        signal: observed.signal(),
+    };
     let reader = JoinedThread::launch("njutest-provider-output", move || {
         let mut bytes = Vec::new();
         let read = BufReader::new(stdout)
@@ -604,10 +637,7 @@ fn spawn_all_reader(
             Ok(_read) => String::from_utf8(bytes).map_err(ProviderReadError::from),
             Err(source) => Err(ProviderReadError::Io(source)),
         };
-        match sender.send(answer) {
-            Ok(()) => {}
-            Err(closed) => drop(closed),
-        }
+        sender.finish(answer);
     })
     .map_err(|source| {
         ProviderError::new(
@@ -615,15 +645,22 @@ fn spawn_all_reader(
             format!("cannot start the provider output reader: {source}"),
         )
     })?;
-    Ok((answer, reader))
+    Ok((
+        Answers {
+            received: answer,
+            observed,
+        },
+        reader,
+    ))
 }
 
 /// One running provider process, and the line reader that keeps a slow answer from blocking the run.
 #[derive(Debug)]
 pub struct Process {
-    child: SupervisedChild,
+    child: GroupChild,
     stdin: Option<ChildStdin>,
-    lines: Option<Receiver<ReadAnswer>>,
+    lines: Option<Answers>,
+    trace: crate::trace::Recorder,
     reader: Option<JoinedThread>,
 }
 
@@ -652,24 +689,32 @@ impl Process {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
-        grouped(&mut spawning);
-        let mut child = SupervisedChild::launch(&mut spawning).map_err(|source| {
+        let observed = Observation::subscribe();
+        let mut child = GroupChild::start(&mut spawning).map_err(|source| {
             ProviderError::new(
                 ProviderErrorKind::Unstartable,
                 format!("cannot start {program}: {source}"),
             )
         })?;
-        let stdin = child.take_stdin();
-        let stdout = child.take_stdout().ok_or_else(|| {
+        let stdin = child.stdin();
+        let stdout = child.stdout().ok_or_else(|| {
             ProviderError::new(ProviderErrorKind::Unstartable, "the provider has no stdout")
         })?;
-        let (lines, reader) = spawn_line_reader(stdout)?;
+        let (lines, reader) = spawn_line_reader(stdout, observed)?;
         Ok(Self {
             child,
             stdin,
             lines: Some(lines),
+            trace: crate::trace::Recorder::disabled(),
             reader: Some(reader),
         })
+    }
+
+    /// Retains the caller's actual host waits in its authoritative run recorder.
+    #[must_use]
+    pub fn with_trace(mut self, trace: &crate::trace::Recorder) -> Self {
+        self.trace = trace.clone();
+        self
     }
 
     /// Asks one question and reads one answer.
@@ -699,40 +744,28 @@ impl Process {
                     format!("cannot reach the provider: {source}"),
                 )
             })?;
-        let lines = self.lines.as_ref().ok_or_else(|| {
+        let lines = self.lines.as_mut().ok_or_else(|| {
             ProviderError::new(
                 ProviderErrorKind::Protocol,
                 "the provider output reader is no longer available",
             )
         })?;
-        let said = match lines.recv_timeout(timeout) {
-            Ok(Ok(said)) => said,
-            Ok(Err(source)) => {
-                return Err(ProviderError::new(
-                    ProviderErrorKind::Protocol,
-                    source.to_string(),
-                ));
-            }
-            Err(RecvTimeoutError::Timeout) => {
-                return Err(ProviderError::new(
-                    ProviderErrorKind::Timeout,
-                    format!(
-                        "the provider said nothing about {} in {}",
-                        request.capability(),
-                        rust_mutants::duration::render(timeout)
-                    ),
-                ));
-            }
-            Err(RecvTimeoutError::Disconnected) => {
-                return Err(ProviderError::new(
-                    ProviderErrorKind::Protocol,
-                    format!(
-                        "the provider ended without answering about {}",
-                        request.capability()
-                    ),
-                ));
-            }
-        };
+        let said = lines.receive(
+            AnswerWait {
+                timeout,
+                trace: &self.trace,
+                quiet: format!(
+                    "the provider said nothing about {} in {}",
+                    request.capability(),
+                    rust_mutants::duration::render(timeout)
+                ),
+                ended: format!(
+                    "the provider ended without answering about {}",
+                    request.capability()
+                ),
+            },
+            &WallClock,
+        )?;
         read(&said, request)
     }
 
@@ -869,6 +902,28 @@ pub struct Once<'a> {
 /// [`ProviderErrorKind::Unstartable`] when the command cannot be run,
 /// [`ProviderErrorKind::Timeout`] when it does not end in time, and [`ProviderErrorKind::Protocol`] when it writes more than `limit`.
 pub fn once(asking: &Once<'_>) -> Result<String, ProviderError> {
+    once_recorded(asking, &crate::trace::Recorder::disabled())
+}
+
+/// Runs the actual one-shot provider and retains its measured semantic response wait.
+///
+/// # Errors
+/// The provider or its complete owned output observation fails.
+pub fn once_observed(
+    asking: &Once<'_>,
+    trace: &crate::trace::Recorder,
+) -> Result<String, ProviderError> {
+    if !trace.is_enabled() {
+        return once(asking);
+    }
+    once_recorded(asking, trace)
+}
+
+/// Runs the actual provider with the selected complete output and recording authority.
+fn once_recorded(
+    asking: &Once<'_>,
+    trace: &crate::trace::Recorder,
+) -> Result<String, ProviderError> {
     let Once {
         command,
         dir,
@@ -892,14 +947,14 @@ pub fn once(asking: &Once<'_>) -> Result<String, ProviderError> {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    grouped(&mut spawning);
-    let mut child = SupervisedChild::launch(&mut spawning).map_err(|source| {
+    let observed = Observation::subscribe();
+    let mut child = GroupChild::start(&mut spawning).map_err(|source| {
         ProviderError::new(
             ProviderErrorKind::Unstartable,
             format!("cannot start {program}: {source}"),
         )
     })?;
-    let mut stdin = child.take_stdin().ok_or_else(|| {
+    let mut stdin = child.stdin().ok_or_else(|| {
         ProviderError::new(
             ProviderErrorKind::Unstartable,
             "the provider has no standard input",
@@ -917,16 +972,16 @@ pub fn once(asking: &Once<'_>) -> Result<String, ProviderError> {
             )
         })?;
     drop(stdin);
-    let stdout = child.take_stdout().ok_or_else(|| {
+    let stdout = child.stdout().ok_or_else(|| {
         ProviderError::new(ProviderErrorKind::Unstartable, "the provider has no stdout")
     })?;
-    let (said, reader) = spawn_all_reader(stdout, limit)?;
-    let running = OneShot {
+    let (said, reader) = spawn_all_reader(stdout, limit, observed)?;
+    let mut running = OneShot {
         child,
         answer: Some(said),
         reader: Some(reader),
     };
-    let answer = running.receive(timeout);
+    let answer = running.receive(timeout, trace);
     let timed_out = match &answer {
         Ok(_answer) => false,
         Err(error) => error.is_timeout(),
@@ -940,59 +995,9 @@ pub fn once(asking: &Once<'_>) -> Result<String, ProviderError> {
     }
 }
 
-#[cfg(unix)]
-fn grouped(command: &mut Command) {
-    use std::os::unix::process::CommandExt as _;
-
-    command.process_group(0);
-}
-
-#[cfg(not(unix))]
-const fn grouped(_command: &mut Command) {}
-
-#[cfg(unix)]
-#[expect(
-    clippy::needless_pass_by_ref_mut,
-    reason = "the same signature as the platform without groups, whose child has to be killed through it"
-)]
-fn kill_tree(child: &mut Child) -> std::io::Result<()> {
-    match rust_mutants::runner::stop_group(child.id(), rust_mutants::runner::GroupStop::Kill)? {
-        rust_mutants::runner::Stopped::Group => Ok(()),
-        rust_mutants::runner::Stopped::LeaderOnly => Err(std::io::Error::new(
-            std::io::ErrorKind::PermissionDenied,
-            "the provider's process group refused the stop, and a process besides its leader is \
-             still running or could not be seen, so the provider is not stopped",
-        )),
-    }
-}
-
-#[cfg(not(unix))]
-fn kill_tree(child: &mut Child) -> std::io::Result<()> {
-    child.kill()
-}
-
 #[cfg(test)]
 mod tests {
     use super::{InstanceId, ProviderErrorKind, Request, read};
-
-    #[cfg(unix)]
-    #[test]
-    fn stopping_a_provider_whose_leader_has_already_exited_is_no_failure() {
-        let mut command = std::process::Command::new("true");
-        super::grouped(&mut command);
-        let launched = super::SupervisedChild::launch(&mut command);
-        let Ok(mut provider) = launched else {
-            panic!("`true` starts: {launched:?}");
-        };
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        let stopped = provider.terminate_and_wait();
-        assert!(
-            stopped.is_ok(),
-            "a provider that exited before its stop arrived, and is not reaped yet, is stopped: \
-             on macOS the group signal is refused with EPERM for such a group, and that is the \
-             group being gone rather than a cleanup that failed: {stopped:?}"
-        );
-    }
 
     fn protocol_error(document: &str, request: &Request) {
         let refusal = read(document, request).expect_err("protocol must be refused");

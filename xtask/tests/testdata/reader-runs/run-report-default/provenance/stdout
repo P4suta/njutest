@@ -1,0 +1,50 @@
+open                             started
+open                               0.51s
+prepare                          started
+pristine                         started
+pristine                           0.42s
+discover                         started
+discover                           0.01s
+plan                             started
+plan                               0.00s
+witness                          started
+witness                            0.22s
+validate                         started
+validate                           0.45s
+build                            started
+verify                           started
+verify                             0.80s
+build                              0.81s
+prepare                            2.91s
+run         10 mutants on 4 jobs (auto)
+[ 1/10] 36f3786c607b20288246 killed        fixture-simple/lib/fixture_simple
+[ 2/10] 355723c8d204e44dac60 killed        fixture-simple/lib/fixture_simple
+[ 3/10] 4f09b8f6515d886cf638 killed        fixture-simple/lib/fixture_simple
+[ 4/10] 97dcf2a134137b47d185 killed        fixture-simple/lib/fixture_simple
+[ 5/10] f0d20edfda2959667ff1 survived    
+[ 6/10] 7dade0daa6fdfca0540a killed        fixture-simple/lib/fixture_simple
+[ 7/10] c7df40a2d69eae0d983d killed        fixture-simple/test/parity
+[ 8/10] 29fa56091a8bb5622f20 killed        fixture-simple/lib/fixture_simple
+[ 9/10] 4cd205f7d6faa29392ae killed        fixture-simple/test/parity
+[10/10] 00e556aa9db45bd9d1d5 killed        fixture-simple/test/parity
+          killed 9  survived 1  unproven 0  step_limit_reached 0  waited 0  inconclusive 0  errored 0  not_run 0   elapsed 0:00
+          killed 9  survived 1  unproven 0  step_limit_reached 0  waited 0  inconclusive 0  errored 0  not_run 0   elapsed 0:00
+
+run       20261002t160420233z
+workspace 92e1c914b3aa8e45958e8c6cbc03c0a840b570da8ebacf24264968f09ab41c54
+catalog   9cb332e10b4fe7d47bd0713b1378e5d3050656de6b789ea6bce0abec92aff24c
+jobs      4 (auto)
+
+surviving-mutant       no test noticed f0d20edfda2959667ff1; 1 test ran and passed
+
+SURVIVORS    1 survivors: 1 each its own finding, and 0 that are 0 unexercised paths, named once each below
+
+MUTANTS   10 mutants were cataloged: 10 executed, 0 refused by the compiler, 3 places passed over.
+OUTCOMES  killed=9 survived=1 unproven=0 step_limit_reached=0 waited=0 inconclusive=0 errored=0 not_run=0
+OF THOSE  Those 8 add to the 10 cataloged. Within them, not run is 0 unreached, not run is 0 declined, survived is 0 expected, unproven is 0 killed natively, unproven is 0 survived natively, unproven is 0 unreached natively, unproven is 0 discharged by a native proof.
+SCORE     90.0%  (9 detected of 10 decided)
+WORK      started=0 of 30 pairs across 3 targets; 100.0% removed (unreached=20 sealed=9 never-infected=1)
+          tests=0 of 20; 100.0% removed
+REPORT    /Users/yasunobu/njutest-oc/evidence/batch/phase3/package-C/reader-recording-products/run-report-default/trees/fixture-simple/reports/mutation/20261002t160420233z/run-report-v1.json
+NEXT      rust-mutants explain src/lib.rs:max:gt-to-ge@11
+          says which tests reached one of these, and writes the block that records a reason for it

@@ -3,11 +3,16 @@
 
 //! Respelling an integer literal: the radix and the suffix it was written with, and the values it cannot move to.
 
+#![expect(
+    clippy::expect_used,
+    reason = "a test reports a literal it could not build by panicking"
+)]
+
 use njutest_devkit::result::{OptionState::Present, option_state};
 use rust_mutants::syntax::respell_int;
 
 fn literal(text: &str) -> syn::LitInt {
-    syn::LitInt::new(text, proc_macro2::Span::call_site())
+    njutest_devkit::lexed::parse::<syn::LitInt>(text).expect("an integer literal")
 }
 
 #[test]

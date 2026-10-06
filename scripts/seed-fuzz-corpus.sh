@@ -10,11 +10,10 @@ if [[ $# -ne 1 || ! $1 =~ ^[A-Za-z0-9_-]+$ ]]; then
 fi
 
 target=$1
-seed="seeds/${target}"
 corpus="corpus/${target}"
-if [[ ! -d "${seed}" ]]; then
-  exit 0
-fi
-
-mkdir -p "${corpus}"
-cp -R "${seed}/." "${corpus}/"
+for committed in "seeds/${target}" "regressions/${target}"; do
+  if [[ -d "${committed}" ]]; then
+    mkdir -p "${corpus}"
+    cp -R "${committed}/." "${corpus}/"
+  fi
+done

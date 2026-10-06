@@ -7,10 +7,12 @@
 
 pub mod cargo_double;
 pub mod census;
+pub mod cost;
 pub mod docs;
 pub mod fake_cargo;
 pub mod fixture;
 pub mod golden;
+pub mod lexed;
 pub mod named_flags;
 pub mod paths;
 pub mod process;
@@ -20,5 +22,6 @@ pub mod reproducible;
 pub mod result;
 pub mod rust_source;
 pub mod strictjson;
+pub mod temporary;
 pub mod thread;
 pub mod workflow_commands;

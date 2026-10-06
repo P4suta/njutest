@@ -26,6 +26,7 @@ const MUTANT: &str = "aaaaaaaaaaaaaaaaaaaa";
 
 fn judged(disposition: Disposition) -> Judged {
     Judged {
+        evidence: njutest::testkit::reports::sealed_as(&disposition.decided()),
         catalog_index: 0,
         id: "a".repeat(64),
         display_id: MUTANT.to_owned(),
@@ -34,7 +35,11 @@ fn judged(disposition: Disposition) -> Judged {
         item: "demo".to_owned(),
         original: ">".to_owned(),
         replacement: String::new(),
-        position: None,
+        position: Position {
+            line: 1,
+            column: 1,
+            character_column: 1,
+        },
         disposition,
         source_run_id: None,
         observed: Vec::new(),
@@ -48,12 +53,79 @@ fn phase(disposition: Disposition) -> Mutation {
         skips: BTreeMap::new(),
         drift: Vec::new(),
         sources: BTreeMap::new(),
-        repaired: BTreeMap::new(),
+        repaired: Vec::new(),
     }
+}
+
+/// The phase that judged `disposition` from native executions alone, which is a lead.
+fn led(disposition: Disposition) -> Mutation {
+    let mut phase = phase(disposition);
+    for one in &mut phase.judged {
+        one.evidence = Some(rust_mutants::sealed::record::Evidence::Unproven {
+            reasons: vec![rust_mutants::sealed::record::Doubt::Native],
+        });
+    }
+    phase
 }
 
 fn accepted() -> BTreeSet<String> {
     BTreeSet::from(["a".repeat(64)])
+}
+
+#[test]
+fn a_verdict_no_sealed_execution_established_is_a_lead_that_answers_nothing() {
+    let answers = [
+        Disposition::Killed {
+            by: "pkg/lib/pkg".to_owned(),
+        },
+        Disposition::Survived {
+            route: Route::Block {
+                reaching: vec![Reaches {
+                    target: "pkg/lib/pkg".to_owned(),
+                    tests: njutest::assure::route::Asked::Every,
+                }],
+                discharged: Vec::new(),
+                fallback: None,
+            },
+        },
+        Disposition::Unreached,
+    ];
+    for disposition in answers {
+        let name = disposition.name();
+        let sealed = phase(disposition.clone());
+        let lead = led(disposition);
+
+        let kinds = |phase: &Mutation, accepted: &BTreeSet<String>| {
+            phase
+                .findings(accepted)
+                .iter()
+                .map(|finding| finding.kind)
+                .collect::<Vec<FindingKind>>()
+        };
+        assert_eq!(
+            kinds(&lead, &BTreeSet::new()),
+            vec![FindingKind::UnprovenMutant],
+            "a {name} only a native run said is a lead, which a run reports as unproven \
+             whatever it was: it is not a detection, a survivor or a gap in reach until a \
+             sealed execution says so (ADR 0046)"
+        );
+        assert_eq!(
+            kinds(&lead, &accepted()),
+            vec![FindingKind::UnprovenMutant],
+            "and no acceptance answers a {name} lead, since it says nothing the tests were \
+             asked"
+        );
+        let counted = lead.accounting(&accepted()).expect("one row is countable");
+        assert_eq!(
+            (counted.observers.unproven, counted.accepted),
+            (1, 0),
+            "a lead is decided by nobody and accepted by nobody: {counted:?}"
+        );
+        assert!(
+            !kinds(&sealed, &BTreeSet::new()).contains(&FindingKind::UnprovenMutant),
+            "while the same {name} resting on its sealed executions is a verdict"
+        );
+    }
 }
 
 #[test]
@@ -141,7 +213,7 @@ fn an_acceptance_does_not_answer_for_a_mutation_the_clock_cut_short() {
 
 #[test]
 fn a_survivor_no_test_could_have_noticed_says_so_and_names_the_proofs() {
-    let phase = phase(Disposition::Survived {
+    let phase = led(Disposition::Survived {
         route: Route::Discharged {
             discharged: vec![
                 discharge("pkg/lib/pkg", NEVER_INFECTED),
@@ -261,17 +333,17 @@ fn each_way_a_pair_can_fail_to_agree_says_which_one_happened() {
 #[test]
 fn a_finding_is_raised_where_the_mutation_it_names_is() {
     let mut one = judged(Disposition::Unreached);
-    one.position = Some(Position {
+    one.position = Position {
         line: 12,
         column: 5,
         character_column: 5,
-    });
+    };
     let phase = Mutation {
         judged: vec![one],
         skips: BTreeMap::new(),
         drift: Vec::new(),
         sources: BTreeMap::new(),
-        repaired: BTreeMap::new(),
+        repaired: Vec::new(),
     };
 
     let findings = phase.findings(&BTreeSet::new());
@@ -286,7 +358,7 @@ fn a_finding_is_raised_where_the_mutation_it_names_is() {
 
 #[test]
 fn a_survivor_removed_by_one_proof_twice_over_names_that_proof_once() {
-    let phase = phase(Disposition::Survived {
+    let phase = led(Disposition::Survived {
         route: Route::Discharged {
             discharged: vec![
                 discharge("pkg/test/two", NEVER_INFECTED),
@@ -332,6 +404,7 @@ fn a_survivor_some_tests_ran_and_others_were_removed_from_says_the_tests_ran() {
 
 fn of(display_id: &str, disposition: Disposition, reused: bool) -> Judged {
     Judged {
+        evidence: njutest::testkit::reports::sealed_as(&disposition.decided()),
         catalog_index: 0,
         id: display_id.repeat(4),
         display_id: display_id.to_owned(),
@@ -340,7 +413,11 @@ fn of(display_id: &str, disposition: Disposition, reused: bool) -> Judged {
         item: "demo".to_owned(),
         original: ">".to_owned(),
         replacement: String::new(),
-        position: None,
+        position: Position {
+            line: 1,
+            column: 1,
+            character_column: 1,
+        },
         disposition,
         source_run_id: reused.then(|| "20260905T081500Z-000000".to_owned()),
         observed: Vec::new(),
@@ -434,7 +511,7 @@ fn all_of_them() -> Mutation {
         skips: BTreeMap::new(),
         drift: Vec::new(),
         sources: BTreeMap::new(),
-        repaired: BTreeMap::new(),
+        repaired: Vec::new(),
     }
 }
 
@@ -523,7 +600,7 @@ fn the_outcome_a_disposition_records_is_one_the_report_can_say_who_decided() {
         });
         assert_eq!(
             decided,
-            judged.disposition.decision(),
+            judged.verdict(false).decision(),
             "the outcome {outcome:?} and the disposition it came from disagree about \
              who decided it; the two are read by different readers of the same run"
         );
@@ -670,7 +747,7 @@ fn three(of_a_kind: [(&str, Disposition, bool); 3]) -> Mutation {
         skips: BTreeMap::new(),
         drift: Vec::new(),
         sources: BTreeMap::new(),
-        repaired: BTreeMap::new(),
+        repaired: Vec::new(),
     }
 }
 

@@ -1,0 +1,28 @@
+# How a platform tells two environment variable names apart: whether two names are one, whether a name begins with a prefix, and which rule each platform reads names by.
+# The engine's `vars::Spelling` and xtask's `environment::Spelling` answer by this table, each held to it by a law, so xtask reads a name as the engine does.
+question	rule	name	other	answer
+same	exact	PATH	PATH	yes
+same	exact	PATH	Path	no
+same	exact	NJUTEST_SLOT_DIR	njutest_slot_dir	no
+same	exact	PATH	PATHS	no
+same	ascii-caseless	PATH	PATH	yes
+same	ascii-caseless	PATH	Path	yes
+same	ascii-caseless	NJUTEST_SLOT_DIR	njutest_slot_dir	yes
+same	ascii-caseless	PATH	PATHS	no
+same	ascii-caseless	HOME	HOMEDRIVE	no
+begins	exact	GIT_DIR	GIT_	yes
+begins	exact	git_dir	GIT_	no
+begins	exact	GIT	GIT_	no
+begins	exact	CARGO_HOME	CARGO_	yes
+begins	exact	RUSTFLAGS	RUST	yes
+begins	ascii-caseless	GIT_DIR	GIT_	yes
+begins	ascii-caseless	git_dir	GIT_	yes
+begins	ascii-caseless	Git_Work_Tree	GIT_	yes
+begins	ascii-caseless	GIT	GIT_	no
+begins	ascii-caseless	cargo_home	CARGO_	yes
+begins	ascii-caseless	rustflags	RUST	yes
+begins	ascii-caseless	TRUST	RUST	no
+host	exact	unix	-	yes
+host	ascii-caseless	unix	-	no
+host	exact	windows	-	no
+host	ascii-caseless	windows	-	yes

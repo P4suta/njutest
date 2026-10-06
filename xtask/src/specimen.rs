@@ -137,13 +137,14 @@ pub(crate) fn completed(producer: Producer, payload: &mut serde_json::Map<String
 }
 
 /// The keys of a flat specimen that belong to the report rather than to its one part.
-const ENVELOPE: [&str; 6] = [
+const ENVELOPE: [&str; 7] = [
     "schema",
     "schema_version",
     "run_id",
     "run_kind",
     "contract",
     "scope",
+    "provenance",
 ];
 
 /// The keys of a flat specimen no complete report holds: what a run concluded is the recording's `run-end`, never the document's.
@@ -359,7 +360,7 @@ pub(crate) fn shard(
         "schema".to_owned(),
         Value::from("njutest-assurance-shard-report-v1"),
     );
-    shard.insert("schema_version".to_owned(), Value::from(2));
+    shard.insert("schema_version".to_owned(), Value::from(3));
     shard.insert("run_id".to_owned(), Value::from(run));
     shard.insert(
         "shard".to_owned(),
@@ -394,7 +395,7 @@ pub(crate) fn merged(shards: &[Value], run: &str) -> Result<Value, CompletionErr
         "schema".to_owned(),
         Value::from("njutest-assurance-report-v1"),
     );
-    report.insert("schema_version".to_owned(), Value::from(2));
+    report.insert("schema_version".to_owned(), Value::from(3));
     report.insert("run_id".to_owned(), Value::from(run));
     for key in [
         "run_kind",

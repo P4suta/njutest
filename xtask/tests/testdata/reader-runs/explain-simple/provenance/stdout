@@ -1,0 +1,19 @@
+
+run       20261002t125732779z
+workspace def12e7ab71e279c592f40f7f6b4cefa99a1d785943e40473620d23d7508a4d8
+catalog   82946360d0657b5f03d7a76baf4c58b9b82b9853b602678b838583310f27d624
+jobs      1 (1)
+
+surviving-mutant       no test noticed f0d20edfda2959667ff1; 1 test ran and passed
+
+SURVIVORS    1 survivors: 1 each its own finding, and 0 that are 0 unexercised paths, named once each below
+
+MUTANTS   13 mutants were cataloged: 13 executed, 0 refused by the compiler, 29 places passed over.
+OUTCOMES  killed=12 survived=1 unproven=0 step_limit_reached=0 waited=0 inconclusive=0 errored=0 not_run=0
+OF THOSE  Those 8 add to the 13 cataloged. Within them, not run is 0 unreached, not run is 0 declined, survived is 0 expected, unproven is 0 killed natively, unproven is 0 survived natively, unproven is 0 unreached natively, unproven is 0 discharged by a native proof.
+SCORE     92.3%  (12 detected of 13 decided)
+WORK      started=0 of 39 pairs across 3 targets; 100.0% removed (unreached=26 sealed=12 never-infected=1)
+          tests=0 of 26; 100.0% removed
+REPORT    /Users/yasunobu/njutest-oc/evidence/batch/phase3/package-C/reader-recording-products/explain-simple/trees/fixture-simple/reports/mutation/20261002t125732779z/run-report-v1.json
+NEXT      rust-mutants explain src/lib.rs:max:gt-to-ge@11
+          says which tests reached one of these, and writes the block that records a reason for it

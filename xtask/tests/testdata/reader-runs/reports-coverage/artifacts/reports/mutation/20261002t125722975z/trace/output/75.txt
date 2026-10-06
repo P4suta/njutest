@@ -1,0 +1,10 @@
+
+running 5 tests
+test tests::a_short_list_is_short ... ok
+test tests::a_version_is_earlier_than_a_later_one ... ok
+test tests::a_labelled_target_of_low_rank_is_labelled ... ok
+test tests::clamp_returns_the_smaller ... ok
+test tests::a_name_before_m_is_named ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

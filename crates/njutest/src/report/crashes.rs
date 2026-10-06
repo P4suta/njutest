@@ -125,16 +125,18 @@ pub struct CrashRecord {
     pub position: Option<Position>,
     /// What became of it.
     pub decision: CrashDecision,
+    /// Whether the decision rests on at least one run and every run it rests on was a sealed instance, which one round decides (ADR 0046).
+    pub sealed: bool,
 }
 
 impl CrashRecord {
     /// Where a person reads it: the file, and the line where the run knows one.
     #[must_use]
     pub fn place(&self) -> String {
-        self.position.map_or_else(
-            || self.path.clone(),
-            |at| format!("{}:{}", self.path, at.line),
-        )
+        match self.position {
+            Some(at) => format!("{}:{}", self.path, at.line),
+            None => self.path.clone(),
+        }
     }
 }
 
@@ -271,7 +273,7 @@ pub fn limited(records: &[CrashRecord]) -> Vec<Limitation> {
         return Vec::new();
     }
     vec![Limitation::new(
-        crate::limitation::CRASH_NOT_PUT,
+        crate::limitation::Limitation::CrashNotPut,
         &format!(
             "the compiler refused {} crash(es), so nothing is claimed about a stop after those \
              calls: {}",

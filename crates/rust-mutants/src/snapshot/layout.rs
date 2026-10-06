@@ -90,10 +90,15 @@ impl Layout {
         &self.root
     }
 
-    /// This layout, with the directory a copy of it is made in.
+    /// This layout, with the directory a copy of it is made in, every place in it spelled by its names alone, with no separator after the last.
     #[must_use]
     pub fn under(&self, stage: PathBuf) -> Placement {
-        let placed = |source: &Path| stage.join(relative(&self.ancestor, source));
+        let placed = |source: &Path| -> PathBuf {
+            stage
+                .components()
+                .chain(relative(&self.ancestor, source).components())
+                .collect()
+        };
         Placement {
             source_root: self.root.clone(),
             root: placed(&self.root),
@@ -194,7 +199,7 @@ fn settled(path: &Path, kind: SnapshotErrorKind) -> Result<PathBuf, SnapshotErro
             "a path that still climbs names no one place, so a copy cannot say where it put it",
         ));
     }
-    Ok(path.to_path_buf())
+    Ok(crate::canonical::plainly(path))
 }
 
 /// The longest run of components `one` and `other` begin with, when they begin with any.

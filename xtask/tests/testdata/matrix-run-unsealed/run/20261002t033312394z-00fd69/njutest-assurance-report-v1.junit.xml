@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="fixture-simple" tests="14" failures="12" skipped="0" time="31.171">
+  <testsuite name="targets" tests="2" failures="0" skipped="0">
+    <testcase classname="fixture-simple" name="fixture-simple/lib/fixture_simple" time="0.230"/>
+    <testcase classname="fixture-simple" name="fixture-simple/test/parity" time="0.225"/>
+  </testsuite>
+  <testsuite name="findings" tests="12" failures="12">
+    <testcase classname="dimension-not-measured" name="mutation">
+      <failure message="10 thing(s) the mutation dimension put were not decided, so it is not established along it: 4f09b8f6515d886cf638: a native lead of killed no sealed execution established; 36f3786c607b20288246: a native lead of killed no sealed execution established; 97dcf2a134137b47d185: a native lead of killed no sealed execution established; 355723c8d204e44dac60: a native lead of killed no sealed execution established; f0d20edfda2959667ff1: a native lead of survived no sealed execution established; 29fa56091a8bb5622f20: a native lead of killed no sealed execution established; 7dade0daa6fdfca0540a: a native lead of killed no sealed execution established; c7df40a2d69eae0d983d: a native lead of killed no sealed execution established; 00e556aa9db45bd9d1d5: a native lead of killed no sealed execution established; 4cd205f7d6faa29392ae: a native lead of killed no sealed execution established"/>
+    </testcase>
+    <testcase classname="dimension-not-measured" name="schedule">
+      <failure message="3 thing(s) the schedule dimension put were not decided, so it is not established along it: fixture-simple/doc/fixture_simple: its baseline did not pass, so no schedule of it could be held; fixture-simple/lib/fixture_simple: every delayed schedule passed, which is a sample of its schedules and never all of them; fixture-simple/test/parity: every delayed schedule passed, which is a sample of its schedules and never all of them"/>
+    </testcase>
+    <testcase classname="unproven-mutant" name="4f09b8f6515d886cf638">
+      <failure message="no sealed execution established a verdict about return-default at src/lib.rs (nothing was sealed to put it to), so the native run&apos;s killed is a lead and not a verdict"/>
+    </testcase>
+    <testcase classname="unproven-mutant" name="36f3786c607b20288246">
+      <failure message="no sealed execution established a verdict about negate-condition at src/lib.rs (nothing was sealed to put it to), so the native run&apos;s killed is a lead and not a verdict"/>
+    </testcase>
+    <testcase classname="unproven-mutant" name="97dcf2a134137b47d185">
+      <failure message="no sealed execution established a verdict about condition-to-true at src/lib.rs (nothing was sealed to put it to), so the native run&apos;s killed is a lead and not a verdict"/>
+    </testcase>
+    <testcase classname="unproven-mutant" name="355723c8d204e44dac60">
+      <failure message="no sealed execution established a verdict about condition-to-false at src/lib.rs (nothing was sealed to put it to), so the native run&apos;s killed is a lead and not a verdict"/>
+    </testcase>
+    <testcase classname="unproven-mutant" name="f0d20edfda2959667ff1">
+      <failure message="no sealed execution established a verdict about gt-to-ge at src/lib.rs (nothing was sealed to put it to), so the native run&apos;s survived is a lead and not a verdict: no test could have noticed it natively, since every one of the 1 targets that reach it was removed without being run, by never-infected"/>
+    </testcase>
+    <testcase classname="unproven-mutant" name="29fa56091a8bb5622f20">
+      <failure message="no sealed execution established a verdict about return-default at src/lib.rs (nothing was sealed to put it to), so the native run&apos;s killed is a lead and not a verdict"/>
+    </testcase>
+    <testcase classname="unproven-mutant" name="7dade0daa6fdfca0540a">
+      <failure message="no sealed execution established a verdict about return-default at src/lib.rs (nothing was sealed to put it to), so the native run&apos;s killed is a lead and not a verdict"/>
+    </testcase>
+    <testcase classname="unproven-mutant" name="c7df40a2d69eae0d983d">
+      <failure message="no sealed execution established a verdict about return-true at src/lib.rs (nothing was sealed to put it to), so the native run&apos;s killed is a lead and not a verdict"/>
+    </testcase>
+    <testcase classname="unproven-mutant" name="00e556aa9db45bd9d1d5">
+      <failure message="no sealed execution established a verdict about rem-to-mul at src/lib.rs (nothing was sealed to put it to), so the native run&apos;s killed is a lead and not a verdict"/>
+    </testcase>
+    <testcase classname="unproven-mutant" name="4cd205f7d6faa29392ae">
+      <failure message="no sealed execution established a verdict about eq-to-neq at src/lib.rs (nothing was sealed to put it to), so the native run&apos;s killed is a lead and not a verdict"/>
+    </testcase>
+  </testsuite>
+  <properties>
+    <property name="schema" value="njutest-assurance-report-v1"/>
+    <property name="run_id" value="20261002t033312394z-00fd69"/>
+    <property name="verdict" value="Insufficient"/>
+    <property name="commit" value="unavailable"/>
+    <property name="builds" value="default"/>
+    <property name="mutants_killed" value="9"/>
+    <property name="mutants_survived" value="1"/>
+  </properties>
+</testsuites>

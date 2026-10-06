@@ -200,7 +200,10 @@ fn run_exits_by_what_the_tests_said() {
     assert!(stdout(&survived).contains("survived"));
 
     let unknown = against(&fixture, &["run", "--mutant", "ffffffff"]);
-    assert_eq!(unknown.status.code(), Some(2));
+    assert_eq!(
+        unknown.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_FAILED))
+    );
     let said = njutest_devkit::process::strict_utf8(&unknown.stderr);
     assert!(said.contains("RM5003"), "{said}");
 }
@@ -221,13 +224,16 @@ fn instrument_prints_one_file_as_the_engine_rewrites_it() {
         text.contains(&format!("{module}::active(")) && text.contains(&format!("mod {module} {{")),
         "{text}"
     );
-    assert!(
-        text.contains(&format!(
-            "{allow}\nmod {module} {{",
-            allow = rust_mutants::instrument::GENERATED_MODULE_ALLOW_ATTRIBUTE
-        )),
-        "only the private generated module owns the exact lint exception: {text}"
-    );
+    for built_for in ["not(target_os = \"wasi\")", "target_os = \"wasi\""] {
+        assert!(
+            text.contains(&format!(
+                "{allow}\n#[cfg({built_for})]\nmod {module} {{",
+                allow = rust_mutants::instrument::GENERATED_MODULE_ALLOW_ATTRIBUTE
+            )),
+            "only the private generated module owns the exact lint exception, native and sealed \
+             alike ({built_for}): {text}"
+        );
+    }
     assert!(
         !text.contains("#[allow(warnings") && !text.contains("#[allow(unused) pub fn max"),
         "instrumentation must not suppress a diagnostic in user code: {text}"
@@ -240,7 +246,10 @@ fn instrument_prints_one_file_as_the_engine_rewrites_it() {
     );
 
     let missing = against(&fixture, &["instrument", "--file", "src/nope.rs"]);
-    assert_eq!(missing.status.code(), Some(2));
+    assert_eq!(
+        missing.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_FAILED))
+    );
     let refusal = njutest_devkit::process::strict_utf8(&missing.stderr).into_owned();
     assert!(
         refusal.contains("RM0004") && refusal.contains("src/nope.rs"),
@@ -398,7 +407,8 @@ fn equivalence_asks_about_at_most_the_limit_it_was_given() {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
-        vars: njutest_devkit::paths::environment_for_a_run()
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
+        vars: njutest_devkit::paths::environment_for_a_toolchain_run(&[])
             .into_iter()
             .collect(),
         temp_directory: fixture.temp().to_path_buf(),
@@ -560,22 +570,51 @@ fn a_test_that_runs_a_bare_cargo_gets_the_runs_toolchain_rather_than_a_shim_that
     );
 }
 
-/// Whether the process `pid` names is still running.
+/// Whether the process `pid` names is still running: one the kernel has ended and its new parent has not yet reaped is a zombie, which `kill -0` still answers for but which runs nothing.
 #[cfg(unix)]
 fn running(pid: &str) -> bool {
-    std::process::Command::new("kill")
-        .args(["-0", pid])
+    match std::process::Command::new("ps")
+        .args(["-o", "stat=", "-p", pid])
         .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
+        .output()
+    {
+        Ok(listed) if listed.status.success() => match std::str::from_utf8(&listed.stdout) {
+            Ok(state) => !state.trim_start().starts_with('Z'),
+            Err(_not_text) => true,
+        },
+        Ok(_not_listed) => false,
+        Err(_no_ps) => true,
+    }
 }
 
-/// The processes `fixture-escapes`'s test said it started, whichever of them were still running when its run had ended, and whichever of those the test could not end itself.
+/// Whether `pid` has ended and waits for this process, its parent, to reap it.
+#[cfg(unix)]
+fn left_to_this_process(pid: &str) -> bool {
+    match std::process::Command::new("ps")
+        .args(["-o", "stat=,ppid=", "-p", pid])
+        .stderr(std::process::Stdio::null())
+        .output()
+    {
+        Ok(listed) if listed.status.success() => match std::str::from_utf8(&listed.stdout) {
+            Ok(state) => {
+                let mut fields = state.split_whitespace();
+                fields.next().is_some_and(|stat| stat.starts_with('Z'))
+                    && fields.next() == Some(std::process::id().to_string().as_str())
+            }
+            Err(_not_text) => true,
+        },
+        Ok(_not_listed) => false,
+        Err(_no_ps) => true,
+    }
+}
+
+/// The processes `fixture-escapes`'s test said it started, whichever of them were still running when its run had ended, whichever of those the test could not end itself, and whichever ended and were left to this process to reap.
 #[cfg(unix)]
 struct Escaped {
     pids: Vec<String>,
     survivors: Vec<String>,
     unstopped: Vec<String>,
+    unreaped: Vec<String>,
 }
 
 /// A run of `fixture-escapes` with every variable in `set`, and what its test started, of which it ends whatever the run left running.
@@ -622,6 +661,11 @@ fn escaping(set: &[&str]) -> (Output, Fixture, std::io::Result<Escaped>) {
             .map(str::to_owned)
             .collect();
         let survivors: Vec<String> = pids.iter().filter(|pid| running(pid)).cloned().collect();
+        let unreaped: Vec<String> = pids
+            .iter()
+            .filter(|pid| left_to_this_process(pid))
+            .cloned()
+            .collect();
         let unstopped = survivors
             .iter()
             .filter(|pid| {
@@ -636,6 +680,7 @@ fn escaping(set: &[&str]) -> (Output, Fixture, std::io::Result<Escaped>) {
             pids,
             survivors,
             unstopped,
+            unreaped,
         }
     });
     (output, fixture, started)
@@ -649,6 +694,7 @@ fn a_process_a_test_left_running_ends_with_the_run() {
         pids,
         survivors,
         unstopped,
+        unreaped,
     } = started.expect("the test says what it started");
     assert!(
         output.status.code().is_some_and(|code| code < 2),
@@ -661,6 +707,12 @@ fn a_process_a_test_left_running_ends_with_the_run() {
          the test did, in the run's copy or scratch, and the run ends every process still working \
          there when it closes, so nothing a test leaves behind holds a lock or a port past it: \
          {survivors:?} of {pids:?}, of which {unstopped:?} are still running"
+    );
+    assert!(
+        unreaped.is_empty(),
+        "the run adopts every process it starts, so one whose parent ended before the run ended \
+         it is the run's to reap, and a run that ends it reaps it too: {unreaped:?} of {pids:?} \
+         are left ended and unreaped"
     );
     let trace = std::fs::read_to_string(
         njutest_devkit::fixture::newest_run(
@@ -684,10 +736,11 @@ fn a_process_that_holds_a_refused_runs_output_ends_with_it() {
         pids,
         survivors,
         unstopped,
+        unreaped,
     } = started.expect("the test says what it started");
     assert_eq!(
         output.status.code(),
-        Some(2),
+        Some(i32::from(rust_mutants::run::EXIT_FAILED)),
         "a daemon that keeps the test's output open leaves the execution unreadable to its end, \
          and the baseline that cannot be read refuses the run: {output:?}"
     );
@@ -697,27 +750,25 @@ fn a_process_that_holds_a_refused_runs_output_ends_with_it() {
         "a refused run removes its copy too, and ends what still works in it first: \
          {survivors:?} of {pids:?}, of which {unstopped:?} are still running"
     );
+    assert!(
+        unreaped.is_empty(),
+        "a refused run reaps what it ended as a run that reaches a verdict does: {unreaped:?} of \
+         {pids:?} are left ended and unreaped"
+    );
     drop(fixture);
 }
 
 /// A test that reads a setting only the home the run was given holds, which a confined execution cannot see.
 const READS_THE_GIVEN_HOME: &str = "// SPDX-FileCopyrightText: 2026 njutest contributors\n// SPDX-License-Identifier: MIT OR Apache-2.0\n\n//! Reads a setting only the given home holds.\n\n#[test]\nfn the_setting_the_home_already_holds_is_the_one_recalled() {\n    assert_eq!(fixture_home::recall().expect(\"the home holds a setting\"), \"already there\");\n}\n";
 
-/// The environment every run gets, with `home` as the home directory and the toolchain's own homes still where they are.
+/// The environment every run gets, changed as the devkit changes a run given `home` as its home.
 fn given_home(fixture: &Fixture, home: &std::path::Path) -> Environment {
     let mut given = environment(fixture);
-    let real = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
-        .map(std::path::PathBuf::from);
-    for (name, beside) in [("CARGO_HOME", ".cargo"), ("RUSTUP_HOME", ".rustup")] {
-        let pinned = std::env::var_os(name)
-            .or_else(|| real.as_ref().map(|home| home.join(beside).into_os_string()));
-        match pinned {
-            Some(pinned) => given.vars.set(name, pinned),
-            None => given.vars.remove(name),
+    for change in njutest_devkit::paths::given_home(home) {
+        match change {
+            njutest_devkit::paths::Given::Set(name, value) => given.vars.set(name, value),
+            njutest_devkit::paths::Given::Removed(name) => given.vars.remove(name),
         }
-    }
-    for name in ["HOME", "USERPROFILE"] {
-        given.vars.set(name, home.as_os_str().to_owned());
     }
     given
 }
@@ -744,6 +795,7 @@ fn a_write_a_test_makes_under_its_home_lands_in_its_execution() {
             "--tier",
             "all",
             "--no-coverage",
+            "--no-seal",
             "--ui",
             "quiet",
             "--root",
@@ -758,9 +810,10 @@ fn a_write_a_test_makes_under_its_home_lands_in_its_execution() {
         },
     );
     let output = njutest_devkit::process::answered(code, out, err);
-    assert!(
-        output.status.code().is_some_and(|code| code < 2),
-        "the run reaches a verdict: {output:?}"
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_UNESTABLISHED)),
+        "the run answers, and what a native run with the given home says is a lead: {output:?}"
     );
     assert_eq!(
         std::fs::read_to_string(&setting).expect("the given home's setting"),
@@ -806,6 +859,7 @@ fn run_given(fixture: &Fixture, given: &Environment) -> Output {
             "--tier",
             "all",
             "--no-coverage",
+            "--no-seal",
             "--ui",
             "quiet",
             "--trace",
@@ -874,9 +928,10 @@ fn a_remembered_baseline_that_needed_the_given_home_answers_only_for_that_home()
     std::fs::write(&setting, "already there").expect("a setting the given home holds");
     let mut given = given_home(&fixture, &home);
     let first = run_given(&fixture, &given);
-    assert!(
-        first.status.code().is_some_and(|code| code < 2),
-        "the run reaches a verdict: {first:?}"
+    assert_eq!(
+        first.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_UNESTABLISHED)),
+        "the run answers, and what a native run with the given home says is a lead: {first:?}"
     );
     let second = run_given(&fixture, &given);
     let trace = newest_trace(&fixture);
@@ -927,7 +982,8 @@ fn a_home_the_run_cannot_make_refuses_the_run_with_its_code() {
         .expect("the identity readable again");
     let said = njutest_devkit::process::strict_utf8(&output.stderr);
     assert!(
-        output.status.code() == Some(2) && said.contains("RM5012"),
+        output.status.code() == Some(i32::from(rust_mutants::run::EXIT_FAILED))
+            && said.contains("RM5012"),
         "a home the engine cannot make for an execution is the engine's failure, refused with its \
          code and the file that stopped it, never a baseline that fails and so passes with the \
          given home instead: {output:?}"
@@ -985,8 +1041,8 @@ fn a_shim_that_answers_only_in_the_given_home_is_asked_as_a_confined_test_asks_i
     let output = run_given(&fixture, &given);
     assert_eq!(
         output.status.code(),
-        Some(0),
-        "the run reaches a clean verdict: {output:?}"
+        Some(i32::from(rust_mutants::run::EXIT_UNESTABLISHED)),
+        "the run answers, and what a native run with the given home says is a lead: {output:?}"
     );
     assert_eq!(
         unconfined_targets(&fixture),

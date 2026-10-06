@@ -57,7 +57,7 @@ fn common() -> key::Common {
         platform: "x86_64-unknown-linux-gnu".to_owned(),
         engine: "e".repeat(64),
         environment: environment(20),
-        contract: "standard-v1".to_owned(),
+        contract: Contract::StandardV1,
         test_args: Vec::new(),
         build: rust_mutants::cargo::BuildConfig {
             features: vec!["default".to_owned()],
@@ -83,7 +83,11 @@ fn survivors(count: u32) -> (Vec<Judged>, Vec<Decided>) {
             item: "demo".to_owned(),
             original: ">".to_owned(),
             replacement: String::new(),
-            position: None,
+            position: njutest::report::Position {
+                line: 1,
+                column: 1,
+                character_column: 1,
+            },
             disposition: Disposition::Survived {
                 route: Route::All {
                     reaching: vec!["core/lib/core".to_owned()],
@@ -93,6 +97,7 @@ fn survivors(count: u32) -> (Vec<Judged>, Vec<Decided>) {
             source_run_id: None,
             observed: Vec::new(),
             routing: None,
+            evidence: njutest::testkit::reports::sealed_as(&njutest::report::Decided::Survived),
         })
         .collect();
     let decided = (0..count)

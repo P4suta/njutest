@@ -37,6 +37,7 @@ fn against(fixture: &Fixture, args: &[&str]) -> Output {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
+        module_owner: rust_mutants::sealed::ModuleOwner::default(),
         vars: njutest_devkit::paths::environment_for_a_run()
             .into_iter()
             .collect(),
@@ -64,18 +65,18 @@ fn head(text: &str) -> &str {
 }
 
 fn measured() -> Fixture {
-    ran("fixture-simple")
+    ran("reports-simple")
 }
 
 /// A run whose report holds a gap no proof can close: `earlier` compares two values the compiler will not vouch for, so nothing removes the mutation and a test has to notice it or not.
 fn with_a_survivor() -> Fixture {
-    ran("fixture-coverage")
+    ran("reports-coverage")
 }
 
-fn ran(name: &str) -> Fixture {
-    let fixture = Fixture::copy(name);
-    let ran = against(
-        &fixture,
+/// Readers pay for their live CLI projection; the original holds the audited compiler and engine run.
+fn ran(recording: &str) -> Fixture {
+    njutest_devkit::report::Original::open(
+        recording,
         &[
             "run",
             "--offline",
@@ -85,9 +86,10 @@ fn ran(name: &str) -> Fixture {
             "--jobs",
             "1",
         ],
-    );
-    assert_eq!(ran.status.code(), Some(1), "{ran:?}");
-    fixture
+    )
+    .expect("the complete actual source, configuration and recorded run")
+    .fixture()
+    .expect("the current fixture matches the original execution")
 }
 
 fn projected(fixture: &Fixture, format: &str) -> String {
@@ -97,6 +99,61 @@ fn projected(fixture: &Fixture, format: &str) -> String {
         "reading a report back answers with the run's own exit code: {output:?}"
     );
     stdout(&output)
+}
+
+#[test]
+fn an_original_recording_reconciles_its_actual_producer_and_captured_output() {
+    use sha2::Digest as _;
+
+    let original = njutest_devkit::paths::workspace_root()
+        .join("xtask/tests/testdata/reader-runs/reports-simple");
+    let arguments = [
+        "run",
+        "--offline",
+        "--locked",
+        "--ui",
+        "quiet",
+        "--jobs",
+        "1",
+    ];
+    njutest_devkit::report::Original::read(&original, &arguments)
+        .expect("the genuine original producer is a positive control");
+    for (field, planted) in [
+        ("command", serde_json::json!(["another-product"])),
+        ("cwd", serde_json::json!("/another-original")),
+        ("producer_revision", serde_json::json!("0".repeat(40))),
+        ("exit_code", serde_json::json!(2)),
+        ("stdout_sha256", serde_json::json!("0".repeat(64))),
+        ("stderr_sha256", serde_json::json!("0".repeat(64))),
+    ] {
+        let changed = tempfile::tempdir().expect("a negative copy of genuine evidence");
+        njutest_devkit::fixture::copy_tree(&original, changed.path());
+        let path = changed.path().join("provenance/producer.json");
+        let mut producer: serde_json::Value = njutest_devkit::strictjson::decode_slice(
+            &std::fs::read(&path).expect("the actual producer metadata"),
+        )
+        .expect("the actual producer metadata is JSON");
+        producer[field] = planted;
+        let encoded = serde_json::to_vec(&producer).expect("the planted negative metadata");
+        std::fs::write(&path, &encoded).expect("the negative producer metadata");
+        let binding = changed.path().join("binding.json");
+        let mut value: serde_json::Value = njutest_devkit::strictjson::decode_slice(
+            &std::fs::read(&binding).expect("the actual recording binding"),
+        )
+        .expect("the actual binding is JSON");
+        value["provenance"]["producer.json"] =
+            serde_json::json!(hex::encode(sha2::Sha256::digest(&encoded)));
+        std::fs::write(
+            &binding,
+            serde_json::to_vec(&value).expect("the negative binding"),
+        )
+        .expect("bind the actual negative metadata bytes");
+        let refused = njutest_devkit::report::Original::read(changed.path(), &arguments);
+        assert!(
+            refused.is_err(),
+            "a SHA-bound producer disagreement in {field} must be refused: {refused:?}"
+        );
+    }
 }
 
 /// The text with everything that changes between two runs of the same tree taken out.
@@ -284,7 +341,11 @@ fn a_source_the_report_names_and_the_root_does_not_hold_is_rm0012() {
     std::fs::remove_file(fixture.root().join("src/lib.rs")).expect("the source goes away");
     let output = against(&fixture, &["report", "--format", "stryker"]);
     let said = njutest_devkit::process::strict_utf8(&output.stderr).into_owned();
-    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(rust_mutants::run::EXIT_FAILED)),
+        "{output:?}"
+    );
     assert!(said.contains("RM0012"), "{said}");
     assert!(said.contains("src/lib.rs"), "{said}");
 }
@@ -351,7 +412,12 @@ fn a_file_the_tests_noticed_every_mutation_in_is_counted_rather_than_printed() {
             "1",
         ],
     );
-    assert!(ran.status.code().is_some_and(|code| code <= 1), "{ran:?}");
+    assert!(
+        ran.status
+            .code()
+            .is_some_and(|code| code < i32::from(rust_mutants::run::EXIT_FAILED)),
+        "{ran:?}"
+    );
     let report: serde_json::Value =
         njutest_devkit::strictjson::decode_str(&projected(&fixture, "json"))
             .expect("the stored report");

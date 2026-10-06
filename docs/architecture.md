@@ -82,6 +82,9 @@ A kill is existential and is reused when the recorded killer still reaches the m
 A survival is universal and is reused only when every target that reaches the mutant now is one the recording run ran against it under the same key.
 A timeout keeps its finding.
 See [ADR 0007](adr/0007-survived-evidence-is-universal.md).
+A verdict sealed executions established is believed only once they, put again on the run's own bench, come out the same, and is established afresh where they do not ([sealed execution](engine/sealed.md#reproducing-a-sealed-verdict)).
+
+A whole report is kept too, under the identity of everything it was about, and `verify` reissues it only once every sealed execution it rests on has run again and come out the same; the preparation that runs them again starts no test natively ([sealed execution](engine/sealed.md#reproducing-a-sealed-verdict)).
 
 ## Everything a run writes
 
@@ -110,3 +113,11 @@ advisory_lock, environment, test_args, report, config
 ```
 
 Every seam is an argument ([ADR 0001](adr/0001-seam-policy.md)); the gate `cargo xtask devgates` refuses the alternative.
+
+Reader contracts retain an original product recording for each complete source and configuration rather than running the product again to read its output.
+Each binding preserves the actual producer command, exit, original source archive, report, trace and provenance bytes.
+The required repository gate independently reads the archive, compares every source digest and mode, checks the closed binding schema, and derives the complete retained file inventory.
+Missing families, ignored inputs, unknown fields and unnamed subjects remain refusals even when other recordings are complete.
+The seven reader families are `documents-baseline`, `explain-simple`, `projections-unicode`, `reports-coverage`, `reports-simple`, `run-report-alltiers` and `run-report-default`.
+Their reader controls pay for decoding, projections, schema checks and independent proof audits of those actual recordings.
+Compiler, product and CLI behavior controls continue to execute the live layer their claim requires.

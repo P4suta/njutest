@@ -16,8 +16,9 @@ use std::time::{Duration, SystemTime};
 
 use jiff::Timestamp;
 use rust_mutants::tempowner::{
-    ClaimError, LEGACY_MAX_AGE, LOCK_NAME, MARKER_NAME, MarkerError, Role, SCHEMA, acquire, claim,
-    claim_cache, claim_cache_of, lock_path, marker_path, read_marker, reclaim, sweep, sweep_with,
+    ClaimError, Holder, LEGACY_MAX_AGE, LOCK_NAME, MARKER_NAME, Marker, MarkerError, Role, SCHEMA,
+    acquire, claim, claim_cache, claim_cache_of, lock_path, marker_path, read_marker, reclaim,
+    sweep, sweep_with,
 };
 
 /// The real clock: the legacy rule compares against real modification times.
@@ -347,6 +348,60 @@ fn a_cache_a_run_is_using_is_not_reclaimed() {
 }
 
 #[test]
+fn a_scratch_declared_a_cache_under_its_claim_is_spared_by_a_sweep_and_free_to_claim() {
+    let parent = tempfile::tempdir().expect("tempdir");
+    let at = Timestamp::from_second(1_700_000_000).expect("a timestamp");
+    let dir = make(parent.path(), "rust-mutants-snap-dddd");
+    let mut owner = claim(&dir, at).expect("a fresh directory is claimable");
+    owner
+        .release_as_cache("rust-mutants-frozen-source-v1")
+        .expect("declared and let go");
+    let marker = read_marker(&dir).expect("readable");
+    assert_eq!(
+        (
+            marker.schema.as_str(),
+            marker.role,
+            marker.released,
+            marker.started,
+            &marker
+        ),
+        (
+            "rust-mutants-frozen-source-v1",
+            Role::Cache,
+            true,
+            at,
+            owner.marker()
+        ),
+        "the declaration names the cache, says it was let go, and keeps when it was claimed"
+    );
+    let swept = sweep(parent.path(), &["rust-mutants-snap-"], at).expect("sweep");
+    assert_eq!(
+        (swept.removed.len(), swept.cached),
+        (0, 1),
+        "a routine sweep spares a cache: {swept:?}"
+    );
+    let mut taken = acquire(&lock_path(&dir))
+        .expect("opens")
+        .expect("free once declared");
+    taken.release().expect("releases");
+}
+
+#[test]
+fn a_claim_already_let_go_is_not_declared_a_cache() {
+    let parent = tempfile::tempdir().expect("tempdir");
+    let dir = make(parent.path(), "rust-mutants-snap-eeee");
+    let mut owner = claim(&dir, now()).expect("a fresh directory is claimable");
+    owner.release().expect("releases");
+    let declared = owner.release_as_cache("rust-mutants-frozen-source-v1");
+    let marker = read_marker(&dir).expect("readable");
+    assert!(
+        declared.is_err() && marker.role == Role::Scratch && marker.schema == SCHEMA,
+        "a directory this claim no longer holds may already be somebody else's, so its \
+         declaration stays as it was: {declared:?} {marker:?}"
+    );
+}
+
+#[test]
 fn a_marker_written_before_roles_existed_still_reads() {
     let dir = tempfile::tempdir().expect("tempdir");
     fs::write(
@@ -506,5 +561,138 @@ fn a_slot_taken_over_from_a_dead_run_is_emptied_under_the_lock() {
     assert_eq!(
         left, expected,
         "what a dead run left is gone before this run reserves `1` again, and only the claim remains"
+    );
+}
+
+/// What a sweep of `parent` would remove, recorded rather than removed, so a directory whose lock is still open can be judged on every platform.
+fn judged(parent: &Path) -> (Vec<std::path::PathBuf>, usize) {
+    let removed = std::cell::RefCell::new(Vec::new());
+    let remove = |dir: &Path| -> std::io::Result<()> {
+        removed.borrow_mut().push(dir.to_path_buf());
+        Ok(())
+    };
+    let result = sweep_with(parent, &["rust-mutants-snap-"], now(), &remove).expect("ok");
+    assert!(result.failures.is_empty(), "{:?}", result.failures);
+    (removed.into_inner(), result.live)
+}
+
+#[test]
+fn a_directory_its_holder_let_go_is_not_in_use_whatever_its_lock_still_says() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let dir = make(temp.path(), "rust-mutants-snap-let-go");
+    claim(&dir, now())
+        .expect("claims")
+        .release()
+        .expect("releases");
+    let lingering = acquire(&lock_path(&dir))
+        .expect("opens the lock")
+        .expect("nobody holds it once released");
+
+    let (removed, live) = judged(temp.path());
+
+    assert_eq!(
+        (removed, live),
+        (vec![dir], 0),
+        "the holder let the directory go, and a lock the operating system has not yet \
+         released, as Windows releases an ended process's in its own time, is no holder"
+    );
+    drop(lingering);
+}
+
+#[test]
+fn a_holder_that_is_gone_frees_its_directory_whatever_its_lock_still_says() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let dir = make(temp.path(), "rust-mutants-snap-reused");
+    fs::write(
+        marker_path(&dir),
+        format!(
+            "{{\"schema\":\"{SCHEMA}\",\"pid\":{pid},\"started\":\"2026-01-01T00:00:00Z\",\
+             \"kept\":false,\"role\":\"scratch\",\"holder\":{{\"pid\":{pid},\
+             \"started\":\"not when this process started\",\"boot\":null}},\"released\":false}}\n",
+            pid = std::process::id()
+        ),
+    )
+    .expect("a marker naming a holder that is gone");
+    let lingering = acquire(&lock_path(&dir))
+        .expect("opens the lock")
+        .expect("nobody holds it yet");
+
+    let (removed, live) = judged(temp.path());
+
+    assert_eq!(
+        (removed, live),
+        (vec![dir], 0),
+        "the pid names a process that started at another time, which is not the holder, so \
+         nobody holds the directory whatever its lock says"
+    );
+    drop(lingering);
+}
+
+#[test]
+fn a_holder_that_runs_and_has_not_let_go_holds_its_directory_whatever_its_lock_says() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let dir = make(temp.path(), "rust-mutants-snap-holding");
+    let marker = Marker {
+        schema: SCHEMA.to_owned(),
+        pid: std::process::id(),
+        started: now(),
+        kept: false,
+        role: Role::Scratch,
+        keyed_to: None,
+        holder: Holder::this_process(),
+        released: false,
+    };
+    assert!(
+        marker.holder.is_some(),
+        "this platform says when a process started, which is what a holder is known by"
+    );
+    fs::write(
+        marker_path(&dir),
+        serde_json::to_vec(&marker).expect("a marker is JSON"),
+    )
+    .expect("the marker of a claim whose lock is open to anyone");
+
+    let (removed, live) = judged(temp.path());
+
+    assert_eq!(
+        (removed, live),
+        (Vec::new(), 1),
+        "its holder runs and has not let go, so it holds the directory, whether or not the \
+         lock is where the operating system still has it"
+    );
+}
+
+#[test]
+fn whether_a_directory_is_held_is_decided_by_its_marker_and_by_its_lock_only_where_it_cannot_say() {
+    use rust_mutants::tempowner::{Holding, Liveness, Said, holding};
+    let table = [
+        (Said::Released, None, Holding::Free),
+        (Said::Named(Liveness::Gone), None, Holding::Free),
+        (Said::Named(Liveness::Alive), None, Holding::Held),
+        (Said::Named(Liveness::Unread), None, Holding::Held),
+        (Said::Unnamed, Some(true), Holding::Free),
+        (Said::Unnamed, Some(false), Holding::Held),
+        (Said::Unreadable, Some(true), Holding::Free),
+        (Said::Unreadable, Some(false), Holding::Held),
+    ];
+    for (said, lock, expected) in table {
+        let asked = std::cell::Cell::new(false);
+        let decided = holding(said, || {
+            asked.set(true);
+            Ok(lock.expect("the lock is asked only where the table says it is"))
+        })
+        .expect("a decision");
+        assert_eq!(decided, expected, "{said:?} with the lock free: {lock:?}");
+        assert_eq!(
+            asked.get(),
+            lock.is_some(),
+            "{said:?}: the lock is asked exactly where the marker cannot say, since the \
+             operating system releases a holder's lock when it gets round to it"
+        );
+    }
+    let failing = holding(Said::Unnamed, || Err(std::io::Error::other("unopenable")));
+    assert!(
+        failing.is_err(),
+        "a lock that cannot be asked is not read as free"
     );
 }

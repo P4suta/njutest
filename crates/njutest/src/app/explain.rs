@@ -114,6 +114,7 @@ fn write_explanation(stdout: &mut dyn Write, explanation: &Explanation<'_>) -> s
                 &format!("REUSED-FROM\t{}\t{}", fact.build(), escape(provenance)),
             )?;
         }
+        rested(stdout, fact)?;
     }
     for finding in conclusion
         .findings
@@ -201,4 +202,37 @@ fn one<'a>(
             Ok(None)
         }
     }
+}
+
+/// What one build's answer rests on: each sealed execution it rests on, as its target, its test and what it came to, or every reason none established it (ADR 0046).
+fn rested(
+    stdout: &mut dyn Write,
+    fact: &crate::report::BuildMutationDecision,
+) -> std::io::Result<()> {
+    match fact.evidence() {
+        Some(rust_mutants::sealed::record::Evidence::Sealed { executions }) => {
+            for run in executions {
+                super::say(
+                    stdout,
+                    &format!(
+                        "SEALED\t{}\t{}\t{}\t{}",
+                        fact.build(),
+                        escape(&run.target),
+                        escape(&run.test),
+                        run.came_to.name()
+                    ),
+                )?;
+            }
+        }
+        Some(rust_mutants::sealed::record::Evidence::Unproven { reasons }) => {
+            for reason in reasons {
+                super::say(
+                    stdout,
+                    &format!("UNPROVEN\t{}\t{}", fact.build(), escape(reason.said())),
+                )?;
+            }
+        }
+        None => {}
+    }
+    Ok(())
 }

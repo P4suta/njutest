@@ -66,6 +66,8 @@ mod table {
         ReadingExhausted,
         /// The thread Rust text is read on could not be started.
         ReadingThread,
+        /// Rust text that runs deeper than its reading thread's stack holds.
+        ReadingTooDeep,
         /// Snapshot options that cannot be honoured, such as an escaping report directory.
         SnapshotInvalidOptions,
         /// A source root that is relative, cannot be read, or is not a directory.
@@ -112,6 +114,10 @@ mod table {
         BuildLedgerUnreadable,
         /// A bare `cargo` from the copy a run measures answers as no toolchain the run can put first on the tests' search path.
         TestsToolchainUnreachable,
+        /// A compiler or linker input required to bind a build could not be read.
+        CompilerInputUnreadable,
+        /// This process could not be made to adopt the processes a run starts.
+        SnapshotAdoption,
         /// A dep-info file has no rule to read.
         DepInfoUnreadable,
         /// An artifact's dep-info file could not be read.
@@ -186,6 +192,20 @@ mod table {
         CoverageNothingWritten,
         /// An executable a successful build named could not be read back for equivalence comparison.
         EquivalenceArtifactUnreadable,
+        /// A cost counter reached the width of its field.
+        CostAccountingOverflowed,
+        /// A diagnostic note did not carry what the cost fold needed.
+        CostAccountingInvalid,
+        /// A sealed module the sealed build named could not be read.
+        SealedModuleUnreadable,
+        /// The sealed host could not run an invocation it was given.
+        SealedHostFailed,
+        /// A target's environment holds a name or a value that is not text, which a sealed instance cannot be given.
+        SealedEnvironmentNotText,
+        /// A file of the instrumented tree could not be read into the snapshot a sealed instance is given.
+        SealedTreeUnreadable,
+        /// A sealed execution's judgement broke the rule a pass keeps, which is a defect of the engine.
+        SealedJudgementContradicted,
         /// A rule name the canonical registry does not know.
         RuleUnknown,
         /// A pattern that is not a pattern.
@@ -348,6 +368,14 @@ mod table {
                     summary: "the thread Rust text is read on could not be started",
                     remedy: Some(
                         "the operating system refused a thread; check the process and memory limits of this user, and run again",
+                    ),
+                    sealed: Sealed,
+                },
+                Self::ReadingTooDeep => ErrorCode {
+                    code: "RM0020",
+                    summary: "Rust text that runs deeper than its reading thread's stack holds",
+                    remedy: Some(
+                        "a file whose groups nest past 1000 or whose trees chain past 12288 tokens is refused rather than read into a stack overflow; split the expression, or skip the file with an exclude pattern",
                     ),
                     sealed: Sealed,
                 },
@@ -532,6 +560,22 @@ mod table {
                     summary: "a bare `cargo` from the copy a run measures answers as no toolchain the run can put first on the tests' search path",
                     remedy: Some(
                         "run `cargo -vV` from the directory the message names with the environment the run was given: a shim that chooses a toolchain by the directory it runs in has to answer there, or the toolchain rustc names has to hold a cargo",
+                    ),
+                    sealed: Sealed,
+                },
+                Self::CompilerInputUnreadable => ErrorCode {
+                    code: "RM1024",
+                    summary: "a compiler or linker input needed to bind a build could not be read",
+                    remedy: Some(
+                        "read the path the diagnostic names with the build's environment; preserve the operating system's refusal instead of treating an unreadable input as absent",
+                    ),
+                    sealed: Sealed,
+                },
+                Self::SnapshotAdoption => ErrorCode {
+                    code: "RM1025",
+                    summary: "this process could not be made to adopt the processes a run starts, so a process working in its copy could not later be told from one the run did not start",
+                    remedy: Some(
+                        "the kernel refused PR_SET_CHILD_SUBREAPER, which the message names; run where a sandbox or seccomp profile allows that prctl",
                     ),
                     sealed: Sealed,
                 },
@@ -827,6 +871,62 @@ mod table {
                     ),
                     sealed: Sealed,
                 },
+                Self::CostAccountingOverflowed => ErrorCode {
+                    code: "RM7002",
+                    summary: "a cost counter reached the width of its field",
+                    remedy: Some(
+                        "this is a defect in this tool, which refused the record rather than wrap it; report the run that produced it",
+                    ),
+                    sealed: Sealed,
+                },
+                Self::CostAccountingInvalid => ErrorCode {
+                    code: "RM7003",
+                    summary: "a diagnostic note did not carry what the cost accounting needed",
+                    remedy: Some(
+                        "this is a defect in this tool, which refused the record rather than guess; report the run that produced the note",
+                    ),
+                    sealed: Sealed,
+                },
+                Self::SealedModuleUnreadable => ErrorCode {
+                    code: "RM8001",
+                    summary: "a sealed module the sealed build named could not be read",
+                    remedy: Some(
+                        "run again after checking nothing removes or rewrites the sealed build's target directory while it is read",
+                    ),
+                    sealed: Sealed,
+                },
+                Self::SealedHostFailed => ErrorCode {
+                    code: "RM8002",
+                    summary: "the sealed host could not run an invocation it was given",
+                    remedy: Some(
+                        "the message carries the host's own code (RS...), which docs/errors.md says what to do about",
+                    ),
+                    sealed: Sealed,
+                },
+                Self::SealedJudgementContradicted => ErrorCode {
+                    code: "RM8005",
+                    summary: "a sealed execution's judgement broke the rule a pass keeps: it passed an ending its harness does not pass by, or failed one it does",
+                    remedy: Some(
+                        "this is a defect in this tool, which stopped rather than write a verdict on it; report the target and the test the message names",
+                    ),
+                    sealed: Sealed,
+                },
+                Self::SealedEnvironmentNotText => ErrorCode {
+                    code: "RM8003",
+                    summary: "a target's environment holds a name or a value that is not text",
+                    remedy: Some(
+                        "a sealed instance reads its environment as text: move the package where its path is UTF-8, or leave the target out of sealing",
+                    ),
+                    sealed: Sealed,
+                },
+                Self::SealedTreeUnreadable => ErrorCode {
+                    code: "RM8004",
+                    summary: "a file of the instrumented tree could not be read into the sealed snapshot",
+                    remedy: Some(
+                        "run again after checking nothing removes or rewrites the run's snapshot while it is read",
+                    ),
+                    sealed: Sealed,
+                },
                 Self::RuleUnknown => ErrorCode {
                     code: "RM9001",
                     summary: "a rule name the canonical registry does not know",
@@ -906,6 +1006,17 @@ pub const COVERAGE_NOTHING_WRITTEN: ErrorCode = RmCode::CoverageNothingWritten.e
 /// An executable a successful build named could not be read back for equivalence comparison.
 pub const EQUIVALENCE_ARTIFACT_UNREADABLE: ErrorCode =
     RmCode::EquivalenceArtifactUnreadable.error_code();
+/// A sealed module could not be read.
+pub const SEALED_MODULE_UNREADABLE: ErrorCode = RmCode::SealedModuleUnreadable.error_code();
+/// The sealed host could not run an invocation.
+pub const SEALED_HOST_FAILED: ErrorCode = RmCode::SealedHostFailed.error_code();
+/// A sealed execution's judgement broke the rule a pass keeps.
+pub const SEALED_JUDGEMENT_CONTRADICTED: ErrorCode =
+    RmCode::SealedJudgementContradicted.error_code();
+/// A target's environment is not text.
+pub const SEALED_ENVIRONMENT_NOT_TEXT: ErrorCode = RmCode::SealedEnvironmentNotText.error_code();
+/// A file of the instrumented tree could not be read into the sealed snapshot.
+pub const SEALED_TREE_UNREADABLE: ErrorCode = RmCode::SealedTreeUnreadable.error_code();
 
 /// A change set that git could not be asked for.
 pub const CHANGE_SET_UNAVAILABLE: ErrorCode = RmCode::ChangeSetUnavailable.error_code();
@@ -930,6 +1041,7 @@ pub const CI_SINK_UNWRITABLE: ErrorCode = RmCode::CiSinkUnwritable.error_code();
 pub(crate) const READING_SYNTAX: ErrorCode = RmCode::ReadingSyntax.error_code();
 pub(crate) const READING_EXHAUSTED: ErrorCode = RmCode::ReadingExhausted.error_code();
 pub(crate) const READING_THREAD: ErrorCode = RmCode::ReadingThread.error_code();
+pub(crate) const READING_TOO_DEEP: ErrorCode = RmCode::ReadingTooDeep.error_code();
 
 pub(crate) const SNAPSHOT_INVALID_OPTIONS: ErrorCode = RmCode::SnapshotInvalidOptions.error_code();
 pub(crate) const SNAPSHOT_SOURCE_ROOT: ErrorCode = RmCode::SnapshotSourceRoot.error_code();
@@ -941,6 +1053,7 @@ pub(crate) const SNAPSHOT_UNSUPPORTED_NAME: ErrorCode =
     RmCode::SnapshotUnsupportedName.error_code();
 pub(crate) const SNAPSHOT_DESTINATION: ErrorCode = RmCode::SnapshotDestination.error_code();
 pub(crate) const SNAPSHOT_COPY: ErrorCode = RmCode::SnapshotCopy.error_code();
+pub(crate) const SNAPSHOT_ADOPTION: ErrorCode = RmCode::SnapshotAdoption.error_code();
 pub(crate) const SNAPSHOT_CLEANUP_REFUSED: ErrorCode = RmCode::SnapshotCleanupRefused.error_code();
 pub(crate) const SNAPSHOT_CLEANUP_FAILED: ErrorCode = RmCode::SnapshotCleanupFailed.error_code();
 pub(crate) const CARGO_TOOLCHAIN_NOT_FOUND: ErrorCode = RmCode::CargoToolchainNotFound.error_code();
@@ -958,6 +1071,8 @@ pub(crate) const CAPDIR_NAME_REFUSED: ErrorCode = RmCode::CapdirNameRefused.erro
 pub(crate) const BUILD_LEDGER_UNREADABLE: ErrorCode = RmCode::BuildLedgerUnreadable.error_code();
 pub(crate) const TESTS_TOOLCHAIN_UNREACHABLE: ErrorCode =
     RmCode::TestsToolchainUnreachable.error_code();
+/// A compiler or linker input required to bind a build could not be read.
+pub const COMPILER_INPUT_UNREADABLE: ErrorCode = RmCode::CompilerInputUnreadable.error_code();
 pub(crate) const DEP_INFO_UNREADABLE: ErrorCode = RmCode::DepInfoUnreadable.error_code();
 pub(crate) const DEP_INFO_MISSING: ErrorCode = RmCode::DepInfoMissing.error_code();
 pub(crate) const DISCOVER_FILE_UNREADABLE: ErrorCode = RmCode::DiscoverFileUnreadable.error_code();
@@ -1055,6 +1170,19 @@ pub enum EngineError {
     /// The crate planted for the routing layers could not be put where a session can open it.
     #[error(transparent)]
     Sentinel(#[from] crate::sentinel::SentinelError),
+    /// A sealed execution could not be set up or run.
+    #[error(transparent)]
+    Sealed(crate::sealed::bench::BenchError),
+}
+
+impl From<crate::sealed::bench::BenchError> for EngineError {
+    fn from(error: crate::sealed::bench::BenchError) -> Self {
+        if matches!(error, crate::sealed::bench::BenchError::Interrupted) {
+            Self::Interrupted
+        } else {
+            Self::Sealed(error)
+        }
+    }
 }
 
 impl EngineError {
@@ -1078,6 +1206,7 @@ impl EngineError {
                 CACHE_UNREADABLE
             }
             Self::Sentinel(error) => error.code(),
+            Self::Sealed(error) => error.code(),
         }
     }
 }

@@ -29,7 +29,7 @@ pub fn recorded(
     let mut binaries: BTreeMap<String, (&str, Harness)> = BTreeMap::new();
     for target in session.targets() {
         let harness = harness_of(target, threads);
-        binaries.insert(target.id.clone(), (target.package.as_str(), harness));
+        binaries.insert(target.id().to_owned(), (target.package(), harness));
     }
     let metadata = session.metadata();
     let touched = &session.verified().touched.targets;
@@ -38,10 +38,10 @@ pub fn recorded(
     let closures: BTreeMap<String, Vec<String>> = binaries
         .iter()
         .map(|(binary, (package, _))| {
-            let closure = metadata
-                .members()
-                .find(|member| member.name == *package)
-                .map_or_else(Vec::new, |member| metadata.closure(&member.id));
+            let closure = match metadata.members().find(|member| member.name == *package) {
+                Some(member) => metadata.closure(&member.id),
+                None => Vec::new(),
+            };
             let (kept, left_out) = linked(&closure, &compiled);
             uncompiled.extend(left_out.into_iter().cloned());
             (binary.clone(), kept.into_iter().cloned().collect())
@@ -56,7 +56,10 @@ pub fn recorded(
     let records = binaries
         .into_iter()
         .map(|(binary, (package, harness))| {
-            let closure = closures.get(&binary).map_or(&[][..], Vec::as_slice);
+            let closure = match closures.get(&binary) {
+                Some(closure) => closure.as_slice(),
+                None => &[][..],
+            };
             let unread: Vec<PackageScan> = closure
                 .iter()
                 .filter(|id| !read.contains_key(*id))
@@ -112,11 +115,9 @@ pub fn scans(
     let read = schedule::measure(
         ids,
         &schedule::Crew::threads(workers, "njutest-read"),
-        |_at, id| {
-            metadata.package(id).map_or_else(
-                || Ok(unread_manifest(id)),
-                |package| crate::concurrency::read::package(package, compiled),
-            )
+        |_at, id| match metadata.package(id) {
+            Some(package) => crate::concurrency::read::package(package, compiled),
+            None => Ok(unread_manifest(id)),
         },
     )?;
     let mut scanned = BTreeMap::new();
@@ -143,7 +144,7 @@ fn unread_manifest(package: &str) -> PackageScan {
 
 /// What runs `target`'s tests, when libtest runs them on `threads`.
 const fn harness_of(target: &rust_mutants::execute::TestTarget, threads: Threads) -> Harness {
-    match (target.kind, target.harness) {
+    match (target.kind(), target.harness) {
         (TargetKind::Doc, _) => Harness::Doctest,
         (
             TargetKind::Lib
@@ -183,7 +184,11 @@ pub fn explored(
                 why: Unexplored::NotAsked,
             } => {}
             Exploration::Unexplored {
-                why: Unexplored::NotNeeded | Unexplored::NotPassing | Unexplored::NoSite,
+                why:
+                    Unexplored::NotNeeded
+                    | Unexplored::NotPassing
+                    | Unexplored::NoSite
+                    | Unexplored::ReachUnrecorded,
             }
             | Exploration::Sampled { .. }
             | Exploration::Undecided { .. }
@@ -195,10 +200,13 @@ pub fn explored(
             };
             continue;
         }
-        let reached = touched
-            .get(&record.target)
-            .map(|touches| touches.reached.union())
-            .unwrap_or_default();
+        let Some(recorded) = touched.get(&record.target) else {
+            record.explored = Exploration::Unexplored {
+                why: Unexplored::ReachUnrecorded,
+            };
+            continue;
+        };
+        let reached = recorded.reached.union();
         if reached.is_empty() {
             record.explored = Exploration::Unexplored {
                 why: Unexplored::NoSite,

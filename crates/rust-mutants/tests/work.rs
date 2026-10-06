@@ -17,7 +17,7 @@ use rust_mutants::work::{Removal, Work};
 fn document(targets: &[&str], rows: &[serde_json::Value]) -> RunDocument {
     let value = serde_json::json!({
         "document_type": "rust-mutants/run-report",
-        "schema_version": 3,
+        "schema_version": 5,
         "tool_version": "0.1.0",
         "run": {
             "id": "20260907T000000000Z",
@@ -43,13 +43,15 @@ fn document(targets: &[&str], rows: &[serde_json::Value]) -> RunDocument {
         "targets": targets
             .iter()
             .map(|id| serde_json::json!({
-                "id": id, "kind": "test", "harness": true, "tests": 1, "limitations": []
+                "id": id, "kind": "test", "harness": true, "tests": 1, "limitations": [], "sealed": {"state": "sealed", "remedy": null, "uncontrolled": []}
             }))
             .collect::<Vec<_>>(),
         "accounting": {
             "cataloged": rows.len(), "refused": 0, "skipped": 0, "executed": 0,
-            "killed": 0, "survived": 0, "step_limit_reached": 0, "waited": 0, "inconclusive": 0, "errored": 0,
-            "not_run": 0, "unreached": 0, "discharged": 0, "declined": 0, "expected": 0
+            "killed": 0, "survived": 0, "unproven": 0, "step_limit_reached": 0, "waited": 0,
+            "inconclusive": 0, "errored": 0, "not_run": 0, "unreached": 0, "declined": 0,
+            "expected": 0, "unproven_killed": 0, "unproven_survived": 0, "unproven_unreached": 0,
+            "unproven_discharged": 0
         },
         "score": null,
         "established_tests": 0,
@@ -98,7 +100,9 @@ fn row(index: u32, extra: &serde_json::Value) -> serde_json::Value {
         "identical": "not-measured",
         "expected": false,
         "unreached": false,
-        "source_run_id": null
+        "source_run_id": null,
+        "part_run_id": null,
+        "evidence": {"kind": "unproven", "reasons": ["not-sealed"]}
     });
     let (Some(object), Some(more)) = (value.as_object_mut(), extra.as_object()) else {
         panic!("both are objects");
@@ -133,6 +137,44 @@ fn pairs(work: &Work, reason: &str) -> u64 {
         .iter()
         .find(|removed| removed.reason == reason)
         .map_or(0, |removed| removed.pairs)
+}
+
+#[test]
+fn a_row_no_run_writes_is_refused_rather_than_counted_as_unreached() {
+    let document = document(&["demo/test/one"], &[row(0, &serde_json::json!({}))]);
+    let refused = Work::of(&document).expect_err(
+        "a row with no route, no reason it was not run and no run it came from says nothing \
+         about what removed its pairs, so it is no row a run writes",
+    );
+    assert!(
+        refused.to_string().contains(&format!("{:064x}", 0)),
+        "the refusal names the row: {refused}"
+    );
+}
+
+#[test]
+fn a_target_the_document_does_not_list_is_refused_rather_than_counted_as_one_test() {
+    let document = document(
+        &["demo/test/one"],
+        &[row(
+            0,
+            &serde_json::json!({
+                "route": {
+                    "granularity": "all",
+                    "reaching": ["demo/test/one"],
+                    "executed": ["demo/test/two"]
+                }
+            }),
+        )],
+    );
+    let refused = Work::of(&document).expect_err(
+        "how many tests a target the document does not list was asked is written nowhere, so \
+         the ledger cannot count them",
+    );
+    assert!(
+        refused.to_string().contains("demo/test/two"),
+        "the refusal names the target: {refused}"
+    );
 }
 
 #[test]

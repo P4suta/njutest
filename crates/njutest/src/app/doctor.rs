@@ -220,7 +220,7 @@ fn examine(environment: &Environment) -> Vec<Finding> {
             env: Some(environment.vars.clone()),
         },
         &dir,
-        &cancel,
+        &rust_mutants::runner::Watched::new(&cancel, &rust_mutants::trace::Recorder::disabled()),
     ) {
         Ok(toolchain) => Some(toolchain),
         Err(_) => None,

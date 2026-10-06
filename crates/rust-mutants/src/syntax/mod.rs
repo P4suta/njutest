@@ -9,10 +9,10 @@ mod position;
 mod regroup;
 mod rules;
 mod shape;
+mod unvalidated;
 mod walk;
 
 use std::collections::BTreeMap;
-use std::fmt;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -30,39 +30,12 @@ pub(crate) fn implemented(block: &syn::ItemImpl) -> String {
     shape::implemented(block)
 }
 
-/// One of the four guard shapes the instrumenter composes a dormant mutant from; see the module documentation.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, njutest_macros::AllVariants,
-)]
-pub enum Form {
-    /// The boolean selector, for a syntactically boolean position.
-    C,
-    /// The expression selector, for any value position.
-    E,
-    /// The statement guard.
-    S,
-    /// The guard written onto a match arm that had none, which is the one shape that adds syntax rather than replacing it.
-    M,
+/// The last segment of a type's name, which is what the compiler calls a function of its `impl` by.
+pub(crate) fn type_name(ty: &syn::Type) -> String {
+    shape::type_name(ty)
 }
 
-impl Form {
-    /// The letter.
-    #[must_use]
-    pub const fn letter(self) -> &'static str {
-        match self {
-            Self::C => "C",
-            Self::E => "E",
-            Self::S => "S",
-            Self::M => "M",
-        }
-    }
-}
-
-impl fmt::Display for Form {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.letter())
-    }
-}
+pub use rust_mutants_adapt::guard::Form;
 
 /// The rewrite site the instrumenter has to use for one candidate.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,6 +48,19 @@ pub struct SiteHint {
     pub site_text: String,
     /// How many `super::` segments the site's call into the runtime module needs, which is none where every inline module around it glob-imports its parent.
     pub super_depth: u32,
+    /// The `const fn` whose body is the innermost body around the site, which the instrumented tree writes without its `const` while it holds a guard (ADR 0047).
+    pub const_fn: Option<ConstFn>,
+}
+
+/// A `const fn` as the instrumenter has to find it again: where its `const` is, and the names a compiler diagnostic calls it by.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ConstFn {
+    /// The bytes of its `const` keyword.
+    pub keyword: Span,
+    /// Its own name.
+    pub name: String,
+    /// The last path segment of the type whose `impl` or `trait` holds it, or `None` for a function neither holds.
+    pub owner: Option<String>,
 }
 
 /// What an arm with no guard is given before the guard a mutation writes, so the edit a catalog records is the source the mutant compiles to rather than an expression spliced against the pattern.
@@ -150,7 +136,7 @@ pub struct Found {
     pub probe: Option<crate::probe::Question>,
 }
 
-/// Why a place produced no candidate.
+/// Why a place produced no mutant.
 /// Declared in rank order, which is the order skips are reported in.
 #[derive(
     Debug,
@@ -167,7 +153,7 @@ pub struct Found {
 )]
 #[serde(rename_all = "kebab-case")]
 pub enum SkipReason {
-    /// A constant context: a `const` or `static` initializer, a `const fn` body, a `const` block, an array length, an enum discriminant.
+    /// A constant context: a `const` or `static` initializer, a `const` block, an array length, an enum discriminant.
     ConstContext,
     /// A macro invocation, whose body is tokens the walker does not parse.
     MacroInvocation,
@@ -189,8 +175,10 @@ pub enum SkipReason {
     GeneratedOutsideWorkspace,
     /// A file of a crate that forbids a lint the guards' own attribute turns off, which no guard could compile in.
     ForbiddenLints,
-    /// The body of a `const fn`, whose every call the compiler may evaluate, where a runtime guard cannot live.
-    ConstFnBody,
+    /// A candidate in a `const fn` the compiler evaluates before the program runs, which validation leaves out so the function keeps its `const` (ADR 0047).
+    EvaluatedBeforeRun,
+    /// A candidate in a const fn whose package or a dependent member holds a doctest, conditional early use or opaque expansion the validation build cannot check.
+    UnvalidatedConstUse,
     /// A condition that binds with `let`, whose parts a guard cannot rearrange without moving the binding out of scope.
     LetCondition,
     /// A range with no end, which has no other form to become.
@@ -221,7 +209,8 @@ impl SkipReason {
             Self::IncludedExpression => "included-expression",
             Self::GeneratedOutsideWorkspace => "generated-outside-workspace",
             Self::ForbiddenLints => "forbidden-lints",
-            Self::ConstFnBody => "const-fn-body",
+            Self::EvaluatedBeforeRun => "evaluated-before-run",
+            Self::UnvalidatedConstUse => "unvalidated-const-use",
             Self::LetCondition => "let-condition",
             Self::OpenRange => "open-range",
             Self::UnstatedReturnType => "unstated-return-type",
@@ -236,7 +225,7 @@ impl SkipReason {
     pub const fn explanation(self) -> &'static str {
         match self {
             Self::ConstContext => {
-                "the expression is evaluated by the compiler (a const or static initializer, a const fn, a const block, an array length, a discriminant), where a runtime guard cannot live"
+                "the expression is evaluated by the compiler (a const or static initializer, a const block, an array length, a discriminant), where a runtime guard cannot live"
             }
             Self::MacroInvocation => {
                 "the code is inside a macro invocation, whose body is tokens the walker does not parse; each invocation counts once"
@@ -266,8 +255,11 @@ impl SkipReason {
             Self::ForbiddenLints => {
                 "the crate forbids a lint the guards' own attribute turns off, and forbid is the one level an allow cannot override, so no guard could compile here whatever it edited"
             }
-            Self::ConstFnBody => {
-                "the expression is in the body of a const fn, which the compiler may evaluate at any call, where a runtime guard cannot live"
+            Self::EvaluatedBeforeRun => {
+                "the expression is in a const fn the compiler evaluates before the program runs (a const or static initializer, a const block, an array length, or a const fn that keeps its const calls it), so the function keeps its const and a runtime guard cannot live in it"
+            }
+            Self::UnvalidatedConstUse => {
+                "a doctest, conditional early use or opaque expansion in this package or a dependent member is outside the validation build, so its linked const fn bodies keep their const and carry no runtime guard"
             }
             Self::LetCondition => {
                 "the condition binds with let, and what a guard would have to rearrange is what the binding is in scope for"
@@ -306,6 +298,17 @@ pub struct Skip {
     pub path: String,
     /// How many candidates, or invocations for a macro.
     pub count: u32,
+}
+
+/// How many places each reason left unmutated, every record counted by the places it stands for, or `None` where a total does not fit.
+#[must_use]
+pub fn census(skips: &[Skip]) -> Option<BTreeMap<SkipReason, u64>> {
+    let mut census: BTreeMap<SkipReason, u64> = BTreeMap::new();
+    for skip in skips {
+        let places = census.entry(skip.reason).or_insert(0);
+        *places = places.checked_add(u64::from(skip.count))?;
+    }
+    Some(census)
 }
 
 /// One decision the walker took, for the trace.
@@ -353,6 +356,8 @@ pub struct FileDiscovery {
     pub decisions: Vec<Decision>,
     /// Whether the file carries `#![no_std]`.
     pub no_std: bool,
+    /// Whether source outside the validation build may evaluate a linked const fn before the program runs.
+    pub unvalidated_const_use: bool,
     /// Every file this one pastes in with `include!`, in source order.
     pub includes: Vec<Include>,
     /// Every `rust-mutants: skip` marker the file carries, in source order.
@@ -421,6 +426,7 @@ pub struct TraceRecordError {
 pub struct Selection<'r> {
     registry: &'r Registry,
     rules: Vec<Rule>,
+    compile_items: bool,
 }
 
 impl<'r> Selection<'r> {
@@ -430,6 +436,7 @@ impl<'r> Selection<'r> {
         Self {
             registry,
             rules: registry.select_tier(tier),
+            compile_items: tier == Tier::Compiled,
         }
     }
 
@@ -446,7 +453,18 @@ impl<'r> Selection<'r> {
                 })
             })
             .collect::<Result<Vec<Rule>, RuleError>>()?;
-        Ok(Self { registry, rules })
+        Ok(Self {
+            registry,
+            rules,
+            compile_items: false,
+        })
+    }
+
+    /// Whether const item initializers are selected for a build per mutant.
+    #[must_use]
+    pub const fn compiling_items(mut self, selected: bool) -> Self {
+        self.compile_items = selected;
+        self
     }
 
     /// The registry the rules come from.
@@ -543,7 +561,7 @@ impl SyntaxError {
             walk::WalkError::Bounds => Self::TooLarge {
                 path: path.to_owned(),
             },
-            walk::WalkError::Unread(unread) => Self::unread(path, unread),
+            walk::WalkError::Unread { source } => Self::unread(path, source),
         }
     }
 
@@ -560,7 +578,8 @@ impl SyntaxError {
                 message,
             },
             unread @ (crate::parsing::ReadingError::Exhausted { .. }
-            | crate::parsing::ReadingError::ThreadUnavailable { .. }) => Self::Unread {
+            | crate::parsing::ReadingError::ThreadUnavailable { .. }
+            | crate::parsing::ReadingError::TooDeep { .. }) => Self::Unread {
                 path: path.to_owned(),
                 source: unread,
             },
@@ -605,6 +624,35 @@ pub(crate) fn discover_counting(
     source: &[u8],
     selection: &Selection<'_>,
 ) -> Result<(FileDiscovery, Option<usize>), SyntaxError> {
+    discover_counting_with(parsing, (path, source), selection, regroup::Grouping::of)
+}
+
+#[cfg(any(test, feature = "testkit"))]
+pub(crate) fn discover_counting_planted(
+    parsing: &crate::parsing::Parsing,
+    path: &str,
+    source: &[u8],
+    selection: &Selection<'_>,
+) -> Result<(FileDiscovery, Option<usize>), SyntaxError> {
+    discover_counting_with(parsing, (path, source), selection, |file, parsing| {
+        regroup::Grouping::of(file, parsing).planted()
+    })
+}
+
+/// Where a rule sits in the registry's order, and a rule it does not list after every one it does.
+fn listed(registry: &Registry, name: &str) -> usize {
+    match registry.position(name) {
+        Some(listed) => listed,
+        None => usize::MAX,
+    }
+}
+
+fn discover_counting_with<'p>(
+    parsing: &'p crate::parsing::Parsing,
+    (path, source): (&str, &[u8]),
+    selection: &Selection<'_>,
+    grouping_of: impl FnOnce(&syn::File, &'p crate::parsing::Parsing) -> regroup::Grouping<'p>,
+) -> Result<(FileDiscovery, Option<usize>), SyntaxError> {
     let text = std::str::from_utf8(source).map_err(|_invalid| SyntaxError::NotUtf8 {
         path: path.to_owned(),
     })?;
@@ -640,7 +688,7 @@ pub(crate) fn discover_counting(
             directive,
         },
     })?;
-    let grouping = regroup::Grouping::of(&file, parsing);
+    let grouping = grouping_of(&file, parsing);
     let input = walk::Input {
         text,
         base,
@@ -662,7 +710,7 @@ pub(crate) fn discover_counting(
         .finish()
         .map_err(|failed| SyntaxError::walked(path, failed))?;
 
-    let position = |name: &str| selection.registry().position(name).unwrap_or(usize::MAX);
+    let position = |name: &str| listed(selection.registry(), name);
     candidates.sort_by_key(|found| {
         (
             found.candidate.span.start,
@@ -680,6 +728,7 @@ pub(crate) fn discover_counting(
             skips,
             decisions,
             no_std,
+            unvalidated_const_use: unvalidated::uses(&file),
             annotations,
         },
         grouping.read(),

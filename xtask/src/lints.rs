@@ -9,6 +9,21 @@ use std::fmt;
 use syn::parse::Parser as _;
 use syn::visit::Visit;
 
+use super::cfg_conditions::{CfgScope, CfgTruth, CfgWorld, cfg_constant, item_attributes};
+
+mod cache_directories;
+mod clears;
+mod compiler_diagnostics;
+mod ffi;
+mod git_doors;
+mod handovers;
+mod procfs;
+mod raw_buffers;
+mod sensitive_names;
+mod signals;
+mod stamps;
+mod wide_records;
+
 const OWNED_TRAIT_OBJECT_REMEDY: &str = "use an enum for a closed set of implementations, or a \
     generic parameter for an open one; owning a vtable erases the set precisely where ownership \
     should make it explicit";
@@ -104,16 +119,27 @@ const UNCHECKED_CAST_REMEDY: &str = "use `TryFrom`, an exact pointer type, or a 
     constructor that can reject an unrepresentable value. `as` truncates integers and changes \
     pointer meaning without a failure branch, and host Clippy cannot inspect code behind another \
     target's cfg";
+const UNSAFE_OUTSIDE_FFI_REMEDY: &str = "move the foreign call into one of the modules \
+    `xtask/src/lints/ffi.rs` names, behind a safe function the rest of the tree calls, or name a \
+    new module there in the change that argues for it. Those modules are the whole of what the \
+    compiler does not vouch for, and each is held to checked conversions because a host build \
+    cannot read another target's cfg; an `unsafe` block or an `expect(unsafe_code)` anywhere \
+    else is a boundary nobody listed";
 const UNOWNED_SPAWN_REMEDY: &str = "construct threads and child processes only inside a named \
     owner that must join, kill, or reap them on every path. Raw `thread::spawn`, \
     `Builder::spawn`, and `Command::spawn` make cleanup an optional convention; scoped work must \
     likewise pass through a typed scope helper whose lifetime proves the join";
-const RAW_GROUP_SIGNAL_REMEDY: &str = "stop a process group through \
-    `rust_mutants::runner::stop_group`. What the kernel answers a group signal is one question \
+const RAW_GROUP_SIGNAL_REMEDY: &str = "start the process as a \
+    `rust_mutants::runner::GroupChild` and stop its group through it, or through \
+    `rust_mutants::runner::stop_group` with the `Leader` it hands out until it has reaped. What \
+    the kernel answers a group signal is one question \
     wherever it is asked: on macOS a group whose members have all ended while its leader waits to \
     be reaped refuses it with EPERM, which is the group being gone, and a second place that sends \
     the signal itself decides that again, which is how the provider kept reporting a failed \
-    cleanup after the runner had stopped doing so";
+    cleanup after the runner had stopped doing so. A program started by any path, a script a \
+    shell or a wrapper is handed, a system call by its number, a foreign declaration, and a \
+    method of a type that is not a `Child` or one this file implements are the same signal, and \
+    a receiver the file never types is refused rather than guessed";
 const UNBOUNDED_CHANNEL_REMEDY: &str = "use a bounded `sync_channel` whose capacity and full or \
     disconnected policy are named at the construction boundary. `mpsc::channel` lets a stalled \
     consumer turn producer progress into unbounded memory growth";
@@ -192,6 +218,12 @@ const RAW_TREE_WALK_REMEDY: &str = "read the repository through \
     `crate::repository::entries`; a gate that walks the filesystem reads what a build, a \
     run or a report left beside the tree, and one that a concurrent build rewrites fails the gate \
     for a reason that is no finding";
+const RAW_GIT_REMEDY: &str = "start git through a door that reads the tree itself: \
+    `rust_mutants::git` in shipped code, `njutest_devkit::repo::git` in a test, \
+    `xtask::repository::git` in a gate. Each says `core.fsmonitor=false` and \
+    `core.untrackedCache=false`, because a git started as the user configured it may answer \
+    from a file-system monitor that has not seen a write yet, and a file list it gives is then \
+    the daemon's say-so rather than the tree";
 const BARE_SHELL_REMEDY: &str = "a POSIX `sh` is on every Unix and on no Windows search path \
     this repository can count on, so a program named `sh` outside `#[cfg(unix)]` is a precondition \
     nobody states: a test takes its shell from `njutest_devkit::paths::posix_sh()`, which says what \
@@ -199,18 +231,35 @@ const BARE_SHELL_REMEDY: &str = "a POSIX `sh` is on every Unix and on no Windows
 const RAW_LEXING_REMEDY: &str = "read Rust text through `rust_mutants::parsing`: `apart` lends \
     a `Parsing`, and its `read`, `read_with`, `file` and `tokens` are the only ways text becomes \
     tokens. Text lexed anywhere else stays in proc-macro2's map for as long as its thread lives, and \
-    past 4 GiB on one thread every location wraps; a reading thread ends with its map. A \
-    `.parse::<T>()` of a type that is not Rust text goes on `PARSED_TYPES`";
+    past 4 GiB on one thread every location wraps; a reading thread ends with its map. A bench or \
+    an example that measures reads through `njutest_devkit::lexed`, and a `.parse::<T>()` of a \
+    type that is not Rust text goes on `PARSED_TYPES`";
 const RAW_ENVIRONMENT_REMEDY: &str = "hold an environment as `rust_mutants::vars::Variables`, \
-    which reads, changes, selects and digests a name only as the platform takes it. Pairs of \
+    or in xtask, which cannot depend on the engine, as `xtask::environment::Environment`; each \
+    reads, changes, selects and digests a name only as the platform takes it. Pairs of \
     `OsString` let each reader compare names its own way, and four did it by bytes where Windows \
     takes any case: a declared variable hashed as unset, a composed one inherited beside its \
     replacement, a reserved one let through, and a home the tests were never given";
+const RAW_PROCESS_END_REMEDY: &str = "read how a process an assurance phase started ended \
+    through `assure::ended::ProcessEnd`, which sorts every termination once and exhaustively: a \
+    stop the run asked for is the run interrupted, a clock, a signal or an unclassified status is \
+    no answer about the suite, and only an exit of the process's own is read further. \
+    `succeeded`, `timed_out` and `conventional_exit_code` each answer one question about the end \
+    and leave every other ending to whoever forgot it, which is how a cancelled interpreter run \
+    was reported as a toolchain with no interpreter";
+const DEFAULTED_ABSENCE_REMEDY: &str = "read the field its producer's schema requires and \
+    refuse the input where it is not there, or match on its absence and say what that means: \
+    the layer is unaudited, naming what was absent and where, or the record is not the shape a \
+    run writes. An audit reader that supplies a value its input never gave reads a record that \
+    lacks what the audit checks as one that says zero or nothing, and passes it";
 const RAW_READ_REMEDY: &str = "ask `crate::observe` what the path is. A reader of evidence that \
     touches the filesystem itself decides at its own call site what an I/O failure means, which is \
     how a lock file beside the profiles became a directory that could not be read and how running \
     out of descriptors became an unread file; `observe` decides it once, as absent, unreadable, or \
     an error that says nothing about the path";
+const UNOWNED_CACHE_DIRECTORY_REMEDY: &str = "a compilation-cache writer can outlive its caller. \
+    Use a durable cache or the parent-owned CacheDirectory from cargo xtask tidy. \
+    A TempDir destructor or a successful removal is not a producer completion event";
 
 macro_rules! declare_kinds {
     ($( $variant:ident => $label:literal),+ $(,)?) => {
@@ -264,6 +313,7 @@ declare_kinds! {
     StringAlias => "string-alias",
     ResultAlias => "result-alias",
     DiscardedResult => "discarded-result",
+    DiscardedCompilerStderr => "discarded-compiler-stderr",
     DroppedComputation => "dropped-computation",
     IgnoredComputation => "ignored-computation",
     OpenDeserialization => "open-deserialization",
@@ -271,6 +321,7 @@ declare_kinds! {
     Comment => "comment",
     UnboundedRemoval => "unbounded-removal",
     RawTreeRemoval => "raw-tree-removal",
+    UnownedCacheDirectory => "unowned-cache-directory",
     PerishableHandle => "perishable-handle",
     LooseLayout => "loose-layout",
     WildcardOverOurOwn => "wildcard-over-our-own",
@@ -281,6 +332,9 @@ declare_kinds! {
     FabricatedOverflow => "fabricated-overflow",
     WrappingCounter => "wrapping-counter",
     UncheckedCast => "unchecked-cast",
+    UnsafeOutsideFfi => "unsafe-outside-ffi",
+    RawBufferPointer => "raw-buffer-pointer",
+    SensitiveName => "sensitive-name",
     UnownedSpawn => "unowned-spawn",
     RawGroupSignal => "raw-group-signal",
     UnboundedChannel => "unbounded-channel",
@@ -297,6 +351,14 @@ declare_kinds! {
     BareShell => "bare-shell",
     RawLexing => "raw-lexing",
     RawEnvironment => "raw-environment",
+    RawProcessEnd => "raw-process-end",
+    DefaultedAbsence => "defaulted-absence",
+    RawGit => "raw-git",
+    RawProcfs => "raw-procfs",
+    RawStamp => "raw-stamp",
+    RawEnvironmentClear => "raw-environment-clear",
+    WideRecordInteger => "wide-record-integer",
+    ClaimAfterRelease => "claim-after-release",
 }
 
 impl Kind {
@@ -321,6 +383,7 @@ impl Kind {
             Self::StringAlias => STRING_ALIAS_REMEDY,
             Self::ResultAlias => RESULT_ALIAS_REMEDY,
             Self::DiscardedResult => DISCARDED_RESULT_REMEDY,
+            Self::DiscardedCompilerStderr => compiler_diagnostics::REMEDY,
             Self::DroppedComputation => DROPPED_COMPUTATION_REMEDY,
             Self::IgnoredComputation => IGNORED_COMPUTATION_REMEDY,
             Self::OpenDeserialization => OPEN_DESERIALIZATION_REMEDY,
@@ -328,6 +391,7 @@ impl Kind {
             Self::Comment => COMMENT_REMEDY,
             Self::UnboundedRemoval => UNBOUNDED_REMOVAL_REMEDY,
             Self::RawTreeRemoval => RAW_TREE_REMOVAL_REMEDY,
+            Self::UnownedCacheDirectory => UNOWNED_CACHE_DIRECTORY_REMEDY,
             Self::PerishableHandle => PERISHABLE_HANDLE_REMEDY,
             Self::LooseLayout => LOOSE_LAYOUT_REMEDY,
             Self::WildcardOverOurOwn => WILDCARD_OVER_OUR_OWN_REMEDY,
@@ -338,6 +402,15 @@ impl Kind {
             Self::FabricatedOverflow => FABRICATED_OVERFLOW_REMEDY,
             Self::WrappingCounter => WRAPPING_COUNTER_REMEDY,
             Self::UncheckedCast => UNCHECKED_CAST_REMEDY,
+            Self::UnsafeOutsideFfi => UNSAFE_OUTSIDE_FFI_REMEDY,
+            Self::RawBufferPointer => raw_buffers::REMEDY,
+            Self::SensitiveName => sensitive_names::REMEDY,
+            Self::RawGit => RAW_GIT_REMEDY,
+            Self::RawProcfs => procfs::REMEDY,
+            Self::RawStamp => stamps::REMEDY,
+            Self::RawEnvironmentClear => clears::REMEDY,
+            Self::WideRecordInteger => wide_records::REMEDY,
+            Self::ClaimAfterRelease => handovers::REMEDY,
             Self::UnownedSpawn => UNOWNED_SPAWN_REMEDY,
             Self::RawGroupSignal => RAW_GROUP_SIGNAL_REMEDY,
             Self::UnboundedChannel => UNBOUNDED_CHANNEL_REMEDY,
@@ -354,6 +427,8 @@ impl Kind {
             Self::RawEnvironment => RAW_ENVIRONMENT_REMEDY,
             Self::LoneTemporaryVariable => LONE_TEMPORARY_VARIABLE_REMEDY,
             Self::ErrorName => ERROR_NAME_REMEDY,
+            Self::RawProcessEnd => RAW_PROCESS_END_REMEDY,
+            Self::DefaultedAbsence => DEFAULTED_ABSENCE_REMEDY,
         }
     }
 }
@@ -388,13 +463,16 @@ const PAINTER: &str = "rust-mutants/src/telling.rs";
 /// Where the rule itself is written, which has to spell what it refuses in order to refuse it.
 const PAINT_RULE: [&str; 2] = ["xtask/src/lints.rs", "xtask/tests/lints.rs"];
 
-/// The module that is allowed to make it in a loop, being the one that bounds it.
+/// The modules that are allowed to make it in a loop, being the ones that bound it.
 ///
 /// A test may make it too: what a test removes is what it made, and it is standing there watching.
-const RECLAIMER: &str = "crates/rust-mutants/src/reclaim.rs";
+const RECLAIMERS: [&str; 1] = ["crates/rust-mutants/src/reclaim.rs"];
 
-/// The one module that removes a tree a run owns, restoring the owner's access on the way down.
-const TREE_REMOVER: &str = "crates/rust-mutants/src/tempowner/mod.rs";
+/// The modules that remove a tree an owner holds, restoring the owner's access on the way down.
+const TREE_REMOVERS: [&str; 2] = [
+    "crates/rust-mutants/src/tempowner/mod.rs",
+    "crates/njutest-devkit/src/temporary.rs",
+];
 
 /// Whether `file` is code a crate ships, which is where a removal of a run's own tree happens.
 fn shipped_source(file: &str) -> bool {
@@ -404,10 +482,11 @@ fn shipped_source(file: &str) -> bool {
 /// The only modules allowed to touch `serde_json`'s last-key-wins readers.
 ///
 /// Repository-relative equality matters: a suffix match would let an arbitrary nested `strictjson.rs` grant itself the parser capability.
-const STRICT_JSON_READERS: [&str; 5] = [
+const STRICT_JSON_READERS: [&str; 6] = [
     "crates/njutest/src/strictjson.rs",
     "crates/njutest-devkit/src/strictjson.rs",
     "crates/rust-mutants-cli/src/strictjson.rs",
+    "crates/rust-mutants-sealed/src/strictjson.rs",
     "crates/rust-mutants/src/strictjson.rs",
     "xtask/src/strictjson.rs",
 ];
@@ -469,6 +548,20 @@ fn evidence_reader(file: &str) -> bool {
     file != OBSERVER && EVIDENCE_READERS.iter().any(|scope| file.starts_with(scope))
 }
 
+/// The assurance phases, each of which concludes about the suite from the processes it starts.
+const PHASES: &str = "crates/njutest/src/assure/";
+
+/// The one module that sorts how a phase's process ended.
+const PROCESS_END: &str = "crates/njutest/src/assure/ended.rs";
+
+/// What a supervised run's result is asked about its end by, one question at a time.
+const PROCESS_END_QUESTIONS: [&str; 3] = ["succeeded", "timed_out", "conventional_exit_code"];
+
+/// Whether `file` is an assurance phase, which reads how its processes ended only through [`PROCESS_END`].
+fn phase_source(file: &str) -> bool {
+    file != PROCESS_END && file.starts_with(PHASES)
+}
+
 /// What a path, or a value standing for one, is asked about the filesystem by.
 const FILESYSTEM_QUESTIONS: [&str; 12] = [
     "read_dir",
@@ -512,10 +605,7 @@ fn filesystem_path_span(path: &syn::Path) -> Option<proc_macro2::Span> {
 }
 
 fn strict_conversions(file: &str) -> bool {
-    matches!(
-        file,
-        "crates/rust-mutants/src/runner/windows.rs" | "crates/rust-mutants/src/tempowner/lock.rs"
-    )
+    ffi::MODULES.contains(&file)
 }
 
 /// One thing found in one file.
@@ -575,19 +665,15 @@ impl fmt::Display for Finding {
     }
 }
 
-/// Everything `source` holds that this repository does not write.
-///
-/// # Errors
-/// A file that is not Rust this version can parse.
-pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error> {
-    let parsed = syn::parse_file(source)?;
-    let policies = [
+/// The policies the scan holds `file` to besides the rules every file keeps.
+fn policies(file: &str) -> BTreeSet<SourcePolicy> {
+    [
         (
-            file.ends_with(RECLAIMER) || file.contains("/tests/"),
+            RECLAIMERS.contains(&file) || file.contains("/tests/"),
             SourcePolicy::Reclaimer,
         ),
         (
-            file == TREE_REMOVER || !shipped_source(file),
+            TREE_REMOVERS.contains(&file) || !shipped_source(file),
             SourcePolicy::TreeRemover,
         ),
         (
@@ -598,20 +684,34 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
         (strict_conversions(file), SourcePolicy::StrictConversions),
         (evidence_reader(file), SourcePolicy::EvidenceReader),
         (gate_source(file), SourcePolicy::GateSource),
+        (phase_source(file), SourcePolicy::PhaseSource),
     ]
     .into_iter()
     .filter(|(enabled, _policy)| *enabled)
     .map(|(_enabled, policy)| policy)
-    .collect();
+    .collect()
+}
+
+/// Everything `source` holds that this repository does not write.
+///
+/// # Errors
+/// A file that is not Rust this version can parse.
+pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error> {
+    let parsed = crate::lexed::file(source)?;
     let mut scan = Scan {
         file: file.to_owned(),
         found: Vec::new(),
         looping: 0,
         aliases: Aliases::of(&parsed),
-        policies,
+        policies: policies(file),
         owned_spawn_boundaries: owned_spawn_boundaries(&parsed),
     };
     scan.visit_file(&parsed);
+    scan.found.extend(raw_buffers::found(&parsed, file));
+    scan.found.extend(sensitive_names::found(&parsed, file));
+    scan.found.extend(cache_directories::found(&parsed, file));
+    scan.found
+        .extend(compiler_diagnostics::found(&parsed, file));
     scan.found.extend(comments(file, source));
     scan.found.extend(handles(file, source));
     scan.found.extend(painted(file, source));
@@ -621,15 +721,33 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
         scan.found.extend(foreign_remainders(&parsed, file));
     }
     scan.found.extend(broad_expectations(&parsed, file));
-    if signals_are_held(file) {
-        scan.found.extend(raw_group_signals(&parsed, file));
+    if signals::held(file) {
+        scan.found.extend(signals::found(&parsed, file));
     }
+    if ffi::held(file) {
+        scan.found.extend(ffi::found(&parsed, file));
+    }
+    if git_doors::held(file) {
+        scan.found.extend(git_doors::found(&parsed, file));
+    }
+    if procfs::held(file) {
+        scan.found.extend(procfs::found(&parsed, file));
+    }
+    if handovers::held(file) {
+        scan.found.extend(handovers::found(&parsed, file));
+    }
+    scan.found.extend(stamps::found(&parsed, file));
+    scan.found.extend(wide_records::found(&parsed, file));
+    scan.found.extend(clears::found(&parsed, file));
     scan.found.extend(implied_cfgs(&parsed, file));
     if file != SHELL_FINDER {
         scan.found.extend(bare_shells(&parsed, file));
     }
     if reads_into_the_map(file) {
         scan.found.extend(raw_lexings(&parsed, file));
+    }
+    if crate::defaulted::answers_for_absence(file) {
+        scan.found.extend(defaulted_absences(&parsed, file));
     }
     if !ENVIRONMENT_READERS
         .iter()
@@ -650,7 +768,7 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
 /// # Errors
 /// The source is not Rust this compiler version can parse.
 pub fn source_redirects(source: &str) -> Result<Vec<SourceRedirect>, syn::Error> {
-    let parsed = syn::parse_file(source)?;
+    let parsed = crate::lexed::file(source)?;
     let mut visitor = SourceRedirects { found: Vec::new() };
     visitor.visit_file(&parsed);
     visitor.found.sort_by_key(|redirect| match redirect {
@@ -667,7 +785,7 @@ pub fn source_redirects(source: &str) -> Result<Vec<SourceRedirect>, syn::Error>
 /// # Errors
 /// The source is not Rust this compiler version can parse.
 pub fn proc_macro_exports(source: &str) -> Result<Vec<ProcMacroExport>, syn::Error> {
-    let parsed = syn::parse_file(source)?;
+    let parsed = crate::lexed::file(source)?;
     let mut exports = Vec::new();
     for item in parsed.items {
         let syn::Item::Fn(function) = item else {
@@ -752,7 +870,7 @@ fn conditional_proc_macro_export(meta: &syn::Meta) -> Result<bool, syn::Error> {
 /// # Errors
 /// The source is not Rust this compiler version can parse.
 pub fn opaque_proc_macro_synthesis(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error> {
-    let parsed = syn::parse_file(source)?;
+    let parsed = crate::lexed::file(source)?;
     let mut visitor = OpaqueProcMacroSynthesis {
         file,
         found: Vec::new(),
@@ -1269,7 +1387,7 @@ fn meta_broadly_expects(meta: &syn::Meta) -> bool {
 /// # Errors
 /// The source is not Rust this compiler version can parse.
 pub fn declared_enums(source: &str) -> Result<Vec<String>, syn::Error> {
-    let parsed = syn::parse_file(source)?;
+    let parsed = crate::lexed::file(source)?;
     let mut found = Vec::new();
     let mut named = Named { found: &mut found };
     named.visit_file(&parsed);
@@ -1293,7 +1411,7 @@ impl<'ast> Visit<'ast> for Named<'_> {
 /// # Errors
 /// The source is not Rust this compiler version can parse.
 pub fn open_enums(source: &str) -> Result<Vec<String>, syn::Error> {
-    let parsed = syn::parse_file(source)?;
+    let parsed = crate::lexed::file(source)?;
     Ok(open_enum_declarations(&parsed)
         .into_iter()
         .map(|(name, _line)| name)
@@ -1359,7 +1477,7 @@ impl Wildcard {
 /// # Errors
 /// The source is not Rust this compiler version can parse.
 pub fn wildcards_over(source: &str, ours: &[String]) -> Result<Vec<Wildcard>, syn::Error> {
-    let parsed = syn::parse_file(source)?;
+    let parsed = crate::lexed::file(source)?;
     let resolver = EnumResolver::of(&parsed, ours);
     let mut found = Vec::new();
     let mut scan = Catching {
@@ -2120,7 +2238,7 @@ pub fn manual_variant_lists_across<'a>(
     let mut parsed = Vec::new();
     let mut shapes: BTreeMap<String, BTreeMap<String, Vec<EnumShape>>> = BTreeMap::new();
     for (scope, file, source) in sources {
-        let syntax = syn::parse_file(source)?;
+        let syntax = crate::lexed::file(source)?;
         for (name, declarations) in enum_shapes(&syntax) {
             shapes
                 .entry(scope.to_owned())
@@ -2308,7 +2426,7 @@ pub fn open_and_closed_across<'a>(
     let mut listed = BTreeSet::new();
     let mut errors = BTreeSet::new();
     for (scope, file, source) in sources {
-        let parsed = syn::parse_file(source)?;
+        let parsed = crate::lexed::file(source)?;
         open.extend(
             open_enum_declarations(&parsed)
                 .into_iter()
@@ -3759,7 +3877,7 @@ fn external_capture_allowed(file: &str, item: &str) -> bool {
                 "Profile",
                 "CompilerMessage",
                 "Diagnostic",
-                "DiagnosticSpan",
+                "SpanFields",
             ],
         ),
         (
@@ -3801,6 +3919,7 @@ fn manual_default_allowed(file: &str, item: &str) -> bool {
                 "Contract",
                 "Execution",
                 "Fuzz",
+                "Mutation",
                 "Reports",
             ],
         ),
@@ -4796,6 +4915,7 @@ enum SourcePolicy {
     StrictConversions,
     EvidenceReader,
     GateSource,
+    PhaseSource,
 }
 
 struct Scan {
@@ -5055,6 +5175,14 @@ impl Scan {
         );
         for method in ["from_utf8_lossy", "to_string_lossy"] {
             self.note_each(Kind::LossyText, identifier_spans_in_tokens(tokens, method));
+        }
+        if self.has_policy(SourcePolicy::PhaseSource) {
+            for question in PROCESS_END_QUESTIONS {
+                self.note_each(
+                    Kind::RawProcessEnd,
+                    invocation_spans_in_tokens(tokens, question),
+                );
+            }
         }
         self.note_each(
             Kind::ForgottenValue,
@@ -5524,6 +5652,11 @@ impl Visit<'_> for Scan {
         if self.has_policy(SourcePolicy::GateSource) && call.method == "read_dir" {
             self.note(Kind::RawTreeWalk, call.method.span());
         }
+        if self.has_policy(SourcePolicy::PhaseSource)
+            && PROCESS_END_QUESTIONS.contains(&call.method.to_string().as_str())
+        {
+            self.note(Kind::RawProcessEnd, call.method.span());
+        }
         if call.method == "spawn" && !self.raw_spawn_boundary(call.method.span()) {
             self.note(Kind::UnownedSpawn, call.method.span());
         }
@@ -5597,6 +5730,15 @@ impl Visit<'_> for Scan {
             && let Some(span) = tree_walk_span(&path.path)
         {
             self.note(Kind::RawTreeWalk, span);
+        }
+        if self.has_policy(SourcePolicy::PhaseSource)
+            && path.path.segments.len() > 1
+            && let Some(segment) =
+                path.path.segments.iter().find(|segment| {
+                    PROCESS_END_QUESTIONS.contains(&segment.ident.to_string().as_str())
+                })
+        {
+            self.note(Kind::RawProcessEnd, segment.ident.span());
         }
         if let Some(segment) = path
             .path
@@ -5962,7 +6104,7 @@ fn tokens_name_one_of(tokens: &proc_macro2::TokenStream, names: &BTreeSet<String
         proc_macro2::TokenTree::Ident(ident) => names.contains(&ident.to_string()),
         proc_macro2::TokenTree::Group(group) => tokens_name_one_of(&group.stream(), names),
         proc_macro2::TokenTree::Literal(literal) => {
-            syn::parse_str::<syn::LitStr>(&literal.to_string())
+            crate::lexed::parse::<syn::LitStr>(&literal.to_string())
                 .is_ok_and(|literal| format_string_names_one_of(&literal.value(), names))
         }
         proc_macro2::TokenTree::Punct(_) => false,
@@ -6351,6 +6493,12 @@ fn opaque_sensitive_meta(meta: &syn::Meta) -> bool {
     let syn::Meta::List(list) = meta else {
         return false;
     };
+    if list.path.is_ident("cfg") {
+        return match list.parse_args::<syn::Meta>() {
+            Ok(condition) => opaque_cfg_condition(&condition),
+            Err(_opaque_cfg) => true,
+        };
+    }
     if list.path.is_ident("derive") {
         return list
             .parse_args_with(
@@ -6373,6 +6521,18 @@ fn opaque_sensitive_meta(meta: &syn::Meta) -> bool {
     {
         Ok(nested) => nested.iter().skip(1).any(opaque_sensitive_meta),
         Err(_unrecognised_generated_cfg_attr) => true,
+    }
+}
+
+fn opaque_cfg_condition(meta: &syn::Meta) -> bool {
+    let syn::Meta::List(list) = meta else {
+        return false;
+    };
+    match list
+        .parse_args_with(syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated)
+    {
+        Ok(nested) => nested.iter().any(opaque_cfg_condition),
+        Err(_opaque_condition) => true,
     }
 }
 
@@ -6403,136 +6563,17 @@ fn allow_attribute_spans(meta: &syn::Meta) -> Vec<proc_macro2::Span> {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum CfgTruth {
-    Always,
-    Never,
-    Variable,
-}
-
-fn cfg_constant(meta: &syn::Meta) -> CfgTruth {
-    let syn::Meta::List(list) = meta else {
-        return CfgTruth::Variable;
-    };
-    let arguments = match list
-        .parse_args_with(syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated)
-    {
-        Ok(arguments) => arguments,
-        Err(_opaque_condition) => return CfgTruth::Variable,
-    };
-    if list.path.is_ident("all") {
-        let mut variable = false;
-        for argument in &arguments {
-            match cfg_constant(argument) {
-                CfgTruth::Never => return CfgTruth::Never,
-                CfgTruth::Variable => variable = true,
-                CfgTruth::Always => {}
-            }
-        }
-        return if variable {
-            CfgTruth::Variable
-        } else {
-            CfgTruth::Always
-        };
-    }
-    if list.path.is_ident("any") {
-        let mut variable = false;
-        for argument in &arguments {
-            match cfg_constant(argument) {
-                CfgTruth::Always => return CfgTruth::Always,
-                CfgTruth::Variable => variable = true,
-                CfgTruth::Never => {}
-            }
-        }
-        return if variable {
-            CfgTruth::Variable
-        } else {
-            CfgTruth::Never
-        };
-    }
-    if !list.path.is_ident("not") || arguments.len() != 1 {
-        return CfgTruth::Variable;
-    }
-    match arguments.first().map(cfg_constant) {
-        Some(CfgTruth::Always) => CfgTruth::Never,
-        Some(CfgTruth::Never) => CfgTruth::Always,
-        Some(CfgTruth::Variable) | None => CfgTruth::Variable,
-    }
-}
-
-/// Where an environment is read as pairs: the one type that holds it, and the tooling the engine cannot be a dependency of.
+/// Where an environment is read as pairs: the engine's one type that holds it, xtask's, which cannot depend on the engine, and the test support the engine cannot be a dependency of.
 const ENVIRONMENT_READERS: [&str; 3] = [
     "crates/rust-mutants/src/vars.rs",
+    "xtask/src/environment.rs",
     "crates/njutest-devkit/",
-    "xtask/",
 ];
 
 /// Every type that holds an environment variable as a pair of `OsString`s.
 fn raw_environments(parsed: &syn::File, file: &str) -> Vec<Finding> {
     let mut visitor = RawEnvironment {
         file,
-        found: Vec::new(),
-    };
-    visitor.visit_file(parsed);
-    visitor.found
-}
-
-/// The one file for each platform that may signal a process by id: the engine's runner on Unix and on Windows, and xtask's work, which cannot depend on the engine.
-const SIGNALLERS: [&str; 3] = [
-    "crates/rust-mutants/src/runner/unix.rs",
-    "crates/rust-mutants/src/runner/windows.rs",
-    "xtask/src/work.rs",
-];
-
-/// Every name that sends a signal to a process or a group by id, from any crate that offers one.
-const SIGNALLING_NAMES: [&str; 16] = [
-    "kill",
-    "killpg",
-    "kill_process",
-    "kill_process_group",
-    "kill_current_process_group",
-    "tgkill",
-    "tkill",
-    "sigqueue",
-    "pidfd_send_signal",
-    "SYS_kill",
-    "SYS_tgkill",
-    "SYS_tkill",
-    "SYS_pidfd_send_signal",
-    "TerminateProcess",
-    "TerminateJobObject",
-    "GenerateConsoleCtrlEvent",
-];
-
-/// Programs that signal the processes they are given.
-const SIGNALLING_PROGRAMS: [&str; 8] = [
-    "kill",
-    "pkill",
-    "killall",
-    "taskkill",
-    "kill.exe",
-    "taskkill.exe",
-    "/bin/kill",
-    "/usr/bin/kill",
-];
-
-/// The file that defines this rule, which names every way to signal in order to refuse it.
-const SIGNAL_RULE: &str = "xtask/src/lints.rs";
-
-/// Whether `file` is code that runs for somebody, crate or xtask, where signalling by id is held to one place.
-fn signals_are_held(file: &str) -> bool {
-    (file.starts_with("crates/") || file.starts_with("xtask/"))
-        && file.contains("/src/")
-        && ships(file)
-        && !SIGNALLERS.contains(&file)
-        && file != SIGNAL_RULE
-}
-
-/// Every place a file names a way to signal a process by id, but for the one place that does it and code compiled only for tests.
-fn raw_group_signals(parsed: &syn::File, file: &str) -> Vec<Finding> {
-    let mut visitor = RawSignal {
-        file,
-        tests: 0,
         found: Vec::new(),
     };
     visitor.visit_file(parsed);
@@ -6569,141 +6610,6 @@ impl Visit<'_> for RawEnvironment<'_> {
             });
         }
         syn::visit::visit_type_tuple(self, tuple);
-    }
-}
-
-/// How many enclosing items are compiled only for tests, and every signalling name outside them, by path, import, macro token or program.
-struct RawSignal<'a> {
-    file: &'a str,
-    tests: usize,
-    found: Vec<Finding>,
-}
-
-/// Whether `attributes` compile what they sit on only for tests.
-fn compiled_only_for_tests(attributes: &[syn::Attribute]) -> bool {
-    attributes.iter().any(|attribute| match &attribute.meta {
-        syn::Meta::List(list) if list.path.is_ident("cfg") => {
-            list.tokens.to_string() == "test"
-                || all_of(&list.tokens)
-                    .is_some_and(|parts| parts.iter().any(|part| part.to_string() == "test"))
-        }
-        syn::Meta::List(_) | syn::Meta::Path(_) | syn::Meta::NameValue(_) => false,
-    })
-}
-
-/// Whether `name` is one of the ways to signal by id.
-fn signalling(name: &proc_macro2::Ident) -> bool {
-    SIGNALLING_NAMES.contains(&name.to_string().as_str())
-}
-
-impl RawSignal<'_> {
-    fn within(&mut self, attributes: &[syn::Attribute], walk: impl FnOnce(&mut Self)) {
-        let tests = compiled_only_for_tests(attributes);
-        if tests {
-            self.tests = self.tests.saturating_add(1);
-        }
-        walk(self);
-        if tests {
-            self.tests = self.tests.saturating_sub(1);
-        }
-    }
-
-    fn note(&mut self, span: proc_macro2::Span) {
-        if self.tests == 0 {
-            self.found.push(Finding {
-                kind: Kind::RawGroupSignal,
-                file: self.file.to_owned(),
-                line: span.start().line,
-            });
-        }
-    }
-
-    /// Every signalling name among `tokens` that is not a method, and every signalling program spelled there.
-    fn scan_tokens(&mut self, tokens: &proc_macro2::TokenStream) {
-        let trees: Vec<proc_macro2::TokenTree> = tokens.clone().into_iter().collect();
-        for (at, tree) in trees.iter().enumerate() {
-            match tree {
-                proc_macro2::TokenTree::Ident(name) if signalling(name) => {
-                    let method = at > 0
-                        && matches!(
-                            trees.get(at.saturating_sub(1)),
-                            Some(proc_macro2::TokenTree::Punct(dot)) if dot.as_char() == '.'
-                        );
-                    if !method {
-                        self.note(name.span());
-                    }
-                }
-                proc_macro2::TokenTree::Literal(literal) => {
-                    let program = match syn::parse2::<syn::LitStr>(proc_macro2::TokenStream::from(
-                        tree.clone(),
-                    )) {
-                        Ok(text) => SIGNALLING_PROGRAMS.contains(&text.value().as_str()),
-                        Err(_not_a_string) => false,
-                    };
-                    if program {
-                        self.note(literal.span());
-                    }
-                }
-                proc_macro2::TokenTree::Group(group) => self.scan_tokens(&group.stream()),
-                proc_macro2::TokenTree::Ident(_) | proc_macro2::TokenTree::Punct(_) => {}
-            }
-        }
-    }
-}
-
-impl Visit<'_> for RawSignal<'_> {
-    fn visit_item(&mut self, item: &syn::Item) {
-        self.within(item_attributes(item), |walk| {
-            syn::visit::visit_item(walk, item);
-        });
-    }
-
-    fn visit_impl_item(&mut self, item: &syn::ImplItem) {
-        let attributes: &[syn::Attribute] = match item {
-            syn::ImplItem::Const(one) => &one.attrs,
-            syn::ImplItem::Fn(one) => &one.attrs,
-            syn::ImplItem::Type(one) => &one.attrs,
-            syn::ImplItem::Macro(one) => &one.attrs,
-            _ => &[],
-        };
-        self.within(attributes, |walk| syn::visit::visit_impl_item(walk, item));
-    }
-
-    fn visit_path(&mut self, path: &syn::Path) {
-        let names: Vec<&syn::PathSegment> = path.segments.iter().collect();
-        for (at, segment) in names.iter().enumerate() {
-            let child_kill = segment.ident == "kill"
-                && at > 0
-                && names
-                    .get(at.saturating_sub(1))
-                    .is_some_and(|before| before.ident == "Child");
-            if signalling(&segment.ident) && !child_kill {
-                self.note(segment.ident.span());
-            }
-        }
-        syn::visit::visit_path(self, path);
-    }
-
-    fn visit_use_name(&mut self, name: &syn::UseName) {
-        if signalling(&name.ident) {
-            self.note(name.ident.span());
-        }
-    }
-
-    fn visit_use_rename(&mut self, rename: &syn::UseRename) {
-        if signalling(&rename.ident) {
-            self.note(rename.ident.span());
-        }
-    }
-
-    fn visit_lit_str(&mut self, literal: &syn::LitStr) {
-        if SIGNALLING_PROGRAMS.contains(&literal.value().as_str()) {
-            self.note(literal.span());
-        }
-    }
-
-    fn visit_macro(&mut self, invocation: &syn::Macro) {
-        self.scan_tokens(&invocation.tokens);
     }
 }
 
@@ -6843,51 +6749,57 @@ impl Visit<'_> for BareShell<'_> {
     }
 }
 
-/// Every `#[cfg]` whose condition an enclosing item's `#[cfg]` already guarantees, which a reader takes for a second condition the item is under.
 fn implied_cfgs(parsed: &syn::File, file: &str) -> Vec<Finding> {
     let mut visitor = ImpliedCfg {
         file,
         held: Vec::new(),
+        conditions: CfgScope::new(CfgWorld::Any),
         found: Vec::new(),
     };
     visitor.visit_file(parsed);
     visitor.found
 }
 
-/// The conditions the items around the walk are compiled under, and what repeated one of them.
 struct ImpliedCfg<'a> {
     file: &'a str,
     held: Vec<String>,
+    conditions: CfgScope,
     found: Vec<Finding>,
 }
 
 impl ImpliedCfg<'_> {
-    /// Notes every condition of `attributes` the enclosing ones imply, then walks the item under all of them.
     fn within(&mut self, attributes: &[syn::Attribute], walk: impl FnOnce(&mut Self)) {
-        let conditions: Vec<(proc_macro2::TokenStream, proc_macro2::Span)> = attributes
-            .iter()
-            .filter_map(|attribute| match &attribute.meta {
-                syn::Meta::List(list) if list.path.is_ident("cfg") => {
-                    Some((list.tokens.clone(), attribute.pound_token.span))
-                }
-                syn::Meta::List(_) | syn::Meta::Path(_) | syn::Meta::NameValue(_) => None,
-            })
-            .collect();
-        for (condition, span) in &conditions {
-            if implied(condition, &self.held) {
-                self.found.push(Finding {
-                    kind: Kind::VacuousCfg,
-                    file: self.file.to_owned(),
-                    line: span.start().line,
-                });
-            }
-        }
         let depth = self.held.len();
-        for (condition, _span) in &conditions {
-            self.held.extend(conjuncts(condition));
+        let condition_depth = self.conditions.mark();
+        let mut possible = self.conditions.possible();
+        for attribute in attributes {
+            if let syn::Meta::List(list) = &attribute.meta
+                && list.path.is_ident("cfg")
+            {
+                if implied(&list.tokens, &self.held) {
+                    self.found.push(Finding {
+                        kind: Kind::VacuousCfg,
+                        file: self.file.to_owned(),
+                        line: attribute.pound_token.span.start().line,
+                    });
+                }
+                self.held.extend(conjuncts(&list.tokens));
+            }
+            if self.conditions.push(attribute) {
+                let now = self.conditions.possible();
+                if possible && !now {
+                    self.found.push(Finding {
+                        kind: Kind::VacuousCfg,
+                        file: self.file.to_owned(),
+                        line: attribute.pound_token.span.start().line,
+                    });
+                }
+                possible = now;
+            }
         }
         walk(self);
         self.held.truncate(depth);
+        self.conditions.truncate(condition_depth);
     }
 }
 
@@ -7000,28 +6912,6 @@ impl Visit<'_> for ImpliedCfg<'_> {
 
     fn visit_local(&mut self, local: &syn::Local) {
         self.within(&local.attrs, |walk| syn::visit::visit_local(walk, local));
-    }
-}
-
-/// The attributes of any item, every kind named, so a kind this walk forgot is a compile error rather than a hole.
-fn item_attributes(item: &syn::Item) -> &[syn::Attribute] {
-    match item {
-        syn::Item::Const(one) => &one.attrs,
-        syn::Item::Enum(one) => &one.attrs,
-        syn::Item::ExternCrate(one) => &one.attrs,
-        syn::Item::Fn(one) => &one.attrs,
-        syn::Item::ForeignMod(one) => &one.attrs,
-        syn::Item::Impl(one) => &one.attrs,
-        syn::Item::Macro(one) => &one.attrs,
-        syn::Item::Mod(one) => &one.attrs,
-        syn::Item::Static(one) => &one.attrs,
-        syn::Item::Struct(one) => &one.attrs,
-        syn::Item::Trait(one) => &one.attrs,
-        syn::Item::TraitAlias(one) => &one.attrs,
-        syn::Item::Type(one) => &one.attrs,
-        syn::Item::Union(one) => &one.attrs,
-        syn::Item::Use(one) => &one.attrs,
-        _ => &[],
     }
 }
 
@@ -8402,7 +8292,7 @@ const RUST_READER: &str = "crates/rust-mutants/src/parsing.rs";
 const OUTSIDE_THE_MAP: [&str; 2] = ["crates/njutest-macros/", "crates/njutest-devkit/"];
 
 /// Every type a `.parse::<T>()` may name outside the reader, none of them Rust text.
-const PARSED_TYPES: [&str; 19] = [
+const PARSED_TYPES: [&str; 20] = [
     "u8",
     "u16",
     "u32",
@@ -8422,6 +8312,7 @@ const PARSED_TYPES: [&str; 19] = [
     "String",
     "toml::Table",
     "jiff::Timestamp",
+    "crate::limitation::Name",
 ];
 
 /// Functions and constructors that lex the text they are given, whatever path names them.
@@ -8435,9 +8326,13 @@ const LEXING_MACROS: [&str; 4] = [
     "parse_quote_spanned",
 ];
 
-/// Whether `file` is shipped code that would read into proc-macro2's map on its own thread.
+/// Whether `file` is code a crate ships, builds with, or runs to measure itself, where a reading on its own thread would fill proc-macro2's map: its sources, its build script, its benches and its examples.
 fn reads_into_the_map(file: &str) -> bool {
-    shipped_source(file)
+    let built_or_measured = file.starts_with("crates/")
+        && (file.ends_with("/build.rs")
+            || file.contains("/benches/")
+            || file.contains("/examples/"));
+    (shipped_source(file) || built_or_measured)
         && file != RUST_READER
         && !OUTSIDE_THE_MAP
             .iter()
@@ -8446,20 +8341,52 @@ fn reads_into_the_map(file: &str) -> bool {
 
 /// Every place outside the reader where Rust text becomes tokens, but for code compiled only for tests.
 fn raw_lexings(parsed: &syn::File, file: &str) -> Vec<Finding> {
+    let mut renames = Renames::default();
+    renames.visit_file(parsed);
     let mut visitor = RawLexing {
         file,
         tests: 0,
         found: Vec::new(),
+        renamed: renames
+            .found
+            .into_iter()
+            .map(|rename| (rename.local, rename.source))
+            .collect(),
     };
     visitor.visit_file(parsed);
     visitor.found
 }
 
-/// How many enclosing items are compiled only for tests, and every lexing outside all of them.
+/// Every name the file gives to something named otherwise, wherever it stands: a `use` under another name, and a `type` alias of a path.
+#[derive(Default)]
+struct Renames {
+    found: Vec<Rename>,
+}
+
+impl Visit<'_> for Renames {
+    fn visit_item_use(&mut self, item: &syn::ItemUse) {
+        imported_renames(&item.tree, &mut Vec::new(), &mut self.found);
+    }
+
+    fn visit_item_type(&mut self, item: &syn::ItemType) {
+        if let syn::Type::Path(aliased) = &*item.ty
+            && aliased.qself.is_none()
+        {
+            self.found.push(Rename {
+                source: last_name(&aliased.path),
+                local: item.ident.to_string(),
+            });
+        }
+        syn::visit::visit_item_type(self, item);
+    }
+}
+
+/// How many enclosing items are compiled only for tests, and every lexing outside all of them, with every name the file gives to something named otherwise read as the name it stands for.
 struct RawLexing<'a> {
     file: &'a str,
     tests: usize,
     found: Vec<Finding>,
+    renamed: BTreeMap<String, String>,
 }
 
 /// Whether `attributes` compile what they sit on only for tests.
@@ -8482,33 +8409,24 @@ fn last_name(path: &syn::Path) -> String {
     }
 }
 
-/// Whether `path` names a function that lexes the text it is given.
-fn lexing_path(path: &syn::Path, qualified: Option<&syn::QSelf>) -> bool {
-    let names: Vec<String> = path
-        .segments
-        .iter()
-        .map(|segment| segment.ident.to_string())
-        .collect();
-    let Some(last) = names.last() else {
-        return false;
-    };
-    let lexed_type = |name: &str| name == "TokenStream" || name == "Literal";
-    let qualified_lexed = qualified.is_some_and(|qself| match &*qself.ty {
-        syn::Type::Path(ty) => lexed_type(&last_name(&ty.path)),
-        _ => false,
-    });
-    LEXING_FUNCTIONS.contains(&last.as_str())
-        || (last == "from_str"
-            && (qualified_lexed
-                || names
-                    .iter()
-                    .any(|name| lexed_type(name) || name == "FromStr")))
-        || (last == "new"
-            && names
+/// Whether a type spelled `spelled` is one a `.parse::<T>()` may read outside the reader.
+fn parsed_type(spelled: &str) -> bool {
+    PARSED_TYPES.contains(&spelled)
+}
+
+/// The type a turbofish names first, spelled with `::` between its segments, or nothing where it names no plain path.
+fn turbofish_type(arguments: &syn::AngleBracketedGenericArguments) -> Option<String> {
+    match arguments.args.first() {
+        Some(syn::GenericArgument::Type(syn::Type::Path(ty))) if ty.qself.is_none() => Some(
+            ty.path
+                .segments
                 .iter()
-                .rev()
-                .nth(1)
-                .is_some_and(|ty| ty == "LitInt" || ty == "LitFloat"))
+                .map(|segment| segment.ident.to_string())
+                .collect::<Vec<String>>()
+                .join("::"),
+        ),
+        Some(_) | None => None,
+    }
 }
 
 impl RawLexing<'_> {
@@ -8532,6 +8450,168 @@ impl RawLexing<'_> {
             });
         }
     }
+
+    /// `name` read back through every name the file gives it, an import under another name or a `type` alias, to the one it stands for.
+    fn resolved(&self, name: &str) -> String {
+        let mut standing = name;
+        for _ in 0..=self.renamed.len() {
+            match self.renamed.get(standing) {
+                Some(source) if source != standing => standing = source,
+                Some(_) | None => break,
+            }
+        }
+        standing.to_owned()
+    }
+
+    /// Whether `path` names a function that lexes the text it is given.
+    fn lexing_path(&self, path: &syn::Path, qualified: Option<&syn::QSelf>) -> bool {
+        let names: Vec<String> = path
+            .segments
+            .iter()
+            .map(|segment| self.resolved(&segment.ident.to_string()))
+            .collect();
+        let Some(last) = names.last() else {
+            return false;
+        };
+        let lexed_type = |name: &str| name == "TokenStream" || name == "Literal";
+        let qualified_type = qualified.and_then(|qself| match &*qself.ty {
+            syn::Type::Path(ty) => Some(self.resolved(&last_name(&ty.path))),
+            _ => None,
+        });
+        let member = qualified_type
+            .as_deref()
+            .or_else(|| names.iter().rev().nth(1).map(String::as_str));
+        let turbofish = path
+            .segments
+            .last()
+            .and_then(|segment| match &segment.arguments {
+                syn::PathArguments::AngleBracketed(arguments) => turbofish_type(arguments),
+                syn::PathArguments::None | syn::PathArguments::Parenthesized(_) => None,
+            });
+        LEXING_FUNCTIONS.contains(&last.as_str())
+            || (last == "from_str"
+                && (member.is_some_and(lexed_type)
+                    || names
+                        .iter()
+                        .any(|name| lexed_type(name) || name == "FromStr")))
+            || (last == "new" && matches!(member, Some("LitInt" | "LitFloat")))
+            || ((last == "parse" || last == "parse_with") && member == Some("LitStr"))
+            || (last == "parse"
+                && member == Some("str")
+                && turbofish.is_none_or(|ty| !parsed_type(&ty)))
+    }
+
+    /// Every lexing written inside the arguments of a macro, which the parser leaves as tokens: a lexing function named, one read through a type it is a method of, a `from_str` of a lexed type or of `FromStr`, a `parse` into a type not on the list or into one it does not name, and a lexing macro invoked.
+    fn lexing_tokens(&mut self, tokens: &proc_macro2::TokenStream) {
+        let mut flat = Vec::new();
+        flattened_tokens(tokens, &mut flat);
+        for (at, token) in flat.iter().enumerate() {
+            let FlatToken::Ident(spelled, span) = token else {
+                continue;
+            };
+            let name = self.resolved(spelled);
+            let before = |back: usize| at.checked_sub(back).and_then(|index| flat.get(index));
+            let after = |ahead: usize| at.checked_add(ahead).and_then(|index| flat.get(index));
+            let pathed = matches!(
+                (before(1), before(2)),
+                (Some(FlatToken::Punct(':')), Some(FlatToken::Punct(':')))
+            );
+            let owner = match before(3) {
+                Some(FlatToken::Ident(owner, _)) if pathed => Some(self.resolved(owner)),
+                Some(_) | None => None,
+            };
+            let method = matches!(before(1), Some(FlatToken::Punct('.')));
+            let qualified = pathed && matches!(before(3), Some(FlatToken::Punct('>')));
+            let called = pathed || method;
+            let read_as = turbofish_spelled(&flat, at);
+            let unlisted = |ty: &String| !parsed_type(ty);
+            let lexes = LEXING_FUNCTIONS.contains(&name.as_str())
+                || (name == "parse_with" && called)
+                || (name == "new" && matches!(owner.as_deref(), Some("LitInt" | "LitFloat")))
+                || (name == "parse" && owner.as_deref() == Some("LitStr"))
+                || (name == "from_str" && self.names_lexed_type(&flat, at))
+                || (name == "parse"
+                    && (method || qualified || owner.as_deref() == Some("str"))
+                    && read_as.as_ref().is_none_or(unlisted))
+                || (name == "parse" && called && read_as.as_ref().is_some_and(unlisted))
+                || (LEXING_MACROS.contains(&name.as_str())
+                    && matches!(after(1), Some(FlatToken::Punct('!'))));
+            if lexes {
+                self.note(*span);
+            }
+        }
+    }
+
+    /// Whether the path a `from_str` at `at` of `flat` is written at names `TokenStream`, `Literal` or `FromStr`.
+    fn names_lexed_type(&self, flat: &[FlatToken], at: usize) -> bool {
+        let mut back = at;
+        while let Some(previous) = back.checked_sub(1).and_then(|index| flat.get(index)) {
+            match previous {
+                FlatToken::Ident(name, _) => {
+                    let name = self.resolved(name);
+                    if name == "TokenStream" || name == "Literal" || name == "FromStr" {
+                        return true;
+                    }
+                }
+                FlatToken::Punct(':' | '<' | '>') => {}
+                FlatToken::Punct(_) | FlatToken::Other => return false,
+            }
+            back = back.saturating_sub(1);
+        }
+        false
+    }
+}
+
+/// One token of a macro's arguments, flattened so a rule can read its neighbours.
+enum FlatToken {
+    /// A name and where it stands.
+    Ident(String, proc_macro2::Span),
+    /// One punctuation character.
+    Punct(char),
+    /// A literal, or where a group opens or closes.
+    Other,
+}
+
+/// `tokens` flattened into `into`, each group marked where it opens and closes.
+fn flattened_tokens(tokens: &proc_macro2::TokenStream, into: &mut Vec<FlatToken>) {
+    for tree in tokens.clone() {
+        match tree {
+            proc_macro2::TokenTree::Ident(ident) => {
+                into.push(FlatToken::Ident(ident.to_string(), ident.span()));
+            }
+            proc_macro2::TokenTree::Punct(punct) => into.push(FlatToken::Punct(punct.as_char())),
+            proc_macro2::TokenTree::Group(group) => {
+                into.push(FlatToken::Other);
+                flattened_tokens(&group.stream(), into);
+                into.push(FlatToken::Other);
+            }
+            proc_macro2::TokenTree::Literal(_) => into.push(FlatToken::Other),
+        }
+    }
+}
+
+/// The type the turbofish after the name at `at` of `flat` names, spelled with `::` between its segments, or nothing where no turbofish follows.
+fn turbofish_spelled(flat: &[FlatToken], at: usize) -> Option<String> {
+    let mut ahead = at.checked_add(1)?;
+    for wanted in [':', ':', '<'] {
+        match flat.get(ahead) {
+            Some(FlatToken::Punct(found)) if *found == wanted => ahead = ahead.checked_add(1)?,
+            Some(_) | None => return None,
+        }
+    }
+    let mut names = Vec::new();
+    let mut depth = 0_usize;
+    while let Some(token) = flat.get(ahead) {
+        match token {
+            FlatToken::Punct('<') => depth = depth.saturating_add(1),
+            FlatToken::Punct('>') if depth == 0 => return Some(names.join("::")),
+            FlatToken::Punct('>') => depth = depth.saturating_sub(1),
+            FlatToken::Ident(name, _) if depth == 0 => names.push(name.clone()),
+            FlatToken::Ident(..) | FlatToken::Punct(_) | FlatToken::Other => {}
+        }
+        ahead = ahead.checked_add(1)?;
+    }
+    None
 }
 
 impl Visit<'_> for RawLexing<'_> {
@@ -8553,7 +8633,7 @@ impl Visit<'_> for RawLexing<'_> {
     }
 
     fn visit_item_use(&mut self, item: &syn::ItemUse) {
-        for function in LEXING_FUNCTIONS {
+        for function in LEXING_FUNCTIONS.iter().chain(&LEXING_MACROS) {
             for span in imported_function_spans(&item.tree, function) {
                 self.note(span);
             }
@@ -8562,7 +8642,7 @@ impl Visit<'_> for RawLexing<'_> {
     }
 
     fn visit_expr_path(&mut self, path: &syn::ExprPath) {
-        if lexing_path(&path.path, path.qself.as_ref())
+        if self.lexing_path(&path.path, path.qself.as_ref())
             && let Some(last) = path.path.segments.last()
         {
             self.note(last.ident.span());
@@ -8572,20 +8652,11 @@ impl Visit<'_> for RawLexing<'_> {
 
     fn visit_expr_method_call(&mut self, call: &syn::ExprMethodCall) {
         let method = call.method.to_string();
-        let untyped = |turbofish: &syn::AngleBracketedGenericArguments| match turbofish.args.first()
-        {
-            Some(syn::GenericArgument::Type(syn::Type::Path(ty))) if ty.qself.is_none() => {
-                let spelled = ty
-                    .path
-                    .segments
-                    .iter()
-                    .map(|segment| segment.ident.to_string())
-                    .collect::<Vec<String>>()
-                    .join("::");
-                !PARSED_TYPES.contains(&spelled.as_str())
-            }
-            Some(_) | None => true,
-        };
+        let untyped =
+            |turbofish: &syn::AngleBracketedGenericArguments| match turbofish_type(turbofish) {
+                Some(spelled) => !parsed_type(&spelled),
+                None => true,
+            };
         let lexes = method == "parse_str"
             || method == "parse_with"
             || (method == "parse" && call.turbofish.as_ref().is_some_and(untyped));
@@ -8596,11 +8667,117 @@ impl Visit<'_> for RawLexing<'_> {
     }
 
     fn visit_macro(&mut self, invocation: &syn::Macro) {
-        if LEXING_MACROS.contains(&last_name(&invocation.path).as_str())
+        if LEXING_MACROS.contains(&self.resolved(&last_name(&invocation.path)).as_str())
             && let Some(last) = invocation.path.segments.last()
         {
             self.note(last.ident.span());
         }
+        self.lexing_tokens(&invocation.tokens);
+        syn::visit::visit_macro(self, invocation);
+    }
+}
+
+/// Every call in an audit reader or a runner file that decides, outside code compiled only for tests, that answers for an absent value with one its input never gave.
+fn defaulted_absences(parsed: &syn::File, file: &str) -> Vec<Finding> {
+    let mut visitor = DefaultedAbsence {
+        file,
+        tests: 0,
+        found: Vec::new(),
+    };
+    visitor.visit_file(parsed);
+    visitor.found
+}
+
+/// How many enclosing items are compiled only for tests, and every defaulting call outside all of them.
+struct DefaultedAbsence<'a> {
+    file: &'a str,
+    tests: usize,
+    found: Vec<Finding>,
+}
+
+impl DefaultedAbsence<'_> {
+    fn within(&mut self, attributes: &[syn::Attribute], walk: impl FnOnce(&mut Self)) {
+        let tests = test_only(attributes);
+        if tests {
+            self.tests = self.tests.saturating_add(1);
+        }
+        walk(self);
+        if tests {
+            self.tests = self.tests.saturating_sub(1);
+        }
+    }
+
+    fn note(&mut self, span: proc_macro2::Span) {
+        if self.tests == 0 {
+            self.found.push(Finding {
+                kind: Kind::DefaultedAbsence,
+                file: self.file.to_owned(),
+                line: span.start().line,
+            });
+        }
+    }
+
+    /// Every defaulting call a macro's tokens make: a name of [`crate::defaulted::DEFAULTING`] right after a `.` or a `::`, at any depth, since syn leaves a macro's arguments as tokens.
+    fn tokens(&mut self, tokens: proc_macro2::TokenStream) {
+        let mut called = false;
+        for tree in tokens {
+            match tree {
+                proc_macro2::TokenTree::Group(group) => {
+                    self.tokens(group.stream());
+                    called = false;
+                }
+                proc_macro2::TokenTree::Punct(punct) => {
+                    called = matches!(punct.as_char(), '.' | ':');
+                }
+                proc_macro2::TokenTree::Ident(ident) => {
+                    if called && crate::defaulted::DEFAULTING.contains(&ident.to_string().as_str())
+                    {
+                        self.note(ident.span());
+                    }
+                    called = false;
+                }
+                proc_macro2::TokenTree::Literal(_) => called = false,
+            }
+        }
+    }
+}
+
+impl Visit<'_> for DefaultedAbsence<'_> {
+    fn visit_item(&mut self, item: &syn::Item) {
+        self.within(item_attributes(item), |walk| {
+            syn::visit::visit_item(walk, item);
+        });
+    }
+
+    fn visit_impl_item(&mut self, item: &syn::ImplItem) {
+        let attributes: &[syn::Attribute] = match item {
+            syn::ImplItem::Const(one) => &one.attrs,
+            syn::ImplItem::Fn(one) => &one.attrs,
+            syn::ImplItem::Type(one) => &one.attrs,
+            syn::ImplItem::Macro(one) => &one.attrs,
+            _ => &[],
+        };
+        self.within(attributes, |walk| syn::visit::visit_impl_item(walk, item));
+    }
+
+    fn visit_expr_method_call(&mut self, call: &syn::ExprMethodCall) {
+        if crate::defaulted::DEFAULTING.contains(&call.method.to_string().as_str()) {
+            self.note(call.method.span());
+        }
+        syn::visit::visit_expr_method_call(self, call);
+    }
+
+    fn visit_expr_path(&mut self, path: &syn::ExprPath) {
+        if let Some(last) = path.path.segments.last()
+            && crate::defaulted::DEFAULTING.contains(&last.ident.to_string().as_str())
+        {
+            self.note(last.ident.span());
+        }
+        syn::visit::visit_expr_path(self, path);
+    }
+
+    fn visit_macro(&mut self, invocation: &syn::Macro) {
+        self.tokens(invocation.tokens.clone());
         syn::visit::visit_macro(self, invocation);
     }
 }

@@ -3,6 +3,11 @@
 
 //! Execution: one test process per mutant, and what its exit status means.
 
+#![expect(
+    clippy::expect_used,
+    reason = "a test reports a setup failure by panicking"
+)]
+
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
@@ -133,7 +138,7 @@ const fn result(exit_code: i32) -> Observation {
         stopped: Stopped::Exited {
             exit: ProcessExit::Code(exit_code),
         },
-        stale_catalog: false,
+        refused: false,
     }
 }
 
@@ -143,14 +148,14 @@ const fn signalled(signal: i32) -> Observation {
         stopped: Stopped::Exited {
             exit: ProcessExit::Signal(signal),
         },
-        stale_catalog: false,
+        refused: false,
     }
 }
 
 const fn stopped(stopped: Stopped) -> Observation {
     Observation {
         stopped,
-        stale_catalog: false,
+        refused: false,
     }
 }
 
@@ -265,6 +270,154 @@ fn a_target_is_named_by_package_kind_and_name() {
     assert_eq!(TargetKind::parse("bench"), None);
 }
 
+/// One package whose manifest is `manifest` at `root`, holding `targets` as cargo metadata names them.
+fn declared(
+    root: &Path,
+    manifest: Option<&str>,
+    targets: &serde_json::Value,
+) -> rust_mutants::cargo::Metadata {
+    let path = root.join("Cargo.toml");
+    if let Some(text) = manifest {
+        std::fs::write(&path, text).expect("the manifest");
+    }
+    let id = "path+file:///w/own-harness#0.1.0";
+    let document = serde_json::json!({
+        "packages": [{
+            "name": "own-harness", "version": "0.1.0", "id": id, "manifest_path": path,
+            "edition": "2024", "targets": targets, "features": {}, "dependencies": []
+        }],
+        "workspace_members": [id], "workspace_default_members": [id], "resolve": null,
+        "target_directory": root.join("target"), "version": 1, "workspace_root": root,
+        "metadata": null
+    });
+    rust_mutants::cargo::Metadata::parse(document.to_string().as_bytes()).expect("the metadata")
+}
+
+/// What cargo says it built of `target` as a test binary, as `cargo test --all-targets` builds it.
+fn built_as_a_test(root: &Path, target: &serde_json::Value) -> rust_mutants::cargo::Message {
+    let name = target["name"].as_str().expect("a name");
+    let executable = root
+        .join("target")
+        .join("debug")
+        .join("deps")
+        .join(format!("{name}-abc"));
+    let message = serde_json::json!({
+        "reason": "compiler-artifact", "package_id": "path+file:///w/own-harness#0.1.0",
+        "manifest_path": root.join("Cargo.toml"), "target": target,
+        "profile": {
+            "opt_level": "0", "debuginfo": 2, "debug_assertions": true,
+            "overflow_checks": true, "test": true
+        },
+        "features": [], "filenames": [executable], "executable": executable, "fresh": false
+    });
+    let mut messages = rust_mutants::cargo::parse_messages(format!("{message}\n").as_bytes())
+        .expect("the artifact message");
+    messages.pop().expect("one message")
+}
+
+/// A target as cargo metadata and cargo's build messages name it.
+fn cargo_target(kind: &str, name: &str, test: bool) -> serde_json::Value {
+    serde_json::json!({
+        "kind": [kind], "crate_types": [if kind == "lib" { "lib" } else { kind }], "name": name,
+        "src_path": "/w/own-harness/src/lib.rs", "edition": "2024", "doc": kind == "lib",
+        "doctest": false, "test": test
+    })
+}
+
+#[test]
+fn a_target_the_manifest_does_not_test_is_not_a_test_target() {
+    let root = tempfile::tempdir().expect("a directory");
+    let lib = cargo_target("lib", "own_harness", true);
+    let tool = cargo_target("bin", "tool", false);
+    let demo = cargo_target("example", "demo", false);
+    let metadata = declared(
+        root.path(),
+        Some(
+            "[package]\nname = \"own-harness\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
+             [[bin]]\nname = \"tool\"\npath = \"src/main.rs\"\ntest = false\n",
+        ),
+        &serde_json::json!([lib, tool, demo]),
+    );
+    let messages = [lib, tool, demo].map(|target| built_as_a_test(root.path(), &target));
+    let targets = rust_mutants::execute::targets_of(
+        &messages,
+        &metadata.packages,
+        &root.path().join("target"),
+    )
+    .expect("the targets");
+    assert_eq!(
+        targets.iter().map(TestTarget::id).collect::<Vec<_>>(),
+        ["own-harness/lib/own_harness"],
+        "`cargo test --all-targets` builds a binary and an example `test = false` leaves out of \
+         `cargo test` as test binaries too, and running them measures tests the project never runs"
+    );
+    assert_eq!(
+        rust_mutants::execute::declared_targets(&metadata.members().collect::<Vec<_>>()),
+        std::collections::BTreeSet::from(["own-harness/lib/own_harness".to_owned()]),
+        "and a target nobody tests is not one a run can be told to skip"
+    );
+}
+
+#[test]
+fn a_library_without_the_harness_is_read_as_its_own_program_whatever_names_it() {
+    for (manifest, kind, name) in [
+        ("[lib]\nharness = false\n", "lib", "own_harness"),
+        (
+            "[lib]\nname = \"renamed\"\nharness = false\n",
+            "lib",
+            "renamed",
+        ),
+        (
+            "[lib]\nproc-macro = true\nharness = false\n",
+            "proc-macro",
+            "own_harness",
+        ),
+    ] {
+        let root = tempfile::tempdir().expect("a directory");
+        let lib = cargo_target(kind, name, true);
+        let metadata = declared(
+            root.path(),
+            Some(&format!(
+                "[package]\nname = \"own-harness\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
+                 {manifest}"
+            )),
+            &serde_json::json!([lib]),
+        );
+        let targets = rust_mutants::execute::targets_of(
+            &[built_as_a_test(root.path(), &lib)],
+            &metadata.packages,
+            &root.path().join("target"),
+        )
+        .expect("the targets");
+        assert_eq!(
+            targets
+                .iter()
+                .map(|target| target.harness)
+                .collect::<Vec<_>>(),
+            [false],
+            "{manifest:?} builds the {kind} {name} without libtest, so its silence is not a \
+             test result and its exit status is the whole answer"
+        );
+    }
+}
+
+#[test]
+fn a_package_whose_manifest_is_not_there_is_refused_rather_than_read_as_libtest() {
+    let root = tempfile::tempdir().expect("a directory");
+    let lib = cargo_target("lib", "own_harness", true);
+    let metadata = declared(root.path(), None, &serde_json::json!([lib]));
+    let targets = rust_mutants::execute::targets_of(
+        &[built_as_a_test(root.path(), &lib)],
+        &metadata.packages,
+        &root.path().join("target"),
+    );
+    assert!(
+        targets.is_err(),
+        "a manifest that is not there says nothing about the harness, and reading nothing as \
+         libtest reads a custom harness's silence as a test result: {targets:?}"
+    );
+}
+
 fn target() -> TestTarget {
     TestTarget::new(
         "demo",
@@ -280,6 +433,15 @@ fn target() -> TestTarget {
         ),
         (OsString::from("CARGO_PKG_NAME"), OsString::from("demo")),
     ]))
+}
+
+#[test]
+fn a_target_id_is_derived_from_its_read_only_identity() {
+    let built = target();
+    assert_eq!(
+        built.id(),
+        target_id(built.package(), built.kind(), built.name())
+    );
 }
 
 #[test]
@@ -309,6 +471,7 @@ fn the_environment_is_the_base_plus_cargos_own_plus_the_activation() {
             steps: None,
             profile: None,
             crash: None,
+            fate: None,
         },
         &target(),
         Some(&Scratch::under(scratch, Home::Given)),
@@ -386,6 +549,7 @@ fn a_baseline_inherits_none_of_the_variables_a_run_composes_for_itself() {
             steps: None,
             profile: None,
             crash: None,
+            fate: None,
         },
         &target(),
         None,
@@ -435,6 +599,7 @@ fn the_guards_are_told_where_to_record_exactly_when_the_run_asks_them_to() {
             steps: None,
             profile: None,
             crash: None,
+            fate: None,
         },
         &target(),
         None,
@@ -525,6 +690,7 @@ fn a_test_process_learns_which_cargo_built_it() {
             steps: None,
             profile: None,
             crash: None,
+            fate: None,
         },
         &target,
         None,
@@ -555,6 +721,7 @@ fn a_test_process_learns_which_cargo_built_it() {
             steps: None,
             profile: None,
             crash: None,
+            fate: None,
         },
         &target,
         None,
@@ -573,8 +740,13 @@ fn a_test_process_learns_which_cargo_built_it() {
 
 #[test]
 fn a_target_cargo_runs_puts_the_harness_arguments_after_a_separator() {
-    let mut doc = target();
-    doc.kind = TargetKind::ProcMacro;
+    let mut doc = TestTarget::new(
+        "demo",
+        TargetKind::ProcMacro,
+        "cli",
+        PathBuf::from("/t/debug/deps/cli-abc"),
+        PathBuf::from("/w/demo"),
+    );
     doc.executable = PathBuf::from("/bin/cargo");
     doc.through = ["test", "--doc", "--package", "demo"]
         .into_iter()
@@ -616,7 +788,7 @@ fn a_runtime_that_named_another_catalog_is_an_error_however_the_process_exited()
         stopped: Stopped::Exited {
             exit: ProcessExit::Code(101),
         },
-        stale_catalog: said.contains(rust_mutants::instrument::STALE_CATALOG_MARKER),
+        refused: said.contains(rust_mutants::instrument::STALE_CATALOG_MARKER),
     };
 
     assert_eq!(
@@ -649,6 +821,7 @@ fn an_inherited_coverage_profile_path_never_reaches_a_test_process() {
             steps: None,
             profile: None,
             crash: None,
+            fate: None,
         },
         &target(),
         Some(&Scratch::under(scratch, Home::Given)),
@@ -694,6 +867,7 @@ fn the_profile_path_a_coverage_pass_composes_is_the_one_it_gets() {
             steps: None,
             profile: Some(mine),
             crash: None,
+            fate: None,
         },
         &target(),
         None,
@@ -722,10 +896,10 @@ fn a_test_target_built_step_by_step_equals_the_literal_it_replaces() {
         OsString::from("/w/demo"),
     )]))
     .with_through(vec![OsString::from("test"), OsString::from("--doc")]);
-    assert_eq!(built.id, "demo/lib/demo");
-    assert_eq!(built.package, "demo");
-    assert_eq!(built.kind, TargetKind::Lib);
-    assert_eq!(built.name, "demo");
+    assert_eq!(built.id(), "demo/lib/demo");
+    assert_eq!(built.package(), "demo");
+    assert_eq!(built.kind(), TargetKind::Lib);
+    assert_eq!(built.name(), "demo");
     assert_eq!(built.cwd, PathBuf::from("/w/demo"));
     assert_eq!(built.cargo_env.len(), 1);
     assert_eq!(built.through.len(), 2);
@@ -842,7 +1016,7 @@ fn a_custom_harness_that_exits_zero_survived_and_one_that_exits_nonzero_killed()
                 stopped: Stopped::Exited {
                     exit: ProcessExit::Code(exit_code),
                 },
-                stale_catalog: false,
+                refused: false,
             },
             None,
             (false, &[]),
@@ -865,7 +1039,7 @@ fn a_libtest_target_that_printed_no_summary_is_undecided_rather_than_survived() 
             stopped: Stopped::Exited {
                 exit: ProcessExit::Code(0),
             },
-            stale_catalog: false,
+            refused: false,
         },
         None,
         (true, &[]),
@@ -1141,6 +1315,7 @@ fn a_harness_that_never_started_says_why() {
             touch: None,
             steps: None,
             crash: None,
+            fate: None,
             profile: None,
         },
         &rust_mutants::runner::Cancel::new(),
@@ -1327,7 +1502,7 @@ struct Reading {
 fn every_reading() -> Vec<Reading> {
     let mut readings = Vec::new();
     for (stop, exit, stopped) in every_stop() {
-        for stale in [false, true] {
+        for refused in [false, true] {
             for (harness, named) in [(false, false), (true, false), (true, true)] {
                 let summaries: &[Option<Summary>] =
                     if harness { &every_summary() } else { &[None] };
@@ -1339,11 +1514,11 @@ fn every_reading() -> Vec<Reading> {
                             if harness { "yes" } else { "no" },
                             if named { "yes" } else { "no" },
                             summary_word(*summary),
-                            if stale { "yes" } else { "no" },
+                            if refused { "yes" } else { "no" },
                         ],
                         observed: Observation {
                             stopped: stopped.clone(),
-                            stale_catalog: stale,
+                            refused,
                         },
                         summary: *summary,
                         harness,
@@ -1495,6 +1670,7 @@ fn a_confined_home_is_the_executions_with_the_build_homes_pinned_and_gits_identi
             steps: None,
             profile: None,
             crash: None,
+            fate: None,
         },
         &target(),
         Some(&scratch),
@@ -1555,6 +1731,7 @@ fn confined(base: &Variables, own: &Path) -> Variables {
             steps: None,
             profile: None,
             crash: None,
+            fate: None,
         },
         &target(),
         Some(&scratch),

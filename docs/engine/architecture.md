@@ -16,6 +16,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 2. **Instrumentation happens once.** Every compilable mutant of a file lives dormant behind a guard in the snapshot; the test binaries are built once;
    `RUST_MUTANTS_ACTIVE=<64 hex id>` activates one mutant per test process.
 3. **Bytes are spliced, never pretty-printed.** Comments, whitespace, and CRLF are preserved, and every splice keeps its line count, so coverage regions and mutant positions agree line for line with the pristine file.
+   A file the build reads as text is read as it was written: each `include_str!` or `include_bytes!` of a Rust source of the tree is pointed at a copy of that source beside the reader, in bytes of the same length, and a source the build only reads as text, that no guard is placed in, is left as it was copied, as [limitations](../limitations.md) says.
 4. **Phases are types.** `Workspace::open → Workspace::prepare(self) → Session`;
    a session executes any number of (mutant, target) pairs without rebuilding.
 
@@ -234,18 +235,25 @@ and says whether the answer is still the same.
 
 ## Guards
 
-Four forms.
+Five forms.
 **Form C** for a position that is syntactically boolean (an `if` or `while` condition, an operand of `&&`/`||`, a match guard):
 `__rm::value!(__rm::active(3) && __rm::value!(a >= b) || !__rm::active(3) && a > b)`.
 **Form E** for any expression in value position:
 `__rm::value!(if __rm::active(5) { a - b } else { a + b })` — both branches unify to one type, so `Default::default()` is inferred from the original.
 `value!` expands to exactly its expression: it gives the parser one grouped expression without a function-call type-inference boundary, a temporary scope, or lint-producing parentheses.
+A value that opens a block — one that begins with a brace, an attribute or a label, or with `if`, `match`, `loop`, `while`, `for`, `unsafe`, `const` or `async` — ends a statement at its own closing brace, so its Form E guard is the chain itself, which ends where the value did, rather than a `value!` call around it; which values open a block is `rust_mutants_decision::shape::opens_a_block`.
+Every guard is written by `rust_mutants_adapt::guard::compose`, which reads each offset where it writes the text, so no offset is arithmetic that could overflow.
 **Form S** for a statement: `if __rm::active(7) { x -= step; } else { x += step; }`, the original bytes in the `else` so lines are kept.
 **Form M** for a match arm that has no guard, which is the one shape that adds syntax rather than replacing it: the site is the pattern, kept verbatim, and the guard is written after it — `0 if (__rm::active(9) && (false) || !(__rm::active(9)) && (true)) =>`, where the branch that keeps the arm is the guard it did without.
+**Form B** for a const item initializer selected by the `compiled` tier: `__rm::value!(if __rm::baked(5) { __rm::value!(a - b) } else { __rm::value!(a + b) })`.
+The selector is a constant function evaluated with one catalog index baked into that mutant's separate build, and with none in the original control builds ([ADR 0048](../adr/0048-const-items-are-mutated-by-a-build-per-mutant.md)).
 A position where wrapping would move a value out of place — an assignment target, a borrow operand, a method receiver, a scrutinee —
 escalates to its parent expression, then to the statement.
 
 The runtime is a private `mod __rm` appended after the last line of each instrumented file ([ADR 0011](../adr/0011-the-runtime-lives-at-the-end-of-each-instrumented-file.md)).
+It is appended twice, under one name and one condition and its negation, so every target compiles exactly one of them: the module every target but `target_os = "wasi"` compiles, then the one a sealed host runs, which a build for `wasm32-wasip1` compiles in its place.
+The first is byte for byte the module the recorded instrumentation cases hold, and `tests/instrument.rs` compares what a build for any other target reads with those recordings.
+The second holds no step allowance, beat, orphan watch, schedule delay, lock, thread, clock or destructor, because the host's fuel bounds an instance and one thread runs one test; every item the two modules share is the same item, and the laws of `instrument::runtime` refuse one that drifts.
 No lint attribute is put on user code.
 The private generated support module has one exact `#[allow(dead_code, unused_qualifications)]`: one shared runtime serves files that use different subsets of it, and its collision-proof standard-library paths are deliberately fully qualified.
 A crate that `forbid`s either lint (or its `unused`/`warnings` group) is refused before instrumentation because Rust does not permit the module to lower a `forbid`.
@@ -286,17 +294,44 @@ The search is bounded; running out of the budget condemns what is left, which is
 Every offence bisection names is then compiled once more on its own, so the report carries the compiler's words about that mutant rather than a sentence saying there were none.
 A row says `isolated` when the compiler refused it alone, and names the mutants it was refused with when it did not.
 
+### A `const fn`
+
+A guard is a call the program makes while it runs, and the body of a `const fn` is one the compiler may evaluate before it does ([ADR 0047](../adr/0047-a-const-fn-is-mutated-where-nothing-evaluates-it-early.md)).
+The walk proposes a `const fn`'s body as it proposes any other, and records with each candidate the `const fn` whose body is the innermost around it; a closure or a function written inside one is a body of its own.
+A round writes every `const fn` holding a guard without its `const`, blanking the keyword so that nothing after it moves, and every other `const fn` with it.
+A `const fn` so written takes no checkpoint and no entry marker, as it takes none with its `const`: what the steps count and what an item's reach names are what the pristine file says, whichever functions a round unconsts.
+
+Where the compiler evaluates such a function, it refuses the tree with `E0015` at the call, which lies in no mutant's branch.
+The refusal names the callee: a free function by a note whose span is its definition, which holds the blanked keyword, and an associated function or a method by its type and its name, which may name more than one function the round wrote without its `const`, and then names every one of them.
+Where the call is in the body of a `const fn` the round wrote with its `const` only because it holds no guard — its one candidate refused by the compiler, say — the caller carries the guard: from the next round on it goes without its `const` too, wherever the callee does.
+Anywhere else — a `const` or `static` initializer, a `const` block, an array length, or a `const fn` that keeps its `const` because the compiler evaluates it — the callee keeps its `const` from the next round on, and every mutant it holds is left out as `evaluated-before-run`.
+Which of the two it is, is read from the refusal's primary span against the syntax, never from its words: the narrowest body of a `const fn` written with its `const` that holds the span is the caller, unless a constant inside that body holds it, since the compiler evaluates such a constant on its own.
+Each such round learns a call or a function that keeps its `const`, neither of which it unlearns, so the rounds end, however long the chain, without a bisection and without the round limit that bounds ordinary attribution.
+A bisection starts from the tree with nothing live, in which no function goes without its `const`.
+
+Before validation, discovery keeps const bodies unchanged where source outside that build may evaluate them.
+A documentation code block, opaque documentation or expansion, a standard macro that may be replaced or whose arguments carry attributes, conditional early evaluation, an unavailable conditional module, or source outside the snapshot or unreadable as a file bars const-body candidates in its package and dependency closure.
+This conservative `unvalidated-const-use` gate reads test-only, excluded and entered-only source too, follows package edges rather than guessed function names, and records the source paths beside each skipped candidate.
+It leaves ordinary runtime bodies mutable and treats `#[cfg(test)]` alone as validated by the all-target build.
+
+A candidate left out this way is not a refusal: its edit may compile, and a mutation of a function the compiler evaluates may even be noticed by the compiler itself.
+It is a place no guard can live, so a report counts it with the places passed over, under `evaluated-before-run`, and lists it with the rejections for its identity and the compiler's words, with `reason: "evaluated-before-run"` where a refusal says `"compiler-refused"`.
+
+The witness tree asks nothing about a site in a `const fn`, because it is checked before validation says which of them go without their `const`, and a witness written into one would be a call the `const` refuses: such a mutant carries no branch proof, no comparison and no probe, and is run against every test that reaches it.
+
 A build nobody waited for is a cancellation and not a tree that does not compile: `Ctrl-C` during a round ends validation with `RM0001`, and nothing is condemned on the strength of what a half-finished command printed.
+The same holds of every build either product runs: how it came out is `cargo::Completion`, which exists only where cargo exited with a code of its own and printed exactly one `build-finished` record, last, that agrees with that code.
+A cargo ended by a signal, one that exited without the record, or a record that says what the exit code does not is a failed command or an unreadable stream, never a compiler that refused the tree.
 
 ## Skips, stated
 
 `const-context`, `macro-invocation`, `cfg-attribute`, `test-code`,
 `unsupported-site`, `excluded`, `test-only-file`, `no-std-crate`,
 `included-expression`, `generated-outside-workspace`, `forbidden-lints`,
-`const-fn-body`, `let-condition`, `open-range`, `unstated-return-type`,
+`evaluated-before-run`, `unvalidated-const-use`, `let-condition`, `open-range`, `unstated-return-type`,
 `loop-value`, `annotated`, `configured`.
 Each is counted and named;
-`rust-mutants why-skipped` lists them.
+`rust-mutants why-skipped` lists them, except `evaluated-before-run`, which validation decides and `why-skipped` does not run.
 A skip is a decision the tool made and says; a rejection (a mutant the compiler refused) is a fact about the program and is reported with the diagnostic.
 
 A `rust-mutants: skip <reason>` comment is the one skip an author writes.
@@ -308,13 +343,13 @@ Markers are read from the gaps between tokens, so the words inside a string lite
 It is applied where the walk's own decisions are, so every tally says the same thing about the file, and an entry that hid nothing is the same `unmatched-skip` finding a stale marker is.
 
 Every place a rule targets has a decision: a candidate with its guard form, or a skip with its reason.
-A rule that passed over a place without saying so is what `crates/rust-mutants/tests/census.rs` refuses, and it is why a `const fn` body, a condition that binds with `let`, and a range with no end are reasons of their own rather than silence.
+A rule that passed over a place without saying so is what `crates/rust-mutants/tests/census.rs` refuses, and it is why a condition that binds with `let` and a range with no end are reasons of their own rather than silence.
 Two decisions carry a note instead of a reason of their own: `identical-replacement` where a rule's replacement is what is already written, and `text-mismatch` where the bytes at the span are not the operator the rule expects.
 
 The per-file walk (`rust_mutants::syntax`) keeps walking inside a region it will not mutate and counts every candidate it would have produced under the outermost reason, so the tallies say how much code each reason hides.
 A macro invocation counts once, since its body is tokens the walker does not parse.
 Whole-file reasons (`excluded`, `test-only-file`,
-`no-std-crate`, `generated-outside-workspace`, `forbidden-lints`) are decided by the workspace layer from cargo metadata and dep-info, not by the walk.
+`no-std-crate`, `generated-outside-workspace`, `forbidden-lints`) are decided by the workspace layer from cargo metadata and dep-info, not by the walk, and `evaluated-before-run` by validation, from what the compiler refused.
 A file a build script A crate is `forbidden-lints` when its root, or the `[lints]` table cargo builds it with, forbids one of the lints the guards' own attribute turns off:
 `forbid` is the one level an `allow` cannot override, so a guard there is a compile error whatever it edits, and every mutant of the crate would otherwise be refused with nothing saying why.
 A `deny` is fine, which is what the attribute is carried for.
@@ -352,6 +387,7 @@ Windows Job Objects provide the stronger contained-tree lifetime boundary.
 A POSIX descendant that did leave the group is ended when the run closes, cancelled or refused alike: `escaped::working_under` lists every process whose working directory lies in the run's copy or its scratch, which none but a process the run started has once its executions have ended, and `Workspace::close` ends each and notes it as `escaped-processes`.
 `Snapshot`'s drop does the same before it removes the copy, so no path out of a run leaves a process working in a directory that is gone.
 The listing is `/proc/<pid>/cwd` on Linux and `lsof -d cwd` elsewhere, since macOS hides the environment of platform binaries from `ps`; what the sweep cannot see is stated in [limitations](../limitations.md).
+On Linux the engine adopts every process it starts from the moment it makes the copy, so a process the run started stays among its descendants until it ends, and a process whose working directory `/proc` will not say refuses the removal only where its parents lead back to the engine; the engine reaps the ended processes it adopted that no child it started could be ([ADR 0050](../adr/0050-a-run-adopts-every-process-it-starts.md)).
 
 ### The scratch a test process is given
 

@@ -1,0 +1,35 @@
+{
+  "schema": "njutest-reader-producer-v1",
+  "command": [
+    "/Users/yasunobu/projects/github.com/P4suta/njutest-w18/target/debug/rust-mutants",
+    "run",
+    "--offline",
+    "--locked",
+    "--trace",
+    "--root",
+    "/Users/yasunobu/njutest-oc/evidence/batch/phase3/package-C/reader-recording-products/projections-unicode/trees/fixture-unicode"
+  ],
+  "cwd": "/Users/yasunobu/njutest-oc/evidence/batch/phase3/package-C/reader-recording-products/projections-unicode/trees/fixture-unicode",
+  "environment": {
+    "CARGO_BUILD_JOBS": "6",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "CARGO_INCREMENTAL": "0",
+    "RUSTC_WRAPPER": "",
+    "RUSTUP_TOOLCHAIN": "1.98.0",
+    "NO_COLOR": "1",
+    "XDG_CACHE_HOME": "/Users/yasunobu/njutest-oc/evidence/batch/phase3/package-C/reader-recording-products/projections-unicode/cache",
+    "TMPDIR": "/Users/yasunobu/njutest-oc/evidence/batch/phase3/package-C/reader-recording-products/projections-unicode/temp",
+    "TMP": "/Users/yasunobu/njutest-oc/evidence/batch/phase3/package-C/reader-recording-products/projections-unicode/temp",
+    "TEMP": "/Users/yasunobu/njutest-oc/evidence/batch/phase3/package-C/reader-recording-products/projections-unicode/temp",
+    "NJUTEST_FIXTURE_BUILD_CACHE": "/Users/yasunobu/projects/github.com/P4suta/njutest-w18/target/fixture-build-cache"
+  },
+  "producer_revision": "38bba9e90ba9df4bc8dee4e1c3e8e999eed4d669",
+  "producer_patch_sha256": "fe83a32c90bccac08978c679c93d127e484fea84d03a00247e19dbfd4061ace4",
+  "binary_sha256": "ddf16c1037208bbd36a7f0581fd99b905107575649a7f997b37e4668415e896e",
+  "exit_code": 1,
+  "started": "2026-10-02T12:57:28.548423+00:00",
+  "duration_seconds": 3.8031649999902584,
+  "stdout_sha256": "41a44eaea37cc6984f5aa21f4565539327167476aa85abc6aee7e6c048aeb880",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

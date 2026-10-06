@@ -48,10 +48,10 @@ pub(super) fn bundle(
             message: format!("no run report is stored under {}", reports.display()),
         })?;
     let run_id = super::stored_spelling(&directory)?;
-    let bundle = asked.output.map_or_else(
-        || directory.join(crate::diagnostics::DIRECTORY_NAME),
-        Path::to_path_buf,
-    );
+    let bundle = match asked.output {
+        Some(named) => named.to_path_buf(),
+        None => directory.join(crate::diagnostics::DIRECTORY_NAME),
+    };
     std::fs::create_dir_all(&bundle).map_err(|source| CliError::writing(&bundle, source))?;
 
     let doctor = json_line(&doctor_document(
@@ -150,7 +150,11 @@ fn gathered<'a>(
 
 /// What the toolchain says about itself, for a reader who has a different one.
 pub(super) fn toolchain_text(root: &Path, environment: &Environment, cancel: &Cancel) -> String {
-    let located = rust_mutants::cargo::Toolchain::locate(&locating(environment), root, cancel);
+    let located = rust_mutants::cargo::Toolchain::locate(
+        &locating(environment),
+        root,
+        &rust_mutants::runner::Watched::new(cancel, &rust_mutants::trace::Recorder::disabled()),
+    );
     match located {
         Ok(found) => format!(
             "cargo: {}\nrustc: {}\nhost: {}\nrust-mutants: {}\n",

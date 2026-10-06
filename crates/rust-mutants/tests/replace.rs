@@ -99,6 +99,7 @@ fn record(round: u64) -> rust_mutants::outcomes::Record {
             .collect(),
         run_id: format!("run-{round}"),
         keyed: keyed(),
+        evidence: rust_mutants::sealed::record::Evidence::not_sealed(),
     }
 }
 

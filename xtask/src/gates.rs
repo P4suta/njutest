@@ -4,9 +4,13 @@
 //! The gates applied to this repository: each one reads the tree, hands it to the pure checker of its module, and renders the answer.
 
 use crate::error::Coded as _;
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Arguments;
 use std::path::{Component, Path, PathBuf};
+
+mod originals;
+mod reach;
+pub mod tree;
 
 use crate::{
     deps, devgates, engineaudit, fixtures, lints as lint_scan, proofaudit, release, reportdiff,
@@ -32,6 +36,70 @@ impl crate::error::Coded for GateError {
     }
 }
 
+/// Gates that read the repository tree and belong to `all`.
+#[derive(Debug, Clone, Copy, clap::Subcommand, njutest_macros::AllVariants)]
+pub(crate) enum RepositoryGate {
+    /// The seam ratchet (ADR 0001): production code against `xtask/seam_allowlist.txt`.
+    Devgates,
+    /// Lossy Rust shapes this repository does not write.
+    Lints,
+    /// Dependency direction between the workspace crates.
+    Deps,
+    /// Conventions of the independent fixture projects under fixtures/.
+    Fixtures,
+    /// Version consistency between the workspace and the release manifest.
+    ReleaseCheck,
+    /// Every milestone named in the documentation resolves to one roadmap row.
+    Milestones,
+    /// Every decision record has one number, carries it in its heading, is listed once in the book under it, and is named only as it is.
+    Adrs,
+    /// Every critical decision has a row saying what holds it at every layer, each naming what the tree defines, and every hole is one somebody owns.
+    Invariants,
+    /// Everything that may shrink and never grow, held to where this change meets `origin/main`.
+    Ratchets,
+    /// Every crate declares what its visibility means; incidental APIs are compiled privately.
+    Surfaces,
+    /// Every public function of an incidental surface is reached by something that ships.
+    Reached,
+    /// A second opinion, by body shape alone, on every catch-all the ledger waives.
+    Waivers,
+    /// Nothing a build writes is committed: no tracked path lies under a directory named `target`.
+    Tracked,
+    /// Every skipped target in the mutation configuration is a target Cargo declares.
+    Skipped,
+    /// Every claim of `.rust-mutants.toml` names as many mutations as it says, asked of the engine's own locator.
+    Claims,
+    /// Every retained reader binding names complete versioned original files rather than ignored working-tree artifacts.
+    Originals,
+}
+
+impl RepositoryGate {
+    pub(crate) fn run(
+        self,
+        root: &Path,
+        engine: &crate::claims::Engine<'_>,
+    ) -> Result<String, GateError> {
+        match self {
+            Self::Devgates => devgates(root),
+            Self::Lints => lints(root),
+            Self::Deps => deps(root),
+            Self::Fixtures => fixtures(root),
+            Self::ReleaseCheck => release_check(root),
+            Self::Milestones => milestones(root),
+            Self::Adrs => adrs(root),
+            Self::Invariants => invariants(root),
+            Self::Ratchets => ratchets(root),
+            Self::Surfaces => surfaces(root),
+            Self::Reached => reached(root),
+            Self::Waivers => waivers(root),
+            Self::Tracked => tracked(root),
+            Self::Skipped => skipped(root),
+            Self::Claims => crate::claims::claims(root, engine),
+            Self::Originals => originals(root),
+        }
+    }
+}
+
 fn append(output: &mut String, arguments: Arguments<'_>) {
     output.push_str(&arguments.to_string());
 }
@@ -48,13 +116,18 @@ fn line(output: &mut String, arguments: Arguments<'_>) {
 pub fn all_sources(root: &Path) -> Result<Vec<PathBuf>, GateError> {
     let files = crate::repository::files(root)?;
     validate_closed_source_inventory(&files)?;
-    Ok(files
+    Ok(sources_among(root, &files))
+}
+
+/// Every Rust file of `files` under the source roots, joined to `root`.
+fn sources_among(root: &Path, files: &[String]) -> Vec<PathBuf> {
+    files
         .iter()
         .filter(|relative| {
             in_source_roots(relative) && crate::repository::extension_is(relative, "rs")
         })
         .map(|relative| root.join(relative))
-        .collect())
+        .collect()
 }
 
 const SOURCE_ROOTS: [&str; 4] = ["compiler-surfaces", "crates", "xtask", "fuzz"];
@@ -132,21 +205,21 @@ struct ProcMacroPackage {
 }
 
 fn source_universe(
-    root: &Path,
+    tree: &tree::Tree,
     files: &[PathBuf],
     sources: &[(String, String, String)],
 ) -> Result<Vec<lint_scan::Finding>, GateError> {
     let mut labels = BTreeSet::new();
     let mut canonical_labels = BTreeMap::new();
     for path in files {
-        let label = relative_slash(root, path)?;
+        let label = relative_slash(tree.root(), path)?;
         let canonical = std::fs::canonicalize(path)
             .map_err(|error| GateError(format!("{}: {error}", path.display())))?;
         labels.insert(label.clone());
         canonical_labels.insert(canonical, label);
     }
 
-    let proc_macros = cargo_source_universe(root, &canonical_labels)?;
+    let proc_macros = cargo_source_universe(tree, &canonical_labels)?;
     let mut found = Vec::new();
     for (_scope, file, source) in sources {
         for redirect in lint_scan::source_redirects(source)
@@ -239,71 +312,15 @@ fn resolve_redirect(file: &str, target: &str) -> Option<String> {
 }
 
 fn cargo_source_universe(
-    root: &Path,
+    tree: &tree::Tree,
     sources: &BTreeMap<PathBuf, String>,
 ) -> Result<Vec<ProcMacroPackage>, GateError> {
-    let canonical_root = std::fs::canonicalize(root)
-        .map_err(|error| GateError(format!("{}: {error}", root.display())))?;
-    preflight_cargo_manifests(&canonical_root)?;
-    validate_dependency_proc_macro_inventory(&canonical_root)?;
-    let mut pending = VecDeque::from([root.join("Cargo.toml"), root.join("fuzz/Cargo.toml")]);
-    let mut requested = BTreeSet::new();
-    let mut packages = BTreeSet::new();
+    let canonical_root = std::fs::canonicalize(tree.root())
+        .map_err(|error| GateError(format!("{}: {error}", tree.root().display())))?;
+    validate_dependency_proc_macro_inventory(&canonical_root, tree.graphs())?;
     let mut proc_macros = Vec::new();
-
-    while let Some(manifest) = pending.pop_front() {
-        let manifest = std::fs::canonicalize(&manifest)
-            .map_err(|error| GateError(format!("{}: {error}", manifest.display())))?;
-        if !requested.insert(manifest.clone()) {
-            continue;
-        }
-        let metadata = cargo_metadata::MetadataCommand::new()
-            .manifest_path(&manifest)
-            .no_deps()
-            .exec()
-            .map_err(|error| {
-                GateError(format!(
-                    "cargo metadata for {}: {error}",
-                    manifest.display()
-                ))
-            })?;
-        let mut newly_seen = Vec::new();
-        for package in metadata.workspace_packages() {
-            let package_manifest = std::fs::canonicalize(package.manifest_path.as_std_path())
-                .map_err(|error| {
-                    GateError(format!("{}: {error}", package.manifest_path.as_str()))
-                })?;
-            if !packages.insert(package_manifest.clone()) {
-                continue;
-            }
-            proc_macros.extend(cargo_package_sources(&canonical_root, sources, package)?);
-            newly_seen.push(package);
-        }
-        for package in newly_seen {
-            for dependency in &package.dependencies {
-                let Some(path) = &dependency.path else {
-                    continue;
-                };
-                let dependency_directory =
-                    std::fs::canonicalize(path.as_std_path()).map_err(|error| {
-                        GateError(format!("local dependency {}: {error}", path.as_str()))
-                    })?;
-                if !inside_source_roots(&canonical_root, &dependency_directory) {
-                    return Err(GateError(format!(
-                        "lints: local dependency {} is outside the four scanned source roots",
-                        path.as_str()
-                    )));
-                }
-                let dependency_manifest = dependency_directory.join("Cargo.toml");
-                let dependency_manifest =
-                    std::fs::canonicalize(&dependency_manifest).map_err(|error| {
-                        GateError(format!("{}: {error}", dependency_manifest.display()))
-                    })?;
-                if !packages.contains(&dependency_manifest) {
-                    pending.push_back(dependency_manifest);
-                }
-            }
-        }
+    for member in tree.graphs().members() {
+        proc_macros.extend(cargo_package_sources(&canonical_root, sources, member)?);
     }
     proc_macros.sort_by(|left, right| left.name.cmp(&right.name));
     proc_macros.dedup_by(|left, right| left.name == right.name && left.target == right.target);
@@ -312,41 +329,18 @@ fn cargo_source_universe(
 
 const PROC_MACRO_INVENTORY: &str = "xtask/proc_macro_inventory.txt";
 
-fn validate_dependency_proc_macro_inventory(root: &Path) -> Result<(), GateError> {
+fn validate_dependency_proc_macro_inventory(
+    root: &Path,
+    graphs: &tree::Graphs,
+) -> Result<(), GateError> {
     let inventory_path = root.join(PROC_MACRO_INVENTORY);
     let expected = expected_proc_macro_dependencies(&inventory_path)?;
 
-    for (graph, manifest, lockfile) in [
-        ("root", root.join("Cargo.toml"), root.join("Cargo.lock")),
-        (
-            "fuzz",
-            root.join("fuzz/Cargo.toml"),
-            root.join("fuzz/Cargo.lock"),
-        ),
-    ] {
+    for resolved in graphs.resolved() {
+        let graph = resolved.graph;
+        let lockfile = root.join(resolved.lock);
         let locked = lock_packages(&lockfile)?;
-        let metadata = cargo_metadata::MetadataCommand::new()
-            .manifest_path(&manifest)
-            .features(cargo_metadata::CargoOpt::AllFeatures)
-            .other_options(vec!["--locked".to_owned()])
-            .exec()
-            .map_err(|error| {
-                GateError(format!(
-                    "cargo metadata --locked for {}: {error}",
-                    manifest.display()
-                ))
-            })?;
-        let observed = metadata
-            .packages
-            .iter()
-            .filter(|package| {
-                package
-                    .targets
-                    .iter()
-                    .any(cargo_metadata::Target::is_proc_macro)
-            })
-            .map(proc_macro_dependency_key)
-            .collect::<BTreeSet<_>>();
+        let observed = &resolved.proc_macros;
         let absent_from_lock = observed.difference(&locked).cloned().collect::<Vec<_>>();
         if !absent_from_lock.is_empty() {
             return Err(GateError(format!(
@@ -359,9 +353,9 @@ fn validate_dependency_proc_macro_inventory(root: &Path) -> Result<(), GateError
                 "lints: {PROC_MACRO_INVENTORY} has no {graph} graph"
             ))
         })?;
-        if observed != *declared {
+        if observed != declared {
             let added = observed.difference(declared).cloned().collect::<Vec<_>>();
-            let removed = declared.difference(&observed).cloned().collect::<Vec<_>>();
+            let removed = declared.difference(observed).cloned().collect::<Vec<_>>();
             return Err(GateError(format!(
                 "lints: {graph} locked dependency procedural-macro inventory drifted; added {added:?}, removed {removed:?}"
             )));
@@ -477,48 +471,47 @@ fn lock_packages(path: &Path) -> Result<BTreeSet<String>, GateError> {
 fn cargo_package_sources(
     root: &Path,
     sources: &BTreeMap<PathBuf, String>,
-    package: &cargo_metadata::Package,
+    member: &tree::Member,
 ) -> Result<Vec<ProcMacroPackage>, GateError> {
-    let package_manifest = std::fs::canonicalize(package.manifest_path.as_std_path())
-        .map_err(|error| GateError(format!("{}: {error}", package.manifest_path.as_str())))?;
-    let directory = package_manifest.parent().ok_or_else(|| {
+    let directory = member.manifest.parent().ok_or_else(|| {
         GateError(format!(
             "{} has no package directory",
-            package.manifest_path
+            member.manifest.display()
         ))
     })?;
     if !inside_source_roots(root, directory) {
         return Err(GateError(format!(
             "lints: local package {} at {} is outside the four scanned source roots",
-            package.name, package.manifest_path
+            member.name,
+            member.manifest.display()
         )));
     }
     let mut proc_macros = Vec::new();
-    for target in &package.targets {
-        let source = std::fs::canonicalize(target.src_path.as_std_path()).map_err(|error| {
-            GateError(format!("{} target {}: {error}", package.name, target.name))
-        })?;
-        if !sources.contains_key(&source) {
+    for target in &member.targets {
+        if !sources.contains_key(&target.source) {
             return Err(GateError(format!(
                 "lints: Cargo target {}:{} at {} is not an exact .rs member of the scanned source universe",
-                package.name, target.name, target.src_path
+                member.name,
+                target.name,
+                target.source.display()
             )));
         }
-        if target.is_proc_macro() {
+        if target.proc_macro {
             proc_macros.push(ProcMacroPackage {
-                name: package.name.to_string(),
+                name: member.name.clone(),
                 source_root: directory.join("src"),
-                target: source,
+                target: target.source.clone(),
             });
         }
     }
     Ok(proc_macros)
 }
 
-fn preflight_cargo_manifests(root: &Path) -> Result<(), GateError> {
+/// Refuses, before cargo reads any of them, a manifest among `files` that names a path outside the source roots.
+fn preflight_cargo_manifests(root: &Path, files: &[String]) -> Result<(), GateError> {
     preflight_cargo_manifest(root, &root.join("Cargo.toml"))?;
-    for relative in crate::repository::files(root)? {
-        if in_source_roots(&relative) && relative.ends_with("/Cargo.toml") {
+    for relative in files {
+        if in_source_roots(relative) && relative.ends_with("/Cargo.toml") {
             preflight_cargo_manifest(root, &root.join(relative))?;
         }
     }
@@ -852,7 +845,15 @@ pub fn lints(root: &Path) -> Result<String, GateError> {
 /// # Errors
 /// Every finding, one per line, or a file that could not be read or parsed.
 pub fn lints_scanned(root: &Path) -> Result<String, GateError> {
-    let (files, found) = lint_findings(root)?;
+    lints_scanned_with(root, &tree::Processes)
+}
+
+/// [`lints_scanned`], reading the tree once through `ask` and deciding every check from what that reading holds.
+///
+/// # Errors
+/// What [`lints_scanned`] refuses.
+pub fn lints_scanned_with(root: &Path, ask: &impl tree::Ask) -> Result<String, GateError> {
+    let (files, found) = lint_findings(&tree::Tree::read_with(root, ask)?)?;
     if found.is_empty() {
         let kinds = lint_scan::Kind::ALL
             .iter()
@@ -879,21 +880,80 @@ pub fn lints_scanned(root: &Path) -> Result<String, GateError> {
 /// # Errors
 /// The first kind a planted shape of it was not found as, which means the scan is blind to that shape and its silence about the tree says nothing.
 pub fn lint_sentinels() -> Result<usize, GateError> {
+    lint_sentinels_with(&tree::Processes)
+}
+
+/// [`lint_sentinels`], each kind's shapes read on a thread of their own and answered in the order the kinds are listed, asking git and cargo through `ask`.
+///
+/// # Errors
+/// What [`lint_sentinels`] refuses, for the first kind in that order that refuses.
+pub fn lint_sentinels_with<A: tree::Ask + Sync>(ask: &A) -> Result<usize, GateError> {
+    let skeleton = tree::Skeleton::unread();
+    let sighted: Vec<Result<usize, GateError>> = std::thread::scope(|scope| {
+        let sightings: Vec<Result<Sighting<'_>, GateError>> = lint_scan::Kind::ALL
+            .iter()
+            .map(|kind| {
+                let skeleton = &skeleton;
+                Sighting::launch(scope, *kind, move || {
+                    lint_sighted(*kind, kind.planted(), skeleton, ask)
+                })
+            })
+            .collect();
+        sightings
+            .into_iter()
+            .map(|sighting| sighting.and_then(Sighting::join))
+            .collect()
+    });
     let mut found = 0_usize;
-    for kind in lint_scan::Kind::ALL {
-        let shapes = lint_sighted(*kind, kind.planted())?;
-        found = found.checked_add(shapes).ok_or_else(|| {
+    for shapes in sighted {
+        found = found.checked_add(shapes?).ok_or_else(|| {
             GateError("lints: more planted shapes than a count can hold".to_owned())
         })?;
     }
     Ok(found)
 }
 
-/// How many shapes of `planted` the lint scan found as `kind`, which is all of them or an error.
+/// One lint kind's planted shapes, read on a thread of their own that has ended before the scope holding it does.
+struct Sighting<'scope>(std::thread::ScopedJoinHandle<'scope, Result<usize, GateError>>);
+
+impl<'scope> Sighting<'scope> {
+    /// Starts `work`, which reads `kind`'s shapes.
+    fn launch(
+        scope: &'scope std::thread::Scope<'scope, '_>,
+        kind: lint_scan::Kind,
+        work: impl FnOnce() -> Result<usize, GateError> + Send + 'scope,
+    ) -> Result<Self, GateError> {
+        std::thread::Builder::new()
+            .name(format!("lints {}", kind.label()))
+            .spawn_scoped(scope, work)
+            .map(Self)
+            .map_err(|error| {
+                GateError(format!(
+                    "lints: no thread to read the {} shapes on: {error}",
+                    kind.label()
+                ))
+            })
+    }
+
+    /// What the thread found, or its panic raised again here.
+    fn join(self) -> Result<usize, GateError> {
+        match self.0.join() {
+            Ok(sighted) => sighted,
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
+    }
+}
+
+/// How many shapes of `planted` the lint scan found as `kind`, which is all of them or an error, reading each tree shape with cargo's reading of `skeleton` and asking git and cargo through `ask`.
 ///
 /// # Errors
 /// The first shape the scan did not find as `kind`, or planted text that does not parse.
-pub fn lint_sighted(kind: lint_scan::Kind, planted: &str) -> Result<usize, GateError> {
+pub fn lint_sighted(
+    kind: lint_scan::Kind,
+    planted: &str,
+    skeleton: &tree::Skeleton,
+    ask: &impl tree::Ask,
+) -> Result<usize, GateError> {
     let kinds = |found: Vec<lint_scan::Finding>| -> Vec<lint_scan::Kind> {
         found.into_iter().map(|finding| finding.kind).collect()
     };
@@ -910,7 +970,10 @@ pub fn lint_sighted(kind: lint_scan::Kind, planted: &str) -> Result<usize, GateE
                 .map(kinds)
                 .map_err(|error| GateError(error.to_string()))
         },
-        |root| lint_findings(root).map(|(_files, found)| kinds(found)),
+        |laid| {
+            lint_findings(&tree::Tree::planted(laid, skeleton, ask)?)
+                .map(|(_files, found)| kinds(found))
+        },
     )
 }
 
@@ -924,12 +987,12 @@ struct Planted<'a> {
 
 /// How many shapes of a planted file a scan found as `kind`, which is all of them or an error.
 ///
-/// A one-file shape is read by `per_file` exactly as the gate reads a file of the tree; a tree shape is laid over a synthetic repository and read by `whole`, which is the gate's own scan.
+/// A one-file shape is read by `per_file` exactly as the gate reads a file of the tree; a tree shape is laid over the skeleton and read by `whole`, which is the gate's own scan of the tree laid.
 fn sighted<K: PartialEq>(
     planted: &Planted<'_>,
     kind: &K,
     per_file: impl Fn(&str, &str) -> Result<Vec<K>, GateError>,
-    whole: impl Fn(&Path) -> Result<Vec<K>, GateError>,
+    whole: impl Fn(&crate::sentinel::Laid) -> Result<Vec<K>, GateError>,
 ) -> Result<usize, GateError> {
     let Planted {
         gate,
@@ -953,12 +1016,12 @@ fn sighted<K: PartialEq>(
                 let root = tempfile::tempdir().map_err(|error| {
                     GateError(format!("{gate}: a directory to plant {label} in: {error}"))
                 })?;
-                crate::sentinel::plant(root.path(), files).map_err(|error| {
+                let laid = crate::sentinel::lay(root.path(), files).map_err(|error| {
                     GateError(format!(
                         "{gate}: planting shape `{name}` of {label}: {error}"
                     ))
                 })?;
-                whole(root.path())?
+                whole(&laid)?
             }
         };
         if !found.contains(kind) {
@@ -973,12 +1036,13 @@ fn sighted<K: PartialEq>(
     Ok(shapes.len())
 }
 
-/// How many files the scan read under `root`, and every finding in them.
+/// How many files the scan read of `tree`, and every finding in them.
 ///
 /// # Errors
 /// A file that could not be read or parsed.
-fn lint_findings(root: &Path) -> Result<(usize, Vec<lint_scan::Finding>), GateError> {
-    let files = all_sources(root)?;
+fn lint_findings(tree: &tree::Tree) -> Result<(usize, Vec<lint_scan::Finding>), GateError> {
+    let root = tree.root();
+    let files = sources_among(root, tree.files());
     let mut found = Vec::new();
     let mut sources = Vec::new();
     for path in &files {
@@ -995,7 +1059,7 @@ fn lint_findings(root: &Path) -> Result<(usize, Vec<lint_scan::Finding>), GateEr
         .iter()
         .map(|(_compiled, file, source)| (lint_scan::crate_of(file), file.clone(), source.clone()))
         .collect();
-    found.extend(source_universe(root, &files, &sources)?);
+    found.extend(source_universe(tree, &files, &sources)?);
     found.extend(
         lint_scan::open_and_closed_across(
             sources
@@ -1012,7 +1076,7 @@ fn lint_findings(root: &Path) -> Result<(usize, Vec<lint_scan::Finding>), GateEr
         )
         .map_err(|error| GateError(format!("cross-file variant lists: {error}")))?,
     );
-    found.extend(loose_layouts(root, &files)?);
+    found.extend(loose_layouts(root, &files, tree.files())?);
     found.extend(wildcards(root, &files)?);
     found.sort();
     found.dedup();
@@ -1247,7 +1311,11 @@ fn ratcheted(root: &Path, standing: &[Waived]) -> Result<Vec<lint_scan::Finding>
 }
 
 /// joiners rather than reading the spelling.
-fn loose_layouts(root: &Path, files: &[PathBuf]) -> Result<Vec<lint_scan::Finding>, GateError> {
+fn loose_layouts(
+    root: &Path,
+    files: &[PathBuf],
+    listed: &[String],
+) -> Result<Vec<lint_scan::Finding>, GateError> {
     let mut layouts = Vec::new();
     let mut configured: Vec<String> = Vec::new();
     for path in files {
@@ -1263,7 +1331,7 @@ fn loose_layouts(root: &Path, files: &[PathBuf]) -> Result<Vec<lint_scan::Findin
             layouts.push((module.clone(), name));
         }
     }
-    for path in production_sources(root)? {
+    for path in production_among(root, listed) {
         let source = std::fs::read_to_string(&path)
             .map_err(|error| GateError(format!("{}: {error}", path.display())))?;
         configured.extend(lint_scan::configured_directories(&source));
@@ -1286,7 +1354,7 @@ fn loose_layouts(root: &Path, files: &[PathBuf]) -> Result<Vec<lint_scan::Findin
             });
         }
     }
-    for path in tests_under(root)? {
+    for path in tests_among(root, listed) {
         let source = std::fs::read_to_string(&path)
             .map_err(|error| GateError(format!("{}: {error}", path.display())))?;
         let label = relative_slash(root, &path)?;
@@ -1310,17 +1378,17 @@ fn loose_layouts(root: &Path, files: &[PathBuf]) -> Result<Vec<lint_scan::Findin
     Ok(found)
 }
 
-/// Every test source of the workspace, which is where a layout being joined freezes it.
-fn tests_under(root: &Path) -> Result<Vec<PathBuf>, GateError> {
-    Ok(crate::repository::files(root)?
-        .into_iter()
+/// Every test source among `files`, joined to `root`, which is where a layout being joined freezes it.
+fn tests_among(root: &Path, files: &[String]) -> Vec<PathBuf> {
+    files
+        .iter()
         .filter(|relative| {
             in_source_roots(relative)
                 && crate::repository::extension_is(relative, "rs")
                 && relative.contains("/tests/")
         })
         .map(|relative| root.join(relative))
-        .collect())
+        .collect()
 }
 
 /// The production source files the seam ratchet scans.
@@ -1328,15 +1396,20 @@ fn tests_under(root: &Path) -> Result<Vec<PathBuf>, GateError> {
 /// # Errors
 /// The repository cannot be listed; an incomplete source set proves no gate.
 pub fn production_sources(root: &Path) -> Result<Vec<PathBuf>, GateError> {
-    Ok(crate::repository::files(root)?
-        .into_iter()
+    Ok(production_among(root, &crate::repository::files(root)?))
+}
+
+/// The production source files among `files`, joined to `root`.
+fn production_among(root: &Path, files: &[String]) -> Vec<PathBuf> {
+    files
+        .iter()
         .filter(|relative| {
             in_source_roots(relative)
                 && crate::repository::extension_is(relative, "rs")
                 && is_production(relative)
         })
         .map(|relative| root.join(relative))
-        .collect())
+        .collect()
 }
 
 fn is_production(relative: &str) -> bool {
@@ -1377,7 +1450,7 @@ fn relative_slash(root: &Path, path: &Path) -> Result<String, GateError> {
 /// Returns a disagreement between the scan and the ledger, or an unreadable file.
 pub fn devgates(root: &Path) -> Result<String, GateError> {
     let planted = seam_sentinels()?;
-    let (files, found) = seam_findings(root)?;
+    let (files, found) = seam_findings(root, &production_sources(root)?)?;
     let ledger_path = root.join("xtask/seam_allowlist.txt");
     let ledger_text = std::fs::read_to_string(&ledger_path)
         .map_err(|error| GateError(format!("{}: {error}", ledger_path.display())))?;
@@ -1403,14 +1476,16 @@ pub fn devgates(root: &Path) -> Result<String, GateError> {
     ))
 }
 
-/// How many production files the seam scan read under `root`, and every seam in them.
+/// How many of the production `files` under `root` the seam scan read, and every seam in them.
 ///
 /// # Errors
 /// A file that could not be read or parsed.
-fn seam_findings(root: &Path) -> Result<(usize, Vec<devgates::Seam>), GateError> {
+fn seam_findings(
+    root: &Path,
+    files: &[PathBuf],
+) -> Result<(usize, Vec<devgates::Seam>), GateError> {
     let mut found = Vec::new();
-    let files = production_sources(root)?;
-    for path in &files {
+    for path in files {
         let source = std::fs::read_to_string(path)
             .map_err(|error| GateError(format!("{}: {error}", path.display())))?;
         let label = relative_slash(root, path)?;
@@ -1459,7 +1534,10 @@ pub fn seam_sighted(kind: devgates::SeamKind, planted: &str) -> Result<usize, Ga
                 .map(kinds)
                 .map_err(|error| GateError(error.to_string()))
         },
-        |root| seam_findings(root).map(|(_files, found)| kinds(found)),
+        |laid| {
+            seam_findings(&laid.root, &production_among(&laid.root, &laid.files))
+                .map(|(_files, found)| kinds(found))
+        },
     )
 }
 
@@ -1468,12 +1546,17 @@ pub fn seam_sighted(kind: devgates::SeamKind, planted: &str) -> Result<usize, Ga
 /// # Errors
 /// Returns every edge the direction rule refuses, or a `cargo metadata` failure.
 pub fn deps(root: &Path) -> Result<String, GateError> {
-    let census = census(root)?;
     let metadata = cargo_metadata::MetadataCommand::new()
         .manifest_path(root.join("Cargo.toml"))
         .no_deps()
         .exec()
         .map_err(|error| GateError(format!("cargo metadata: {error}")))?;
+    let fuzz = cargo_metadata::MetadataCommand::new()
+        .manifest_path(root.join("fuzz/Cargo.toml"))
+        .no_deps()
+        .exec()
+        .map_err(|error| GateError(format!("cargo metadata for fuzz/Cargo.toml: {error}")))?;
+    let census = census(root, &metadata, &fuzz)?;
     let members: Vec<String> = metadata
         .workspace_packages()
         .iter()
@@ -1499,11 +1582,6 @@ pub fn deps(root: &Path) -> Result<String, GateError> {
     }
     let violations = deps::check(&edges);
     let mut prohibited = deps::prohibited_direct_dependencies(direct);
-    let fuzz = cargo_metadata::MetadataCommand::new()
-        .manifest_path(root.join("fuzz/Cargo.toml"))
-        .no_deps()
-        .exec()
-        .map_err(|error| GateError(format!("cargo metadata for fuzz/Cargo.toml: {error}")))?;
     prohibited.extend(deps::prohibited_direct_dependencies(
         fuzz.workspace_packages().iter().flat_map(|package| {
             package
@@ -1634,35 +1712,50 @@ fn features_only_tests_build_with(
 ///
 /// # Errors
 /// A manifest that belongs to none of the three, or metadata that could not be read.
-fn census(root: &Path) -> Result<String, GateError> {
-    let members: BTreeSet<PathBuf> = cargo_metadata::MetadataCommand::new()
-        .manifest_path(root.join("Cargo.toml"))
-        .no_deps()
-        .exec()
-        .map_err(|error| GateError(format!("cargo metadata: {error}")))?
-        .workspace_packages()
-        .iter()
-        .map(|package| PathBuf::from(package.manifest_path.as_std_path()))
-        .collect();
-    let fuzz = root.join("fuzz");
-    let fixtures = root.join("fixtures");
+fn census(
+    root: &Path,
+    root_metadata: &cargo_metadata::Metadata,
+    fuzz_metadata: &cargo_metadata::Metadata,
+) -> Result<String, GateError> {
+    let listed = crate::repository::files(root)?;
+    let mut classes = [
+        workspace_manifests(root, root_metadata)?,
+        workspace_manifests(&root.join("fuzz"), fuzz_metadata)?,
+        BTreeSet::new(),
+    ];
+    if listed.iter().any(|path| path.starts_with("fixtures/")) {
+        let dir = root.join("fixtures");
+        let names = fixtures::discover(&dir)
+            .map_err(|error| GateError(format!("{}: {error}", dir.display())))?;
+        for name in names {
+            let fixture = dir.join(&name);
+            let manifest = fixture.join("Cargo.toml");
+            let metadata = cargo_metadata::MetadataCommand::new()
+                .manifest_path(&manifest)
+                .no_deps()
+                .exec()
+                .map_err(|error| {
+                    GateError(format!(
+                        "cargo metadata for {}: {error}",
+                        manifest.display()
+                    ))
+                })?;
+            classes[2].extend(workspace_manifests(&fixture, &metadata)?);
+        }
+    }
     let mut counted = [0_usize; 3];
     let mut loose = Vec::new();
-    for relative in crate::repository::files(root)? {
-        if !(relative == "Cargo.toml" || relative.ends_with("/Cargo.toml"))
-            || relative.starts_with('.')
-        {
+    for relative in listed {
+        if !(relative == "Cargo.toml" || relative.ends_with("/Cargo.toml")) {
             continue;
         }
         let whole = root.join(&relative);
-        let path = whole.as_path();
-        let at = if path == root.join("Cargo.toml") || members.contains(path) {
-            0
-        } else if path.starts_with(&fuzz) {
-            1
-        } else if path.starts_with(&fixtures) {
-            2
-        } else {
+        let path = std::fs::canonicalize(&whole)
+            .map_err(|error| GateError(format!("{}: {error}", whole.display())))?;
+        let Some(at) = classes
+            .iter()
+            .position(|manifests| manifests.contains(&path))
+        else {
             loose.push(relative);
             continue;
         };
@@ -1681,12 +1774,40 @@ fn census(root: &Path) -> Result<String, GateError> {
         )));
     }
     Ok(format!(
-        "{} root-workspace manifest(s), {} under fuzz/ and {} under fixtures/, each \
+        "{} root-workspace, {} fuzz-workspace, and {} fixture-workspace manifest(s), each \
          reached by a command",
         counted.first().copied().unwrap_or_default(),
         counted.get(1).copied().unwrap_or_default(),
         counted.get(2).copied().unwrap_or_default()
     ))
+}
+
+fn workspace_manifests(
+    root: &Path,
+    metadata: &cargo_metadata::Metadata,
+) -> Result<BTreeSet<PathBuf>, GateError> {
+    let expected = std::fs::canonicalize(root)
+        .map_err(|error| GateError(format!("{}: {error}", root.display())))?;
+    let actual = std::fs::canonicalize(metadata.workspace_root.as_std_path())
+        .map_err(|error| GateError(format!("{}: {error}", metadata.workspace_root.as_str())))?;
+    if actual != expected {
+        return Err(GateError(format!(
+            "{}: cargo metadata reports workspace root {}, not {}",
+            root.display(),
+            actual.display(),
+            expected.display()
+        )));
+    }
+    let manifest = expected.join("Cargo.toml");
+    let mut manifests = BTreeSet::from([manifest]);
+    for package in metadata.workspace_packages() {
+        let path = package.manifest_path.as_std_path();
+        manifests.insert(
+            std::fs::canonicalize(path)
+                .map_err(|error| GateError(format!("{}: {error}", path.display())))?,
+        );
+    }
+    Ok(manifests)
 }
 
 /// Conventions of the fixture projects.
@@ -1717,6 +1838,14 @@ pub fn fixtures(root: &Path) -> Result<String, GateError> {
         problems.join("\n"),
         fixtures::RULE
     )))
+}
+
+/// Requires every original reader input, artifact and producer byte to belong to the closed repository inventory.
+///
+/// # Errors
+/// A binding member is ignored, missing, unreadable, unsafe or differs from its original digest.
+pub fn originals(root: &Path) -> Result<String, GateError> {
+    originals::held(root)
 }
 
 /// Version consistency between the workspace and the release manifest.
@@ -1990,12 +2119,8 @@ pub fn tracked(root: &Path) -> Result<String, GateError> {
             planted.join(", ")
         )));
     }
-    let mut git = std::process::Command::new("git");
-    git.arg("-C").arg(root).args(["ls-files", "-z"]);
-    for variable in REDIRECTING_GIT {
-        git.env_remove(variable);
-    }
-    let listed = git
+    let listed = crate::repository::git(root)
+        .args(["ls-files", "-z"])
         .output()
         .map_err(|error| GateError(format!("tracked: git ls-files could not run: {error}")))?;
     if !listed.status.success() {
@@ -2206,10 +2331,12 @@ fn declared_targets(metadata: &cargo_metadata::Metadata) -> BTreeSet<String> {
     declared
 }
 
-/// Every critical decision has a row saying what holds it at every layer, each cell naming an item the tree defines, and every open layer is a hole the gaps ledger gives an owner.
+/// Every critical decision has a row saying what holds it at every layer, and every open layer is a hole the gaps ledger gives an owner.
+///
+/// Each name a cell holds resolves to one definition of the tree, of the kind its layer is held by.
 ///
 /// # Errors
-/// The registry or ledger cannot be read or is malformed, or they and the tree disagree.
+/// The registry or ledger cannot be read or is malformed, a source cannot be read or parsed, or they and the tree disagree.
 pub fn invariants(root: &Path) -> Result<String, GateError> {
     let read = |relative: &str| {
         std::fs::read_to_string(root.join(relative))
@@ -2220,27 +2347,50 @@ pub fn invariants(root: &Path) -> Result<String, GateError> {
     };
     let rows = crate::invariants::rows(&read("docs/invariants.md")?).map_err(coded)?;
     let gaps = crate::invariants::gaps(&read("xtask/invariant_gaps.txt")?).map_err(coded)?;
-    let mut defined = BTreeSet::new();
+    let declared = declared_surfaces(root)?;
+    let mut definitions = Vec::new();
     for path in all_sources(root)? {
         let text = std::fs::read_to_string(&path)
             .map_err(|error| GateError(format!("invariants: {}: {error}", path.display())))?;
-        defined.extend(crate::invariants::defined(&text));
+        let label = relative_slash(root, &path)?;
+        definitions.extend(
+            crate::invariants::definitions(&label, &text, ships_from(&declared, &path))
+                .map_err(|error| GateError(format!("invariants: {label}: {error}")))?,
+        );
     }
-    let (decisions, held) =
-        crate::invariants::check(&rows, &gaps, &defined).map_err(|refused| {
-            GateError(format!(
-                "invariants: the registry and the tree disagree:\n  {}",
-                refused
-                    .iter()
-                    .map(crate::error::Coded::coded)
-                    .collect::<Vec<_>>()
-                    .join("\n  ")
-            ))
-        })?;
+    let mut reached = BTreeSet::new();
+    for names in references(root, &declared)?.ships.into_values() {
+        reached.extend(names);
+    }
+    let mut receipts = BTreeMap::new();
+    for row in &rows {
+        for name in row.receipts() {
+            let held = match crate::receipt::held(root, name, &row.decision) {
+                Ok(_receipt) => crate::invariants::Receipted::Holds,
+                Err(refused) => crate::invariants::Receipted::Refused { why: refused.0 },
+            };
+            receipts.insert((row.decision.clone(), name.to_owned()), held);
+        }
+    }
+    let tree = crate::invariants::Tree {
+        definitions,
+        reached,
+        receipts,
+    };
+    let (decisions, held) = crate::invariants::check(&rows, &gaps, &tree).map_err(|refused| {
+        GateError(format!(
+            "invariants: the registry and the tree disagree:\n  {}",
+            refused
+                .iter()
+                .map(crate::error::Coded::coded)
+                .collect::<Vec<_>>()
+                .join("\n  ")
+        ))
+    })?;
     Ok(format!(
-        "invariants: {decisions} critical decisions, {held} layer cells each naming what the tree \
-         defines, and {} open, each owned in xtask/invariant_gaps.txt; `ratchets` holds them to \
-         the base",
+        "invariants: {decisions} critical decisions, {held} layer cells each naming one \
+         definition of the kind its layer is held by, and {} open, each owned in \
+         xtask/invariant_gaps.txt; `ratchets` holds them to the base",
         gaps.len()
     ))
 }
@@ -2259,9 +2409,7 @@ struct Base {
 /// # Errors
 /// Git could not be started, or answered with a failure.
 fn git_answer(root: &Path, args: &[&str]) -> Result<String, GateError> {
-    let output = std::process::Command::new("git")
-        .arg("-C")
-        .arg(root)
+    let output = crate::repository::git(root)
         .args(args)
         .output()
         .map_err(|error| GateError(format!("ratchets: git could not run: {error}")))?;
@@ -2303,9 +2451,7 @@ impl Base {
     /// Git could not say.
     fn read(&self, root: &Path, relative: &str) -> Result<Option<String>, GateError> {
         let named = format!("{}:{relative}", self.commit);
-        let present = std::process::Command::new("git")
-            .arg("-C")
-            .arg(root)
+        let present = crate::repository::git(root)
             .args(["cat-file", "-e", &named])
             .output()
             .map_err(|error| GateError(format!("ratchets: git could not run: {error}")))?;
@@ -2388,36 +2534,19 @@ fn held_number(relative: &str, text: &str) -> Result<usize, GateError> {
     })
 }
 
-/// Every gate, in order, stopping at the first failure.
+/// Every gate, in order, stopping at the first failure, the claims gate asking `engine`.
 ///
 /// # Errors
 /// Returns the first gate's failure.
-pub fn all(root: &Path) -> Result<String, GateError> {
+pub fn all(root: &Path, engine: &crate::claims::Engine<'_>) -> Result<String, GateError> {
     let mut report = String::new();
-    for gate in [
-        devgates,
-        lints,
-        deps,
-        fixtures,
-        release_check,
-        milestones,
-        adrs,
-        invariants,
-        ratchets,
-        surfaces,
-        reached,
-        defaulted,
-        waivers,
-        tracked,
-        skipped,
-        crate::claims::claims,
-    ] {
-        line(&mut report, format_args!("{}", gate(root)?));
+    for gate in RepositoryGate::ALL {
+        line(&mut report, format_args!("{}", gate.run(root, engine)?));
     }
     Ok(report.trim_end().to_owned())
 }
 
-/// Whether a completed run's verdicts are the ones its own recording supports.
+/// Whether a completed run's verdicts are the ones its own recording supports, every body an answer it carried rests on read again from the tree at `root` where one is named.
 ///
 /// # Errors
 /// A run directory whose report could not be read, is not JSON, or is not the assurance report.
@@ -2425,6 +2554,7 @@ pub fn proofaudit(
     checkers: &crate::schemas::Checkers,
     run: &Path,
     trace: Option<&Path>,
+    root: Option<&Path>,
 ) -> Result<proofaudit::Audit, proofaudit::AuditError> {
     let path = run.join(proofaudit::REPORT_FILE);
     let label = path.display().to_string();
@@ -2440,16 +2570,20 @@ pub fn proofaudit(
             path: &label,
             text: &text,
         },
-        kept.recorded(),
+        proofaudit::Recorded {
+            root,
+            ..kept.recorded()
+        },
         Some(run),
     )
 }
 
-/// The runner's recording and every configured build's engine recording one run kept, each as its path and its text.
+/// The runner's recording and every configured build's engine recording one run kept, each as its path and its text, with what each build kept beside it of the answers it carried.
 struct Recordings {
     runner: Option<(String, String)>,
     engines: Vec<(String, String)>,
     outputs: Vec<(String, proofaudit::soundness::Kept)>,
+    beside: Vec<proofaudit::Beside>,
 }
 
 impl Recordings {
@@ -2462,6 +2596,8 @@ impl Recordings {
                 .map(|(recording_path, text)| (recording_path.as_str(), text.as_str())),
             engines: &self.engines,
             outputs: &self.outputs,
+            beside: &self.beside,
+            root: None,
         }
     }
 }
@@ -2488,11 +2624,75 @@ fn recordings(trace: Option<&Path>) -> Result<Recordings, proofaudit::AuditError
         (Some(directory), Some((_path, text))) => kept_outputs(directory, text),
         (None, _) | (_, None) => Vec::new(),
     };
+    let beside = match trace {
+        Some(directory) => engine_beside(directory)?,
+        None => Vec::new(),
+    };
     Ok(Recordings {
         runner,
         engines,
         outputs,
+        beside,
     })
+}
+
+/// What each configured build's engine kept beside its recording of the answers it carried, in namespace order, each with the position of its recording; a build that kept no `carried-v1.json` carried nothing it kept, and one that kept it keeps the skeletons, the guards' record and the catalog beside it.
+fn engine_beside(trace: &Path) -> Result<Vec<proofaudit::Beside>, proofaudit::AuditError> {
+    let builds = trace.join("builds");
+    let namespaces = match crate::repository::entries(&builds) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(source) => {
+            return Err(proofaudit::AuditError::Unreadable {
+                path: builds.display().to_string(),
+                source,
+            });
+        }
+    };
+    let mut kept = Vec::new();
+    for (engine, namespace) in namespaces.into_iter().enumerate() {
+        let directory = namespace.join("engine");
+        let Some(carried) = beside_document(&directory.join("carried-v1.json"))? else {
+            continue;
+        };
+        let required = |name: &str| {
+            let path = directory.join(name);
+            beside_document(&path)?.ok_or_else(|| proofaudit::AuditError::Unreadable {
+                path: path.display().to_string(),
+                source: std::io::Error::from(std::io::ErrorKind::NotFound),
+            })
+        };
+        kept.push(proofaudit::Beside {
+            engine,
+            path: directory.display().to_string(),
+            carried,
+            skeletons: required("skeletons-v1.json")?,
+            touched: required("touched-v1.json")?,
+            catalog: required("catalog-v1.json")?,
+        });
+    }
+    Ok(kept)
+}
+
+/// The JSON document at `path`, or nothing where no file is there.
+fn beside_document(path: &Path) -> Result<Option<serde_json::Value>, proofaudit::AuditError> {
+    let label = path.display().to_string();
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(proofaudit::AuditError::Unreadable {
+                path: label,
+                source,
+            });
+        }
+    };
+    crate::strictjson::from_str(&text)
+        .map(Some)
+        .map_err(|source| proofaudit::AuditError::Unparsable {
+            path: label,
+            source,
+        })
 }
 
 /// Whether the merged report at `merged` is the merge of the shards `shards`, each re-decided against its recording under `traces`.
@@ -2524,7 +2724,21 @@ pub fn proofaudit_merged(
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    proofaudit::merge::merged_with(checkers, &merged.label, &merged.text, &audited)
+    let kept = proofaudit::kept_stream(merged.run.as_deref()).map_err(|source| {
+        proofaudit::AuditError::Unreadable {
+            path: merged.label.clone(),
+            source,
+        }
+    })?;
+    proofaudit::merge::merged_with(
+        checkers,
+        proofaudit::Reported {
+            path: &merged.label,
+            text: &merged.text,
+        },
+        kept.as_deref(),
+        &audited,
+    )
 }
 
 /// An assurance document as the audit reads it: where it is, what it says, and the run directory holding it when one was named.
@@ -2564,7 +2778,10 @@ fn assurance_document(path: &Path) -> Result<AssuranceDocument, proofaudit::Audi
     })
 }
 
-/// What the recording kept of each interpreter run in the runner's recording `text`, read from beside it in `directory` and held to the size and digest its exec record gives; a copy that is cut, missing, or unreadable is left out, which the audit says it could not re-derive.
+/// The most a kept output holds: the runner keeps the first mebibyte of what a command printed, and says when it cut it.
+const KEPT_OUTPUT_LIMIT: u64 = 1 << 20;
+
+/// What the recording kept of each interpreter run in the runner's recording `text`, by the path its exec record names, each read by [`kept_output`] or said to be unread and why.
 fn kept_outputs(directory: &Path, text: &str) -> Vec<(String, proofaudit::soundness::Kept)> {
     let mut kept = Vec::new();
     for line in text.lines() {
@@ -2582,22 +2799,54 @@ fn kept_outputs(directory: &Path, text: &str) -> Vec<(String, proofaudit::soundn
         {
             continue;
         }
-        if exec
-            .get("output_truncated")
-            .and_then(serde_json::Value::as_bool)
-            != Some(false)
-        {
-            continue;
-        }
-        let Some(relative) = exec.get("output_path").and_then(serde_json::Value::as_str) else {
+        let Some(named) = exec.get("output_path").and_then(serde_json::Value::as_str) else {
             continue;
         };
-        match std::fs::read(directory.join(relative)) {
-            Ok(bytes) => kept.push((relative.to_owned(), held_to(exec, bytes))),
-            Err(_not_kept) => {}
-        }
+        kept.push((named.to_owned(), kept_output(directory, &event, named)));
     }
     kept
+}
+
+/// The copy the recording in `directory` kept of what the exec `event` printed, read only where the runner writes one, `output/<its sequence number>.txt`, whole, bounded, without following a link, and held to the size and digest its record gives.
+fn kept_output(
+    directory: &Path,
+    event: &serde_json::Value,
+    named: &str,
+) -> proofaudit::soundness::Kept {
+    use proofaudit::soundness::Kept;
+
+    let Some(seq) = event.get("seq").and_then(serde_json::Value::as_u64) else {
+        return Kept::Unread {
+            why: "its event carries no sequence number to find the copy by".to_owned(),
+        };
+    };
+    let expected = format!("output/{seq}.txt");
+    if named != expected {
+        return Kept::Unread {
+            why: format!("the recording names it {named:?}, and the runner keeps it at {expected}"),
+        };
+    }
+    let Some(exec) = event.pointer("/payload/exec") else {
+        return Kept::Unread {
+            why: "its event is not an exec record".to_owned(),
+        };
+    };
+    if exec
+        .get("output_truncated")
+        .and_then(serde_json::Value::as_bool)
+        != Some(false)
+    {
+        return Kept::Unread {
+            why: format!("the runner kept only the head of it at {expected}"),
+        };
+    }
+    let relative = Path::new("output").join(format!("{seq}.txt"));
+    match crate::confined::read(directory, &relative, KEPT_OUTPUT_LIMIT) {
+        Ok(bytes) => held_to(exec, bytes),
+        Err(error) => Kept::Unread {
+            why: format!("{expected} could not be read whole: {error}"),
+        },
+    }
 }
 
 /// A kept output held to the size and digest `exec` gives it.
@@ -2656,15 +2905,28 @@ pub fn proofaudit_sentinels(checkers: &crate::schemas::Checkers) -> Result<usize
             "proofaudit: the clean specimen cannot be measured in shards: {error}"
         ))
     })?;
-    for specimen in [&clean, &merged] {
+    let widened = proofaudit::sentinel::widened_and_run_sealed();
+    for specimen in [&clean, &merged, &widened] {
         silent(checkers, specimen)?;
     }
     let mut found = 0_usize;
     for layer in proofaudit::Layer::ALL {
         let planted = proofaudit_sighted(checkers, layer, &layer.planted())?;
-        found = found.checked_add(planted).ok_or_else(|| {
-            GateError("proofaudit: more planted defects than a count can hold".to_owned())
-        })?;
+        let sealed = sealed_sighted(
+            (
+                "proofaudit",
+                layer.label(),
+                layer.reads(),
+                layer.sealed_planted().len(),
+            ),
+            || proofaudit_sighted(checkers, layer, &layer.sealed_planted()),
+        )?;
+        found = found
+            .checked_add(planted)
+            .and_then(|found| found.checked_add(sealed))
+            .ok_or_else(|| {
+                GateError("proofaudit: more planted defects than a count can hold".to_owned())
+            })?;
     }
     for rule in proofaudit::merge::MergeRule::ALL {
         merge_rule_sighted(checkers, rule)?;
@@ -2673,6 +2935,30 @@ pub fn proofaudit_sentinels(checkers: &crate::schemas::Checkers) -> Result<usize
         confirm_rule_sighted(checkers, rule)?;
     }
     Ok(found)
+}
+
+/// How many defects only a sealed execution shows were planted for the layer `label` names in `gate` and found by `sighted`, where it `reads` sealed executions; none where it reads none and none is planted.
+///
+/// # Errors
+/// A layer that reads sealed executions with nothing planted that only one shows, which is a layer nothing holds to not ignoring them, a plant for a layer that reads none, or a plant the layer does not find.
+fn sealed_sighted(
+    (gate, label, reads, planted): (&str, &str, crate::route::Reads, usize),
+    sighted: impl FnOnce() -> Result<usize, GateError>,
+) -> Result<usize, GateError> {
+    use crate::route::Reads;
+    match (reads, planted) {
+        (Reads::Both, 0) => Err(GateError(format!(
+            "{gate}: the {label} layer reads sealed executions and nothing planted for it shows \
+             a defect only a sealed execution shows, so nothing says it does not ignore them \
+             (`Layer::sealed_planted` beside the layer's other plants)"
+        ))),
+        (Reads::Nothing | Reads::Native, 1..) => Err(GateError(format!(
+            "{gate}: a defect only a sealed execution shows is planted for the {label} layer, \
+             which `Layer::reads` says reads none"
+        ))),
+        (Reads::Both, 1..) => sighted(),
+        (Reads::Nothing | Reads::Native, 0) => Ok(0),
+    }
 }
 
 /// Nothing, where every defect planted for `rule` draws a confirmation violation of that rule by name.
@@ -2807,7 +3093,7 @@ fn proofaudit_specimen(
         .map_err(|error| GateError(format!("proofaudit: specimen `{name}`: {error}")))?;
     let shards: Vec<PathBuf> = laid.shards().into_iter().map(Path::to_path_buf).collect();
     if shards.is_empty() {
-        proofaudit(checkers, laid.run(), laid.trace())
+        proofaudit(checkers, laid.run(), laid.trace(), laid.root())
     } else {
         proofaudit_merged(checkers, laid.run(), &shards, laid.traces())
     }
@@ -2939,6 +3225,15 @@ pub fn engine_audit_sentinels(checkers: &crate::schemas::Checkers) -> Result<usi
     let mut found = 0_usize;
     for layer in engineaudit::Layer::ALL {
         let planted = engine_audit_sighted(checkers, layer, &layer.planted())?;
+        sealed_sighted(
+            (
+                "engine-audit",
+                layer.label(),
+                layer.reads(),
+                layer.sealed_planted().len(),
+            ),
+            || engine_audit_sighted(checkers, layer, &layer.sealed_planted()),
+        )?;
         found = found.checked_add(planted).ok_or_else(|| {
             GateError("engine-audit: more planted defects than a count can hold".to_owned())
         })?;
@@ -3181,116 +3476,6 @@ impl Surface {
     }
 }
 
-/// Whether a `cfg` predicate puts what it guards behind a test.
-///
-/// `cfg(test)` and `cfg(feature = "testkit")` and `cfg(any(test, feature = "testkit"))` all do.
-/// `cfg(not(test))` is the opposite and is what ships, so naming `test` is not enough on its own.
-fn only_for_a_test(predicate: &str) -> bool {
-    (predicate.contains("test") || predicate.contains("testkit")) && !predicate.contains("not(test")
-}
-
-/// `text` with every item a `cfg` puts behind a test removed, so what remains is what ships.
-///
-/// A `pub fn` behind `cfg(feature = "testkit")` is test support, and the feature is where somebody said so.
-/// Reading only `cfg(test)` reported sixteen of those as public functions nothing reaches, which is the gate believing its own omission.
-fn without_test_items(text: &str) -> String {
-    let mut kept = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(at) = next_test_cfg(rest) {
-        let (Some(before), Some(after)) = (rest.get(..at), rest.get(at..)) else {
-            break;
-        };
-        kept.push_str(before);
-        let Some(open) = after.find('{') else {
-            break;
-        };
-        let mut depth = 0_usize;
-        let mut end = None;
-        for (offset, character) in after.char_indices().skip(open) {
-            match character {
-                '{' => depth = depth.saturating_add(1),
-                '}' => {
-                    depth = depth.saturating_sub(1);
-                    if depth == 0 {
-                        end = Some(offset.saturating_add(1));
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-        match end.and_then(|end| after.get(end..)) {
-            Some(remaining) => rest = remaining,
-            None => break,
-        }
-    }
-    kept.push_str(rest);
-    kept
-}
-
-/// Where the next attribute that puts an item behind a test begins.
-fn next_test_cfg(text: &str) -> Option<usize> {
-    let mut from = 0_usize;
-    while let Some(at) = text.get(from..).and_then(|rest| rest.find("#[cfg")) {
-        let start = from.saturating_add(at);
-        let line_end = text
-            .get(start..)
-            .and_then(|rest| rest.find('\n'))
-            .map_or(text.len(), |offset| start.saturating_add(offset));
-        let attribute = text.get(start..line_end).unwrap_or_default();
-        if only_for_a_test(attribute) {
-            return Some(start);
-        }
-        from = line_end.max(start.saturating_add(1));
-    }
-    None
-}
-/// Every name a `pub fn` in `text` declares.
-fn public_functions(text: &str) -> Vec<String> {
-    let mut names = Vec::new();
-    for line in text.lines() {
-        let line = line.trim();
-        let Some(after) = line
-            .strip_prefix("pub fn ")
-            .or_else(|| line.strip_prefix("pub const fn "))
-            .or_else(|| line.strip_prefix("pub async fn "))
-        else {
-            continue;
-        };
-        let name: String = after
-            .chars()
-            .take_while(|character| character.is_alphanumeric() || *character == '_')
-            .collect();
-        if !name.is_empty() {
-            names.push(name);
-        }
-    }
-    names
-}
-
-/// How many times `name` is used as a word in `text`.
-fn mentions(text: &str, name: &str) -> usize {
-    let mut count = 0_usize;
-    let bytes = text.as_bytes();
-    let mut from = 0_usize;
-    while let Some(at) = text.get(from..).and_then(|rest| rest.find(name)) {
-        let start = from.saturating_add(at);
-        let end = start.saturating_add(name.len());
-        let before_is_word = start
-            .checked_sub(1)
-            .and_then(|at| bytes.get(at))
-            .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_');
-        let after_is_word = bytes
-            .get(end)
-            .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_');
-        if !before_is_word && !after_is_word {
-            count = count.saturating_add(1);
-        }
-        from = end;
-    }
-    count
-}
-
 /// What every workspace crate declares its public surface to mean, and where it lives.
 ///
 /// # Errors
@@ -3334,16 +3519,72 @@ fn declared_surfaces(root: &Path) -> Result<Vec<(String, Surface, PathBuf)>, Gat
     Ok(declared)
 }
 
-/// Every public function `declaring` declares that `tested` names and `ships` does not.
+/// What the code of every declared crate references, by the name it references.
+struct References {
+    /// Every name the production code of each crate that ships references, by crate.
+    ships: BTreeMap<String, BTreeSet<String>>,
+    /// Every name any code of each crate references, tests included, by crate.
+    tested: BTreeMap<String, BTreeSet<String>>,
+    /// Every public function of an incidental surface, with its crate.
+    candidates: Vec<(String, String)>,
+}
+
+/// Whether `file` is production code of a crate that ships: under the `src` of a declared crate whose surface is not test support.
+fn ships_from(declared: &[(String, Surface, PathBuf)], file: &Path) -> bool {
+    declared
+        .iter()
+        .filter(|(_, _, directory)| file.starts_with(directory))
+        .max_by_key(|(_, _, directory)| directory.components().count())
+        .is_some_and(|(_, surface, directory)| {
+            *surface != Surface::TestSupport && file.starts_with(directory.join("src"))
+        })
+}
+
+/// What the code of every crate of `declared` references, read from every Rust file under it.
 ///
-/// `ships` holds the definition itself, so one mention there is the declaration and no caller; two is a caller.
-/// `tested` holds the definition too, for the same reason.
-#[must_use]
-pub fn only_a_test_reaches(declaring: &str, ships: &str, tested: &str) -> Vec<String> {
-    public_functions(declaring)
-        .into_iter()
-        .filter(|function| mentions(ships, function) <= 1 && mentions(tested, function) > 1)
-        .collect()
+/// # Errors
+/// A file that cannot be listed, read, or parsed.
+fn references(
+    root: &Path,
+    declared: &[(String, Surface, PathBuf)],
+) -> Result<References, GateError> {
+    let mut ships: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut tested: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut candidates = Vec::new();
+    for (name, surface, directory) in declared {
+        for file in rust_files_under(root, directory)? {
+            let text = std::fs::read_to_string(&file)
+                .map_err(|error| GateError(format!("{}: {error}", file.display())))?;
+            let under_src = file.starts_with(directory.join("src"));
+            let all = reach::facts(&text, false)
+                .map_err(|error| GateError(format!("{}: {error}", file.display())))?;
+            tested
+                .entry(name.clone())
+                .or_default()
+                .extend(all.referenced);
+            if *surface != Surface::TestSupport && under_src {
+                let production = reach::facts(&text, true)
+                    .map_err(|error| GateError(format!("{}: {error}", file.display())))?;
+                ships
+                    .entry(name.clone())
+                    .or_default()
+                    .extend(production.referenced);
+                if *surface == Surface::Incidental {
+                    candidates.extend(
+                        production
+                            .public
+                            .into_iter()
+                            .map(|function| (name.clone(), function)),
+                    );
+                }
+            }
+        }
+    }
+    Ok(References {
+        ships,
+        tested,
+        candidates,
+    })
 }
 
 /// Every public function of an incidental surface is one something other than a test reaches.
@@ -3357,37 +3598,24 @@ pub fn only_a_test_reaches(declaring: &str, ships: &str, tested: &str) -> Vec<St
 /// Returns every such function, and refuses a surface nobody declared.
 pub fn reached(root: &Path) -> Result<String, GateError> {
     let declared = declared_surfaces(root)?;
+    let References {
+        ships,
+        tested,
+        candidates,
+    } = references(root, &declared)?;
 
-    let mut ships = String::new();
-    let mut tested = String::new();
-    for (_name, surface, directory) in &declared {
-        for file in rust_files_under(root, directory)? {
-            let text = std::fs::read_to_string(&file)
-                .map_err(|error| GateError(format!("{}: {error}", file.display())))?;
-            let under_src = file.starts_with(directory.join("src"));
-            tested.push_str(&text);
-            tested.push('\n');
-            if *surface != Surface::TestSupport && under_src {
-                ships.push_str(&without_test_items(&text));
-                ships.push('\n');
-            }
-        }
-    }
-
-    let mut only_tests = Vec::new();
-    for (name, surface, directory) in &declared {
-        if *surface != Surface::Incidental {
-            continue;
-        }
-        for file in rust_files_under(root, &directory.join("src"))? {
-            let text = std::fs::read_to_string(&file)
-                .map_err(|error| GateError(format!("{}: {error}", file.display())))?;
-            let shipped = without_test_items(&text);
-            for function in only_a_test_reaches(&shipped, &ships, &tested) {
-                only_tests.push(format!("{name}::{function}"));
-            }
-        }
-    }
+    let mut only_tests: Vec<String> = candidates
+        .into_iter()
+        .filter(|(name, function)| {
+            !ships
+                .get(name)
+                .is_some_and(|referenced| referenced.contains(function))
+                && tested
+                    .get(name)
+                    .is_some_and(|referenced| referenced.contains(function))
+        })
+        .map(|(name, function)| format!("{name}::{function}"))
+        .collect();
     only_tests.sort_unstable();
     only_tests.dedup();
 
@@ -3420,49 +3648,6 @@ pub fn reached(root: &Path) -> Result<String, GateError> {
          under the ceiling of {ceiling}",
         only_tests.len()
     ))
-}
-
-/// Every audit reader supplies no more values its input never gave than `xtask/defaulted_ceiling.txt` allows it, and exactly that many.
-///
-/// # Errors
-/// Every file above or below its ceiling, and a source or ceiling that does not read.
-pub fn defaulted(root: &Path) -> Result<String, GateError> {
-    let mut counted = BTreeMap::new();
-    for file in rust_files_under(root, &root.join("xtask/src"))? {
-        let relative = file
-            .strip_prefix(root)
-            .map_err(|error| GateError(format!("{}: {error}", file.display())))?
-            .components()
-            .map(|part| {
-                part.as_os_str().to_str().ok_or_else(|| {
-                    GateError(format!("{}: a path that is not UTF-8", file.display()))
-                })
-            })
-            .collect::<Result<Vec<&str>, GateError>>()?
-            .join("/");
-        if !crate::defaulted::reads_for_an_audit(&relative) {
-            continue;
-        }
-        let text = std::fs::read_to_string(&file)
-            .map_err(|error| GateError(format!("{}: {error}", file.display())))?;
-        let count = crate::defaulted::defaulted_in(&text)
-            .map_err(|error| GateError(format!("{relative}: {error}")))?;
-        counted.insert(relative, count);
-    }
-    let ceiling = root.join("xtask/defaulted_ceiling.txt");
-    let written = std::fs::read_to_string(&ceiling)
-        .map_err(|error| GateError(format!("{}: {error}", ceiling.display())))?;
-    match crate::defaulted::held(&counted, &written) {
-        Ok(total) => Ok(format!(
-            "defaulted: {total} value(s) supplied where an audit reader's input gave none, each \
-             file at its ceiling"
-        )),
-        Err(refused) => Err(GateError(format!(
-            "defaulted: an audit reader holds a record to a schema and then answers for an absent \
-             field anyway:\n  {}",
-            refused.join("\n  ")
-        ))),
-    }
 }
 
 /// Every `.rs` file under `directory`, skipping anything built.

@@ -120,7 +120,7 @@ fn located(file: &syn::File, start: LineColumn) -> Option<Located> {
         context: Vec::new(),
         found: None,
     };
-    search.items(&file.items);
+    search.visit_file(file);
     search.found
 }
 
@@ -131,45 +131,6 @@ struct Search {
 }
 
 impl Search {
-    fn items(&mut self, items: &[syn::Item]) {
-        for item in items {
-            if self.found.is_some() {
-                return;
-            }
-            self.item(item);
-        }
-    }
-
-    fn item(&mut self, item: &syn::Item) {
-        match item {
-            syn::Item::Fn(function) => {
-                self.candidate(&function.block, &function.sig, &function.attrs);
-            }
-            syn::Item::Mod(module) => {
-                if let Some((_, inner)) = &module.content {
-                    self.within(&module.attrs, |search| search.items(inner));
-                }
-            }
-            syn::Item::Impl(block) => self.within(&block.attrs, |search| {
-                for member in &block.items {
-                    if let syn::ImplItem::Fn(method) = member {
-                        search.candidate(&method.block, &method.sig, &method.attrs);
-                    }
-                }
-            }),
-            syn::Item::Trait(declared) => self.within(&declared.attrs, |search| {
-                for member in &declared.items {
-                    if let syn::TraitItem::Fn(method) = member
-                        && let Some(block) = &method.default
-                    {
-                        search.candidate(block, &method.sig, &method.attrs);
-                    }
-                }
-            }),
-            _ => {}
-        }
-    }
-
     fn within(&mut self, attributes: &[syn::Attribute], inside: impl FnOnce(&mut Self)) {
         let depth = self.context.len();
         self.context.extend(attributes.iter().cloned());
@@ -183,6 +144,9 @@ impl Search {
         signature: &syn::Signature,
         attributes: &[syn::Attribute],
     ) {
+        if self.found.is_some() {
+            return;
+        }
         if block.brace_token.span.open().start() == self.start {
             let mut context = self.context.clone();
             context.extend(attributes.iter().cloned());
@@ -194,7 +158,49 @@ impl Search {
                 opaque: signature.asyncness.is_some() || opaque.0,
                 context,
             });
+        } else {
+            self.within(attributes, |search| search.visit_block(block));
         }
+    }
+}
+
+impl<'ast> Visit<'ast> for Search {
+    fn visit_item(&mut self, item: &'ast syn::Item) {
+        if self.found.is_none() {
+            syn::visit::visit_item(self, item);
+        }
+    }
+
+    fn visit_item_fn(&mut self, function: &'ast syn::ItemFn) {
+        self.candidate(&function.block, &function.sig, &function.attrs);
+    }
+
+    fn visit_impl_item_fn(&mut self, function: &'ast syn::ImplItemFn) {
+        self.candidate(&function.block, &function.sig, &function.attrs);
+    }
+
+    fn visit_trait_item_fn(&mut self, function: &'ast syn::TraitItemFn) {
+        if let Some(block) = &function.default {
+            self.candidate(block, &function.sig, &function.attrs);
+        }
+    }
+
+    fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
+        self.within(&item.attrs, |search| {
+            syn::visit::visit_item_impl(search, item);
+        });
+    }
+
+    fn visit_item_trait(&mut self, item: &'ast syn::ItemTrait) {
+        self.within(&item.attrs, |search| {
+            syn::visit::visit_item_trait(search, item);
+        });
+    }
+
+    fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+        self.within(&item.attrs, |search| {
+            syn::visit::visit_item_mod(search, item);
+        });
     }
 }
 
@@ -294,7 +300,7 @@ fn invoked_only_listed(tokens: &TokenStream, lists: Lists<'_>) -> bool {
 
 /// Whether `word` is a keyword, which a `!` after it does not make an invocation.
 fn keyword(word: &str) -> bool {
-    syn::parse_str::<syn::Ident>(word).is_err()
+    crate::lexed::parse::<syn::Ident>(word).is_err()
 }
 
 /// Whether `path` is an attribute path on the list: one listed segment, or a first segment naming a tool.
@@ -499,8 +505,12 @@ struct Skeletons {
     document_type: String,
     schema_version: u64,
     items: Vec<ItemClaim>,
+    files: std::collections::BTreeMap<String, String>,
     units: Vec<Unit>,
 }
+
+/// The version of the skeletons document this audit reads, the first to say which bodies it never read.
+const SKELETONS_VERSION: u64 = 4;
 
 /// What the run claims of one cataloged item's body.
 #[derive(Debug, serde::Deserialize)]
@@ -509,7 +519,8 @@ struct ItemClaim {
     index: u64,
     item: NamedItem,
     name: String,
-    body_digest: String,
+    #[serde(deserialize_with = "super::wire::required_option")]
+    body_digest: Option<String>,
     sealed: bool,
     #[serde(rename = "unsealed", deserialize_with = "super::wire::required_option")]
     _unsealed: Option<serde_json::Value>,
@@ -665,48 +676,19 @@ fn tests_of(filter: &[String]) -> std::collections::BTreeSet<&str> {
 /// Every item's file and body span, by the item index the guards' record names it by.
 type Spans = std::collections::BTreeMap<u64, (String, std::ops::Range<u64>)>;
 
-/// Why the guards' record gives no body span to read an item by.
-#[derive(Debug, Clone, Copy)]
-enum Unspanned {
-    /// The record lists no items.
-    NoItems,
-    /// An item of it lacks an index, a file or a body span.
-    ItemWithoutSpan,
-}
-
-impl Unspanned {
-    /// The refusal as a sentence.
-    const fn said(self) -> &'static str {
-        match self {
-            Self::NoItems => "the guards' record names no items",
-            Self::ItemWithoutSpan => {
-                "an item of the guards' record names no index, file or body span"
-            }
-        }
-    }
-}
-
-/// The body span of every item the guards' record names, by item index, or why that record cannot say.
-fn spans(touched: &serde_json::Value) -> Result<Spans, Unspanned> {
-    let Some(items) = touched.get("items").and_then(serde_json::Value::as_array) else {
-        return Err(Unspanned::NoItems);
-    };
-    let mut spans = std::collections::BTreeMap::new();
-    for item in items {
-        let span = (|| {
-            let body = item.get("body")?;
-            Some((
-                item.get("index")?.as_u64()?,
-                item.get("path")?.as_str()?.to_owned(),
-                body.get("start")?.as_u64()?..body.get("end")?.as_u64()?,
-            ))
-        })();
-        let Some((index, path, body)) = span else {
-            return Err(Unspanned::ItemWithoutSpan);
-        };
-        spans.insert(index, (path, body));
-    }
-    Ok(spans)
+/// The body span of every item the guards' record names, by item index, or nothing where the record keeps no item catalog.
+fn spans(touched: &super::wire::Guarded) -> Option<Spans> {
+    touched.items.as_ref().map(|items| {
+        items
+            .iter()
+            .map(|item| {
+                (
+                    item.index,
+                    (item.path.clone(), item.body.start..item.body.end),
+                )
+            })
+            .collect()
+    })
 }
 
 /// One cataloged item, as the guards' record and the carry evidence name it.
@@ -716,7 +698,7 @@ struct Cataloged {
     claimed: (String, u64),
     name: String,
     body: std::ops::Range<usize>,
-    digest: String,
+    digest: Option<String>,
     sealed: bool,
     start: Option<Place>,
 }
@@ -812,7 +794,7 @@ fn decoded<T: serde::de::DeserializeOwned>(
 /// The skeletons document as the shape this audit reads, and the guards' body spans where the run kept them; nothing where either says it is another document.
 fn documents(
     skeletons: &serde_json::Value,
-    touched: Option<&serde_json::Value>,
+    touched: Option<&super::wire::Guarded>,
     notes: &mut super::Notes<'_>,
 ) -> Option<(Skeletons, Option<Spans>)> {
     let skeletons = decoded::<Skeletons>(
@@ -820,11 +802,14 @@ fn documents(
         ("skeletons-v1.json", "rust-mutants/skeletons"),
         notes,
     )?;
-    if skeletons.document_type != "rust-mutants/skeletons" || skeletons.schema_version != 2 {
+    if skeletons.document_type != "rust-mutants/skeletons"
+        || skeletons.schema_version != SKELETONS_VERSION
+    {
         notes.violated(
             "skeletons-v1.json",
             format!(
-                "the document says it is {} version {}, not rust-mutants/skeletons version 2",
+                "the document says it is {} version {}, not rust-mutants/skeletons version \
+                 {SKELETONS_VERSION}",
                 skeletons.document_type, skeletons.schema_version
             ),
         );
@@ -832,9 +817,12 @@ fn documents(
     }
     match touched.map(spans) {
         None => Some((skeletons, None)),
-        Some(Ok(spans)) => Some((skeletons, Some(spans))),
-        Some(Err(why)) => {
-            notes.violated("touched-v1.json", why.said().to_owned());
+        Some(Some(spans)) => Some((skeletons, Some(spans))),
+        Some(None) => {
+            notes.violated(
+                "touched-v1.json",
+                "the guards' record keeps no item catalog".to_owned(),
+            );
             None
         }
     }
@@ -902,11 +890,7 @@ pub(super) fn layer(
             return notes.looked();
         }
     };
-    let measured: std::collections::BTreeMap<&str, &str> = report
-        .mutants
-        .iter()
-        .map(|row| (row.path.as_str(), row.source_digest.as_str()))
-        .collect();
+    let measured = measured(&skeletons, report, &mut notes);
     let items = cataloged(&skeletons, &spans, &mut notes);
     let mut read = Tree::new(root, &measured);
     for item in &items {
@@ -917,11 +901,56 @@ pub(super) fn layer(
     notes.looked()
 }
 
-/// The files of the measured tree, each read once and proved to be the file the run measured where the report can say.
+/// The digest of every file the run measured, as the skeletons keep it for every file an item is in and as each row's source digest says it, every disagreement between the two said.
+fn measured<'r>(
+    skeletons: &'r Skeletons,
+    report: &'r super::Report,
+    notes: &mut super::Notes<'_>,
+) -> std::collections::BTreeMap<&'r str, &'r str> {
+    let mut measured: std::collections::BTreeMap<&str, &str> = skeletons
+        .files
+        .iter()
+        .map(|(path, digest)| (path.as_str(), digest.as_str()))
+        .collect();
+    for row in &report.mutants {
+        match measured.insert(row.path.as_str(), row.source_digest.as_str()) {
+            Some(kept) if kept != row.source_digest => notes.violated(
+                &row.display_id,
+                format!(
+                    "the row says {} was measured as {}, and the skeletons keep it as {kept}",
+                    row.path, row.source_digest
+                ),
+            ),
+            Some(_) | None => {}
+        }
+    }
+    measured
+}
+
+/// The files of the measured tree, each read and parsed once and proved to be the file the run measured where the report can say.
 struct Tree<'a> {
     root: &'a std::path::Path,
     measured: &'a std::collections::BTreeMap<&'a str, &'a str>,
     files: std::collections::BTreeMap<String, Option<(String, bool)>>,
+    syntax: std::collections::BTreeMap<String, Syntax>,
+}
+
+/// A cached reading that keeps unread sources distinct from readable non-Rust text.
+#[derive(Clone)]
+enum Syntax {
+    File(std::rc::Rc<syn::File>),
+    NotRust,
+    Unread,
+}
+
+impl Syntax {
+    /// The parsed file where the reading made one, retaining its original locations.
+    fn file(self) -> Option<std::rc::Rc<syn::File>> {
+        match self {
+            Self::File(file) => Some(file),
+            Self::NotRust | Self::Unread => None,
+        }
+    }
 }
 
 impl<'a> Tree<'a> {
@@ -933,6 +962,7 @@ impl<'a> Tree<'a> {
             root,
             measured,
             files: std::collections::BTreeMap::new(),
+            syntax: std::collections::BTreeMap::new(),
         }
     }
 
@@ -952,6 +982,55 @@ impl<'a> Tree<'a> {
         self.files.insert(path.to_owned(), read.clone());
         read
     }
+
+    /// The one parsing of this file in the audit, including refusals that must not be read again.
+    fn syntax(&mut self, path: &str) -> Syntax {
+        if let Some(known) = self.syntax.get(path) {
+            return known.clone();
+        }
+        let read = match self.text(path) {
+            Some((text, _)) => match crate::lexed::file(&text) {
+                Ok(file) => Syntax::File(std::rc::Rc::new(file)),
+                Err(_not_rust) => Syntax::NotRust,
+            },
+            None => Syntax::Unread,
+        };
+        self.syntax.insert(path.to_owned(), read.clone());
+        read
+    }
+}
+
+/// The remark an item whose body no unit read draws: nothing proves a read of it now is a read of what the run measured.
+fn unread(item: &Cataloged, subject: &str, notes: &mut super::Notes<'_>) {
+    notes.unaudited(
+        subject,
+        format!(
+            "{} keeps no body digest, because no unit read its body, so no read of it now is a \
+             read of what the run measured",
+            item.name
+        ),
+    );
+}
+
+/// Whether the body `read` hashes to the `claimed` digest, saying a violation or an unaudited remark where it does not.
+fn digest_holds(
+    (read, claimed): (&[u8], &str),
+    proven: bool,
+    (name, subject, notes): (&str, &str, &mut super::Notes<'_>),
+) -> bool {
+    if sha256(read) == claimed {
+        return true;
+    }
+    let detail = format!(
+        "{name} keeps a body digest its body's bytes do not hash to, so an edit inside it would \
+         not be told from none"
+    );
+    if proven {
+        notes.violated(subject, detail);
+    } else {
+        notes.unaudited(subject, detail);
+    }
+    false
 }
 
 /// One item's body digest and sealing, read again.
@@ -976,17 +1055,15 @@ fn bodies(
         );
         return;
     };
-    if sha256(body) != item.digest {
-        let detail = format!(
-            "{} keeps a body digest its body's bytes do not hash to, so an edit inside it would \
-             not be told from none",
-            item.name
-        );
-        if proven {
-            notes.violated(&subject, detail);
-        } else {
-            notes.unaudited(&subject, detail);
-        }
+    let Some(claimed) = &item.digest else {
+        unread(item, &subject, notes);
+        return;
+    };
+    if !digest_holds(
+        (body, claimed.as_str()),
+        proven,
+        (&item.name, &subject, notes),
+    ) {
         return;
     }
     if !placed_as_claimed(item, (&text, proven), &subject, notes) {
@@ -1006,8 +1083,10 @@ fn bodies(
         );
         return;
     }
-    let (Ok(file), Some(start)) = (syn::parse_file(&text), line_column(&text, item.body.start))
-    else {
+    let (Some(file), Some(start)) = (
+        tree.syntax(&item.path).file(),
+        line_column(&text, item.body.start),
+    ) else {
         notes.violated(
             &subject,
             format!(
@@ -1092,11 +1171,11 @@ fn unit_files(path: &str, skeletons: &Skeletons, tree: &mut Tree<'_>) -> Option<
                 continue;
             }
             let file = entry.strip_prefix("$root/")?;
-            let (text, _) = tree.text(file)?;
-            let Ok(parsed) = syn::parse_file(&text) else {
-                continue;
-            };
-            files.push(parsed);
+            match tree.syntax(file) {
+                Syntax::File(parsed) => files.push(parsed.as_ref().clone()),
+                Syntax::NotRust => {}
+                Syntax::Unread => return None,
+            }
         }
     }
     Some(files)
@@ -1135,7 +1214,11 @@ fn skeleton_folds(
                 let Some((text, _)) = tree.text(path) else {
                     continue;
                 };
-                match positions_read(path, &text, items, lists) {
+                let listed = tree
+                    .syntax(path)
+                    .file()
+                    .and_then(|file| positions_read(path, (&text, &file), items, lists));
+                match listed {
                     Some(listed) if *digest == sha256(listed.as_bytes()) => {}
                     Some(listed) => notes.violated(
                         &name,
@@ -1206,16 +1289,17 @@ fn rendering(entry: &str, path: &str, text: &str, items: &[Cataloged]) -> Option
 const POSITIONS: &str = "$positions/";
 
 /// Where the page says the compiler reads a position in the file at `path`, one line each in byte order: every body that is not sealed by its ordinal, and outside every cataloged body each item-level macro invocation but a `macro_rules!` definition, each documentation attribute holding a line rustdoc may test, each other attribute off the list, and each array length, enum discriminant, const parameter default and const generic argument that holds a macro invocation or a call; `None` where the file does not parse.
-fn positions_read(path: &str, text: &str, items: &[Cataloged], lists: Lists<'_>) -> Option<String> {
-    let file = match syn::parse_file(text) {
-        Ok(file) => file,
-        Err(_not_rust) => return None,
-    };
+fn positions_read(
+    path: &str,
+    (text, file): (&str, &syn::File),
+    items: &[Cataloged],
+    lists: Lists<'_>,
+) -> Option<String> {
     let mut found = Candidates {
         lists,
         seen: Vec::new(),
     };
-    found.visit_file(&file);
+    found.visit_file(file);
     let mut in_file: Vec<&Cataloged> = items.iter().filter(|item| item.path == path).collect();
     in_file.sort_by_key(|item| item.index);
     let mut bodies = Vec::new();
@@ -1390,14 +1474,14 @@ impl<'ast> Visit<'ast> for Candidates<'_> {
 /// The evidence a believed record is held to, read once.
 struct Held<'a> {
     tree: String,
-    bodies: std::collections::BTreeMap<NamedItem, (String, bool, Option<Place>)>,
-    by_index: std::collections::BTreeMap<u64, (NamedItem, String)>,
+    bodies: std::collections::BTreeMap<NamedItem, (Option<String>, bool, Option<Place>)>,
+    by_index: std::collections::BTreeMap<u64, (NamedItem, Option<String>)>,
     spans: &'a Spans,
-    touched: &'a serde_json::Value,
+    touched: &'a super::wire::Guarded,
 }
 
 impl<'a> Held<'a> {
-    fn of(skeletons: &Skeletons, touched: &'a serde_json::Value, spans: &'a Spans) -> Self {
+    fn of(skeletons: &Skeletons, touched: &'a super::wire::Guarded, spans: &'a Spans) -> Self {
         let mut units: Vec<String> = skeletons
             .units
             .iter()
@@ -1481,7 +1565,7 @@ fn believed(
                 ),
             );
         }
-        if let Some(why) = locus_differs(row, &record.locus, held) {
+        if let Some(why) = locus_differs(&Edit::of_row(row), &record.locus, held) {
             notes.violated(
                 subject,
                 format!("the record's locus is not the mutation's: {why}"),
@@ -1512,32 +1596,71 @@ fn planned_reach(
     held: &Held<'_>,
     notes: &mut super::Notes<'_>,
 ) {
-    let reaching = super::evidence::reaching_targets(held.touched, index);
+    for said in planning(index, plan, held.touched) {
+        match said {
+            Planning::Unreached(why) => notes.violated(subject, why),
+            Planning::Unkept(why) => notes.unaudited(subject, why),
+        }
+    }
+}
+
+/// What the guards' record says against one target a plan runs for a mutation.
+enum Planning {
+    /// The record does not bear the plan out: a violation, in words.
+    Unreached(String),
+    /// The record keeps too little to say, in words.
+    Unkept(String),
+}
+
+/// Every target `plan` runs that the guards' record `touched` does not say reaches the mutation at `index`, narrowed to the tests the plan names, and every one it keeps too little of to say.
+fn planning(index: u64, plan: &[Planned], touched: &super::wire::Guarded) -> Vec<Planning> {
+    let reaching = super::evidence::reaching_targets(touched, index);
+    let mut said = Vec::new();
     for planned in plan {
         let target = planned.target.as_str();
-        let Some(narrowed) = reaching.get(target) else {
-            notes.violated(
-                subject,
-                format!(
-                    "the plan runs {target}, which the guards' record says reaches nothing of it"
-                ),
-            );
+        let documented = target.contains("/doc/")
+            && (touched.targets.contains_key(target)
+                || touched
+                    .limitations
+                    .iter()
+                    .any(|limited| limited == &format!("touch-not-recorded:{target}")));
+        if documented {
+            if planned.filter.is_some() {
+                said.push(Planning::Unreached(format!(
+                    "the plan narrows native documentation target {target} by guards that do not measure it"
+                )));
+            }
             continue;
+        }
+        let narrowed = match reaching.get(target) {
+            None => {
+                said.push(Planning::Unreached(format!(
+                    "the plan runs {target}, which the guards' record says reaches nothing of it"
+                )));
+                continue;
+            }
+            Some(Err(unkept)) => {
+                said.push(Planning::Unkept(format!(
+                    "the plan runs {target}, and the guards' record keeps no {} for it, so \
+                     whether it reaches this cannot be re-derived",
+                    unkept.word()
+                )));
+                continue;
+            }
+            Some(Ok(narrowed)) => narrowed,
         };
         let filter: Option<std::collections::BTreeSet<String>> = planned
             .filter
             .as_ref()
             .map(|tests| tests.iter().cloned().collect());
         if filter.is_some() && filter.as_ref() != narrowed.as_ref() {
-            notes.violated(
-                subject,
-                format!(
-                    "the plan narrows {target} to {filter:?}, and the guards' record narrows it \
-                     to {narrowed:?}"
-                ),
-            );
+            said.push(Planning::Unreached(format!(
+                "the plan narrows {target} to {filter:?}, and the guards' record narrows it to \
+                 {narrowed:?}"
+            )));
         }
     }
+    said
 }
 
 /// Whether every target a carried answer rests on held its reach, re-derived from the control records the run kept (P7).
@@ -1547,19 +1670,548 @@ fn reach_held(
     standings: &std::collections::BTreeMap<String, crate::drift::Standing>,
     notes: &mut super::Notes<'_>,
 ) {
-    for target in targets {
-        let standing = match standings.get(target) {
-            Some(crate::drift::Standing::Held) => continue,
-            Some(other) => other.name(),
-            None => "without a baseline to compare a control with",
-        };
+    for why in targets
+        .into_iter()
+        .filter_map(|target| unheld(target, standings))
+    {
         notes.violated(
             subject,
-            format!(
-                "the run carried it though a premise of ADR 0041 fails: reach-moved: the run's own \
-                 records make {target} {standing}"
-            ),
+            format!("the run carried it though a premise of ADR 0041 fails: {why}"),
         );
+    }
+}
+
+/// Why `target` did not hold its reach under a control of the run's tree, as the run's own records make it, or nothing where it held (P7).
+fn unheld(
+    target: &str,
+    standings: &std::collections::BTreeMap<String, crate::drift::Standing>,
+) -> Option<String> {
+    let standing = match standings.get(target) {
+        Some(crate::drift::Standing::Held) => return None,
+        Some(other) => other.name(),
+        None => "without a baseline to compare a control with",
+    };
+    Some(format!(
+        "reach-moved: the run's own records make {target} {standing}"
+    ))
+}
+
+/// What one configured build of a runner kept beside its engine recording of the answers it carried: the documents the engine writes for them.
+#[derive(Debug, Clone, Copy)]
+pub struct Kept<'a> {
+    /// `carried-v1.json`.
+    pub carried: &'a serde_json::Value,
+    /// `skeletons-v1.json`.
+    pub skeletons: &'a serde_json::Value,
+    /// `touched-v1.json`.
+    pub touched: &'a serde_json::Value,
+    /// `catalog-v1.json`, whose edits every locus is derived from.
+    pub catalog: &'a serde_json::Value,
+}
+
+/// What a runner's report row says of the mutation a carried answer is for: where its edit is, and what it is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reported {
+    /// Its catalog index.
+    pub index: u64,
+    /// Its file.
+    pub path: String,
+    /// The line of its edit.
+    pub line: u64,
+    /// The byte column of its edit.
+    pub column: u64,
+    /// The bytes its edit replaces.
+    pub original: String,
+    /// What they become.
+    pub replacement: String,
+}
+
+/// One mutation of the catalog a build kept beside its recording, as the engine writes it, with the branch a proof names where it names one.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CatalogEdit {
+    index: u64,
+    id: String,
+    #[serde(rename = "display_id")]
+    _display_id: String,
+    path: String,
+    #[serde(rename = "package")]
+    _package: String,
+    #[serde(rename = "family")]
+    _family: String,
+    rule: String,
+    #[serde(rename = "item")]
+    _item: String,
+    rule_version: u64,
+    line: u64,
+    column: u64,
+    start_byte: u64,
+    end_byte: u64,
+    #[serde(rename = "source_digest")]
+    _source_digest: String,
+    original: String,
+    replacement: String,
+    #[serde(rename = "branch")]
+    _branch: Option<serde_json::Value>,
+}
+
+/// Where a mutation's edit is and what it is, which is all a locus is derived from.
+struct Edit<'e> {
+    path: &'e str,
+    start_byte: u64,
+    end_byte: u64,
+    replacement: &'e str,
+    rule: &'e str,
+    rule_version: u64,
+}
+
+impl<'e> Edit<'e> {
+    /// The edit of an engine report's row.
+    fn of_row(row: &'e super::Row) -> Self {
+        Self {
+            path: &row.path,
+            start_byte: row.start_byte,
+            end_byte: row.end_byte,
+            replacement: &row.replacement,
+            rule: &row.rule,
+            rule_version: row.rule_version,
+        }
+    }
+
+    /// The edit of a mutation a kept catalog holds.
+    fn of_catalog(mutation: &'e CatalogEdit) -> Self {
+        Self {
+            path: &mutation.path,
+            start_byte: mutation.start_byte,
+            end_byte: mutation.end_byte,
+            replacement: &mutation.replacement,
+            rule: &mutation.rule,
+            rule_version: mutation.rule_version,
+        }
+    }
+}
+
+/// Every mutation of the catalog document `catalog`, or why it is not the one this audit reads.
+fn catalog_of(catalog: &serde_json::Value) -> Result<Vec<CatalogEdit>, KeptError> {
+    let said = |key: &str| catalog.get(key).ok_or(KeptError::Uncataloged);
+    let document_type = said("document_type")?
+        .as_str()
+        .ok_or(KeptError::Uncataloged)?;
+    let version = said("schema_version")?
+        .as_u64()
+        .ok_or(KeptError::Uncataloged)?;
+    if document_type != "rust-mutants/catalog" || version != 1 {
+        return Err(KeptError::OtherCatalog {
+            said: document_type.to_owned(),
+            version,
+        });
+    }
+    said("mutants")?
+        .as_array()
+        .ok_or(KeptError::Uncataloged)?
+        .iter()
+        .map(|mutation| {
+            serde_json::from_value::<CatalogEdit>(mutation.clone()).map_err(|source| {
+                KeptError::Undecodable {
+                    file: "catalog-v1.json",
+                    document: "rust-mutants/catalog",
+                    source,
+                }
+            })
+        })
+        .collect()
+}
+
+/// What reading one body a carried answer rests on again from the tree said.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReadAgain {
+    /// The file is proved the one the run measured, and what the build kept of the body is not what its bytes make.
+    Violated {
+        /// The item, as the carry evidence names it.
+        subject: String,
+        /// What it kept and what the bytes make.
+        detail: String,
+    },
+    /// What the build kept could not be held to the bytes: the file cannot be read from the tree, or is not the one the run measured.
+    Unaudited {
+        /// The item, as the carry evidence names it.
+        subject: String,
+        /// Why.
+        detail: String,
+    },
+}
+
+/// Every body the carried answers a runner's build believed rest on, read again from the tree at `root` and held to the digest and start the build kept of it.
+///
+/// A body is read only in a file whose digest in the skeletons proves it the one the run measured, and every body counts: each locus's own and every one an execution entered.
+///
+/// # Errors
+/// The first document that is not the one this audit reads, in words.
+pub fn bodies_again(kept: Kept<'_>, root: &std::path::Path) -> Result<Vec<ReadAgain>, KeptError> {
+    let skeletons =
+        serde_json::from_value::<Skeletons>(kept.skeletons.clone()).map_err(|source| {
+            KeptError::Undecodable {
+                file: "skeletons-v1.json",
+                document: "rust-mutants/skeletons",
+                source,
+            }
+        })?;
+    if skeletons.document_type != "rust-mutants/skeletons"
+        || skeletons.schema_version != SKELETONS_VERSION
+    {
+        return Err(KeptError::Other {
+            file: "skeletons-v1.json",
+            said: skeletons.document_type,
+            version: skeletons.schema_version,
+            document: "rust-mutants/skeletons",
+            expected: SKELETONS_VERSION,
+        });
+    }
+    let touched =
+        super::wire::read_touched(kept.touched).map_err(|source| KeptError::Undecodable {
+            file: "touched-v1.json",
+            document: "guards' record",
+            source,
+        })?;
+    let spans = spans(&touched).ok_or(KeptError::Uncataloged)?;
+    let carried = serde_json::from_value::<Believed>(kept.carried.clone()).map_err(|source| {
+        KeptError::Undecodable {
+            file: "carried-v1.json",
+            document: "rust-mutants/carried",
+            source,
+        }
+    })?;
+    let resting: std::collections::BTreeSet<&NamedItem> = carried
+        .records
+        .iter()
+        .flat_map(|entry| {
+            std::iter::once(&entry.record.locus.item).chain(
+                entry
+                    .record
+                    .executions
+                    .iter()
+                    .flat_map(|execution| execution.entered.iter().map(|one| &one.item)),
+            )
+        })
+        .collect();
+    Ok(resting
+        .into_iter()
+        .filter_map(|item| {
+            let claim = skeletons.items.iter().find(|claim| claim.item == *item)?;
+            read_again(item, claim, (&skeletons.files, &spans), root)
+        })
+        .collect())
+}
+
+/// What reading `claim`'s body again from `root` says against what the build kept of it, or nothing where it holds.
+fn read_again(
+    item: &NamedItem,
+    claim: &ItemClaim,
+    (files, spans): (&std::collections::BTreeMap<String, String>, &Spans),
+    root: &std::path::Path,
+) -> Option<ReadAgain> {
+    let subject = item.to_string();
+    let unaudited = |detail: String| {
+        Some(ReadAgain::Unaudited {
+            subject: subject.clone(),
+            detail,
+        })
+    };
+    let Some((path, body)) = spans.get(&claim.index) else {
+        return unaudited("the guards' record keeps no body span for it".to_owned());
+    };
+    let Ok(bytes) = std::fs::read(root.join(path)) else {
+        return unaudited(format!("{path} cannot be read from the tree"));
+    };
+    match files.get(path) {
+        Some(digest) if *digest == sha256(&bytes) => {}
+        Some(_) => return unaudited(format!("{path} is not the file the run measured")),
+        None => {
+            return unaudited(format!(
+                "the skeletons keep no digest of {path}, so no file read again is proved the one \
+                 the run measured"
+            ));
+        }
+    }
+    let violated = |detail: String| {
+        Some(ReadAgain::Violated {
+            subject: subject.clone(),
+            detail,
+        })
+    };
+    let (Ok(start), Ok(end)) = (usize::try_from(body.start), usize::try_from(body.end)) else {
+        return violated(format!(
+            "its body span does not fit this machine's addresses, so no byte of {path} is its body"
+        ));
+    };
+    let range = start..end;
+    let Some(read) = bytes.get(range.clone()) else {
+        return violated(format!(
+            "its body span lies outside {path}, the file the run measured"
+        ));
+    };
+    let Some(claimed) = &claim.body_digest else {
+        return violated(format!(
+            "the build kept no body digest of {}, which a carried answer rests on, so it rests \
+             on a body nobody read",
+            claim.name
+        ));
+    };
+    if sha256(read) != *claimed {
+        return violated(format!(
+            "the build kept a body digest of {} that its body's bytes in {path}, the file the run \
+             measured, do not hash to, so an answer carried across it rests on a body nobody read",
+            claim.name
+        ));
+    }
+    let start = match bytes
+        .split_at_checked(range.start)
+        .map(|(before, _)| std::str::from_utf8(before))
+    {
+        Some(Ok(before)) => placed(before, before.len()),
+        Some(Err(_)) | None => None,
+    };
+    (start != claim.start).then(|| ReadAgain::Violated {
+        subject: subject.clone(),
+        detail: format!(
+            "the build kept {} as starting at {:?}, and its body starts at {start:?} in {path}, \
+             the file the run measured",
+            claim.name, claim.start
+        ),
+    })
+}
+
+/// One carried answer a runner's build believed, as this audit reads it again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rederived {
+    /// The full identity of the mutant it answered for.
+    pub mutant: String,
+    /// What the record says the answer was.
+    pub outcome: String,
+    /// The run the record says established it.
+    pub run_id: String,
+    /// The first premise of ADR 0041 it fails, in the words the trace uses, or nothing where every one holds.
+    pub fails: Option<String>,
+    /// Every target its plan runs that the guards' record does not say reaches the mutation as the plan narrows it, in words.
+    pub unplanned: Vec<String>,
+    /// What the guards' record or the report keeps too little of to say whether each planned target reaches the mutation, in words.
+    pub unkept: Vec<String>,
+    /// Why the record's locus is not the one the mutation's edit makes, as the catalog kept beside the recording and the report's row say it, or nothing where it is.
+    pub misplaced: Option<String>,
+}
+
+/// Why what a runner's build kept beside its recording is not the carry evidence this audit reads.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum KeptError {
+    /// A document does not decode into the shape this audit reads.
+    #[error("{file} is not the {document} document this audit reads: {source}")]
+    Undecodable {
+        /// The document's file name.
+        file: &'static str,
+        /// The document it should be.
+        document: &'static str,
+        /// What the decoder said.
+        #[source]
+        source: serde_json::Error,
+    },
+    /// A document says it is another document, or another version of it.
+    #[error("{file} says it is {said} version {version}, not {document} version {expected}")]
+    Other {
+        /// The document's file name.
+        file: &'static str,
+        /// What it says it is.
+        said: String,
+        /// The version it says.
+        version: u64,
+        /// The document it should be.
+        document: &'static str,
+        /// The version it should be.
+        expected: u64,
+    },
+    /// The guards' record keeps no item catalog, or the kept catalog no mutation list, so no body or edit can be named.
+    #[error("touched-v1.json keeps no item catalog, or catalog-v1.json no mutations")]
+    Uncataloged,
+    /// The kept catalog says it is another document, or another version of it.
+    #[error(
+        "catalog-v1.json says it is {said} version {version}, not rust-mutants/catalog version 1"
+    )]
+    OtherCatalog {
+        /// What it says it is.
+        said: String,
+        /// The version it says.
+        version: u64,
+    },
+}
+
+impl crate::error::Coded for KeptError {
+    fn code(&self) -> crate::error::XtCode {
+        match self {
+            Self::Undecodable { .. }
+            | Self::Other { .. }
+            | Self::Uncataloged
+            | Self::OtherCatalog { .. } => crate::error::XtCode::EngineEvidence,
+        }
+    }
+}
+
+/// Every carried answer a runner's build believed, held to every premise of ADR 0041 again.
+///
+/// P1 to P6 and P8 are read from what the build kept beside its recording and P7 from the control records `standings` re-derives, with nothing of the engine's.
+/// Each locus is derived again from the edit the kept catalog holds for its mutant, which must be the edit the report's row in `reported` says, and the plan each was held to is held to the guards' record at that row's catalog index.
+///
+/// # Errors
+/// The first document that is not the one this audit reads, in words.
+pub fn rederived(
+    kept: Kept<'_>,
+    (standings, reported): (
+        Option<&std::collections::BTreeMap<String, crate::drift::Standing>>,
+        &std::collections::BTreeMap<String, Reported>,
+    ),
+) -> Result<Vec<Rederived>, KeptError> {
+    let catalog = catalog_of(kept.catalog)?;
+    let skeletons =
+        serde_json::from_value::<Skeletons>(kept.skeletons.clone()).map_err(|source| {
+            KeptError::Undecodable {
+                file: "skeletons-v1.json",
+                document: "rust-mutants/skeletons",
+                source,
+            }
+        })?;
+    if skeletons.document_type != "rust-mutants/skeletons"
+        || skeletons.schema_version != SKELETONS_VERSION
+    {
+        return Err(KeptError::Other {
+            file: "skeletons-v1.json",
+            said: skeletons.document_type,
+            version: skeletons.schema_version,
+            document: "rust-mutants/skeletons",
+            expected: SKELETONS_VERSION,
+        });
+    }
+    let touched =
+        super::wire::read_touched(kept.touched).map_err(|source| KeptError::Undecodable {
+            file: "touched-v1.json",
+            document: "guards' record",
+            source,
+        })?;
+    let spans = spans(&touched).ok_or(KeptError::Uncataloged)?;
+    let carried = serde_json::from_value::<Believed>(kept.carried.clone()).map_err(|source| {
+        KeptError::Undecodable {
+            file: "carried-v1.json",
+            document: "rust-mutants/carried",
+            source,
+        }
+    })?;
+    if carried.document_type != "rust-mutants/carried" || carried.schema_version != 2 {
+        return Err(KeptError::Other {
+            file: "carried-v1.json",
+            said: carried.document_type,
+            version: carried.schema_version,
+            document: "rust-mutants/carried",
+            expected: 2,
+        });
+    }
+    let held = Held::of(&skeletons, &touched, &spans);
+    Ok(carried
+        .records
+        .iter()
+        .map(|entry| rederive(entry, (&held, &catalog), (standings, reported)))
+        .collect())
+}
+
+/// Why the locus `entry` was carried under is not the one its mutation's edit makes: the kept catalog holds no edit of that identity, holds one the report's row does not say, or makes another locus of it.
+fn misplaced(
+    entry: &BelievedRecord,
+    (held, catalog): (&Held<'_>, &[CatalogEdit]),
+    reported: Option<&Reported>,
+) -> Option<String> {
+    let Some(mutation) = catalog.iter().find(|one| one.id == entry.mutant) else {
+        return Some(
+            "the catalog kept beside the recording holds no edit of that identity, so no locus \
+             can be derived for it"
+                .to_owned(),
+        );
+    };
+    let Some(reported) = reported else {
+        return Some(
+            "the report holds no row of that identity with a catalog index, so which edit the \
+             catalog's is cannot be held to it"
+                .to_owned(),
+        );
+    };
+    let kept = (
+        mutation.index,
+        mutation.path.as_str(),
+        mutation.line,
+        mutation.column,
+        mutation.original.as_str(),
+        mutation.replacement.as_str(),
+    );
+    let said = (
+        reported.index,
+        reported.path.as_str(),
+        reported.line,
+        reported.column,
+        reported.original.as_str(),
+        reported.replacement.as_str(),
+    );
+    if kept != said {
+        return Some(format!(
+            "the catalog kept beside the recording holds the edit {kept:?} under that identity, \
+             and the report's row says {said:?}"
+        ));
+    }
+    locus_differs(&Edit::of_catalog(mutation), &entry.record.locus, held)
+}
+
+/// One carried record a runner's build believed, held to every premise of ADR 0041, its locus to the edit its mutation makes, and its plan to the guards' record.
+fn rederive(
+    entry: &BelievedRecord,
+    (held, catalog): (&Held<'_>, &[CatalogEdit]),
+    (standings, reported): (
+        Option<&std::collections::BTreeMap<String, crate::drift::Standing>>,
+        &std::collections::BTreeMap<String, Reported>,
+    ),
+) -> Rederived {
+    let record = &entry.record;
+    let fails = premise_fails(record, &entry.plan, held).or_else(|| {
+        standings.and_then(|standings| {
+            resting_targets(record, &entry.plan)
+                .into_iter()
+                .find_map(|target| unheld(target, standings))
+        })
+    });
+    let row = reported.get(&entry.mutant);
+    let misplaced = misplaced(entry, (held, catalog), row);
+    let (unplanned, unkept) = match row.map(|row| row.index) {
+        Some(index) => planning(index, &entry.plan, held.touched).into_iter().fold(
+            (Vec::new(), Vec::new()),
+            |(mut unplanned, mut unkept), said| {
+                match said {
+                    Planning::Unreached(why) => unplanned.push(why),
+                    Planning::Unkept(why) => unkept.push(why),
+                }
+                (unplanned, unkept)
+            },
+        ),
+        None => (
+            Vec::new(),
+            vec![
+                "the report names no catalog index for it, so whether each planned target \
+                 reaches it cannot be re-derived"
+                    .to_owned(),
+            ],
+        ),
+    };
+    Rederived {
+        mutant: entry.mutant.clone(),
+        outcome: record.outcome.clone(),
+        run_id: record.run_id.clone(),
+        fails,
+        unplanned,
+        unkept,
+        misplaced,
     }
 }
 
@@ -1578,8 +2230,8 @@ fn resting_targets<'r>(record: &'r Carried, plan: &'r [Planned]) -> Vec<&'r str>
     plan.iter().map(|one| one.target.as_str()).collect()
 }
 
-/// Why a record's locus is not the mutation at `row`: another item, another body, another place in it, another edit, or another rule.
-fn locus_differs(row: &super::Row, locus: &Locus, held: &Held<'_>) -> Option<String> {
+/// Why a record's locus is not the one `row`'s edit makes: another item, another body, another place in it, another edit, or another rule.
+fn locus_differs(row: &Edit<'_>, locus: &Locus, held: &Held<'_>) -> Option<String> {
     let Some((index, (_, body))) = held
         .spans
         .iter()
@@ -1593,6 +2245,11 @@ fn locus_differs(row: &super::Row, locus: &Locus, held: &Held<'_>) -> Option<Str
     let Some((item, digest)) = held.by_index.get(index) else {
         return Some(format!("item {index} has no carry evidence"));
     };
+    let Some(read) = digest else {
+        return Some(format!(
+            "item {index} has no body a unit read, so no locus names it"
+        ));
+    };
     let (Some(start), Some(end)) = (
         row.start_byte.checked_sub(body.start),
         row.end_byte.checked_sub(body.start),
@@ -1601,10 +2258,10 @@ fn locus_differs(row: &super::Row, locus: &Locus, held: &Held<'_>) -> Option<Str
     };
     let expected = Locus {
         item: item.clone(),
-        body_digest: digest.clone(),
+        body_digest: read.clone(),
         start,
         end,
-        replacement: row.replacement.clone(),
+        replacement: row.replacement.to_owned(),
         rule: format!("{}@{}", row.rule, row.rule_version),
     };
     (*locus != expected)
@@ -1669,7 +2326,7 @@ fn execution_fails(execution: &Execution, enough: &[&str], held: &Held<'_>) -> O
     }
     for entered in &execution.entered {
         match held.bodies.get(&entered.item) {
-            Some((now, _, _)) if *now != entered.body_digest => {
+            Some((now, _, _)) if now.as_deref() != Some(entered.body_digest.as_str()) => {
                 return Some(format!("item-changed: {}", entered.item));
             }
             Some((_, false, _)) => return Some(format!("unsealed: {}", entered.item)),
@@ -1684,4 +2341,70 @@ fn execution_fails(execution: &Execution, enough: &[&str], held: &Held<'_>) -> O
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::{SKELETONS_VERSION, Skeletons, Tree, Unit, unit_files};
+
+    /// The number of texts kept in this thread's location map, including the probe itself.
+    fn texts_on_this_thread() -> usize {
+        let probe = crate::lexed::parse::<syn::Ident>("probe").expect("a probe identifier");
+        let named = probe.span().file();
+        named
+            .strip_prefix("<parsed string ")
+            .and_then(|rest| rest.strip_suffix('>'))
+            .expect("a lexed token names its source text")
+            .parse::<usize>()
+            .expect("the source texts are numbered")
+    }
+
+    #[test]
+    fn rereading_a_unit_keeps_only_one_copy_of_its_sources_in_the_location_map() {
+        let root = tempfile::tempdir().expect("the source root");
+        std::fs::write(root.path().join("lib.rs"), "pub fn f() {}\n").expect("the source");
+        std::fs::write(root.path().join("data"), "this is not Rust").expect("a text input");
+        let measured = BTreeMap::new();
+        let mut tree = Tree::new(root.path(), &measured);
+        let skeletons = Skeletons {
+            document_type: "rust-mutants/skeletons".to_owned(),
+            schema_version: SKELETONS_VERSION,
+            items: Vec::new(),
+            files: BTreeMap::new(),
+            units: vec![Unit {
+                package: "app".to_owned(),
+                target: "app".to_owned(),
+                kind: "lib".to_owned(),
+                test: false,
+                skeleton: String::new(),
+                entries: BTreeMap::from([
+                    ("$root/lib.rs".to_owned(), String::new()),
+                    ("$root/data".to_owned(), String::new()),
+                ]),
+            }],
+        };
+        assert_eq!(
+            unit_files("lib.rs", &skeletons, &mut tree)
+                .expect("the unit's sources are readable")
+                .len(),
+            1
+        );
+        let before = texts_on_this_thread();
+        for _ in 0..10 {
+            assert_eq!(
+                unit_files("lib.rs", &skeletons, &mut tree)
+                    .expect("the same unit remains readable")
+                    .len(),
+                1
+            );
+        }
+        assert_eq!(
+            texts_on_this_thread(),
+            before + 1,
+            "the audit reads each source once, including non-Rust text; repeated body checks \
+             must not retain more copies until the 32-bit location map wraps"
+        );
+    }
 }

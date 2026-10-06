@@ -3,9 +3,10 @@
 
 //! The baseline: what the one verified run of every target observed.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 
 use rust_mutants::execute::TestTarget;
+use rust_mutants::limitation::{Limited, TargetId};
 use rust_mutants::outcome::Outcome;
 use rust_mutants::session::Session;
 
@@ -41,8 +42,44 @@ pub struct Baseline {
     /// What the compiler said, when the workspace did not build.
     /// Then there are no targets, and that is a finding rather than an error.
     pub failure: Option<String>,
-    /// What this phase could not honour, by name.
-    pub limitations: Vec<String>,
+    /// What this phase could not honour.
+    pub limitations: Vec<BaselineLimitation>,
+}
+
+/// One known limitation stated by a baseline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BaselineLimitation {
+    /// A limitation from the engine, optionally about one target.
+    Engine(Limited),
+    /// A limitation of the runner's own measurement.
+    Runner(crate::limitation::Limitation),
+}
+
+impl BaselineLimitation {
+    /// The report name of this limitation.
+    #[must_use]
+    pub fn name(&self) -> crate::limitation::Name {
+        match self {
+            Self::Engine(limited) => limited.limitation.into(),
+            Self::Runner(limitation) => (*limitation).into(),
+        }
+    }
+
+    /// The target this limitation is about, where it names one.
+    #[must_use]
+    pub const fn target(&self) -> Option<&TargetId> {
+        match self {
+            Self::Engine(limited) => limited.target.as_ref(),
+            Self::Runner(_) => None,
+        }
+    }
+
+    fn wire_name(&self) -> String {
+        match self {
+            Self::Engine(limited) => limited.to_string(),
+            Self::Runner(limitation) => limitation.name().to_owned(),
+        }
+    }
 }
 
 /// Where a phase says what it is doing, and what it is watched by.
@@ -118,7 +155,7 @@ pub fn observe(
         limitations: limitations(session.targets(), &verified.touched.limitations),
         ..Baseline::default()
     };
-    let built = |id: &str| session.targets().iter().find(|one| one.id.as_str() == id);
+    let built = |id: &str| session.targets().iter().find(|one| one.id() == id);
     let rows: Vec<(&String, &rust_mutants::session::Baseline)> = verified
         .targets
         .iter()
@@ -183,43 +220,49 @@ pub fn refused(error: &crate::error::RunnerError) -> Option<Baseline> {
 pub fn unmeasurable(target: &TestTarget) -> bool {
     target
         .limitations
-        .iter()
-        .any(|name| name == rust_mutants::limitation::DOCTESTS_NONE)
+        .contains(&rust_mutants::limitation::Limitation::DoctestsNone)
 }
 
 /// Every limitation `targets` and the run's own `touched` record state, each named once.
 #[must_use]
-pub fn limitations(targets: &[TestTarget], touched: &[String]) -> Vec<String> {
-    let mut named = BTreeSet::new();
+pub fn limitations(targets: &[TestTarget], touched: &[Limited]) -> Vec<BaselineLimitation> {
+    let mut named = BTreeMap::new();
     for target in targets {
         if unmeasurable(target) {
             continue;
         }
-        named.extend(target.limitations.iter().cloned());
+        for limitation in &target.limitations {
+            let limited = BaselineLimitation::Engine(Limited::whole(*limitation));
+            named.insert(limited.wire_name(), limited);
+        }
     }
-    named.extend(touched.iter().cloned());
+    for limitation in touched {
+        let limited = BaselineLimitation::Engine(limitation.clone());
+        named.insert(limited.wire_name(), limited);
+    }
     if targets
         .iter()
-        .any(|target| target.kind == rust_mutants::execute::TargetKind::ProcMacro)
+        .any(|target| target.kind() == rust_mutants::execute::TargetKind::ProcMacro)
     {
-        named.extend(std::iter::once(
-            crate::limitation::PROC_MACRO_EXPANSION_NOT_MEASURED.to_owned(),
-        ));
+        let limited = BaselineLimitation::Runner(
+            crate::limitation::Limitation::ProcMacroExpansionNotMeasured,
+        );
+        named.insert(limited.wire_name(), limited);
     }
-    named.into_iter().collect()
+    named.into_values().collect()
 }
 
 /// The runner's name for one of the engine's targets.
 /// # Errors
 /// Returns a typed refusal if a target field cannot be framed by the stable identity recipe.
 pub fn target_of(target: &TestTarget) -> Result<Target, crate::targets::TargetError> {
-    let unit = UnitKind::of(target.kind);
+    let unit = UnitKind::of(target.kind());
     Ok(Target {
-        id: target_id(&target.package, unit, &target.name, WHOLE_BINARY)
-            .map_err(|error| crate::targets::TargetError::invalid(&target.name, error))?,
-        package: target.package.clone(),
+        id: target_id(target.package(), unit, target.name(), WHOLE_BINARY)
+            .map_err(|error| crate::targets::TargetError::invalid(target.name(), error))?,
+        package: target.package().to_owned(),
         unit,
-        unit_name: target.name.clone(),
+        unit_name: target.name().to_owned(),
         path: WHOLE_BINARY.to_owned(),
         ignored: false,
         executable: target.executable.clone(),
@@ -288,7 +331,10 @@ pub fn status_of(outcome: Outcome, ignored: u32, output: &str) -> TargetVerdict 
         Outcome::Killed => (
             TargetStatus::Failed,
             Some(FindingKind::FailingTest),
-            Some(failure(output).unwrap_or_else(|| "the target failed".to_owned())),
+            Some(match failure(output) {
+                Some(said) => said,
+                None => "the target failed".to_owned(),
+            }),
         ),
         Outcome::StepLimitReached => (
             TargetStatus::Missing,
@@ -320,9 +366,10 @@ pub fn status_of(outcome: Outcome, ignored: u32, output: &str) -> TargetVerdict 
         Outcome::Errored => (
             TargetStatus::Missing,
             Some(FindingKind::TargetMissing),
-            Some(failure(output).unwrap_or_else(|| {
-                "the target could not be started, so nothing was observed".to_owned()
-            })),
+            Some(match failure(output) {
+                Some(said) => said,
+                None => "the target could not be started, so nothing was observed".to_owned(),
+            }),
         ),
     };
     TargetVerdict {

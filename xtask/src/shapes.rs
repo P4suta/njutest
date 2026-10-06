@@ -120,7 +120,7 @@ fn shaped(block: &syn::Block, ours: &[String]) -> Shape {
 /// # Errors
 /// The source is not Rust this compiler version can parse.
 pub fn shapes(source: &str, ours: &[String]) -> Result<BTreeMap<usize, Waived>, syn::Error> {
-    let parsed = syn::parse_file(source)?;
+    let parsed = crate::lexed::file(source)?;
     let mut found = BTreeMap::new();
     let mut scan = Shaping {
         ours,

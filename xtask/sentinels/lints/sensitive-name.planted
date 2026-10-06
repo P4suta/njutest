@@ -1,0 +1,26 @@
+=== report-function source crates/app/src/lib.rs
+fn account() -> u32 { 2 }
+=== reports-function source crates/app/src/lib.rs
+fn accounts() -> u32 { 2 }
+=== password-log source crates/app/src/lib.rs
+fn read() { let password = String::new(); println!("{password}"); }
+=== credential-field source crates/app/src/lib.rs
+struct Settings { api_key: String }
+=== generated-binding source crates/app/src/lib.rs
+macro_rules! read { () => { let secret = String::new(); } }
+=== destructured-binding source crates/app/src/lib.rs
+fn read(input: Data) { let Data { password } = input; }
+=== parameter source crates/app/src/lib.rs
+fn read(auth_token: String) {}
+=== iteration source crates/app/src/lib.rs
+fn read(values: Vec<String>) { for password in values { println!("{password}"); } }
+=== conditional-binding source crates/app/src/lib.rs
+fn read(value: Option<String>) { if let Some(api_key) = value { println!("{api_key}"); } }
+=== constant source crates/app/src/lib.rs
+const PASSWORD: &str = "synthetic";
+=== static source crates/app/src/lib.rs
+static API_KEY: &str = "synthetic";
+=== enum-constructor source crates/app/src/lib.rs
+enum Input { Password(String) }
+=== generated-constant source crates/app/src/lib.rs
+macro_rules! input { () => { const PASSWORD: &str = "synthetic"; } }

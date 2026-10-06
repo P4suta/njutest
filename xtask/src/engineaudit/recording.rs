@@ -94,9 +94,28 @@ fn phases(events: &[Value], notes: &mut Notes<'_>) {
     let mut open: Vec<String> = Vec::new();
     for event in events {
         match string(event, "type").as_deref() {
-            Some("phase-start") => open.push(phase_name(event)),
+            Some("phase-start") => {
+                let Some(name) = phase_name(event) else {
+                    notes.unaudited(
+                        "phase",
+                        "a phase began and the recording names no phase for it, so which phase \
+                         ends it cannot be re-derived"
+                            .to_owned(),
+                    );
+                    return;
+                };
+                open.push(name);
+            }
             Some("phase-end") => {
-                let name = phase_name(event);
+                let Some(name) = phase_name(event) else {
+                    notes.unaudited(
+                        "phase",
+                        "a phase ended and the recording names no phase for it, so which phase \
+                         it closed cannot be re-derived"
+                            .to_owned(),
+                    );
+                    return;
+                };
                 if let Some(at) = open.iter().rposition(|held| *held == name) {
                     let closed = open.remove(at);
                     if closed != name {
@@ -161,7 +180,15 @@ fn instrumented(events: &[Value], notes: &mut Notes<'_>) {
             number(record, "lines_before"),
             number(record, "lines_after"),
         );
-        let path = string(record, "path").unwrap_or_default();
+        let Some(path) = string(record, "path") else {
+            notes.unaudited(
+                "instrument",
+                "an instrumentation record names no file, so whether it moved a line of one \
+                 cannot be re-derived"
+                    .to_owned(),
+            );
+            continue;
+        };
         match (before, after) {
             (Some(before), Some(after)) if before != after => notes.violated(
                 &path,
@@ -183,22 +210,41 @@ fn instrumented(events: &[Value], notes: &mut Notes<'_>) {
 
 /// Every target the build produced, against the verification of it.
 fn verified(events: &[Value], notes: &mut Notes<'_>) {
-    let mut built: BTreeSet<String> = BTreeSet::new();
+    let mut built: Option<BTreeSet<String>> = None;
     let mut verified: BTreeSet<String> = BTreeSet::new();
     let mut skipped: BTreeSet<String> = BTreeSet::new();
     for event in events {
         match string(event, "type").as_deref() {
             Some("build") => {
-                if let Some(record) = event.get("build") {
-                    built.extend(strings(record, "targets"));
-                    for detail in array(record, "details") {
-                        if strings(detail, "limitations")
-                            .iter()
-                            .any(|one| one == "target-skipped-by-configuration")
-                            && let Some(target) = string(detail, "id")
-                        {
-                            skipped.insert(target);
-                        }
+                let Some((targets, details)) = event.get("build").and_then(|record| {
+                    Some((strings(record, "targets")?, array(record, "details")?))
+                }) else {
+                    notes.unaudited(
+                        "build",
+                        "a build record holds no targets and details this audit reads, so what \
+                         the build produced cannot be held to what was verified"
+                            .to_owned(),
+                    );
+                    return;
+                };
+                built.get_or_insert_with(BTreeSet::new).extend(targets);
+                for detail in details {
+                    let (Some(target), Some(limitations)) =
+                        (string(detail, "id"), strings(detail, "limitations"))
+                    else {
+                        notes.unaudited(
+                            "build",
+                            "a build record details a target by no name and limitations this \
+                             audit reads, so whether it was configured out cannot be re-derived"
+                                .to_owned(),
+                        );
+                        return;
+                    };
+                    if limitations
+                        .iter()
+                        .any(|one| one == "target-skipped-by-configuration")
+                    {
+                        skipped.insert(target);
                     }
                 }
             }
@@ -220,6 +266,15 @@ fn verified(events: &[Value], notes: &mut Notes<'_>) {
         );
         return;
     }
+    let Some(built) = built else {
+        notes.unaudited(
+            "build",
+            "the recording holds no build record, so which targets the build produced cannot be \
+             held to what was verified"
+                .to_owned(),
+        );
+        return;
+    };
     for target in built.difference(&verified) {
         if skipped.contains(target) {
             continue;
@@ -233,8 +288,8 @@ fn verified(events: &[Value], notes: &mut Notes<'_>) {
     }
 }
 
-/// The refusals, against the rounds that condemned them.
-fn condemned(report: &Report, events: &[Value], notes: &mut Notes<'_>) {
+/// Every candidate the recording's validation rounds and bisections condemned, and how many rounds it holds; nothing where one of them names what it condemned in no form this audit reads, which is said.
+fn condemnations(events: &[Value], notes: &mut Notes<'_>) -> Option<(BTreeSet<u64>, usize)> {
     let mut named: BTreeSet<u64> = BTreeSet::new();
     let mut rounds = 0usize;
     for event in events {
@@ -246,25 +301,55 @@ fn condemned(report: &Report, events: &[Value], notes: &mut Notes<'_>) {
                         "the number of validation rounds exceeds this platform's address space"
                             .to_owned(),
                     );
-                    return;
+                    return None;
                 };
                 rounds = next_rounds;
-                if let Some(record) = event.get("round") {
-                    for one in array(record, "attributed") {
-                        if let Some(index) = number(one, "index") {
-                            named.insert(index);
-                        }
-                    }
-                }
+                let Some(attributed) = event
+                    .get("round")
+                    .and_then(|record| array(record, "attributed"))
+                    .and_then(|attributed| {
+                        attributed
+                            .iter()
+                            .map(|one| number(one, "index"))
+                            .collect::<Option<Vec<u64>>>()
+                    })
+                else {
+                    notes.unaudited(
+                        "rejections",
+                        "a validation round attributes its refusals to no candidate indices this \
+                         audit reads, so what it condemned cannot be re-derived"
+                            .to_owned(),
+                    );
+                    return None;
+                };
+                named.extend(attributed);
             }
             Some("bisect") => {
-                if let Some(record) = event.get("bisect") {
-                    named.extend(numbers(record, "offenders"));
-                }
+                let Some(offenders) = event
+                    .get("bisect")
+                    .and_then(|record| numbers(record, "offenders"))
+                else {
+                    notes.unaudited(
+                        "bisect",
+                        "a bisection record's offenders are not catalog indices this audit \
+                         reads, so what it condemned cannot be re-derived"
+                            .to_owned(),
+                    );
+                    return None;
+                };
+                named.extend(offenders);
             }
             _ => {}
         }
     }
+    Some((named, rounds))
+}
+
+/// The refusals, against the rounds that condemned them.
+fn condemned(report: &Report, events: &[Value], notes: &mut Notes<'_>) {
+    let Some((named, rounds)) = condemnations(events, notes) else {
+        return;
+    };
     if rounds == 0 {
         if !report.rejections.is_empty() {
             notes.unaudited(
@@ -285,17 +370,18 @@ fn condemned(report: &Report, events: &[Value], notes: &mut Notes<'_>) {
                 .to_owned(),
         );
     }
-    for index in refused.difference(&named) {
-        let subject = report
-            .rejections
-            .iter()
-            .find(|one| one.index == *index)
-            .map_or_else(|| index.to_string(), |one| one.display_id.clone());
+    for rejection in report
+        .rejections
+        .iter()
+        .filter(|one| !named.contains(&one.index))
+    {
         notes.violated(
-            &subject,
-            "the report refuses this candidate and no round condemned it; a refusal nothing \
-             accounts for is a mutant somebody dropped"
-                .to_owned(),
+            &rejection.display_id,
+            format!(
+                "the report refuses candidate {} and no round condemned it; a refusal nothing \
+                 accounts for is a mutant somebody dropped",
+                rejection.index
+            ),
         );
     }
 }
@@ -305,7 +391,7 @@ fn routed(report: &Report, recorded: &CheckedRecording, notes: &mut Notes<'_>) {
     let routing = &recorded.routing;
     let tests = baseline_tests(&recorded.events);
     let excused = baseline_declines(&recorded.events, notes);
-    if routing.routes.is_empty() && routing.execs.is_empty() {
+    if routing.routes.is_empty() && routing.executions().is_empty() {
         notes.unaudited(
             "route",
             "the recording holds no routing decision and no execution, so nothing holds a row \
@@ -359,14 +445,22 @@ fn routed(report: &Report, recorded: &CheckedRecording, notes: &mut Notes<'_>) {
             );
             continue;
         };
-        let execs: Vec<&crate::route::Exec> = routing.execs_for(&row.id, &row.display_id).collect();
+        let mut execs: Vec<&crate::route::Exec> = Vec::new();
+        let mut sealed: Vec<&crate::route::Sealed> = Vec::new();
+        for execution in routing.executions_for(&row.id, &row.display_id) {
+            match execution {
+                crate::route::Execution::Native(exec) => execs.push(exec),
+                crate::route::Execution::Sealed(one) => sealed.push(one),
+            }
+        }
         reported_route(row, route, notes);
         ran_in_order(row, route, &execs, notes);
         named_its_tests(row, &execs, &tests, notes);
         answered(row, &execs, notes);
         declined(row, &execs, &excused, notes);
-        reached(row, route, &execs, notes);
+        reached(row, (route, &routing.controls), &execs, notes);
         discharged(row, route, &execs, notes);
+        sealed_recorded(row, &sealed, notes);
     }
 }
 
@@ -387,7 +481,15 @@ fn baseline_declines(
             continue;
         };
         match crate::route::declines(record) {
-            Ok(declines) => excused.entry(target).or_default().extend(declines),
+            Ok(crate::route::Recorded::Said(declines)) => {
+                excused.entry(target).or_default().extend(declines);
+            }
+            Ok(crate::route::Recorded::Unrecorded) => notes.unaudited(
+                &target,
+                "the baseline's verification does not say which of its tests declined, so no \
+                 decline under a mutation is excused by it"
+                    .to_owned(),
+            ),
             Err(error) => notes.violated(
                 &target,
                 format!("the baseline's declines cannot be read: {error}"),
@@ -395,6 +497,41 @@ fn baseline_declines(
         }
     }
     excused
+}
+
+/// One execution and the declines it recorded.
+struct Declining<'a> {
+    exec: &'a crate::route::Exec,
+    declines: &'a [(String, String)],
+}
+
+/// Each execution with the declines it recorded, or nothing where one of them does not say which tests declined, which is said.
+fn said_declines<'a>(
+    row: &Row,
+    execs: &[&'a crate::route::Exec],
+    notes: &mut Notes<'_>,
+) -> Option<Vec<Declining<'a>>> {
+    let mut said = Vec::new();
+    for exec in execs {
+        match &exec.declined {
+            crate::route::Recorded::Said(declines) => said.push(Declining {
+                exec,
+                declines: declines.as_slice(),
+            }),
+            crate::route::Recorded::Unrecorded => {
+                notes.unaudited(
+                    row.label(),
+                    format!(
+                        "its execution against {} does not say which tests declined, so the \
+                         row's declines are not re-derived",
+                        exec.target
+                    ),
+                );
+                return None;
+            }
+        }
+    }
+    Some(said)
 }
 
 /// A row's declines and what they made of it, re-derived from its executions and the declines each target's baseline made (ADR 0043).
@@ -409,8 +546,11 @@ fn declined(
     let Some(answer) = execs.iter().rev().find(|exec| exec.target == row.target) else {
         return;
     };
+    let Some(said) = said_declines(row, execs, notes) else {
+        return;
+    };
     let recorded: BTreeSet<&(String, String)> =
-        execs.iter().flat_map(|exec| exec.declined.iter()).collect();
+        said.iter().flat_map(|one| one.declines.iter()).collect();
     let claimed: BTreeSet<(String, String)> = row
         .declined
         .iter()
@@ -427,16 +567,13 @@ fn declined(
             ),
         );
     }
-    for exec in execs {
-        let changed = exec
-            .declined
-            .iter()
-            .find(|one| match excused.get(&exec.target) {
-                Some(baseline) => !baseline.contains(*one),
-                None => true,
-            });
-        let answering = std::ptr::eq(*exec, *answer);
-        let every = !exec.declined.is_empty() && exec.tests_run == Some(count(exec.declined.len()));
+    for Declining { exec, declines } in said {
+        let changed = declines.iter().find(|one| match excused.get(&exec.target) {
+            Some(baseline) => !baseline.contains(*one),
+            None => true,
+        });
+        let answering = std::ptr::eq(exec, *answer);
+        let every = !declines.is_empty() && exec.tests_run == Some(count(declines.len()));
         match changed {
             Some((test, why))
                 if !answering || row.outcome != KILLED || row.killed_by != [test.clone()] =>
@@ -490,24 +627,26 @@ fn ran_in_order(
     execs: &[&crate::route::Exec],
     notes: &mut Notes<'_>,
 ) {
+    let crate::route::Recorded::Said(executed) = &route.executed else {
+        notes.unaudited(
+            row.label(),
+            "the recording's route does not say which targets ran, so the order they ran in is \
+             not re-derived"
+                .to_owned(),
+        );
+        return;
+    };
     let mut ran: Vec<&str> = execs.iter().map(|exec| exec.target.as_str()).collect();
     if row.retried {
         ran.pop();
     }
-    if ran
-        != route
-            .executed
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>()
-    {
+    if ran != executed.iter().map(String::as_str).collect::<Vec<_>>() {
         notes.violated(
             row.label(),
             format!(
-                "the route says {:?} ran, in that order, and the recording ran {ran:?}; a route \
-                 that names work nobody did, or leaves out work somebody did, is not an account \
-                 of the run",
-                route.executed
+                "the route says {executed:?} ran, in that order, and the recording ran {ran:?}; a \
+                 route that names work nobody did, or leaves out work somebody did, is not an \
+                 account of the run"
             ),
         );
     }
@@ -524,11 +663,18 @@ fn named_its_tests(
         let Some(known) = tests.get(&exec.target) else {
             continue;
         };
-        for test in exec
-            .failed_tests
-            .iter()
-            .filter(|test| !known.contains(*test))
-        {
+        let crate::route::Recorded::Said(failed) = &exec.failed_tests else {
+            notes.unaudited(
+                row.label(),
+                format!(
+                    "the killing execution against {} does not say which tests failed, so \
+                     whether they are tests its baseline ran is not re-derived",
+                    exec.target
+                ),
+            );
+            continue;
+        };
+        for test in failed.iter().filter(|test| !known.contains(*test)) {
             notes.violated(
                 row.label(),
                 format!(
@@ -574,12 +720,21 @@ fn reported_route(row: &Row, recorded: &crate::route::Route, notes: &mut Notes<'
         );
     }
     let reported_executed: BTreeSet<&str> = reported.executed.iter().map(String::as_str).collect();
-    let recorded_executed: BTreeSet<&str> = recorded.executed.iter().map(String::as_str).collect();
-    if reported_executed != recorded_executed {
-        notes.violated(
+    match &recorded.executed {
+        crate::route::Recorded::Said(executed) => {
+            if reported_executed != executed.iter().map(String::as_str).collect() {
+                notes.violated(
+                    row.label(),
+                    "the report and recording name different executed targets".to_owned(),
+                );
+            }
+        }
+        crate::route::Recorded::Unrecorded => notes.unaudited(
             row.label(),
-            "the report and recording name different executed targets".to_owned(),
-        );
+            "the recording's route does not say which targets ran, so the report's are not \
+             held to it"
+                .to_owned(),
+        ),
     }
     let reported_discharged: BTreeSet<(&str, &str)> = reported
         .discharged
@@ -691,8 +846,23 @@ fn attributed(row: &Row, exec: &crate::route::Exec, notes: &mut Notes<'_>) {
     let Some(signal) = exec.signal else {
         return;
     };
-    if exec.outcome != KILLED || !exec.failed_tests.is_empty() {
+    if exec.outcome != KILLED {
         return;
+    }
+    match &exec.failed_tests {
+        crate::route::Recorded::Said(failed) if !failed.is_empty() => return,
+        crate::route::Recorded::Said(_) => {}
+        crate::route::Recorded::Unrecorded => {
+            notes.unaudited(
+                row.label(),
+                format!(
+                    "an execution against {} is counted killed on signal {signal} and does not \
+                     say which tests failed, so whether the tests ended it is not known",
+                    exec.target
+                ),
+            );
+            return;
+        }
     }
     match raised(signal) {
         Raised::Itself => {}
@@ -773,10 +943,35 @@ fn retried(row: &Row, execs: &[&crate::route::Exec], notes: &mut Notes<'_>) {
     }
 }
 
-/// The route's granularity, against whether anything ran.
+/// Every sealed execution a row rests on, against the sealed executions the recording holds for its mutant: the same target, test and ending, and no other (ADR 0046).
+fn sealed_recorded(row: &Row, sealed: &[&crate::route::Sealed], notes: &mut Notes<'_>) {
+    let super::Resting::Sealed { executions } = &row.evidence else {
+        return;
+    };
+    let recorded: Vec<(&str, &str, &str)> = sealed
+        .iter()
+        .map(|one| (one.target.as_str(), one.test.as_str(), one.came_to.as_str()))
+        .collect();
+    let rests_on: Vec<(&str, &str, &str)> = executions
+        .iter()
+        .map(|run| (run.target.as_str(), run.test.as_str(), run.came_to.name()))
+        .collect();
+    if recorded != rests_on {
+        notes.violated(
+            row.label(),
+            format!(
+                "the row rests on the sealed executions {rests_on:?} and the recording holds \
+                 {recorded:?}; a verdict resting on an execution nobody recorded is one nobody \
+                 can check"
+            ),
+        );
+    }
+}
+
+/// The route's granularity, against whether anything ran, and a row nothing reaches, against the sealed controls where sealed executions decided it.
 fn reached(
     row: &Row,
-    route: &crate::route::Route,
+    (route, controls): (&crate::route::Route, &[crate::route::SealedControl]),
     execs: &[&crate::route::Exec],
     notes: &mut Notes<'_>,
 ) {
@@ -787,7 +982,7 @@ fn reached(
              runs one against it; a claim its own run contradicts is not a claim"
                 .to_owned(),
         ),
-        ("all" | "block", true) if row.outcome != NOT_RUN => notes.violated(
+        ("all" | "block", true) if row.outcome != NOT_RUN && !row.sealed() => notes.violated(
             row.label(),
             format!(
                 "the route says {} targets could notice this mutation and nothing ran; an \
@@ -798,7 +993,9 @@ fn reached(
         ),
         _ => {}
     }
-    if row.unreached && route.granularity != UNREACHED {
+    if row.unreached && row.sealed() {
+        sealed_unreached(row, (route, controls), notes);
+    } else if row.unreached && route.granularity != UNREACHED {
         notes.violated(
             row.label(),
             format!(
@@ -808,6 +1005,60 @@ fn reached(
         );
     }
 }
+
+/// A row sealed executions call unreached, held to the sealed controls as the engine decides it (ADR 0046): no control reached its guard, and every target the native route reaches it through has a station every control of which the sealed build answered for.
+fn sealed_unreached(
+    row: &Row,
+    (route, controls): (&crate::route::Route, &[crate::route::SealedControl]),
+    notes: &mut Notes<'_>,
+) {
+    if let Some(control) = controls
+        .iter()
+        .find(|control| control.reached.contains(&row.index))
+    {
+        notes.violated(
+            row.label(),
+            format!(
+                "the row says no sealed test reaches this mutation, and the sealed control of \
+                 {} {} reached its guard",
+                control.target, control.test
+            ),
+        );
+        return;
+    }
+    for target in &route.reaching {
+        let held: Vec<&crate::route::SealedControl> = controls
+            .iter()
+            .filter(|control| control.target == *target)
+            .collect();
+        if held.is_empty() {
+            notes.violated(
+                row.label(),
+                format!(
+                    "the row says no sealed test reaches this mutation, the route says {target} \
+                     reaches it natively, and the recording holds no sealed control of \
+                     {target}; a reach no sealed control answered is not one the sealed build \
+                     decided"
+                ),
+            );
+        } else if let Some(uncontrolled) =
+            held.iter().find(|control| control.standing != CONTROLLED)
+        {
+            notes.violated(
+                row.label(),
+                format!(
+                    "the row says no sealed test reaches this mutation, and {target}'s test {} \
+                     has no control ({}), so the sealed build did not answer for every test the \
+                     native route reaches it through",
+                    uncontrolled.test, uncontrolled.standing
+                ),
+            );
+        }
+    }
+}
+
+/// What a sealed control's standing is where a mutant's execution can be judged against it.
+const CONTROLLED: &str = "controlled";
 
 /// Every target a proof removed, against the executions of the mutant it was removed from.
 fn discharged(
@@ -886,15 +1137,12 @@ pub(super) fn work(
         return notes.looked();
     };
     let ran = recorded
-        .events
+        .routing
+        .executions()
         .iter()
-        .filter(|event| {
-            string(event, "type").as_deref() == Some("mutant-exec")
-                && event
-                    .get("mutant")
-                    .and_then(|record| record.get("id"))
-                    .and_then(Value::as_str)
-                    .is_some_and(|id| !id.is_empty())
+        .filter(|execution| match execution {
+            crate::route::Execution::Native(exec) => !exec.mutant.is_empty(),
+            crate::route::Execution::Sealed(_) => false,
         })
         .count();
     let Ok(ran) = u64::try_from(ran) else {
@@ -971,10 +1219,7 @@ fn pairs_of(row: &Row, built: &BTreeSet<&str>, targets: usize, notes: &mut Notes
     }
 }
 
-/// The name of the phase one boundary is about.
-fn phase_name(event: &Value) -> String {
-    event
-        .get("phase")
-        .and_then(|phase| string(phase, "name"))
-        .unwrap_or_default()
+/// The name of the phase one boundary is about, or nothing where the boundary names none.
+fn phase_name(event: &Value) -> Option<String> {
+    event.get("phase").and_then(|phase| string(phase, "name"))
 }

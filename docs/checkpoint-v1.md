@@ -22,6 +22,9 @@ A `before` that names `by`, or holds a kill, is not a checkpoint: no run asks th
 A successor may therefore inherit only an existential fact a target established about the identical tree.
 Every other mutation is judged again.
 
+A kill is one only where a sealed execution established it ([ADR 0046](adr/0046-a-verdict-is-what-a-sealed-run-observed.md)), so a saved mutant carries `evidence`, the sealed executions it rests on, in the report's shape ([report v1](report-v1.md#what-a-decision-rests-on)), and a resumed row carries them in turn.
+A kill whose evidence does not establish a kill by `by` — one only a native run observed, or one its first detection names another target for — is not a checkpoint: a native kill is a lead, and a lead is judged again rather than inherited.
+
 A checkpoint keeps no drift record ([report v1](report-v1.md#drift)).
 A comparison an interrupted run made was against the baseline that run measured, and a resumed run measures its own; an inherited kill runs no control, so a target whose every kill was inherited is run alone for the comparison in the resumed run rather than holding on a comparison nothing made this run.
 

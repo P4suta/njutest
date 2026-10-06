@@ -97,8 +97,17 @@ pub struct Discharge {
     pub proof: String,
 }
 
+/// A field only one of the two producers writes: what this recording says, or that its producer does not write it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Recorded<T> {
+    /// The producer of this recording does not write the field, so the recording says nothing of it.
+    Unrecorded,
+    /// What the recording says.
+    Said(T),
+}
+
 /// One routing decision, as either producer records it.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Route {
     /// The mutant, as a person types it.
     pub mutant: String,
@@ -113,7 +122,7 @@ pub struct Route {
     /// The targets a proof removed.
     pub discharged: Vec<Discharge>,
     /// The targets that ran, which only the engine records.
-    pub executed: Vec<String>,
+    pub executed: Recorded<Vec<String>>,
     /// The targets that were measured, asked, and did not reach the mutation.
     pub considered: Vec<String>,
     /// The run this disposition was read back from.
@@ -164,9 +173,9 @@ pub struct Exec {
     /// The signal the process died of, where the producer recorded one.
     pub signal: Option<i64>,
     /// Every test the harness said failed, which only the engine records.
-    pub failed_tests: Vec<String>,
+    pub failed_tests: Recorded<Vec<String>>,
     /// Each test that declined to measure and its words, as `(test, why)`, which only the engine records (ADR 0043).
-    pub declined: Vec<(String, String)>,
+    pub declined: Recorded<Vec<(String, String)>>,
 }
 
 /// What a recording establishes about whether a process outlived its harness's answer.
@@ -220,13 +229,82 @@ impl Exec {
     }
 }
 
+/// One sealed execution a recording holds: one test of one module run with one mutant active, and what it came to (ADR 0046).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Sealed {
+    /// The mutant, as a person types it.
+    pub mutant: String,
+    /// The target whose module ran.
+    pub target: String,
+    /// The test it ran.
+    pub test: String,
+    /// What it came to, as a report spells it.
+    pub came_to: String,
+    /// The digest of the transcript the verdict rests on, which an engine that named no transcripts does not say.
+    pub transcript: Option<String>,
+}
+
+/// One sealed control: one test of one module run with nothing active, and every guard it reached.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SealedControl {
+    /// The target whose module ran.
+    pub target: String,
+    /// The test it ran.
+    pub test: String,
+    /// `controlled`, or why no mutant's execution can be judged against it.
+    pub standing: String,
+    /// Every guard it reached, by dense catalog index.
+    pub reached: Vec<u64>,
+}
+
+impl Sealed {
+    /// Whether this execution is about the mutant either identity names.
+    #[must_use]
+    pub fn names(&self, id: &str, display_id: &str) -> bool {
+        self.mutant == id || (!display_id.is_empty() && self.mutant == display_id)
+    }
+}
+
+/// One execution of one mutant, the only shape a reader is handed one in, so a reader of either kind says what it makes of the other (ADR 0046).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Execution {
+    /// A native execution: what the process said of itself, which is a lead.
+    Native(Exec),
+    /// A sealed execution: what the host observed, which a verdict rests on.
+    Sealed(Sealed),
+}
+
+impl Execution {
+    /// Whether this execution is about the mutant either identity names.
+    #[must_use]
+    pub fn names(&self, id: &str, display_id: &str) -> bool {
+        match self {
+            Self::Native(exec) => exec.names(id, display_id),
+            Self::Sealed(sealed) => sealed.names(id, display_id),
+        }
+    }
+}
+
+/// What a layer of either audit reads of the executions a row can rest on, each handed to it as an [`Execution`] it has to place (ADR 0046).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reads {
+    /// No execution of a mutation.
+    Nothing,
+    /// Native executions alone, because what it holds is only ever native: a process started, or a disposition run again with sealing off.
+    Native,
+    /// Native and sealed executions, and a defect only a sealed execution shows is planted for it.
+    Both,
+}
+
 /// The routes and the executions of one recording, in the order they were written.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Routing {
     /// Every routing decision.
     pub routes: Vec<Route>,
-    /// Every mutant execution.
-    pub execs: Vec<Exec>,
+    /// Every execution, native and sealed, which only [`Routing::executions`] hands out.
+    executions: Vec<Execution>,
+    /// Every sealed control.
+    pub controls: Vec<SealedControl>,
     /// What the equivalence layer answered for each mutation it asked about, by display identity.
     pub equivalences: Vec<(String, String)>,
 }
@@ -245,21 +323,27 @@ impl Routing {
         self.routes.iter().find(|route| route.names(id, display_id))
     }
 
-    /// Every execution of one mutant, in the order they ran.
-    #[cfg(feature = "testkit")]
-    pub fn execs_of<'a>(&'a self, mutant: &'a str) -> impl Iterator<Item = &'a Exec> {
-        self.execs_for(mutant, mutant)
+    /// Every execution, native and sealed, in the order they were written.
+    #[must_use]
+    pub fn executions(&self) -> &[Execution] {
+        &self.executions
     }
 
-    /// Every execution of one mutant a caller holds both identities of.
-    pub fn execs_for<'a>(
+    /// Every execution of one mutant, in the order they ran.
+    #[cfg(feature = "testkit")]
+    pub fn executions_of<'a>(&'a self, mutant: &'a str) -> impl Iterator<Item = &'a Execution> {
+        self.executions_for(mutant, mutant)
+    }
+
+    /// Every execution of one mutant a caller holds both identities of, in the order they ran.
+    pub fn executions_for<'a>(
         &'a self,
         id: &'a str,
         display_id: &'a str,
-    ) -> impl Iterator<Item = &'a Exec> {
-        self.execs
+    ) -> impl Iterator<Item = &'a Execution> {
+        self.executions
             .iter()
-            .filter(move |exec| exec.names(id, display_id))
+            .filter(move |execution| execution.names(id, display_id))
     }
 }
 
@@ -286,7 +370,19 @@ pub(crate) fn from_events(events: &[Value]) -> Result<Routing, ReadError> {
             }
             Some("mutant-exec") => {
                 let record = required(event, "mutant", Some).map_err(placed)?;
-                routing.execs.push(exec(record).map_err(placed)?);
+                routing
+                    .executions
+                    .push(Execution::Native(exec(record).map_err(placed)?));
+            }
+            Some("sealed-exec") => {
+                let record = required(event, "sealed", Some).map_err(placed)?;
+                routing
+                    .executions
+                    .push(Execution::Sealed(sealed(record).map_err(placed)?));
+            }
+            Some("sealed-control") => {
+                let record = required(event, "control", Some).map_err(placed)?;
+                routing.controls.push(control(record).map_err(placed)?);
             }
             Some("note") => {
                 let noted = event.get("note");
@@ -391,10 +487,10 @@ fn route(record: &Value) -> Result<Route, ReadCauseError> {
         index: number(record, "index"),
         granularity: required(record, "granularity", owned)?,
         fallback: text(record, "fallback"),
-        reaching: strings(record, "reaching"),
+        reaching: texts(record, "reaching")?,
         discharged: discharges(record)?,
-        executed: strings(record, "executed"),
-        considered: strings(record, "considered"),
+        executed: recorded_texts(record, "executed")?,
+        considered: texts(record, "considered")?,
         reused: text(record, "reused"),
         refused: text(record, "refused"),
         rule: text(record, "rule"),
@@ -402,6 +498,33 @@ fn route(record: &Value) -> Result<Route, ReadCauseError> {
 }
 
 /// One execution record, from whichever producer wrote it.
+fn sealed(record: &Value) -> Result<Sealed, ReadCauseError> {
+    Ok(Sealed {
+        mutant: required(record, "mutant", owned)?,
+        target: required(record, "target", owned)?,
+        test: required(record, "test", owned)?,
+        came_to: required(record, "came_to", owned)?,
+        transcript: match record.get("transcript") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(transcript)) => Some(transcript.clone()),
+            Some(other) => {
+                return Err(ReadCauseError::Absent {
+                    field: format!("transcript a reader can read: {other}"),
+                });
+            }
+        },
+    })
+}
+
+fn control(record: &Value) -> Result<SealedControl, ReadCauseError> {
+    Ok(SealedControl {
+        target: required(record, "target", owned)?,
+        test: required(record, "test", owned)?,
+        standing: required(record, "standing", owned)?,
+        reached: indices(record, "reached")?,
+    })
+}
+
 fn exec(record: &Value) -> Result<Exec, ReadCauseError> {
     Ok(Exec {
         mutant: named(record)?,
@@ -417,18 +540,18 @@ fn exec(record: &Value) -> Result<Exec, ReadCauseError> {
         alone: Isolation::recorded(record.get("alone")),
         lingered: Linger::recorded(record.get("lingered")),
         signal: record.get("signal").and_then(Value::as_i64),
-        failed_tests: strings(record, "failed_tests"),
+        failed_tests: recorded_texts(record, "failed_tests")?,
         declined: declines(record)?,
     })
 }
 
-/// Each test a record says declined to measure, with its words; none where the producer records no declines, since the runner's records carry none.
+/// Each test a record says declined to measure, with its words, or that its producer does not record declines, as the runner's records do not.
 ///
 /// # Errors
-/// [`ReadCauseError::Absent`] for an entry that is not a test and its words.
-pub fn declines(record: &Value) -> Result<Vec<(String, String)>, ReadCauseError> {
+/// [`ReadCauseError::Absent`] for a list that is not one, or an entry that is not a test and its words.
+pub fn declines(record: &Value) -> Result<Recorded<Vec<(String, String)>>, ReadCauseError> {
     let Some(entries) = record.get("declined") else {
-        return Ok(Vec::new());
+        return Ok(Recorded::Unrecorded);
     };
     let Some(entries) = entries.as_array() else {
         return Err(ReadCauseError::Absent {
@@ -443,7 +566,8 @@ pub fn declines(record: &Value) -> Result<Vec<(String, String)>, ReadCauseError>
                 field: "declined[].test and declined[].why".to_owned(),
             }),
         })
-        .collect()
+        .collect::<Result<Vec<(String, String)>, ReadCauseError>>()
+        .map(Recorded::Said)
 }
 
 /// The mutant a record is about: the runner writes `mutant`, the engine writes `id`.
@@ -455,24 +579,17 @@ fn named(record: &Value) -> Result<String, ReadCauseError> {
         })
 }
 
-/// Every target a proof removed, with the proof; none where the producer writes no such list.
+/// Every target a proof removed, with the proof, which both producers write on every route.
 fn discharges(record: &Value) -> Result<Vec<Discharge>, ReadCauseError> {
-    record
-        .get("discharged")
-        .and_then(Value::as_array)
-        .map(|entries| {
-            entries
-                .iter()
-                .map(|entry| {
-                    Ok(Discharge {
-                        target: required(entry, "target", owned)?,
-                        proof: required(entry, "proof", owned)?,
-                    })
-                })
-                .collect::<Result<Vec<Discharge>, ReadCauseError>>()
+    required(record, "discharged", Value::as_array)?
+        .iter()
+        .map(|entry| {
+            Ok(Discharge {
+                target: required(entry, "target", owned)?,
+                proof: required(entry, "proof", owned)?,
+            })
         })
-        .transpose()
-        .map(Option::unwrap_or_default)
+        .collect()
 }
 
 /// A string, owned.
@@ -490,16 +607,43 @@ fn number(value: &Value, key: &str) -> Option<u64> {
     value.get(key)?.as_u64()
 }
 
-/// One array of strings, empty when it is absent.
-fn strings(value: &Value, key: &str) -> Vec<String> {
-    value
-        .get(key)
-        .and_then(Value::as_array)
-        .map(|entries| {
-            entries
-                .iter()
-                .filter_map(|entry| entry.as_str().map(str::to_owned))
-                .collect()
+/// The strings of the array field `key`, which every line on its schema carries.
+///
+/// # Errors
+/// [`ReadCauseError::Absent`] where the field is not there, is not an array, or holds anything but strings.
+fn texts(value: &Value, key: &str) -> Result<Vec<String>, ReadCauseError> {
+    required(value, key, Value::as_array)?
+        .iter()
+        .map(|entry| {
+            owned(entry).ok_or_else(|| ReadCauseError::Absent {
+                field: format!("{key}[]"),
+            })
         })
-        .unwrap_or_default()
+        .collect()
+}
+
+/// The catalog indices of the array field `key`, which every line on its schema carries.
+///
+/// # Errors
+/// [`ReadCauseError::Absent`] where the field is not there, is not an array, or holds anything but indices.
+fn indices(value: &Value, key: &str) -> Result<Vec<u64>, ReadCauseError> {
+    required(value, key, Value::as_array)?
+        .iter()
+        .map(|entry| {
+            entry.as_u64().ok_or_else(|| ReadCauseError::Absent {
+                field: format!("{key}[]"),
+            })
+        })
+        .collect()
+}
+
+/// The strings of the array field `key` where this record's producer writes it, and that it does not where the field is not there.
+///
+/// # Errors
+/// What [`texts`] refuses, for a field that is there.
+fn recorded_texts(value: &Value, key: &str) -> Result<Recorded<Vec<String>>, ReadCauseError> {
+    match value.get(key) {
+        None => Ok(Recorded::Unrecorded),
+        Some(_) => texts(value, key).map(Recorded::Said),
+    }
 }

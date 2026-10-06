@@ -15,6 +15,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use njutest_devkit::fixture::copy_tree;
+use njutest_devkit::paths::SEALED_TARGET;
 use rust_mutants::cargo::{
     CompileKind, CompileOptions, Driver, LocateOptions, Message, Metadata, MetadataOptions,
     Toolchain, compile,
@@ -29,6 +30,7 @@ use rust_mutants::rule::{Registry, Tier};
 use rust_mutants::runner::{Cancel, RunResult, Spec, run};
 use rust_mutants::syntax::Selection;
 use rust_mutants::trace::Recorder;
+use rust_mutants::workspace::Workspace;
 
 static REGISTRY: Registry = Registry::canonical();
 
@@ -46,16 +48,21 @@ fn toolchain(dir: &Path, cancel: &Cancel) -> Toolchain {
     Toolchain::locate(
         &LocateOptions {
             cargo: Some(njutest_devkit::paths::cargo_binary()),
+            env: Some(
+                njutest_devkit::paths::environment_for_a_run()
+                    .into_iter()
+                    .collect(),
+            ),
             ..LocateOptions::default()
         },
         dir,
-        cancel,
+        &rust_mutants::runner::Watched::new(cancel, &Recorder::disabled()),
     )
     .expect("locate")
 }
 
-/// Copies `fixture`, instruments every mutable file, and builds its tests.
-fn prepare(fixture: &str) -> Tree {
+/// Copies `fixture`, instruments every mutable file, and builds its tests for `triple`, the host where there is none.
+fn prepare(fixture: &str, triple: Option<&str>) -> Tree {
     let dir = tempfile::Builder::new()
         .prefix("rust-mutants-tree-")
         .tempdir()
@@ -95,10 +102,7 @@ fn prepare(fixture: &str) -> Tree {
         &CompileOptions {
             kind: CompileKind::Check,
             packages: Vec::new(),
-            target_dir: Some(rust_mutants::cargo::BuildDir::new(
-                target.path().to_path_buf(),
-                Vec::new(),
-            )),
+            target_dir: rust_mutants::cargo::BuildDir::new(target.path().to_path_buf(), Vec::new()),
             locked: true,
             offline: true,
             timeout: None,
@@ -107,7 +111,11 @@ fn prepare(fixture: &str) -> Tree {
         },
     )
     .expect("check");
-    assert!(checked.success, "the pristine copy compiles");
+    assert_eq!(
+        checked.completion(),
+        rust_mutants::cargo::Completion::Built,
+        "the pristine copy compiles"
+    );
 
     let discovery = discover(
         &Input {
@@ -145,6 +153,7 @@ fn prepare(fixture: &str) -> Tree {
             path,
             source: &source,
             placements: &placements,
+            carriers: &[],
             markers: &[],
             comparable: &BTreeSet::default(),
             probed: &BTreeMap::default(),
@@ -171,15 +180,28 @@ fn prepare(fixture: &str) -> Tree {
     );
     spec.argv.push("--target-dir".into());
     spec.argv.push(target.path().into());
+    let libraries = triple.map(|triple| {
+        spec.argv.push("--target".into());
+        spec.argv.push(triple.into());
+        njutest_devkit::paths::target_libdir(toolchain.rustc(), triple)
+    });
     spec.structured_stdout = Some(64 << 20);
     let built = run(&spec, &cancel);
+    let messages = rust_mutants::cargo::parse_messages(&built.stdout).expect("messages");
     assert!(
         built.succeeded(),
-        "the instrumented tree builds: {}",
-        std::str::from_utf8(&built.output).expect("the fixture writes exact UTF-8")
+        "the instrumented tree builds for {triple:?}, whose standard library is in {libraries:?}: \
+         {}{:#?}",
+        std::str::from_utf8(&built.output).expect("the fixture writes exact UTF-8"),
+        messages
+            .iter()
+            .filter_map(|message| match message {
+                Message::CompilerMessage(said) => Some(&said.message.message),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
     );
-    let binaries = rust_mutants::cargo::parse_messages(&built.stdout)
-        .expect("messages")
+    let binaries = messages
         .into_iter()
         .filter_map(|message| match message {
             Message::CompilerArtifact(artifact) if artifact.profile.test => artifact
@@ -241,7 +263,7 @@ impl Tree {
 
 #[test]
 fn an_instrumented_tree_builds_and_behaves_exactly_as_it_did_until_a_mutant_is_activated() {
-    let tree = prepare("fixture-simple");
+    let tree = prepare("fixture-simple", None);
     assert!(tree.binaries.contains_key("fixture_simple"));
     assert!(tree.binaries.contains_key("parity"));
 
@@ -296,7 +318,7 @@ fn an_instrumented_tree_builds_and_behaves_exactly_as_it_did_until_a_mutant_is_a
 
 #[test]
 fn a_stale_catalog_ends_the_test_process_rather_than_reporting_a_survivor() {
-    let tree = prepare("fixture-simple");
+    let tree = prepare("fixture-simple", None);
     let mutant = tree.mutant("return-default", "if a > b { a } else { b }");
     let stale = "f".repeat(64);
     let result = tree.exec("fixture_simple", Some(&mutant), Some(&stale));
@@ -312,4 +334,83 @@ fn a_stale_catalog_ends_the_test_process_rather_than_reporting_a_survivor() {
         said.contains(tree.catalog.digest()),
         "it names the catalog it was built from: {said}"
     );
+}
+
+#[test]
+fn an_instrumented_tree_builds_its_tests_for_a_sealed_host() {
+    for fixture in ["fixture-simple", "fixture-strict-lints"] {
+        let tree = prepare(fixture, Some(SEALED_TARGET));
+        assert!(
+            !tree.binaries.is_empty()
+                && tree.binaries.values().all(|module| module
+                    .extension()
+                    .is_some_and(|extension| extension == "wasm")),
+            "{fixture}: every test target of the instrumented tree is a module a sealed host can \
+             run: {:?}",
+            tree.binaries
+        );
+    }
+}
+
+/// A project whose test reads a Rust source of the tree as text, where the file it reads is no module any target compiles.
+fn read_text_project() -> tempfile::TempDir {
+    let project = tempfile::Builder::new()
+        .prefix("rust-mutants-read-text-")
+        .tempdir()
+        .expect("tempdir");
+    let root = project.path().join("readtext");
+    for (path, text) in [
+        (
+            "Cargo.toml",
+            "[package]\nname = \"readtext\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n\n[workspace]\n",
+        ),
+        (
+            "Cargo.lock",
+            "version = 4\n\n[[package]]\nname = \"readtext\"\nversion = \"0.1.0\"\n",
+        ),
+        (
+            "src/lib.rs",
+            "pub fn twice(n: u32) -> u32 {\n    n * 2\n}\n\n#[cfg(test)]\nmod reads {\n    const PASSED: &str = include_str!(\"passaged.rs\");\n\n    #[test]\n    fn the_passage_says_what_it_says() {\n        assert!(PASSED.contains(\"fn guarded\"));\n    }\n}\n",
+        ),
+        (
+            "src/passaged.rs",
+            "pub fn guarded(n: u32) -> u32 {\n    n + 1\n}\n",
+        ),
+    ] {
+        let at = root.join(path);
+        std::fs::create_dir_all(at.parent().expect("a directory")).expect("the directory");
+        std::fs::write(at, text).expect("the file");
+    }
+    project
+}
+
+#[test]
+fn a_file_the_build_only_reads_as_text_is_left_as_it_was_copied() {
+    let project = read_text_project();
+    let root = project.path().join("readtext");
+    let temporary = project.path().join("temp");
+    std::fs::create_dir_all(&temporary).expect("the temporary directory");
+    let cancel = Cancel::new();
+    let workspace = Workspace::open(
+        &root,
+        rust_mutants::testkit::opening::opening(&njutest_devkit::paths::cargo_binary(), &temporary),
+        &cancel,
+    )
+    .expect("open");
+    let snapshot = workspace.snapshot_root().to_path_buf();
+    let session = workspace
+        .prepare(
+            &rust_mutants::session::PrepareOptions::new(Tier::Balanced),
+            &cancel,
+        )
+        .expect("prepare");
+    let passaged = std::fs::read(snapshot.join("src/passaged.rs")).expect("copied");
+    assert_eq!(
+        std::str::from_utf8(&passaged).expect("text"),
+        "pub fn guarded(n: u32) -> u32 {\n    n + 1\n}\n",
+        "the file no target compiles is read as text only, and a run that rewrote it would hand \
+         every reader of the tree bytes no run committed to, while its markers and checkpoints \
+         mark and count nothing the run ever executes"
+    );
+    session.close().expect("close");
 }
