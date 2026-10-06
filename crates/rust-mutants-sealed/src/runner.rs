@@ -2021,11 +2021,20 @@ mod tests {
             stopped < Duration::from_secs(30),
             "the interrupt is delivered while the guest runs, not at the watchdog"
         );
-        let (advanced, backstops) = runner.alarm_advances();
+        let counted_by = Instant::now() + Duration::from_secs(10);
+        let (advanced, backstops) = loop {
+            let (advanced, backstops) = runner.alarm_advances();
+            if advanced > 0 || Instant::now() >= counted_by {
+                break (advanced, backstops);
+            }
+            std::thread::yield_now();
+        };
         assert_eq!(backstops, 0, "an owned raise requires no raw-flag backstop");
         assert!(
             advanced > 0,
-            "the alarm advanced the epoch for the raise itself"
+            "the alarm advanced the epoch for the raise itself: the guest may stop on the raise \
+             at its host call before the alarm counts the advance the raise woke it for, so the \
+             count is read once the alarm has had the bound to make it"
         );
     }
 
