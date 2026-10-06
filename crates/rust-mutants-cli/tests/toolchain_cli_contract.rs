@@ -587,12 +587,34 @@ fn running(pid: &str) -> bool {
     }
 }
 
-/// The processes `fixture-escapes`'s test said it started, whichever of them were still running when its run had ended, and whichever of those the test could not end itself.
+/// Whether `pid` has ended and waits for this process, its parent, to reap it.
+#[cfg(unix)]
+fn left_to_this_process(pid: &str) -> bool {
+    match std::process::Command::new("ps")
+        .args(["-o", "stat=,ppid=", "-p", pid])
+        .stderr(std::process::Stdio::null())
+        .output()
+    {
+        Ok(listed) if listed.status.success() => match std::str::from_utf8(&listed.stdout) {
+            Ok(state) => {
+                let mut fields = state.split_whitespace();
+                fields.next().is_some_and(|stat| stat.starts_with('Z'))
+                    && fields.next() == Some(std::process::id().to_string().as_str())
+            }
+            Err(_not_text) => true,
+        },
+        Ok(_not_listed) => false,
+        Err(_no_ps) => true,
+    }
+}
+
+/// The processes `fixture-escapes`'s test said it started, whichever of them were still running when its run had ended, whichever of those the test could not end itself, and whichever ended and were left to this process to reap.
 #[cfg(unix)]
 struct Escaped {
     pids: Vec<String>,
     survivors: Vec<String>,
     unstopped: Vec<String>,
+    unreaped: Vec<String>,
 }
 
 /// A run of `fixture-escapes` with every variable in `set`, and what its test started, of which it ends whatever the run left running.
@@ -639,6 +661,11 @@ fn escaping(set: &[&str]) -> (Output, Fixture, std::io::Result<Escaped>) {
             .map(str::to_owned)
             .collect();
         let survivors: Vec<String> = pids.iter().filter(|pid| running(pid)).cloned().collect();
+        let unreaped: Vec<String> = pids
+            .iter()
+            .filter(|pid| left_to_this_process(pid))
+            .cloned()
+            .collect();
         let unstopped = survivors
             .iter()
             .filter(|pid| {
@@ -653,6 +680,7 @@ fn escaping(set: &[&str]) -> (Output, Fixture, std::io::Result<Escaped>) {
             pids,
             survivors,
             unstopped,
+            unreaped,
         }
     });
     (output, fixture, started)
@@ -666,6 +694,7 @@ fn a_process_a_test_left_running_ends_with_the_run() {
         pids,
         survivors,
         unstopped,
+        unreaped,
     } = started.expect("the test says what it started");
     assert!(
         output.status.code().is_some_and(|code| code < 2),
@@ -678,6 +707,12 @@ fn a_process_a_test_left_running_ends_with_the_run() {
          the test did, in the run's copy or scratch, and the run ends every process still working \
          there when it closes, so nothing a test leaves behind holds a lock or a port past it: \
          {survivors:?} of {pids:?}, of which {unstopped:?} are still running"
+    );
+    assert!(
+        unreaped.is_empty(),
+        "the run adopts every process it starts, so one whose parent ended before the run ended \
+         it is the run's to reap, and a run that ends it reaps it too: {unreaped:?} of {pids:?} \
+         are left ended and unreaped"
     );
     let trace = std::fs::read_to_string(
         njutest_devkit::fixture::newest_run(
@@ -701,6 +736,7 @@ fn a_process_that_holds_a_refused_runs_output_ends_with_it() {
         pids,
         survivors,
         unstopped,
+        unreaped,
     } = started.expect("the test says what it started");
     assert_eq!(
         output.status.code(),
@@ -713,6 +749,11 @@ fn a_process_that_holds_a_refused_runs_output_ends_with_it() {
         survivors.is_empty(),
         "a refused run removes its copy too, and ends what still works in it first: \
          {survivors:?} of {pids:?}, of which {unstopped:?} are still running"
+    );
+    assert!(
+        unreaped.is_empty(),
+        "a refused run reaps what it ended as a run that reaches a verdict does: {unreaped:?} of \
+         {pids:?} are left ended and unreaped"
     );
     drop(fixture);
 }

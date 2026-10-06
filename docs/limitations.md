@@ -315,10 +315,14 @@ A process a test starts that calls `setsid` or `setpgid` leaves the group, as a 
 A run ends every such process when it closes: it lists the processes whose working directory lies in its copy of the tree or its scratch, which only a process the run started has once its executions have ended, ends them, and names them in the trace as `escaped-processes`.
 A run that refuses or is cancelled ends them too, as it removes its copy, since a copy is never removed while a process still works in it; that path writes no trace record of them.
 On Windows the execution's Job Object ends every descendant, so nothing escapes it.
+On Linux the run adopts every process it starts, so one whose parent ends is handed to the run rather than to init ([ADR 0050](adr/0050-a-run-adopts-every-process-it-starts.md)).
+A process whose working directory `/proc` will not say, as it will not for a non-dumpable one, may be working in the copy when its parents lead back to the run, so the copy is not removed and the run names the process; one whose parents do not, a login or a `sudo -u` beside the run, is no process the run started and is left alone.
+On macOS `lsof` leaves out a process of this user it may not inspect, so such a process is not found there, whoever started it.
 
-Three things follow and are not hidden.
+Four things follow and are not hidden.
 The sweep is at the run's end, not the execution's: executions of one copy share its package root as their working directory, so a process one execution left behind keeps running, and holding what it holds, while the next ones run.
 A process that changed its working directory out of the copy and the scratch, as a daemon that `chdir`s to `/` does, is not found, and outlives the run as it did before.
+A process the run adopted that leads its own process group in the run's session, or its own session, cannot be told from a process the run started, so once it ends it waits to be reaped until the run's process ends.
 And a process that keeps the test's output open keeps the execution from reading to its end, so after two seconds of waiting the execution is `errored` (`wait-failed`) and the run says so; `fixture-escapes` holds both cases.
 
 ## What a run asks of a suite that runs more than one thread

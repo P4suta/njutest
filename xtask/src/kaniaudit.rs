@@ -103,6 +103,13 @@ const GROUP_COVERS: &[&str] = &[
     "njutest-law-branch:failed",
     REACHED_COVER,
 ];
+const DESCENT_COVERS: &[&str] = &[
+    "njutest-law-branch:reaches",
+    "njutest-law-branch:apart",
+    "njutest-law-branch:ended",
+    "njutest-law-branch:broken",
+    REACHED_COVER,
+];
 const OPENER_COVERS: &[&str] = &[
     "njutest-law-branch:held",
     "njutest-law-branch:not-held",
@@ -201,6 +208,12 @@ pub(crate) enum Harness {
     AnswerAgrees,
     #[serde(rename = "group::kani_laws::a_stop_agrees_exactly_with_what_the_kernel_answered")]
     GroupAgrees,
+    #[serde(rename = "descent::kani_laws::a_descent_is_only_what_the_parents_read_say")]
+    DescentRead,
+    #[serde(
+        rename = "descent::kani_laws::a_child_this_process_started_is_never_reaped_as_handed_over"
+    )]
+    StartedKept,
     #[serde(
         rename = "said::kani_laws::every_number_spelled_as_the_runtime_spells_one_reads_back_itself"
     )]
@@ -288,6 +301,8 @@ impl Harness {
             Self::AnswerDecides => 810,
             Self::AnswerAgrees => 960,
             Self::GroupAgrees => 2_700,
+            Self::DescentRead => 130_000,
+            Self::StartedKept => 1_050,
             Self::NumberReadsBack => 450_000,
             Self::StatedNames => 68_600,
             Self::OpenerHeld => 1_300_000,
@@ -365,6 +380,10 @@ impl Harness {
             }
             Self::GroupAgrees => {
                 "group::kani_laws::a_stop_agrees_exactly_with_what_the_kernel_answered"
+            }
+            Self::DescentRead => "descent::kani_laws::a_descent_is_only_what_the_parents_read_say",
+            Self::StartedKept => {
+                "descent::kani_laws::a_child_this_process_started_is_never_reaped_as_handed_over"
             }
             Self::NumberReadsBack => {
                 "said::kani_laws::every_number_spelled_as_the_runtime_spells_one_reads_back_itself"
@@ -451,6 +470,8 @@ impl Harness {
             | Self::AnswerDecides
             | Self::AnswerAgrees
             | Self::GroupAgrees
+            | Self::DescentRead
+            | Self::StartedKept
             | Self::NumberReadsBack
             | Self::StatedNames
             | Self::OpenerHeld
@@ -507,6 +528,9 @@ impl Harness {
                 "crates/rust-mutants-decision/src/answered/kani_laws.rs"
             }
             Self::GroupAgrees => "crates/rust-mutants-decision/src/group/kani_laws.rs",
+            Self::DescentRead | Self::StartedKept => {
+                "crates/rust-mutants-decision/src/descent/kani_laws.rs"
+            }
             Self::NumberReadsBack | Self::StatedNames => {
                 "crates/rust-mutants-decision/src/said/kani_laws.rs"
             }
@@ -567,6 +591,12 @@ impl Harness {
             Self::ConfinementOneName | Self::ConfinementGit => CONFINEMENT_COVERS,
             Self::AnswerDecides | Self::AnswerAgrees => ANSWERED_COVERS,
             Self::GroupAgrees => GROUP_COVERS,
+            Self::DescentRead => DESCENT_COVERS,
+            Self::StartedKept => &[
+                "njutest-law-branch:kept",
+                "njutest-law-branch:handed-over",
+                REACHED_COVER,
+            ],
             Self::OpenerHeld => OPENER_COVERS,
             Self::LookedRestarts => STALL_SAID_COVERS,
             Self::BeatFloor => STALL_BEAT_COVERS,
@@ -676,6 +706,16 @@ impl Harness {
             Self::GroupAgrees => &[
                 "njutest-law-assertion:stop-as-the-kernel-says",
                 "njutest-law-assertion:agrees-only-with-the-decision",
+            ],
+            Self::DescentRead => &[
+                "njutest-law-assertion:reaches-only-through-held-ordered-parents",
+                "njutest-law-assertion:apart-only-past-no-ancestor",
+                "njutest-law-assertion:ended-iff-not-held",
+                "njutest-law-assertion:a-well-founded-table-decides",
+            ],
+            Self::StartedKept => &[
+                "njutest-law-assertion:started-shapes-kept",
+                "njutest-law-assertion:foreign-scope-handed-over",
             ],
             Self::NumberReadsBack => &["njutest-law-assertion:spelled-number-reads-back"],
             Self::StatedNames => &["njutest-law-assertion:stated-only-for-its-check-and-status"],

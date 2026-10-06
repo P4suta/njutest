@@ -747,6 +747,199 @@ fn explicit_cleanup_settles_a_live_producer_before_the_first_removal() {
     drop(completion);
 }
 
+#[cfg(target_os = "linux")]
+const HIDDEN: &str = "NJUTEST_SNAPSHOT_HIDDEN_HOLDER";
+#[cfg(target_os = "linux")]
+const STRANGER: &str = "NJUTEST_SNAPSHOT_STRANGER";
+
+/// Works where its first line of input names, hidden from `/proc` as a non-dumpable process is, and holds there until its input ends.
+#[cfg(target_os = "linux")]
+#[test]
+fn hidden_holder_fixture() {
+    use std::io::{BufRead as _, Read as _, Write as _};
+    if std::env::var_os(HIDDEN).is_none() {
+        return;
+    }
+    let mut input = io::stdin().lock();
+    let mut directory = String::new();
+    input
+        .read_line(&mut directory)
+        .expect("the directory to work in");
+    std::env::set_current_dir(directory.trim_end_matches('\n')).expect("the directory exists");
+    rustix::process::set_dumpable_behavior(rustix::process::DumpableBehavior::NotDumpable)
+        .expect("a process may hide itself");
+    println!("hidden-holder-ready {}", std::process::id());
+    io::stdout()
+        .flush()
+        .expect("the readiness reaches the pipe");
+    let mut rest = Vec::new();
+    input.read_to_end(&mut rest).expect("the input ends");
+}
+
+/// The holder's process id, read from its output past whatever else the harnesses wrote there.
+#[cfg(target_os = "linux")]
+fn holder_ready(output: &mut impl io::BufRead) -> u32 {
+    loop {
+        let mut line = String::new();
+        assert_ne!(
+            output.read_line(&mut line).expect("the holder's output"),
+            0,
+            "the holder ended before it said it was ready"
+        );
+        if let Some(pid) = line.trim().strip_prefix("hidden-holder-ready ") {
+            return pid.parse::<u32>().expect("the holder's process id");
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn hidden(pid: u32) -> bool {
+    matches!(
+        njutest_process::procfs::working_directory(pid),
+        Err(refusal) if refusal.kind() == io::ErrorKind::PermissionDenied
+    )
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_hidden_process_this_one_did_not_start_does_not_refuse_the_cleanup() {
+    use std::io::Write as _;
+    if std::env::var_os(STRANGER).is_none() {
+        let ran = std::process::Command::new(std::env::current_exe().expect("this binary"))
+            .args([
+                "--exact",
+                "snapshot::a_hidden_process_this_one_did_not_start_does_not_refuse_the_cleanup",
+                "--nocapture",
+            ])
+            .env(STRANGER, "1")
+            .output()
+            .expect("the run in a process of its own");
+        assert!(
+            ran.status.success(),
+            "run in a process that adopts nothing before its snapshot, so the holder it orphans \
+             first is nobody's it could adopt: {:?}\n{:?}",
+            std::str::from_utf8(&ran.stdout),
+            std::str::from_utf8(&ran.stderr)
+        );
+        return;
+    }
+    let mut command = std::process::Command::new(njutest_devkit::paths::posix_sh());
+    command
+        .args([
+            "-c",
+            "exec 3<&0; \"$0\" --exact snapshot::hidden_holder_fixture --nocapture --quiet <&3 3<&- &",
+        ])
+        .arg(std::env::current_exe().expect("this binary"))
+        .env(HIDDEN, "1")
+        .env_remove(STRANGER)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped());
+    let mut shell = njutest_devkit::process::SupervisedChild::launch(&mut command)
+        .expect("the shell that starts the holder");
+    let mut input = shell.take_stdin().expect("the holder's input");
+    let mut output = io::BufReader::new(shell.take_stdout().expect("the holder's output"));
+    assert!(
+        shell
+            .completion()
+            .expect("the shell's end")
+            .wait(Some(Duration::from_secs(10)))
+            .expect("the shell's end"),
+        "the shell ends at once, leaving the holder to whoever adopts above this process, which \
+         adopts nothing yet"
+    );
+    let fx = fixture();
+    let snapshot = create(&options(&fx), now()).expect("the snapshot");
+    writeln!(input, "{}", snapshot.root().display()).expect("the holder hears where to work");
+    let holder = holder_ready(&mut output);
+    let me = std::process::id();
+    match njutest_process::procfs::parsed(holder).expect("the holder's stat") {
+        njutest_process::Asked::Answered(stat) => assert_ne!(
+            stat.parent, me,
+            "the holder was left to whoever adopts above this process, not to it: {stat:?}"
+        ),
+        njutest_process::Asked::Gone => panic!("the holder runs"),
+    }
+    assert!(
+        hidden(holder),
+        "the holder is the process the census cannot read, as a new ssh login's session is"
+    );
+    let dir = snapshot.dir().to_path_buf();
+    snapshot.cleanup().expect(
+        "a process of this user that works where /proc will not say, and that does not descend \
+         from this process, is no process this process started, and leaves the cleanup to remove \
+         the copy",
+    );
+    assert!(!path_exists(&dir).expect("inspect the cleaned snapshot"));
+    let held = njutest_process::ForeignProcess::retain(holder)
+        .expect("the holder's generation")
+        .expect("the holder still runs");
+    drop(input);
+    assert!(
+        held.wait(Some(Duration::from_secs(10)))
+            .expect("the holder's end"),
+        "the holder ends once its input does"
+    );
+    drop(output);
+    shell
+        .wait_with_output()
+        .expect("the shell is reaped and its group settled");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_hidden_process_this_one_started_still_refuses_the_cleanup() {
+    use std::io::Write as _;
+    let fx = fixture();
+    let snapshot = create(&options(&fx), now()).expect("the snapshot");
+    let mut command = std::process::Command::new(std::env::current_exe().expect("this binary"));
+    command
+        .args([
+            "--exact",
+            "snapshot::hidden_holder_fixture",
+            "--nocapture",
+            "--quiet",
+        ])
+        .env(HIDDEN, "1")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped());
+    let mut holder = njutest_devkit::process::SupervisedChild::launch(&mut command)
+        .expect("the hidden holder starts");
+    let mut input = holder.take_stdin().expect("the holder's input");
+    let mut output = io::BufReader::new(holder.take_stdout().expect("the holder's output"));
+    writeln!(input, "{}", snapshot.root().display()).expect("the holder hears where to work");
+    let pid = holder_ready(&mut output);
+    assert_eq!(holder.id(), Some(pid), "the holder is this process's child");
+    assert!(hidden(pid), "the census cannot read where the holder works");
+    let dir = snapshot.dir().to_path_buf();
+    let refused = snapshot
+        .cleanup()
+        .expect_err("a process this one started may be working in the copy, so it is not removed");
+    assert_eq!(
+        refused.kind(),
+        SnapshotErrorKind::CleanupFailed,
+        "{refused}"
+    );
+    let said = refused.to_string();
+    let me = std::process::id();
+    for named in [
+        format!("process {pid} ("),
+        format!("descends from this process {me}"),
+        "Permission denied".to_owned(),
+    ] {
+        assert!(
+            said.contains(&named),
+            "the refusal names the process, why it counts as this one's, and what /proc said: \
+             {named:?} in {said}"
+        );
+    }
+    assert!(path_exists(&dir).expect("inspect the refused snapshot"));
+    drop(input);
+    holder
+        .wait_with_output()
+        .expect("the holder ends once its input does");
+    tempowner::remove_tree(&dir).expect("the refused copy is removed once its holder has ended");
+}
+
 #[test]
 fn dropping_an_unkept_snapshot_removes_it_best_effort() {
     let fx = fixture();

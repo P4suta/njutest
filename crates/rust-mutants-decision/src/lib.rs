@@ -10,6 +10,7 @@ pub mod answered;
 pub mod claim;
 pub mod confinement;
 pub mod decline;
+pub mod descent;
 pub mod evidence;
 pub mod group;
 pub mod judgement;

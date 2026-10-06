@@ -599,6 +599,12 @@ impl Owned {
         if let Err(source) = self.supervisor.release() {
             failures.push(source.to_string());
         }
+        #[cfg(target_os = "linux")]
+        if let Err(source) = super::reap_adopted() {
+            failures.push(format!(
+                "reaping the children this process adopted: {source}"
+            ));
+        }
         let refusal =
             (!failures.is_empty()).then(|| Arc::new(io::Error::other(failures.join("; "))));
         self.settlement = Settlement::Settled { status, refusal };

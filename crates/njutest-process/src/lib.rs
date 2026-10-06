@@ -8,6 +8,8 @@
     reason = "private modules share crate-only ownership transitions; public visibility would violate the workspace unreachable_pub gate"
 )]
 
+#[cfg(target_os = "linux")]
+mod adopted;
 mod event;
 mod group;
 #[cfg(target_os = "linux")]
@@ -22,6 +24,8 @@ use unix as sys;
 #[cfg(windows)]
 use windows as sys;
 
+#[cfg(target_os = "linux")]
+pub use adopted::{adopt, reap_adopted};
 pub use event::{ChildEvent, ExitStop, ExitSubscription};
 #[cfg(unix)]
 pub use group::Leader;

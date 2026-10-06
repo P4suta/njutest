@@ -1482,7 +1482,11 @@ impl Workspace {
 
     /// Ends every process this run started that is still running, having left every execution's process group, and says so in the trace.
     fn stop_escaped(&self) {
-        let found = match crate::escaped::working_under(&[self.snapshot.dir(), &self.scratch_dir]) {
+        let adoption = self.snapshot.adoption();
+        let found = match crate::escaped::working_under(
+            adoption,
+            &[self.snapshot.dir(), &self.scratch_dir],
+        ) {
             Ok(found) => found,
             Err(error) => {
                 self.trace.note(
@@ -1495,13 +1499,18 @@ impl Workspace {
         if found.is_empty() {
             return;
         }
-        let failed: Vec<String> = found
+        let mut failed: Vec<String> = found
             .iter()
             .filter_map(|pid| match crate::escaped::stop(*pid) {
                 Ok(()) => None,
                 Err(error) => Some(format!("{pid}: {error}")),
             })
             .collect();
+        if let Err(error) = crate::escaped::reap_adopted(adoption) {
+            failed.push(format!(
+                "the ended ones this process adopted could not be reaped: {error}"
+            ));
+        }
         self.trace.note(
             ESCAPED_PROCESSES,
             &format!(

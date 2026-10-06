@@ -387,6 +387,7 @@ Windows Job Objects provide the stronger contained-tree lifetime boundary.
 A POSIX descendant that did leave the group is ended when the run closes, cancelled or refused alike: `escaped::working_under` lists every process whose working directory lies in the run's copy or its scratch, which none but a process the run started has once its executions have ended, and `Workspace::close` ends each and notes it as `escaped-processes`.
 `Snapshot`'s drop does the same before it removes the copy, so no path out of a run leaves a process working in a directory that is gone.
 The listing is `/proc/<pid>/cwd` on Linux and `lsof -d cwd` elsewhere, since macOS hides the environment of platform binaries from `ps`; what the sweep cannot see is stated in [limitations](../limitations.md).
+On Linux the engine adopts every process it starts from the moment it makes the copy, so a process the run started stays among its descendants until it ends, and a process whose working directory `/proc` will not say refuses the removal only where its parents lead back to the engine; the engine reaps the ended processes it adopted that no child it started could be ([ADR 0050](../adr/0050-a-run-adopts-every-process-it-starts.md)).
 
 ### The scratch a test process is given
 

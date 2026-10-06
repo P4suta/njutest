@@ -622,10 +622,10 @@ pub(super) fn asked_io<T>(answer: io::Result<T>) -> io::Result<Asked<T>> {
     }
 }
 
-/// One process's `/proc/<pid>/stat` line, as [`super::procfs::stat`] reads it.
+/// What one process's `/proc/<pid>/stat` line says of it, as [`super::procfs::parsed`] reads it.
 #[cfg(target_os = "linux")]
-fn proc_stat(pid: Pid) -> io::Result<Asked<String>> {
-    super::procfs::stat(u32::try_from(pid.as_raw_nonzero().get()).map_err(io::Error::other)?)
+fn proc_stat(pid: Pid) -> io::Result<Asked<super::procfs::Stat>> {
+    super::procfs::parsed(u32::try_from(pid.as_raw_nonzero().get()).map_err(io::Error::other)?)
 }
 
 /// Whether `pid` is still in the group `leader` leads and in `session`, or gone once it has ended.
@@ -698,24 +698,11 @@ fn linux_member(pid: Pid, leader: Pid) -> io::Result<Option<Member>> {
         Asked::Answered(stat) => stat,
         Asked::Gone => return Ok(None),
     };
-    let (_, after_name) = stat
-        .rsplit_once(')')
-        .ok_or_else(|| io::Error::other("invalid process stat"))?;
-    let fields = after_name.split_whitespace().collect::<Vec<_>>();
-    let state = fields
-        .first()
-        .ok_or_else(|| io::Error::other("process stat omitted its state"))?;
-    let group = fields
-        .get(2)
-        .ok_or_else(|| io::Error::other("process stat omitted its group"))?
-        .parse::<i32>()
-        .map_err(io::Error::other)?;
-    let born = fields
-        .get(19)
-        .ok_or_else(|| io::Error::other("process stat omitted its birth identity"))?
-        .parse::<u64>()
-        .map_err(io::Error::other)?;
-    Ok((group == leader.as_raw_nonzero().get() && *state != "Z").then_some(Member { pid, born }))
+    let leads = i64::from(stat.scope.group) == i64::from(leader.as_raw_nonzero().get());
+    Ok((leads && !stat.ended).then_some(Member {
+        pid,
+        born: stat.born,
+    }))
 }
 
 /// Whether the group `pgid` leads holds a process besides its leader, as the kernel lists it.
@@ -971,20 +958,12 @@ fn session_of(pid: Pid) -> io::Result<Option<Pid>> {
     }
 }
 
-/// The session field of one `/proc/<pid>/stat` line, read after the command name, which may itself hold spaces and parentheses.
+/// The session a `/proc/<pid>/stat` line names, which is none for a kernel thread.
 #[cfg(target_os = "linux")]
-fn session_of_stat(stat: &str) -> io::Result<Option<Pid>> {
-    let fields = stat
-        .rsplit_once(')')
-        .map(|(_name, fields)| fields)
-        .ok_or_else(|| io::Error::other("a process status line without its command name"))?;
-    let session = fields
-        .split_whitespace()
-        .nth(3)
-        .ok_or_else(|| io::Error::other("a process status line without its session"))?
-        .parse::<i32>()
-        .map_err(io::Error::other)?;
-    Ok(Pid::from_raw(session))
+fn session_of_stat(stat: &super::procfs::Stat) -> io::Result<Option<Pid>> {
+    Ok(Pid::from_raw(
+        i32::try_from(stat.scope.session).map_err(io::Error::other)?,
+    ))
 }
 
 /// The session a process is in: absent once it is gone.
@@ -1188,14 +1167,17 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn a_process_in_no_session_has_none_rather_than_session_zero() {
-        let kernel = "2 (kthreadd) S 0 0 0 0 -1 2129984 0 0 0 0 0 1 0 0 20 0 1 0 2 0 0";
-        assert_eq!(
-            super::session_of_stat(kernel).expect("a complete status line"),
-            None
+        let read = |line: &str| match crate::procfs::Stat::read(line).expect("a status line") {
+            crate::Asked::Answered(stat) => stat,
+            crate::Asked::Gone => panic!("a running process's line: {line:?}"),
+        };
+        let kernel = read("2 (kthreadd) S 0 0 0 0 -1 2129984 0 0 0 0 0 1 0 0 20 0 1 0 2 0 0");
+        assert_eq!(super::session_of_stat(&kernel).expect("a session id"), None);
+        let named = read(
+            "4242 (a (b) c) S 1 4242 4241 0 -1 4194560 100 0 0 0 1 2 0 0 20 0 1 0 987654 1000 10",
         );
-        let named = "4242 (a (b) c) S 1 4242 4241 0 -1 4194560";
         assert_eq!(
-            super::session_of_stat(named).expect("a complete status line"),
+            super::session_of_stat(&named).expect("a session id"),
             rustix::process::Pid::from_raw(4241)
         );
         let own = rustix::process::getpid();
@@ -1485,22 +1467,10 @@ impl ForeignHandle {
 
 #[cfg(target_os = "linux")]
 fn linux_identity(pid: Pid) -> io::Result<Option<super::ProcessIdentity>> {
-    let stat = match proc_stat(pid)? {
-        Asked::Answered(stat) => stat,
-        Asked::Gone => return Ok(None),
+    let born = match proc_stat(pid)? {
+        Asked::Answered(stat) if !stat.ended => stat.born,
+        Asked::Answered(_) | Asked::Gone => return Ok(None),
     };
-    let (_, after_name) = stat
-        .rsplit_once(')')
-        .ok_or_else(|| io::Error::other("the process identity stat is malformed"))?;
-    let fields = after_name.split_whitespace().collect::<Vec<_>>();
-    if fields.first() == Some(&"Z") {
-        return Ok(None);
-    }
-    let born = fields
-        .get(19)
-        .ok_or_else(|| io::Error::other("the process stat omitted its birth identity"))?
-        .parse::<u64>()
-        .map_err(io::Error::other)?;
     let boot = std::fs::read_to_string("/proc/sys/kernel/random/boot_id")?
         .trim_end()
         .to_owned();

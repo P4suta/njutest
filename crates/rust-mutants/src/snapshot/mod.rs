@@ -233,6 +233,8 @@ pub enum SnapshotErrorKind {
     Destination,
     /// A failure while copying the tree into the snapshot.
     Copy,
+    /// This process could not be made to adopt the processes a run starts, so the census of what works in the snapshot could not later tell a process the run started from one it did not.
+    Adoption,
     /// A cleanup that was refused because the recorded directory does not look like one this module created.
     /// It is the guard that stands between a bug in rust-mutants and a user's source tree.
     CleanupRefused,
@@ -256,6 +258,7 @@ impl SnapshotErrorKind {
             Self::UnsupportedName => error::SNAPSHOT_UNSUPPORTED_NAME,
             Self::Destination => error::SNAPSHOT_DESTINATION,
             Self::Copy => error::SNAPSHOT_COPY,
+            Self::Adoption => error::SNAPSHOT_ADOPTION,
             Self::CleanupRefused => error::SNAPSHOT_CLEANUP_REFUSED,
             Self::CleanupFailed => error::SNAPSHOT_CLEANUP_FAILED,
             Self::Layout => error::SNAPSHOT_LAYOUT,
@@ -275,6 +278,7 @@ impl SnapshotErrorKind {
             Self::UnsupportedName => "unsupported-name",
             Self::Destination => "destination",
             Self::Copy => "copy",
+            Self::Adoption => "adoption",
             Self::CleanupRefused => "cleanup-refused",
             Self::CleanupFailed => "cleanup-failed",
             Self::Layout => "layout",
@@ -353,8 +357,8 @@ impl fmt::Display for SnapshotError {
 
 /// The three ways a tree entry can fail to be a regular file or a directory.
 ///
-/// Its own set rather than a `SnapshotErrorKind`, because only three of that enum's eleven can reach the walk, and the sentence a reader is given here is only true of those three.
-/// Passing the wider type meant a catch-all handing eight other kinds a description of a thing they are not — wrong the moment any of them arrived, and unable to arrive only by an argument nothing in the code made.
+/// Its own set rather than a `SnapshotErrorKind`, because only three of that enum's thirteen can reach the walk, and the sentence a reader is given here is only true of those three.
+/// Passing the wider type meant a catch-all handing ten other kinds a description of a thing they are not — wrong the moment any of them arrived, and unable to arrive only by an argument nothing in the code made.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NotARegularFile {
     /// A symbolic link.
@@ -428,6 +432,7 @@ pub struct Snapshot {
     workspace_digest: String,
     stable_dir: bool,
     owner: Option<Owner>,
+    adoption: crate::escaped::Adoption,
     state: State,
 }
 
@@ -437,6 +442,14 @@ pub struct Snapshot {
 /// Every failure is a [`SnapshotError`] naming the path it is about.
 pub fn create(options: &Options, now: Timestamp) -> Result<Snapshot, SnapshotError> {
     let source_root = options.layout.source_root();
+    let adoption = crate::escaped::adopt().map_err(|source| {
+        SnapshotError::new(
+            SnapshotErrorKind::Adoption,
+            options.dest_parent.display().to_string(),
+            "cannot make this process adopt the processes that will work in the snapshot",
+        )
+        .with_source(source)
+    })?;
     let info = fs::metadata(source_root).map_err(|source| {
         SnapshotError::new(
             SnapshotErrorKind::SourceRoot,
@@ -484,6 +497,7 @@ pub fn create(options: &Options, now: Timestamp) -> Result<Snapshot, SnapshotErr
         passed_over,
         stable_dir: false,
         owner: Some(owner),
+        adoption,
         state: State::Live,
     };
     match scaffold(&placement)
@@ -542,6 +556,7 @@ fn settled(
         workspace_digest: snapshot.workspace_digest.clone(),
         stable_dir: true,
         owner: Some(claim_destination(&wanted, now)?),
+        adoption: snapshot.adoption,
         dir: wanted,
         state: State::Live,
     };
@@ -1314,6 +1329,12 @@ fn claim_destination(dir: &Path, now: Timestamp) -> Result<Owner, SnapshotError>
 }
 
 impl Snapshot {
+    /// The proof, taken before the copy existed, that this process adopts every process that will work in it.
+    #[must_use]
+    pub const fn adoption(&self) -> crate::escaped::Adoption {
+        self.adoption
+    }
+
     /// The absolute path of the tree that was copied.
     #[must_use]
     pub fn source_root(&self) -> &Path {
@@ -1543,14 +1564,15 @@ impl Snapshot {
     fn settled_removal(&mut self) -> Result<SettledRemoval<'_>, SnapshotError> {
         cleanup_guard(&self.dir, &self.dest_parent)?;
         let began = std::time::Instant::now();
-        let producers = crate::escaped::end_working_under(&[&self.dir]).map_err(|source| {
-            SnapshotError::new(
-                SnapshotErrorKind::CleanupFailed,
-                self.dir.display().to_string(),
-                "cannot establish completion of every observed snapshot producer",
-            )
-            .with_source(source)
-        })?;
+        let producers =
+            crate::escaped::end_working_under(self.adoption, &[&self.dir]).map_err(|source| {
+                SnapshotError::new(
+                    SnapshotErrorKind::CleanupFailed,
+                    self.dir.display().to_string(),
+                    "cannot establish completion of every observed snapshot producer",
+                )
+                .with_source(source)
+            })?;
         let elapsed = began.elapsed();
         if let Some(owner) = &mut self.owner {
             owner.release().map_err(|source| {

@@ -116,6 +116,8 @@ mod table {
         TestsToolchainUnreachable,
         /// A compiler or linker input required to bind a build could not be read.
         CompilerInputUnreadable,
+        /// This process could not be made to adopt the processes a run starts.
+        SnapshotAdoption,
         /// A dep-info file has no rule to read.
         DepInfoUnreadable,
         /// An artifact's dep-info file could not be read.
@@ -566,6 +568,14 @@ mod table {
                     summary: "a compiler or linker input needed to bind a build could not be read",
                     remedy: Some(
                         "read the path the diagnostic names with the build's environment; preserve the operating system's refusal instead of treating an unreadable input as absent",
+                    ),
+                    sealed: Sealed,
+                },
+                Self::SnapshotAdoption => ErrorCode {
+                    code: "RM1025",
+                    summary: "this process could not be made to adopt the processes a run starts, so a process working in its copy could not later be told from one the run did not start",
+                    remedy: Some(
+                        "the kernel refused PR_SET_CHILD_SUBREAPER, which the message names; run where a sandbox or seccomp profile allows that prctl",
                     ),
                     sealed: Sealed,
                 },
@@ -1043,6 +1053,7 @@ pub(crate) const SNAPSHOT_UNSUPPORTED_NAME: ErrorCode =
     RmCode::SnapshotUnsupportedName.error_code();
 pub(crate) const SNAPSHOT_DESTINATION: ErrorCode = RmCode::SnapshotDestination.error_code();
 pub(crate) const SNAPSHOT_COPY: ErrorCode = RmCode::SnapshotCopy.error_code();
+pub(crate) const SNAPSHOT_ADOPTION: ErrorCode = RmCode::SnapshotAdoption.error_code();
 pub(crate) const SNAPSHOT_CLEANUP_REFUSED: ErrorCode = RmCode::SnapshotCleanupRefused.error_code();
 pub(crate) const SNAPSHOT_CLEANUP_FAILED: ErrorCode = RmCode::SnapshotCleanupFailed.error_code();
 pub(crate) const CARGO_TOOLCHAIN_NOT_FOUND: ErrorCode = RmCode::CargoToolchainNotFound.error_code();

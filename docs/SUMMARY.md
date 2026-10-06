@@ -97,3 +97,4 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 - [0047 A const fn is mutated where nothing evaluates it early](adr/0047-a-const-fn-is-mutated-where-nothing-evaluates-it-early.md)
 - [0048 Const items are mutated by a build per mutant](adr/0048-const-items-are-mutated-by-a-build-per-mutant.md)
 - [0049 OS records and sensitive values carry their boundaries](adr/0049-os-records-and-sensitive-values-carry-their-boundaries.md)
+- [0050 A run adopts every process it starts](adr/0050-a-run-adopts-every-process-it-starts.md)
