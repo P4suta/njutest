@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
+use self::folding::{Folding, Input};
 use super::{
     CAPTURED_COMPILER, COMPILATIONS as DIRECTORY, CompileOptions, Compiled, Completion, Driver,
     Exited, Message, products_name,
@@ -17,6 +18,7 @@ use super::{
 use crate::vars::Variables;
 
 mod failure;
+pub(super) mod folding;
 pub(super) mod loaders;
 pub(super) mod toolchain;
 pub(super) use failure::FailedStage;
@@ -99,6 +101,7 @@ impl BoundInputs {
 
 pub(super) struct Request {
     pub(super) key: String,
+    folded: folding::Folded,
     record: PathBuf,
     inputs: BoundInputs,
     target: PathBuf,
@@ -144,11 +147,11 @@ impl Request {
         configurations(root, env, &mut inputs)?;
         let loaders = toolchain::inputs((driver.toolchain, root), options, env, &mut inputs)?;
         let inputs = BoundInputs::of(inputs)?;
-        let mut digest = Sha256::new();
-        field(&mut digest, SCHEMA.as_bytes());
-        field(&mut digest, loaders.digest().as_bytes());
-        field(
-            &mut digest,
+        let mut folding = Folding::new();
+        folding.field(&Input::Derivation, SCHEMA.as_bytes());
+        folding.nest(loaders.folded());
+        folding.field(
+            &Input::Versions,
             format!(
                 "{:?}/{:?}",
                 driver.toolchain.cargo_version(),
@@ -157,23 +160,26 @@ impl Request {
             .as_bytes(),
         );
         for argument in super::compile_arguments(options) {
-            field(&mut digest, argument.as_encoded_bytes());
+            folding.field(&Input::Arguments, argument.as_encoded_bytes());
         }
-        field(&mut digest, root.as_os_str().as_encoded_bytes());
+        folding.field(&Input::Root, root.as_os_str().as_encoded_bytes());
         for (path, state) in &inputs.0 {
-            field(&mut digest, path.0.as_os_str().as_encoded_bytes());
-            field(&mut digest, state.digest.as_bytes());
-            field(&mut digest, &state.mode.to_be_bytes());
+            let input = Input::File(path.0.clone());
+            folding.field(&input, path.0.as_os_str().as_encoded_bytes());
+            folding.field(&input, state.digest.as_bytes());
+            folding.field(&input, &state.mode.to_be_bytes());
         }
         for (name, value) in env
             .canonical()
             .into_iter()
             .filter(|(name, _value)| compilation_input(env.spelling(), name))
         {
-            field(&mut digest, name.as_encoded_bytes());
-            field(&mut digest, value.as_encoded_bytes());
+            let input = Input::Variable(name.clone());
+            folding.field(&input, name.as_encoded_bytes());
+            folding.field(&input, value.as_encoded_bytes());
         }
-        let key = hex::encode(digest.finalize());
+        let folded = folding.finish();
+        let key = folded.digest().to_owned();
         Ok(Self {
             record: options
                 .target_dir
@@ -181,6 +187,7 @@ impl Request {
                 .join(DIRECTORY)
                 .join(format!("{}.json", crate::keyed::name(&key)?)),
             key,
+            folded,
             inputs,
             target: options.target_dir.path().to_path_buf(),
             environment,
@@ -432,12 +439,10 @@ impl Request {
                 &augmentation.paths,
             )?;
         }
-        if current.key != self.key {
-            return Err(io::Error::other(
-                "compiler inputs changed while preparing their products",
-            ));
+        match folding::InputsChangedError::between(&self.folded, &current.folded) {
+            Some(changed) => Err(io::Error::other(changed)),
+            None => Ok(()),
         }
-        Ok(())
     }
 
     pub(super) fn augment(
@@ -446,24 +451,27 @@ impl Request {
         arguments: &[std::ffi::OsString],
         paths: &[PathBuf],
     ) -> io::Result<Self> {
-        let mut digest = Sha256::new();
-        field(&mut digest, self.key.as_bytes());
-        field(&mut digest, role.as_bytes());
+        let mut folding = Folding::new();
+        folding.nest(&self.folded);
+        folding.field(&Input::Augmentation, role.as_bytes());
         for argument in arguments {
-            field(&mut digest, argument.as_encoded_bytes());
+            folding.field(&Input::Augmentation, argument.as_encoded_bytes());
         }
         for path in paths {
             let state = file(path)?;
-            field(&mut digest, path.as_os_str().as_encoded_bytes());
-            field(&mut digest, state.digest.as_bytes());
-            field(&mut digest, &state.mode.to_be_bytes());
+            let input = Input::File(path.clone());
+            folding.field(&input, path.as_os_str().as_encoded_bytes());
+            folding.field(&input, state.digest.as_bytes());
+            folding.field(&input, &state.mode.to_be_bytes());
             self.inputs.insert(path, state)?;
         }
         for (name, value) in self.environment.canonical() {
-            field(&mut digest, name.as_encoded_bytes());
-            field(&mut digest, value.as_encoded_bytes());
+            let input = Input::Variable(name.clone());
+            folding.field(&input, name.as_encoded_bytes());
+            folding.field(&input, value.as_encoded_bytes());
         }
-        self.key = hex::encode(digest.finalize());
+        self.folded = folding.finish();
+        self.key = self.folded.digest().to_owned();
         self.record
             .set_file_name(format!("{}.json", crate::keyed::name(&self.key)?));
         self.augmentation = Some(Augmentation {
@@ -1623,5 +1631,123 @@ mod tests {
             )
             .unwrap_or_else(|error| panic!("{flags:?} binds no external input: {error}"));
         }
+    }
+
+    /// A tree with no dependency under an owned parent spelled as the filesystem spells it, and a loader search directory beside it.
+    fn bound_tree() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let directory = tempfile::tempdir().expect("an owned parent");
+        let parent = std::fs::canonicalize(directory.path()).expect("the parent's own spelling");
+        let tree = parent.join("tree");
+        std::fs::create_dir_all(tree.join("src")).expect("a source directory");
+        std::fs::write(
+            tree.join("Cargo.toml"),
+            "[package]\nname = \"bound\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[workspace]\n",
+        )
+        .expect("a manifest with no dependency");
+        std::fs::write(tree.join("Cargo.lock"), "version = 4\n").expect("a lock file");
+        std::fs::write(tree.join("src").join("lib.rs"), "pub fn one() {}\n").expect("a library");
+        let search = parent.join("search");
+        std::fs::create_dir_all(&search).expect("a loader search directory");
+        (directory, tree, search)
+    }
+
+    /// The toolchain this suite was built with, located from `tree`, and the environment of a run with every compiler wrapper cleared.
+    fn located(
+        tree: &Path,
+        cancel: &crate::runner::Cancel,
+        trace: &crate::trace::Recorder,
+    ) -> (crate::cargo::Toolchain, crate::vars::Variables) {
+        let mut env: crate::vars::Variables = njutest_devkit::paths::environment_for_a_run()
+            .into_iter()
+            .collect();
+        env.set("RUSTC_WRAPPER", "");
+        env.set("RUSTC_WORKSPACE_WRAPPER", "");
+        let toolchain = crate::cargo::Toolchain::locate(
+            &crate::cargo::LocateOptions {
+                cargo: Some(njutest_devkit::paths::cargo_binary()),
+                env: Some(env.clone()),
+                ..crate::cargo::LocateOptions::default()
+            },
+            tree,
+            &crate::runner::Watched::new(cancel, trace),
+        )
+        .expect("the toolchain this suite was built with");
+        (toolchain, env)
+    }
+
+    /// A locked build of the tree at `tree` into a target directory beside it.
+    fn locked(tree: &Path) -> CompileOptions {
+        let target = tree.with_file_name("target");
+        let mut options = CompileOptions::new(
+            super::super::BuildDir::new(target, Vec::new()).rooted(tree.to_path_buf()),
+        );
+        options.locked = true;
+        options
+    }
+
+    /// A recorder that keeps what it is told in memory.
+    fn recorder() -> crate::trace::Recorder {
+        crate::trace::Recorder::wall(
+            crate::trace::Sink::Memory(crate::trace::MemorySink::unbounded()),
+            crate::testkit::trace::standalone_context(),
+        )
+    }
+
+    #[test]
+    fn a_key_computed_again_names_every_input_that_changed_since_the_first() {
+        let (owned, tree, search) = bound_tree();
+        let (cancel, trace) = (crate::runner::Cancel::new(), recorder());
+        let (toolchain, mut env) = located(&tree, &cancel, &trace);
+        let driver = super::Driver {
+            toolchain: &toolchain,
+            dir: &tree,
+            cancel: &cancel,
+            trace: &trace,
+        };
+        let options = locked(&tree);
+        let variable = *super::loaders::search_variables()
+            .first()
+            .expect("a platform whose loader searches a variable");
+        env.set(variable, &search);
+        let request = super::Request::of(&driver, &options, &mut env).expect("a bound request");
+        request
+            .unchanged(&driver, &options)
+            .expect("a key computed again over the same inputs is the same key");
+        std::fs::write(tree.join("src").join("lib.rs"), "pub fn two() {}\n")
+            .expect("the library changes");
+        std::fs::write(
+            search.join("appeared"),
+            super::loaders::tests::test_library(b"a library the compile left"),
+        )
+        .expect("a library appears where the loader searches");
+        let refused = request
+            .unchanged(&driver, &options)
+            .expect_err("a key computed again over changed inputs is another key");
+        let message = refused.to_string();
+        for named in [tree.join("src").join("lib.rs"), search.join("appeared")] {
+            assert!(
+                message.contains(&named.display().to_string()),
+                "the refusal names {}, the input that changed, so a reader learns the cause \
+                 from it: {message}",
+                named.display()
+            );
+        }
+        let changed = refused
+            .get_ref()
+            .and_then(|source| source.downcast_ref::<super::folding::InputsChangedError>())
+            .expect("the refusal carries the typed changes");
+        assert_eq!(
+            changed.changes(),
+            [
+                super::folding::Change::Changed(super::folding::Input::File(
+                    tree.join("src").join("lib.rs")
+                )),
+                super::folding::Change::Appeared(super::folding::Input::Searched(
+                    search.join("appeared")
+                )),
+            ],
+            "exactly the two inputs that changed are named: {message}"
+        );
+        drop(owned);
     }
 }

@@ -8,8 +8,7 @@ use std::ffi::{OsStr, OsString};
 use std::io;
 use std::path::{Path, PathBuf};
 
-use sha2::{Digest as _, Sha256};
-
+use super::folding::{Folded, Folding, Input};
 use super::toolchain::Identities;
 use crate::capdir::{Dir, Entry, Kind, Name};
 use crate::sensitive::Sensitive;
@@ -18,7 +17,7 @@ use crate::vars::Variables;
 #[derive(Debug)]
 pub(in crate::cargo) struct Inputs {
     namespaces: BTreeMap<&'static str, Option<OsString>>,
-    digest: String,
+    folded: Folded,
 }
 
 impl Inputs {
@@ -76,8 +75,8 @@ impl Inputs {
             ));
         }
         let mut namespaces = BTreeMap::new();
-        let mut digest = Sha256::new();
-        super::field(&mut digest, b"native-library-inputs-v3");
+        let mut digest = Folding::new();
+        digest.field(&Input::Derivation, b"native-library-inputs-v3");
         if let Some(cwd) = cwd {
             if !cwd.is_absolute() {
                 return Err(refused(
@@ -88,16 +87,20 @@ impl Inputs {
                     ),
                 ));
             }
-            super::field(&mut digest, cwd.as_os_str().as_encoded_bytes());
+            digest.field(
+                &Input::Searched(cwd.to_path_buf()),
+                cwd.as_os_str().as_encoded_bytes(),
+            );
         }
         for &name in names {
-            super::field(&mut digest, name.as_bytes());
+            let variable = Input::SearchVariable(name);
+            digest.field(&variable, name.as_bytes());
             let value = env.var(name).map(OsStr::to_os_string);
             match &value {
-                None => super::field(&mut digest, b"absent-variable"),
+                None => digest.field(&variable, b"absent-variable"),
                 Some(value) => {
-                    super::field(&mut digest, b"present-variable");
-                    super::field(&mut digest, value.as_encoded_bytes());
+                    digest.field(&variable, b"present-variable");
+                    digest.field(&variable, value.as_encoded_bytes());
                     if !value.is_empty() || cfg!(any(windows, target_os = "macos")) {
                         for path in search_paths(value)
                             .map_err(|source| refused(Path::new(value), source))?
@@ -120,13 +123,16 @@ impl Inputs {
         if cfg!(windows)
             && let Some(cwd) = cwd
         {
-            super::field(&mut digest, b"native-current-directory");
+            digest.field(
+                &Input::Searched(cwd.to_path_buf()),
+                b"native-current-directory",
+            );
             capture(cwd, identities, &mut digest, (false, &mut Vec::new()))
                 .map_err(|source| refused(cwd, source))?;
         }
         Ok(Self {
             namespaces,
-            digest: hex::encode(digest.finalize()),
+            folded: digest.finish(),
         })
     }
 
@@ -135,7 +141,12 @@ impl Inputs {
     }
 
     pub(in crate::cargo) fn digest(&self) -> &str {
-        &self.digest
+        self.folded.digest()
+    }
+
+    /// The digest with the fields it was folded from, each under the search variable, directory or entry it describes.
+    pub(in crate::cargo) const fn folded(&self) -> &Folded {
+        &self.folded
     }
 }
 
@@ -284,7 +295,7 @@ impl RuntimeInputs {
         Ok(Self {
             original: RuntimeAttestation {
                 schema: 1,
-                digest: inputs.digest,
+                digest: inputs.digest().to_owned(),
             },
             env: Sensitive::new(env.clone()),
             cwd: cwd.to_path_buf(),
@@ -332,7 +343,7 @@ impl RuntimeInputs {
             &self.identities,
             search_variables(),
         )?;
-        if current.digest != self.original.digest {
+        if current.digest() != self.original.digest {
             return Err(io::Error::other(
                 "the original runtime loader namespace changed",
             ));
@@ -361,7 +372,7 @@ fn loader_environment(env: &Variables) -> io::Result<()> {
 fn capture(
     path: &Path,
     identities: &Identities,
-    digest: &mut Sha256,
+    digest: &mut Folding,
     (frameworks, ancestors): (bool, &mut Vec<PathBuf>),
 ) -> io::Result<()> {
     if !path.is_absolute() {
@@ -370,29 +381,30 @@ fn capture(
             "a loader search directory must be absolute",
         ));
     }
-    super::field(digest, path.as_os_str().as_encoded_bytes());
+    let searched = Input::Searched(path.to_path_buf());
+    digest.field(&searched, path.as_os_str().as_encoded_bytes());
     let canonical = match reached(path)? {
         Reached::At(canonical) => canonical,
         Reached::Absent => {
-            super::field(digest, b"absent");
+            digest.field(&searched, b"absent");
             return Ok(());
         }
         Reached::Untraversable => {
-            super::field(digest, b"untraversable");
+            digest.field(&searched, b"untraversable");
             return Ok(());
         }
     };
-    super::field(digest, canonical.as_os_str().as_encoded_bytes());
+    digest.field(&searched, canonical.as_os_str().as_encoded_bytes());
     #[cfg(windows)]
     let fixed = fixed_search_directories()?;
     #[cfg(not(windows))]
     let fixed: [PathBuf; 0] = [];
     if among(&canonical, &fixed) {
-        super::field(digest, b"windows-fixed-search-directory");
+        digest.field(&searched, b"windows-fixed-search-directory");
         return Ok(());
     }
     if ancestors.contains(&canonical) {
-        super::field(digest, b"ancestor-directory-alias");
+        digest.field(&searched, b"ancestor-directory-alias");
         return Ok(());
     }
     ancestors.push(canonical.clone());
@@ -424,43 +436,46 @@ fn capture(
 fn capture_entry(
     (directory, root): (&Dir, &Path),
     text: &str,
-    (identities, digest): (&Identities, &mut Sha256),
+    (identities, digest): (&Identities, &mut Folding),
     (frameworks, ancestors): (bool, &mut Vec<PathBuf>),
 ) -> io::Result<()> {
     let name = Name::new(text).map_err(io::Error::other)?;
     let path = root.join(text);
+    let searched = Input::Searched(path.clone());
     let status = match directory.status_at(name) {
         Ok(Some(status)) => status,
         Ok(None) => return Err(io::Error::other("a loader search entry disappeared")),
         Err(denied) if denied.kind() == io::ErrorKind::PermissionDenied => {
-            unreadable(digest, &path);
+            unreadable(digest, &searched, &path);
             return Ok(());
         }
         Err(source) => return Err(source),
     };
-    super::field(digest, text.as_bytes());
+    digest.field(&searched, text.as_bytes());
     let descend = frameworks || (cfg!(target_os = "linux") && text == "glibc-hwcaps");
     match status.kind {
         Kind::Directory => {
-            super::field(digest, b"directory");
+            digest.field(&searched, b"directory");
             if descend {
                 capture(&path, identities, digest, (true, ancestors))?;
             }
         }
         Kind::File => match readable(&path, identities)? {
-            Readable::NotLibrary => not_an_image(digest, &path),
-            Readable::Unreadable => unreadable(digest, &path),
+            Readable::NotLibrary => not_an_image(digest, &searched, &path),
+            Readable::Unreadable => unreadable(digest, &searched, &path),
             Readable::Library => match super::toolchain::reused(&path, identities)? {
-                Some(state) => bound(digest, &path, &state),
+                Some(state) => bound(digest, &searched, &path, &state),
                 None => match directory.open_entry(name)? {
-                    Entry::File(file) => captured_file(&path, &file, identities, digest)?,
+                    Entry::File(file) => {
+                        captured_file((&path, &file), identities, digest, &searched)?;
+                    }
                     Entry::Dir(_) | Entry::Other => {
                         return Err(io::Error::other("the loader search entry changed kind"));
                     }
                 },
             },
         },
-        Kind::ExecutionAlias => super::field(digest, b"app-execution-alias"),
+        Kind::ExecutionAlias => digest.field(&searched, b"app-execution-alias"),
         Kind::Other => capture_link(&path, identities, digest, (descend, ancestors))?,
     }
     if directory.status_at(name)? != Some(status) {
@@ -472,24 +487,27 @@ fn capture_entry(
 fn capture_link(
     path: &Path,
     identities: &Identities,
-    digest: &mut Sha256,
+    digest: &mut Folding,
     (descend, ancestors): (bool, &mut Vec<PathBuf>),
 ) -> io::Result<()> {
+    let searched = Input::Searched(path.to_path_buf());
     let target = std::fs::read_link(path)?;
-    super::field(digest, target.as_os_str().as_encoded_bytes());
+    digest.field(&searched, target.as_os_str().as_encoded_bytes());
     match reached(path)? {
         Reached::At(canonical) => {
             let file = crate::capdir::open_file_at(&canonical)?;
             let status = crate::capdir::file_status(&file)?;
             match status.kind {
                 Kind::File => match readable(&canonical, identities)? {
-                    Readable::NotLibrary => not_an_image(digest, &canonical),
-                    Readable::Unreadable => unreadable(digest, &canonical),
-                    Readable::Library => captured_file(&canonical, &file, identities, digest)?,
+                    Readable::NotLibrary => not_an_image(digest, &searched, &canonical),
+                    Readable::Unreadable => unreadable(digest, &searched, &canonical),
+                    Readable::Library => {
+                        captured_file((&canonical, &file), identities, digest, &searched)?;
+                    }
                 },
                 Kind::Directory => {
-                    super::field(digest, b"directory-alias");
-                    super::field(digest, canonical.as_os_str().as_encoded_bytes());
+                    digest.field(&searched, b"directory-alias");
+                    digest.field(&searched, canonical.as_os_str().as_encoded_bytes());
                     if descend {
                         capture(&canonical, identities, digest, (true, ancestors))?;
                     }
@@ -511,11 +529,11 @@ fn capture_link(
             Ok(())
         }
         Reached::Absent => {
-            super::field(digest, b"absent-link-target");
+            digest.field(&searched, b"absent-link-target");
             Ok(())
         }
         Reached::Untraversable => {
-            super::field(digest, b"untraversable-link-target");
+            digest.field(&searched, b"untraversable-link-target");
             Ok(())
         }
     }
@@ -584,10 +602,10 @@ fn untraversable(source: &io::Error) -> bool {
 }
 
 fn captured_file(
-    path: &Path,
-    file: &std::fs::File,
+    (path, file): (&Path, &std::fs::File),
     identities: &Identities,
-    digest: &mut Sha256,
+    digest: &mut Folding,
+    searched: &Input,
 ) -> io::Result<()> {
     identities.opened()?;
     let held = crate::capdir::file_status(file)?;
@@ -606,7 +624,7 @@ fn captured_file(
     if crate::capdir::file_status(&after)? != held {
         return Err(io::Error::other("the loader input changed identity"));
     }
-    bound(digest, path, &state);
+    bound(digest, searched, path, &state);
     Ok(())
 }
 
@@ -627,14 +645,14 @@ fn readable(path: &Path, identities: &Identities) -> io::Result<Readable> {
     }
 }
 
-fn unreadable(digest: &mut Sha256, path: &Path) {
-    super::field(digest, path.as_os_str().as_encoded_bytes());
-    super::field(digest, b"unreadable-by-this-user");
+fn unreadable(digest: &mut Folding, searched: &Input, path: &Path) {
+    digest.field(searched, path.as_os_str().as_encoded_bytes());
+    digest.field(searched, b"unreadable-by-this-user");
 }
 
-fn not_an_image(digest: &mut Sha256, path: &Path) {
-    super::field(digest, path.as_os_str().as_encoded_bytes());
-    super::field(digest, b"not-a-loadable-image");
+fn not_an_image(digest: &mut Folding, searched: &Input, path: &Path) {
+    digest.field(searched, path.as_os_str().as_encoded_bytes());
+    digest.field(searched, b"not-a-loadable-image");
 }
 
 /// Whether these leading bytes begin an image a dynamic loader can load as a library: anything it cannot rule out counts as one.
@@ -684,10 +702,10 @@ fn pe_library(head: &[u8]) -> bool {
     u16::from_le_bytes(*characteristics) & 0x2000 != 0
 }
 
-fn bound(digest: &mut Sha256, path: &Path, state: &super::File) {
-    super::field(digest, path.as_os_str().as_encoded_bytes());
-    super::field(digest, state.digest.as_bytes());
-    super::field(digest, &state.mode.to_be_bytes());
+fn bound(digest: &mut Folding, searched: &Input, path: &Path, state: &super::File) {
+    digest.field(searched, path.as_os_str().as_encoded_bytes());
+    digest.field(searched, state.digest.as_bytes());
+    digest.field(searched, &state.mode.to_be_bytes());
 }
 
 #[derive(Debug, thiserror::Error)]
