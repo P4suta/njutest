@@ -570,14 +570,21 @@ fn a_test_that_runs_a_bare_cargo_gets_the_runs_toolchain_rather_than_a_shim_that
     );
 }
 
-/// Whether the process `pid` names is still running.
+/// Whether the process `pid` names is still running: one the kernel has ended and its new parent has not yet reaped is a zombie, which `kill -0` still answers for but which runs nothing.
 #[cfg(unix)]
 fn running(pid: &str) -> bool {
-    std::process::Command::new("kill")
-        .args(["-0", pid])
+    match std::process::Command::new("ps")
+        .args(["-o", "stat=", "-p", pid])
         .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
+        .output()
+    {
+        Ok(listed) if listed.status.success() => match std::str::from_utf8(&listed.stdout) {
+            Ok(state) => !state.trim_start().starts_with('Z'),
+            Err(_not_text) => true,
+        },
+        Ok(_not_listed) => false,
+        Err(_no_ps) => true,
+    }
 }
 
 /// The processes `fixture-escapes`'s test said it started, whichever of them were still running when its run had ended, and whichever of those the test could not end itself.
