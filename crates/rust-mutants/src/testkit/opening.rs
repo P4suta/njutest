@@ -23,10 +23,9 @@ pub fn opening(cargo: &Path, temp: &Path) -> OpenOptions {
     for composed in ["RUSTFLAGS", "RUSTDOCFLAGS", "CARGO_ENCODED_RUSTFLAGS"] {
         env.remove(composed);
     }
-    if let Some(harness) = harness_output() {
-        for name in LOADER_SEARCH {
-            without_harness_output(&mut env, name, &harness);
-        }
+    let harness = harness_output();
+    for name in LOADER_SEARCH {
+        without_harness_output(&mut env, name, harness.as_deref());
     }
     OpenOptions {
         cargo: Some(cargo.to_path_buf()),
@@ -49,13 +48,26 @@ fn harness_output() -> Option<PathBuf> {
     }
 }
 
-/// `name` as a user's run would see it: a loader search path keeps every entry outside the harness's build output, and is absent when none is left.
-fn without_harness_output(env: &mut Variables, name: &str, harness: &Path) {
+/// This workspace's target directory, where every cargo the harness ran a tool through put that tool's build output.
+fn workspace_output() -> PathBuf {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    match manifest.parent().and_then(Path::parent) {
+        Some(workspace) => workspace.join("target"),
+        None => manifest.join("target"),
+    }
+}
+
+/// `name` as a user's run would see it: a loader search path keeps every entry outside the harness's build output and this workspace's target directory, and is absent when none is left.
+fn without_harness_output(env: &mut Variables, name: &str, harness: Option<&Path>) {
     let Some(value) = env.var(name) else {
         return;
     };
+    let workspace = workspace_output();
     let entries: Vec<PathBuf> = std::env::split_paths(value)
-        .filter(|entry| !entry.starts_with(harness))
+        .filter(|entry| {
+            !entry.starts_with(&workspace)
+                && harness.is_none_or(|harness| !entry.starts_with(harness))
+        })
         .collect();
     let Ok(joined) = std::env::join_paths(&entries) else {
         return;
