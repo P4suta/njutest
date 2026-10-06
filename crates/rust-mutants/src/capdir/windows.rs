@@ -1068,7 +1068,7 @@ fn succeeded_nt(status: NTSTATUS) -> io::Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use std::fs::File;
     use std::os::windows::io::AsRawHandle as _;
     use std::ptr;
@@ -1101,6 +1101,16 @@ mod tests {
             FILE_ATTRIBUTE_REPARSE_POINT
         );
         assert_eq!(records::EXECUTION_ALIAS_TAG, IO_REPARSE_TAG_APPEXECLINK);
+    }
+
+    /// Makes `name` in the directory at `path` an app execution alias, as Windows adds one to every user's path when a packaged app installs or updates.
+    #[expect(
+        clippy::redundant_pub_crate,
+        reason = "the capability directory re-exports it to the loader tests, which this test module's own visibility would hide"
+    )]
+    pub(crate) fn make_execution_alias(path: &std::path::Path, name: &str) {
+        let dir = open(path).expect("the directory to put an alias in");
+        execution_alias(&dir, Name::new(name).expect("a component"));
     }
 
     /// Makes `name` in `dir` an app execution alias naming a packaged app's executable, as the Store puts one on every user's path.

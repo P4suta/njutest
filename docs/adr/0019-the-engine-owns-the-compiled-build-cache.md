@@ -367,3 +367,12 @@ No loader reads which object a directory is: it looks names up in it and maps th
 The capture now binds a search directory, and a directory an alias leads to, by its spelling, its canonical path and its entries, and compares the object only to refuse a directory that moved while it was read.
 `capdir::Identity` keeps its volume and object private, so outside the capability directory two identities can be compared and neither can be spelled into a key; the one reader is the Windows change stamp, which tells the identity memo whether a toolchain file is still the object it read.
 A compile on Unix with absolute search paths never bound its directory, which is why only Windows showed it, but a search directory made again with the same entries now binds the same input on every platform.
+
+## Amendment, 2026-10-06: an app execution alias is no loader input
+
+GitHub's Windows runner refused one compile in a run of 4,362 tests with "RM1022: ...
+compiler inputs changed while preparing their products: the loader search entry \\?\C:\Users\runneradmin\AppData\Local\Microsoft\WindowsApps\WindowsPackageManagerMCPServer.exe appeared".
+`WindowsApps` is on every user's `PATH` and holds app execution aliases, which Windows adds and removes as packaged apps install and update, at any moment of a run.
+An alias is an `IO_REPARSE_TAG_APPEXECLINK` reparse point that only process creation resolves: no open of it as a file succeeds, so no loader can map it, and its presence or absence changes no library a compile could load.
+The capture binds nothing for an alias, neither its name nor its kind, so a search directory that gains or loses one binds the input it did.
+An alias that appears in the instant the capture reads its directory still reads as a namespace that changed, which refuses that capture rather than binding a half-read directory.

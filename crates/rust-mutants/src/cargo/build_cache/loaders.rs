@@ -451,6 +451,9 @@ fn capture_entry(
         }
         Err(source) => return Err(source),
     };
+    if status.kind == Kind::ExecutionAlias {
+        return Ok(());
+    }
     digest.field(&searched, text.as_bytes());
     let descend = frameworks || (cfg!(target_os = "linux") && text == "glibc-hwcaps");
     match status.kind {
@@ -475,7 +478,7 @@ fn capture_entry(
                 },
             },
         },
-        Kind::ExecutionAlias => digest.field(&searched, b"app-execution-alias"),
+        Kind::ExecutionAlias => {}
         Kind::Other => capture_link(&path, identities, digest, (descend, ancestors))?,
     }
     if directory.status_at(name)? != Some(status) {
@@ -1248,6 +1251,36 @@ mod namespace_tests {
                 "where the host traverses the junction, what is behind it is bound"
             );
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn an_app_execution_alias_appearing_in_a_search_directory_is_no_loader_input() {
+        let parent = tempfile::tempdir().expect("owned parent");
+        let search = parent.path().join("search");
+        std::fs::create_dir_all(&search).expect("a search directory, which is also the cwd");
+        std::fs::write(
+            search.join("library"),
+            super::tests::test_library(b"one library"),
+        )
+        .expect("a library a loader could load from it");
+        let name = search_variables()
+            .first()
+            .expect("supported native variable");
+        let env = environment(name, &search);
+        let identities = Identities::empty();
+        let before = Inputs::compiler(&env, &search, &identities).expect("the namespace before");
+        crate::capdir::make_execution_alias(&search, "WindowsPackageManagerMCPServer.exe");
+        let after = Inputs::compiler(&env, &search, &identities)
+            .expect("the namespace with an alias in it");
+        assert_eq!(
+            before.digest(),
+            after.digest(),
+            "an app execution alias is a reparse point only process creation resolves and no \
+             loader maps, and Windows adds one to WindowsApps whenever a packaged app updates, \
+             which refused a compile on CI's runner: RM1022 'the loader search entry \
+             ...\\WindowsApps\\WindowsPackageManagerMCPServer.exe appeared'"
+        );
     }
 
     #[test]

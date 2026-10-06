@@ -9,6 +9,8 @@ mod records;
 mod unix;
 #[cfg(windows)]
 mod windows;
+#[cfg(all(test, windows))]
+pub(crate) use windows::tests::make_execution_alias;
 
 use std::fs::File;
 use std::io;
