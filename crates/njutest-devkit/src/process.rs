@@ -494,21 +494,9 @@ pub fn in_group(group: u32) -> std::io::Result<Option<Vec<u32>>> {
 
     let mut found = Vec::new();
     for pid in procfs::processes()? {
-        let stat = match procfs::stat(pid)? {
-            Asked::Answered(stat) => stat,
-            Asked::Gone => continue,
-        };
-        let fields: Vec<&str> = stat
-            .rsplit_once(')')
-            .map(|(_name, after)| after.split_whitespace().collect())
-            .unwrap_or_default();
-        let (Some(state), Some(its_group)) = (fields.first(), fields.get(2)) else {
-            return Err(std::io::Error::other(format!(
-                "process {pid} has a stat line without its state and group: {stat:?}"
-            )));
-        };
-        if its_group.parse::<u32>().map_err(std::io::Error::other)? == group && *state != "Z" {
-            found.push(pid);
+        match procfs::parsed(pid)? {
+            Asked::Answered(stat) if stat.scope.group == group && !stat.ended => found.push(pid),
+            Asked::Answered(_) | Asked::Gone => {}
         }
     }
     Ok(Some(found))

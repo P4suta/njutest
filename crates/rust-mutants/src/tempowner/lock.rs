@@ -76,19 +76,12 @@ mod started {
 
     use super::Start;
 
-    /// The start of `pid` in clock ticks since boot, field 22 of its `stat`, read past the command name, which may hold spaces and parentheses.
+    /// The start of `pid` in clock ticks since boot, as `/proc` says, which is absent once the process has been reaped.
     pub(super) fn start_of(pid: u32) -> Start {
-        let stat = match njutest_process::procfs::stat(pid) {
-            Ok(Asked::Answered(stat)) => stat,
-            Ok(Asked::Gone) => return Start::Absent,
-            Err(_unreadable) => return Start::Unread,
-        };
-        match stat
-            .rsplit_once(')')
-            .and_then(|(_, after)| after.split_whitespace().nth(19))
-        {
-            Some(started) => Start::Running(started.to_owned()),
-            None => Start::Unread,
+        match njutest_process::procfs::parsed(pid) {
+            Ok(Asked::Answered(stat)) => Start::Running(stat.born.to_string()),
+            Ok(Asked::Gone) => Start::Absent,
+            Err(_unreadable) => Start::Unread,
         }
     }
 

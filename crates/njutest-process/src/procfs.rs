@@ -26,11 +26,11 @@ pub fn processes() -> io::Result<Vec<u32>> {
     Ok(listed)
 }
 
-/// One process's `/proc/<pid>/stat` line.
+/// One process's `/proc/<pid>/stat` line, which only [`Stat::read`] reads, so no reader can take the line of a process being released for a running one.
 ///
 /// # Errors
 /// `/proc` refused the open or the read for a reason other than the process having been reaped.
-pub fn stat(pid: u32) -> io::Result<Asked<String>> {
+fn stat(pid: u32) -> io::Result<Asked<String>> {
     match open_stat(pid)? {
         Asked::Answered(opened) => read_stat(opened),
         Asked::Gone => Ok(Asked::Gone),
