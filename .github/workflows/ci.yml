@@ -82,7 +82,7 @@ jobs:
         run: mise run test:ci
       - name: Upload test progress and build costs
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: test-evidence-${{ matrix.os }}
           path: |
@@ -261,7 +261,7 @@ jobs:
           cargo xtask tidy -- cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --test-threads 3 --status-level pass --profile ci
       - name: Upload test progress and build costs
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: coverage-test-evidence
           path: |
@@ -276,7 +276,7 @@ jobs:
       - name: Ratchet region coverage
         run: cargo xtask coverage-ratchet
       - name: Upload coverage report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: coverage
           path: |
