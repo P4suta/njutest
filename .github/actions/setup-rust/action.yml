@@ -58,7 +58,7 @@ runs:
         echo "RUSTC_WRAPPER=" >> "${GITHUB_ENV}"
         echo "MISE_TASK_RUN_AUTO_INSTALL=false" >> "${GITHUB_ENV}"
         python3 scripts/toolchain.py --env >> "${GITHUB_ENV}"
-    - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+    - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
     # `mise.toml` pins two kinds of tool and the key says which: a `cargo:` prefix is a crate, and a bare name is a tool mise fetches itself.
     # install-action only knows the first kind, and it knows a crate by its crates.io name rather than the tool's own, which is why translating the bare ones into its vocabulary needed a rename table.
     # It also carries its own list of versions, so a pin bumped here failed the pipeline until install-action shipped a release that had heard of it — and for `actionlint`, a Go program that is on no registry it reads, the fallback could never succeed at any version.
