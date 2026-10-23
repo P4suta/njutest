@@ -209,6 +209,36 @@ fn lint_ci_steps(fetch: CiCommand) -> Vec<(&'static str, CiCommand)> {
     ]
 }
 
+fn test_ci_steps(fetch: CiCommand, name: &'static str) -> Vec<(&'static str, CiCommand)> {
+    vec![
+        ("Fetch the locked dependency graph", fetch),
+        (name, CiCommand::Task("test:ci")),
+        ("Doctests", CiCommand::Runs("test:doc", &[0])),
+    ]
+}
+
+fn kani_ci_steps(fetch: CiCommand) -> Vec<(&'static str, CiCommand)> {
+    use CiCommand::{CiOnly, Task};
+    vec![
+        ("Fetch the locked dependency graph", fetch),
+        (
+            "Install the exact verifier and backend",
+            CiOnly(
+                "cargo install --locked kani-verifier --version '=0.68.0'\ncargo kani setup",
+                "CI installs the verifier that the local Kani task requires",
+            ),
+        ),
+        (
+            "Prove the production mutation outcome laws",
+            Task("kani:laws"),
+        ),
+        (
+            "Exercise generated harnesses and the retained-result protocol with real Kani",
+            Task("kani:verified"),
+        ),
+    ]
+}
+
 fn expected_ci_steps(job: &str) -> Vec<(&'static str, CiCommand)> {
     use CiCommand::{CiOnly, Runs, Task};
     let fetch = CiOnly(
@@ -216,15 +246,15 @@ fn expected_ci_steps(job: &str) -> Vec<(&'static str, CiCommand)> {
         "CI primes both lockfiles before an offline run",
     );
     match job {
-        "test" => vec![
-            ("Fetch the locked dependency graph", fetch),
-            ("Test every target", Task("test:ci")),
-            ("Doctests", Runs("test:doc", &[0])),
-            (
+        "fast-test" => test_ci_steps(fetch, "Test every target without coverage instrumentation"),
+        "test" => {
+            let mut steps = test_ci_steps(fetch, "Test every target");
+            steps.push((
                 "Lint what only this platform compiles",
                 Runs("clippy", &[0]),
-            ),
-        ],
+            ));
+            steps
+        }
         "lint" => lint_ci_steps(fetch),
         "deny" => vec![
             (
@@ -263,24 +293,7 @@ fn expected_ci_steps(job: &str) -> Vec<(&'static str, CiCommand)> {
             "build the book, which refuses a summary naming a page nobody holds",
             Runs("book", &[0]),
         )],
-        "kani-verified" => vec![
-            ("Fetch the locked dependency graph", fetch),
-            (
-                "Install the exact verifier and backend",
-                CiOnly(
-                    "cargo install --locked kani-verifier --version '=0.68.0'\ncargo kani setup",
-                    "CI installs the verifier that the local Kani task requires",
-                ),
-            ),
-            (
-                "Prove the production mutation outcome laws",
-                Task("kani:laws"),
-            ),
-            (
-                "Exercise generated harnesses and the retained-result protocol with real Kani",
-                Task("kani:verified"),
-            ),
-        ],
+        "kani-verified" => kani_ci_steps(fetch),
         "wasi-testsuite" => vec![
             ("Fetch the locked dependency graph", fetch),
             (
@@ -288,6 +301,7 @@ fn expected_ci_steps(job: &str) -> Vec<(&'static str, CiCommand)> {
                 Task("wasi-testsuite"),
             ),
         ],
+        "fuzz-campaign" | "mutation-campaign" | "dogfood-campaign" => Vec::new(),
         _ => panic!("locally answerable CI job {job} has no step-command correspondence"),
     }
 }
@@ -361,11 +375,9 @@ fn every_locally_answerable_ci_step_runs_its_mise_command() {
     assert!(audit_run.lines().any(|line| line.trim() == "cargo audit --no-fetch --deny warnings --db \"${db}\" || {"));
 }
 
-/// Every job `required` waits for, and the local task that answers it first.
-///
-/// `None` is a job this machine cannot answer, with the reason it cannot.
-/// The list is the whole of what a push has to wait for CI to find out, so adding to it is a decision rather than an omission.
-const GATED: [(&str, Option<&str>); 12] = [
+/// Every CI job and its local entrypoint, or a hosted-only boundary.
+const GATED: [(&str, Option<&str>); 16] = [
+    ("fast-test", Some("mise run test")),
     ("test", Some("mise run test")),
     ("lint", Some("mise run lint")),
     ("deny", Some("mise run deny")),
@@ -378,7 +390,16 @@ const GATED: [(&str, Option<&str>); 12] = [
     ("wasi-testsuite", Some("mise run wasi-testsuite")),
     ("action-smoke", None),
     ("action-smoke-rust-mutants", None),
+    ("fuzz-campaign", Some("mise run fuzz:smoke")),
+    ("mutation-campaign", Some("mise run mutants")),
+    ("dogfood-campaign", Some("mise run dogfood:engine:audit")),
 ];
+
+#[test]
+fn proofs_are_available_in_the_full_check_without_blocking_a_push() {
+    assert!(!task("check").contains("mise run kani:verified"));
+    assert!(task("\"check:full\"").contains("mise run kani:verified"));
+}
 
 #[test]
 fn the_gates_a_person_runs_are_the_gates_the_pipeline_runs() {
@@ -641,7 +662,7 @@ fn benchmarks_are_one_explicit_optional_feature_per_benchmarking_crate() {
 }
 
 #[test]
-fn every_gate_the_pipeline_waits_for_is_one_this_machine_answered_first() {
+fn every_ci_job_has_a_local_entrypoint_or_a_hosted_boundary() {
     let workflow = repository(".github/workflows/ci.yml");
     let needs = workflow
         .split_once("  required:")
@@ -669,9 +690,7 @@ fn every_gate_the_pipeline_waits_for_is_one_this_machine_answered_first() {
     named.sort();
     assert_eq!(
         waited, named,
-        "a job was added to or taken from `required` without saying whether a push can \
-         find out about it first, which is how a twenty-minute answer becomes the only \
-         answer"
+        "every required dependency needs a local entrypoint or a hosted boundary"
     );
 
     let check = task("check");

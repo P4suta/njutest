@@ -138,7 +138,7 @@ fn every_fuzz_target_is_a_source_file_a_readme_row_and_a_workflow_matrix_entry()
         );
         assert!(
             workflow.contains(&format!("- {name}\n")),
-            "the weekly fuzz job does not run {name}"
+            "release fuzz verification does not run {name}"
         );
     }
 }
@@ -244,7 +244,7 @@ fn every_kept_crash_is_the_input_of_an_ordinary_test() {
     assert!(
         untested.is_empty(),
         "these crashes are kept and no test reads them, so the suite a pull request waits for \
-         never asks whether they still crash, and the weekly run that would is not one it \
+         never asks whether they still crash, and the release run that would is not one it \
          waits for: {untested:?}"
     );
 }

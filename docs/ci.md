@@ -40,26 +40,39 @@ To diagnose a run that only misbehaves on the runner, set `NJUTEST_TRACE: '1'` o
 
 | Workflow | Jobs | When |
 | --- | --- | --- |
-| `ci.yml` | the cross-platform test matrix, lint (fmt, clippy, rustdoc, the `cargo xtask` gates, typos, taplo, actionlint, committed), cargo-deny, cargo-audit, the coverage ratchet which is also the Linux suite, `package-install` on every platform the release builds an archive for, the `book` build, `soundness`, `kani-verified`, `wasi-testsuite`, which holds the sealed host to WebAssembly/wasi-testsuite, `action-smoke`, `action-smoke-rust-mutants`, and `required` which gathers them | every pull request, weekly on `main`, and on request |
+| `ci.yml` | Linux `fast-test`, lint (fmt, clippy, rustdoc, repository gates, fuzz compilation, typos, taplo, actionlint, committed), cargo-deny, cargo-audit, `book`, and `required`; full verification also runs the platform matrix, coverage, package installation, Miri, Kani, WASI conformance, action smoke tests, and the three campaigns | the fast gate on pull requests and merge groups; full verification for release candidates and on request |
 | `main.yml` | `tested-tree` proves that the tree a push to `main` brings is the tree a pull request head passed `required` with | every push to `main` |
-| `mutation.yml` | `whole` runs `cargo-mutants` over the workspace | weekly, and on request |
-| `dogfood.yml` | `whole` runs the engine over its own catalog in one job through the `rust-mutants` action, checks the recording, and re-decides the run against the ledger | weekly, and on request |
-| `fuzz.yml` | every fuzz target for a fixed time | weekly, and on an engine pull request |
+| `mutation.yml` | `whole` runs `cargo-mutants` over the workspace | release verification and on request |
+| `dogfood.yml` | `whole` runs the engine over its catalog, checks the recording, and audits the ledger | release verification and on request |
+| `fuzz.yml` | every fuzz target with 5,000 executions and seed 1 | release verification and on request |
 | `release-plz.yml`, `release.yml` | the release train | every push to `main`, and on a tag |
-| `codeql.yml` | CodeQL over Rust and over the workflows, with the `security-extended` queries; `CodeQL required` gathers both analyses within that workflow | every push and pull request, and weekly |
+| `codeql.yml` | CodeQL over Rust and the workflows with `security-extended` queries; `CodeQL required` gathers both analyses | pull requests, merge groups, and on request |
 | `dependency-review.yml` | what a pull request adds to the dependency graph, refused at moderate severity in any scope | on a pull request |
-| `scorecard.yml` | the OpenSSF Scorecard of this repository, published | every push to `main`, and weekly |
+| `scorecard.yml` | the OpenSSF Scorecard of this repository, published | pushes to `main` and on request |
 
 ### What a pull request is asked, and why only that
 
 A merge is a squash of a pull request that was up to date with `main`, which the protection rule requires, so the tree `main` receives is the tree that pull request's head was tested as.
 Running `ci.yml` again on the push asked every question a second time of the same bytes, about three and a half runner-hours each time, and `main.yml`'s `tested-tree` proves the identity instead: it reads the pushed commit's tree and the merged head's, and the head's `required`, and fails when either differs.
-The whole of `ci.yml` still runs on `main` weekly, where a runner image can change under unchanged code, and on request.
+No workflow has a schedule trigger.
+Renovate updates arrive through pull requests and run the same fast gate.
 
-Within a pull request's run, each row answers for something no other row does.
-Linux runs the whole suite once, instrumented, in `coverage`, which has to run all of it to measure it; the uninstrumented Linux row it replaced asked the same questions again.
-`macos-15` is there for its kernel, where `proc_listpgrppids` reports an empty process group after a timeout, so on a pull request it runs the in-process suite and the suites that drive a real cargo and answer with a process group, a signal, a crash, a durable write or a schedule; weekly it runs everything.
+The six ordinary CI jobs are `fast-test`, `lint`, `deny`, `audit`, `book`, and `required`, all on Linux.
+`fast-test` runs every target and feature through `mise run test:ci`, then the doctests, without coverage instrumentation.
+Superseded pull-request and merge-group runs are cancelled.
+`required` checks the expected result of every dependency: ordinary jobs must succeed, and candidate-only jobs must be skipped.
+A failed or cancelled job, a skipped ordinary job, or an empty dependency object fails the summary.
 
+### Full candidate verification
+
+`release.yml` resolves the selected tag to one commit and calls `ci.yml` with that commit as `source`.
+All nested campaigns and every checkout use that source; artifact builds and publication use the same commit.
+Full verification also runs on `ci.yml`'s manual dispatch, using that dispatch's commit.
+It runs the macOS 26, macOS 15, and Windows suites, the Linux coverage ratchet, package installation, Miri, Kani, WASI conformance, both action smoke tests, and `fuzz-campaign`, `mutation-campaign`, and `dogfood-campaign`.
+The full summary requires those jobs to succeed and `fast-test` to be skipped, since coverage already runs the Linux suite.
+Publication waits for the summary.
+
+`macos-15` retains coverage of the older kernel's process-group behavior.
 `package-install` runs `mise run package` on each platform and target `release.yml` builds an archive for, and `cargo test -p xtask --test suite workflows::` holds the two matrices equal.
 It packages every publishable member, builds the archive a release would publish with `cargo xtask bundle`, and installs both products with `cargo install` from that same build.
 Then it unpacks the archive with the platform's own `tar`, asks every binary in it its version, and runs the unpacked `rust-mutants run` and `njutest verify` over a copy of `fixture-assured`.
@@ -69,7 +82,7 @@ The `book` job builds `docs/` with mdbook, which refuses a summary that names a 
 A page that neither side notices is one a reader of the book cannot reach.
 
 `codeql.yml`, `dependency-review.yml`, and `scorecard.yml` answer about the supply chain rather than about this code: what a query finds in it, what a change adds to the graph below it, and what the posture of the repository looks like from outside.
-`cargo deny` and `cargo audit` in `ci.yml` ask the same question of the graph that is already here, on every push; dependency review asks it of the difference, and says so on the pull request.
+`cargo deny` and `cargo audit` check the existing graph on pull requests and merge groups; dependency review checks the pull-request difference.
 Secret scanning, push protection, Dependabot security alerts, and private vulnerability reporting are repository settings rather than workflows, and are on.
 Renovate opens dependency and security-fix pull requests from the shared P4suta configuration.
 
@@ -77,8 +90,25 @@ Every workflow declares `shell: bash` as its default, which GitHub runs as `bash
 Without that default a Linux or macOS step runs in `bash -e`, where `njutest verify | tee out` has the status of `tee`, and a Windows step runs in PowerShell, which goes on past a native command that failed.
 The first let the `soundness` job read on after an exit code nobody had looked at; the second once reported a failing test as a cancelled job forty-five minutes later.
 
-The required checks are the ones `required` gathers.
-`mutation.yml` and `dogfood.yml` are the two independent measurements of how strong this suite is, and neither gates a pull request: a survivor is a test to write or an acceptance to record with a reason, which is work to schedule rather than a push to block.
+The required checks are the ones `required` gathers for that event.
+Fuzzing uses a fixed execution count and seed; an interrupted mutation run supplies no passing release evidence.
+Diagnostic and release artifacts are retained for at most seven days.
+
+Workspace-relative action references exercise the checked-out candidate's actions, including when a manual release selects a different tag from the workflow revision.
+The narrow `self-repository` lint exceptions retain that contract and compatibility with actionlint 1.7.12, which rejects `$/` references.
+Reconsider the workflow-reference exceptions when the pinned linter supports that syntax.
+
+### Local verification boundary
+
+`xtask/tests/workflows.rs` reads the current workflow files and executes the required summary's actual Bash and jq script.
+It checks every dependency with each terminal GitHub result in both fast and full modes, plus an empty result object, and holds the skip sets to the jobs' event conditions.
+It also checks source propagation through candidate verification, nested campaigns, artifact builds, and publication.
+Run `mise x -- cargo test --locked -p xtask --test suite`, `mise x -- actionlint`, and `mise x -- cargo xtask all` for these contracts.
+
+GitHub's workflow scheduler, token permissions, and environment approval semantics are external assumptions that need hosted verification.
+Actionlint checks the workflow syntax and expressions; Kani's Rust semantics do not cover the YAML or jq evaluator.
+The substitute evidence covers the local summary script and static workflow contracts.
+Revisit this boundary when a verifier can check the GitHub Actions execution semantics.
 
 ## Dogfooding the engine
 
@@ -89,10 +119,11 @@ The job then:
 1. asks `rust-mutants trace check` whether the recording is complete,
 2. runs `cargo xtask engine-audit <run> --trace <run>/trace --sites --ledger .rust-mutants.toml`, which re-mints every identity,
    re-tallies every column, re-derives every discharge and every carried answer from the evidence the run kept, holds every row to the recording of what actually ran, and refuses a survivor the ledger does not accept,
-3. says what moved since the last complete run, with `xtask report-diff` against that run's own artifact.
+3. on a standalone manual run, says what moved since the last complete run, with `xtask report-diff` against that run's own artifact.
    There is nothing to compare on the first run of the workflow, and a diff against nothing is not a failure; a diff that cannot be read is.
 
 The first two steps run locally as `mise run dogfood:engine:audit`.
+Candidate verification does not depend on an earlier run's optional comparison artifact.
 
 ## Mutation testing somebody else's project
 

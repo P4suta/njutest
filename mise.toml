@@ -23,8 +23,10 @@
 RUSTC_WRAPPER = "{{ env.RUSTC_WRAPPER | default(value='sccache') }}"
 NJUTEST_NIGHTLY = "{{ read_file(path=config_root ~ '/rust-toolchain.toml') | split(pat='nightly = \"') | last | split(pat='\"') | first }}"
 
+[settings]
+idiomatic_version_file_enable_tools = ["rust"]
+
 [tools]
-rust = "{{ read_file(path=config_root ~ '/rust-toolchain.toml') | split(pat='channel = \"') | last | split(pat='\"') | first }}"
 actionlint = "1.7.12"
 taplo = "0.10.0"
 typos = "1.50.1"
@@ -335,7 +337,7 @@ dir = "fuzz"
 run = "cargo +$NJUTEST_NIGHTLY fuzz build"
 
 [tasks."fuzz:smoke"]
-description = "Seed and run every cargo-fuzz target briefly, the same entry path as weekly CI"
+description = "Seed and run every cargo-fuzz target for a fixed number of executions"
 dir = "fuzz"
 shell = "bash -c"
 run = """
@@ -343,7 +345,7 @@ set -euo pipefail
 for target in $(cargo +"$NJUTEST_NIGHTLY" fuzz list); do
   echo "== $target"
   bash ../scripts/seed-fuzz-corpus.sh "$target"
-  cargo +"$NJUTEST_NIGHTLY" fuzz run "$target" -- -runs=2000 -max_len=1024
+  cargo +"$NJUTEST_NIGHTLY" fuzz run "$target" -- -runs=2000 -seed=1 -max_len=1024
 done
 """
 
@@ -387,7 +389,6 @@ step mise run security:codeql
 step mise run lint
 step mise run test:fast
 step mise run test:doc
-step mise run kani:verified
 step mise run deny
 step mise run audit
 """
@@ -409,7 +410,7 @@ description = "Build the documentation and the packages a release would ship"
 run = ["mise run book", "mise run package"]
 
 [tasks."check:full"]
-description = "Everything a push waits for, and the passes CI also runs"
+description = "Run the local gate and the full release verification tasks on request"
 run = [
   "mise run check",
   "mise run check:cold",
@@ -417,6 +418,12 @@ run = [
   "mise run check:release",
   "mise run test:slow",
   "mise run wasi-testsuite",
+  "mise run coverage",
+  "mise run kani:verified",
+  "mise run security:miri",
+  "mise run fuzz:smoke",
+  "mise run mutants",
+  "mise run dogfood:engine:audit",
 ]
 
 [tasks.bench]

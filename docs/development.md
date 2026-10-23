@@ -27,11 +27,14 @@ Development is test-driven, in three steps of one change:
 3. **Refactor.** Remove the duplication the change introduced, with the suite green throughout.
 
 Evidence is doubled where it can be: a pure function has unit tests and a property test; a boundary (a subprocess, the filesystem, cargo) has a test against a fixture project; a contract (JSON, a command line, an exit code, a trace) has a golden.
-The suite is itself mutation-tested twice — weekly by cargo-mutants, and from M3 by `mise run dogfood` — and a survivor is a test to write or an acceptance to record with a reason, never something to leave.
+Release verification mutation-tests the suite with cargo-mutants and the engine's own dogfood workflow.
+A survivor is a test to write or an acceptance to record with a reason.
 
 ## Gates
 
-`mise run check` runs every local gate, the ones that answer quickest first.
+`mise run check` runs the routine local gates, the ones that answer quickest first.
+`mise run check:full` adds the platform checks and release verification tasks, including coverage, Kani, Miri, fuzzing, and mutation testing.
+Proof campaigns run on request and during release verification, without blocking the push check.
 That is not the order CI runs them in, because CI runs the jobs at once and waits for all of them while a person waits for each in turn: formatting answers in seconds, `lint` — clippy, rustdoc, the repository gates, the fuzz crate's own type check, spelling, TOML, workflows — in tens of them, and the suite in minutes.
 
 It is also what the pre-push hook runs, through `cargo xtask pre-push` (`xtask/src/prepush.rs`).
@@ -39,8 +42,8 @@ The hook refuses a ref whose object is not the checked-out `HEAD`, and an update
 It then checks the object out into the repository's one gate tree and checks that tree again afterwards.
 Adjacent edits, ignored local files, and a mistaken non-fast-forward command therefore cannot become inputs to an answer attributed to the commit going out.
 How that tree is shared between worktrees and sessions is [One machine, several sessions](#one-machine-several-sessions).
-A push that goes out has already answered everything CI asks but four things this machine cannot answer: the suite on Linux and Windows, the coverage ratchets, the suite under Miri, and the composite action driven the way another repository drives it.
-`xtask/tests/tasks.rs` holds the correspondence — a job added to `required` has to name the local task that answers it first, or say why none can.
+Pull requests run the Linux gate described in [CI usage](ci.md); platform suites, coverage, proofs, and the action smoke tests run during candidate verification.
+`xtask/tests/tasks.rs` holds the correspondence between hosted jobs and their local entrypoints or hosted boundaries.
 
 The `manual-variant-list` rule refuses a list naming every variant of a set this repository closes, wherever it is written.
 A closed fieldless enum derives `njutest_macros::AllVariants`, and its compiler-generated `ALL` changes length and contents with the variants, so adding one cannot leave a ledger silently partial.
@@ -284,7 +287,7 @@ It reads that run's `run-report-v1.json` and re-decides it in fourteen layers, n
 
 Its output and exit codes are `proofaudit`'s: one line per remark, one `layer:` line per layer, a summary line, and 0, 1, or 2.
 Before it reads the run, it re-decides a clean synthetic run (`xtask::engineaudit::sentinel::clean`), in which no layer may find anything, and every defect `Layer::planted` holds for each layer, each of which that layer must report; a layer that fires on the clean run or misses a defect planted for it stops the gate with exit code 2 and `the <layer> layer is blind`, before the run is read.
-Three runs of the fixtures are committed under `xtask/tests/testdata/engine-run-*/` and a test re-decides all three, so a change that makes the engine disagree with itself fails here rather than in a weekly job.
+Three runs of the fixtures are committed under `xtask/tests/testdata/engine-run-*/` and a test re-decides all three, so a change that makes the engine disagree with itself fails in the ordinary suite.
 They are recorded, not written: `crates/rust-mutants-cli/tests/toolchain_engine_runs.rs` runs each fixture again as they were recorded — every tier, offline, locked, with its recording, under an empty cache and the least environment a nested run needs — and refuses a committed run whose documents or events have a shape today's engine no longer records; `UPDATE_ENGINE_RUNS=1` records them again, and the diff is the review.
 
 `mise run dogfood:audit` and `mise run dogfood:engine:audit` are those rules as one command each: they run this workspace through the release build, keep the recording, and re-decide it.
@@ -588,12 +591,13 @@ See [fixtures/README.md](../fixtures/README.md).
 ### Fuzz targets
 
 `fuzz/` is a standalone cargo-fuzz crate (nightly, sanitizer) with one target per fail-closed parser or byte transformation of the engine; each target states one property in its doc comment and `fuzz/README.md` lists them.
-`mise run fuzz:smoke` runs every target briefly, which is what somebody changing a parser does before pushing; the `fuzz` workflow spends twenty-five minutes a target, weekly and on request, and never on a pull request.
-Five thousand executions searches nothing a parser is afraid of, and the workflow does not gate `required`, so a crash found there could not have stopped a merge in any case.
+`mise run fuzz:smoke` runs each target for 2000 executions with seed 1.
+The `fuzz` workflow runs each target for 5,000 executions with seed 1 during release verification or on request.
+Its bounds establish finite exploration, and a timeout supplies no passing release evidence.
 A crash reproducer worth keeping goes under `fuzz/regressions/<target>/`, where every later run replays it before exploring, and becomes a regular test that reads it; `xtask/tests/fuzz_ledger.rs` refuses a kept crash no test reads.
-`xtask/tests/fuzz_ledger.rs` keeps the four places that name the targets in step: the source files, the manifest stanzas (each with `bench = false`, so `cargo bench` never builds a sanitizer target), the README rows, and the weekly workflow's matrix.
+`xtask/tests/fuzz_ledger.rs` keeps the four places that name the targets in step: the source files, the manifest stanzas (each with `bench = false`, so `cargo bench` never builds a sanitizer target), the README rows, and the release workflow's matrix.
 
-Being standalone is what makes them cheap to run and easy to lose: nothing in `cargo test --workspace` compiles them, so a target can rot against an API change and say nothing until the weekly job.
+The standalone targets need a separate compile check because `cargo test --workspace` does not build them.
 `mise run fuzz:clippy` — part of `mise run lint`, and a step of the CI lint job — puts the crate through the root Clippy policy on the toolchain the workspace uses, which compiles it and is the cheapest thing that would have noticed.
 
 ### The documentation
@@ -607,7 +611,8 @@ Without the second one a new page is simply absent from the book, which nobody n
 
 ### Coverage
 
-The `coverage` job in `ci.yml` runs the suite once under `cargo llvm-cov` and then ratchets four numbers: the workspace at 80% of regions, `rust-mutants` at 87%, `rust-mutants-cli` at 85%, and `xtask` at 80%. Each floor is a little under what the suite reaches, so an ordinary change has room and a change that drops a whole area does not.
+The release-only `coverage` job in `ci.yml` runs the suite once under `cargo llvm-cov` and then ratchets four numbers: the workspace at 80% of regions, `rust-mutants` at 87%, `rust-mutants-cli` at 85%, and `xtask` at 80%.
+Each floor is a little under what the suite reaches, so an ordinary change has room and a change that drops a whole area does not.
 **A floor is raised when a suite earns it and never lowered**; lowering one is a decision to argue for in the pull request that does it.
 
 The job builds the examples inside the coverage environment before running the suite.

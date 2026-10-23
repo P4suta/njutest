@@ -7,12 +7,9 @@
 name: CodeQL
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
-  schedule:
-    - cron: "31 3 * * 2"
+  merge_group:
   workflow_dispatch:
 
 concurrency:
@@ -32,10 +29,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
-      actions: read
+      actions: read # Read workflow metadata during analysis.
       contents: read
-      packages: read
-      security-events: write
+      packages: read # Read package metadata during analysis.
+      security-events: write # Upload scan results.
     strategy:
       fail-fast: false
       matrix:
