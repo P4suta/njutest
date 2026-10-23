@@ -50,17 +50,13 @@ fn every_installed_toolchain_is_read_from_one_dated_pin_file() {
     );
     let mise = read("mise.toml");
     let tasks: toml::Value = toml::from_str(&mise).expect("mise TOML");
-    for pin in [
-        tasks.get("tools").and_then(|tools| tools.get("rust")),
-        tasks.get("env").and_then(|env| env.get("NJUTEST_NIGHTLY")),
-    ] {
-        assert!(
-            pin.and_then(toml::Value::as_str).is_some_and(
-                |value| value.contains("read_file(path=config_root ~ '/rust-toolchain.toml')")
-            ),
-            "mise must read both shared pins"
-        );
-    }
+    let nightly = tasks.get("env").and_then(|env| env.get("NJUTEST_NIGHTLY"));
+    assert!(
+        nightly.and_then(toml::Value::as_str).is_some_and(
+            |value| value.contains("read_file(path=config_root ~ '/rust-toolchain.toml')")
+        ),
+        "mise must read the shared nightly pin"
+    );
     assert!(
         !floating(&mise),
         "local tasks may select only the shared pins"
@@ -92,6 +88,26 @@ fn every_installed_toolchain_is_read_from_one_dated_pin_file() {
             );
         }
     }
+}
+
+#[test]
+fn mise_reads_the_rust_pin_through_its_native_version_file() {
+    let tasks: toml::Value = toml::from_str(&read("mise.toml")).expect("mise TOML");
+    let enabled = tasks
+        .get("settings")
+        .and_then(|settings| settings.get("idiomatic_version_file_enable_tools"))
+        .and_then(toml::Value::as_array);
+    assert!(
+        enabled.is_some_and(|tools| tools.iter().any(|tool| tool.as_str() == Some("rust"))),
+        "mise must read rust-toolchain.toml natively"
+    );
+    assert!(
+        tasks
+            .get("tools")
+            .and_then(|tools| tools.get("rust"))
+            .is_none(),
+        "a tools.rust declaration must not override the shared version file"
+    );
 }
 
 #[test]

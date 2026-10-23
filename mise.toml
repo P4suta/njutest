@@ -23,8 +23,10 @@
 RUSTC_WRAPPER = "{{ env.RUSTC_WRAPPER | default(value='sccache') }}"
 NJUTEST_NIGHTLY = "{{ read_file(path=config_root ~ '/rust-toolchain.toml') | split(pat='nightly = \"') | last | split(pat='\"') | first }}"
 
+[settings]
+idiomatic_version_file_enable_tools = ["rust"]
+
 [tools]
-rust = "{{ read_file(path=config_root ~ '/rust-toolchain.toml') | split(pat='channel = \"') | last | split(pat='\"') | first }}"
 actionlint = "1.7.12"
 taplo = "0.10.0"
 typos = "1.50.1"
