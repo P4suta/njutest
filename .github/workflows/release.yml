@@ -33,12 +33,13 @@ jobs:
     timeout-minutes: 20
     outputs:
       version: ${{ steps.version.outputs.version }}
+      source: ${{ steps.version.outputs.source }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
           persist-credentials: false
-      - uses: ./.github/actions/setup-rust
+      - uses: ./.github/actions/setup-rust # zizmor: ignore[self-repository] -- Exercise the checked-out candidate's action.
       # Whether each binary says the version is asked where each binary is built: `cargo xtask bundle` refuses one that does not, on every platform.
       - name: The tag and the manifests must name one version
         id: version
@@ -53,6 +54,17 @@ jobs:
             exit 1
           fi
           echo "version=${version}" >>"$GITHUB_OUTPUT"
+          echo "source=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
+
+  verify:
+    name: verify release candidate
+    needs: [check]
+    permissions:
+      actions: read # Read earlier dogfood artifacts.
+      contents: read
+    uses: ./.github/workflows/ci.yml # zizmor: ignore[self-repository] -- actionlint 1.7.12 requires workspace-relative workflows.
+    with:
+      source: ${{ needs.check.outputs.source }}
 
   artifacts:
     name: artifacts (${{ matrix.os }})
@@ -72,9 +84,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ needs.check.outputs.source }}
           persist-credentials: false
-      - uses: ./.github/actions/setup-rust
+      - uses: ./.github/actions/setup-rust # zizmor: ignore[self-repository] -- Exercise the checked-out candidate's action.
       # Which binaries, where each goes, and what goes beside them are what the manifests say, read by the one command; this workflow names none of them.
       - name: Build the binaries the manifests declare and bundle them where binstall reads them
         env:
@@ -85,6 +97,7 @@ jobs:
           name: dist-${{ matrix.target }}
           path: dist/*.tar.gz*
           if-no-files-found: error
+          retention-days: 7
 
   sbom:
     name: sbom
@@ -94,33 +107,36 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ needs.check.outputs.source }}
           persist-credentials: false
-      - uses: ./.github/actions/setup-rust
+      - uses: ./.github/actions/setup-rust # zizmor: ignore[self-repository] -- Exercise the checked-out candidate's action.
       - name: Write what the release is made of
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
         run: |
           mkdir -p dist
-          cargo xtask sbom --output "dist/njutest-${{ needs.check.outputs.version }}.cdx.json"
+          cargo xtask sbom --output "dist/njutest-${VERSION}.cdx.json"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dist-sbom
           path: dist/*.cdx.json
           if-no-files-found: error
+          retention-days: 7
 
   publish:
     name: publish
-    needs: [check, artifacts, sbom]
+    needs: [check, verify, artifacts, sbom]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     environment: release
     permissions:
-      contents: write
-      id-token: write
-      attestations: write
+      contents: write # Publish the verified release artifacts.
+      id-token: write # Authenticate build provenance.
+      attestations: write # Attach build provenance.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ needs.check.outputs.source }}
           persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -138,6 +154,7 @@ jobs:
         run: |
           gh release create "${TAG}" \
             --repo "${GITHUB_REPOSITORY}" \
+            --verify-tag \
             --title "${TAG}" \
             --generate-notes \
             --draft \

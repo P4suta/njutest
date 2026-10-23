@@ -8,15 +8,19 @@ name: dogfood
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "17 5 * * 2"
+  workflow_call:
+    inputs:
+      source:
+        description: Immutable release candidate commit.
+        required: true
+        type: string
 
 permissions:
-  actions: read
+  actions: read # Compare earlier workflow artifacts.
   contents: read
 
 concurrency:
-  group: dogfood-${{ github.ref }}
+  group: dogfood-${{ inputs.source || github.ref }}
   cancel-in-progress: false
 
 env:
@@ -35,9 +39,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.source || github.sha }}
           persist-credentials: false
           fetch-depth: 0
-      - uses: ./.github/actions/setup-rust
+      - uses: ./.github/actions/setup-rust # zizmor: ignore[self-repository] -- Exercise the checked-out candidate's action.
       - name: Fetch the locked dependency graph
         run: cargo fetch --locked
       - name: Build the engine and the gates, and put the engine on the path
@@ -50,7 +55,7 @@ jobs:
       - name: Measure the whole catalog
         id: mutation
         continue-on-error: true
-        uses: ./.github/actions/rust-mutants
+        uses: ./.github/actions/rust-mutants # zizmor: ignore[self-repository] -- Exercise the checked-out candidate's action.
         with:
           args: --locked --trace
           changed-from: ""
@@ -63,7 +68,7 @@ jobs:
         run: |
           set -euo pipefail
           case "$OUTCOME/$VERDICT" in
-            success/detected | failure/found | failure/interrupted) ;;
+            success/detected | failure/found) ;;
             *)
               echo "the step ended $OUTCOME and the run concluded '$VERDICT', which is not a measurement to audit"
               exit 1
@@ -73,10 +78,8 @@ jobs:
           rust-mutants trace check --dir "$run/trace"
           xtask engine-audit "$run" --trace "$run/trace" --sites --root . --ledger .rust-mutants.toml
           cp "$REPORT" whole.json
-          if [ "$VERDICT" = interrupted ]; then
-            echo "the run was ended by the clock; the next one continues from the store this one kept" >> "$GITHUB_STEP_SUMMARY"
-          fi
       - name: Say what moved since the last complete run
+        if: inputs.source == ''
         env:
           GH_TOKEN: ${{ github.token }}
         # A run that reports what a previous one did not is a change somebody made.
@@ -107,3 +110,4 @@ jobs:
             whole.json
             reports/mutation
           if-no-files-found: error
+          retention-days: 7

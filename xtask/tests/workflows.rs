@@ -198,11 +198,14 @@ fn dogfood_ci_builds_the_engine_it_runs_and_the_gate_it_invokes() {
         "the carry audit needs the original source tree"
     );
     assert!(
-        !source.contains("inputs:") && !body.contains("--include") && !body.contains("--tier"),
+        !source.contains("      include:")
+            && !source.contains("      tier:")
+            && !body.contains("--include")
+            && !body.contains("--tier"),
         "the workflow measures the ledger's whole catalog at its configured tier"
     );
     assert!(
-        source.contains("  actions: read\n"),
+        source.contains("  actions: read"),
         "comparison with an earlier run needs Actions read permission"
     );
 }
@@ -331,7 +334,7 @@ fn platforms(body: &str) -> Vec<(String, String)> {
 }
 
 #[test]
-fn every_platform_the_release_archives_on_installs_from_its_archive_on_every_pull_request() {
+fn every_platform_the_release_archives_on_installs_from_its_archive_before_publication() {
     let released = platforms(&job_of("release.yml", "artifacts"));
     assert_eq!(
         released.len(),
@@ -1417,4 +1420,202 @@ fn the_required_check_is_asked_of_every_pull_request() {
         "required is the check a pull request cannot merge without, and a pull request its paths \
          filter skips never gets one: with strict up-to-date and no bypass it waits forever. {block}"
     );
+}
+
+const FAST_EVENTS: &str =
+    "github.event_name == 'pull_request' || github.event_name == 'merge_group'";
+const FULL_EVENTS: &str =
+    "github.event_name != 'pull_request' && github.event_name != 'merge_group'";
+
+#[test]
+fn lean_ci_has_no_scheduled_workflows() {
+    for path in workflows() {
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        assert!(
+            trigger_block(&source, "schedule").is_none(),
+            "{} spends hosted runner time without a source change",
+            path.display()
+        );
+    }
+}
+
+#[test]
+fn lean_ci_tests_pull_requests_and_merge_groups_on_linux() {
+    let source = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../.github/workflows/ci.yml"),
+    )
+    .unwrap_or_else(|error| panic!("ci.yml: {error}"));
+    for event in [
+        "pull_request",
+        "merge_group",
+        "workflow_call",
+        "workflow_dispatch",
+    ] {
+        assert!(trigger_block(&source, event).is_some(), "missing {event}");
+    }
+    assert!(trigger_block(&source, "push").is_none());
+    let fast = job_of("ci.yml", "fast-test");
+    for required in [
+        "runs-on: ubuntu-24.04",
+        "run: mise run test:ci",
+        "cargo test --locked --workspace --all-features --doc",
+        "fetch-depth: 0",
+        FAST_EVENTS,
+    ] {
+        assert!(fast.contains(required), "Linux tests require {required}");
+    }
+    assert!(!fast.contains("matrix:") && !fast.contains("llvm-cov"));
+    for heavy in [
+        "test",
+        "coverage",
+        "package-install",
+        "soundness",
+        "kani-verified",
+        "wasi-testsuite",
+        "action-smoke",
+        "action-smoke-rust-mutants",
+        "fuzz-campaign",
+        "mutation-campaign",
+        "dogfood-campaign",
+    ] {
+        assert!(
+            job_of("ci.yml", heavy).contains(&format!("    if: {FULL_EVENTS}\n")),
+            "{heavy} belongs to candidate verification"
+        );
+    }
+}
+
+#[test]
+fn lean_ci_verifies_and_builds_one_release_source_before_publication() {
+    let check = job_of("release.yml", "check");
+    assert!(check.contains("source: ${{ steps.version.outputs.source }}"));
+    assert!(check.contains("git rev-parse HEAD"));
+    assert!(check.contains("format('refs/tags/{0}', inputs.tag)"));
+    let verify = job_of("release.yml", "verify");
+    assert!(verify.contains("needs: [check]"));
+    assert!(verify.contains("uses: ./.github/workflows/ci.yml"));
+    assert!(verify.contains("source: ${{ needs.check.outputs.source }}"));
+    for name in ["artifacts", "sbom", "publish"] {
+        assert!(
+            job_of("release.yml", name).contains("ref: ${{ needs.check.outputs.source }}"),
+            "{name} must use the checked commit instead of resolving the tag again"
+        );
+    }
+    assert!(job_of("release.yml", "publish").contains("needs: [check, verify, artifacts, sbom]"));
+    assert!(job_of("release.yml", "publish").contains("--verify-tag"));
+    let ci = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../.github/workflows/ci.yml"),
+    )
+    .unwrap_or_else(|error| panic!("ci.yml: {error}"));
+    for checkout in ci.split("uses: actions/checkout@").skip(1) {
+        let step = checkout.split("\n      - ").next().unwrap_or_default();
+        assert!(step.contains("ref: ${{ inputs.source || github.sha }}"));
+    }
+    for name in ["fuzz", "mutation", "dogfood"] {
+        let campaign = job_of("ci.yml", &format!("{name}-campaign"));
+        assert!(campaign.contains(&format!("uses: ./.github/workflows/{name}.yml")));
+        assert!(campaign.contains("source: ${{ inputs.source || github.sha }}"));
+        let path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../.github/workflows/{name}.yml"));
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        assert!(trigger_block(&source, "workflow_call").is_some());
+        assert!(source.contains("ref: ${{ inputs.source || github.sha }}"));
+    }
+}
+
+/// The required job's executable script and its two declared skip sets.
+fn required_script() -> (String, Vec<String>, Vec<String>) {
+    let body = job_of("ci.yml", "required");
+    let script = body
+        .split_once("        run: |\n")
+        .unwrap_or_else(|| panic!("required has an executable script"))
+        .1
+        .lines()
+        .map(|line| line.strip_prefix("          ").unwrap_or(line))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let skips = body
+        .split_once("SKIPPED:")
+        .and_then(|(_, rest)| rest.split_once("&& '"))
+        .and_then(|(_, rest)| rest.split_once("' || '"))
+        .unwrap_or_else(|| panic!("required declares the skip set for each event"));
+    let fast = njutest_devkit::strictjson::decode_str(skips.0)
+        .unwrap_or_else(|error| panic!("fast skip set: {error}"));
+    let full =
+        njutest_devkit::strictjson::decode_str(skips.1.split('\'').next().unwrap_or_default())
+            .unwrap_or_else(|error| panic!("full skip set: {error}"));
+    (script, fast, full)
+}
+
+/// The actual summary script's verdict for a dependency result object.
+fn required_passes(
+    script: &str,
+    needs: &serde_json::Map<String, serde_json::Value>,
+    skipped: &[String],
+) -> bool {
+    let needs =
+        serde_json::to_string(needs).unwrap_or_else(|error| panic!("dependency results: {error}"));
+    let skipped =
+        serde_json::to_string(skipped).unwrap_or_else(|error| panic!("skip set: {error}"));
+    std::process::Command::new("bash")
+        .args(["-e", "-o", "pipefail", "-c", script])
+        .env("NEEDS", needs)
+        .env("SKIPPED", skipped)
+        .output()
+        .unwrap_or_else(|error| panic!("execute the required summary: {error}"))
+        .status
+        .success()
+}
+
+#[test]
+fn lean_ci_summary_refuses_failed_cancelled_and_incorrectly_skipped_jobs() {
+    let source = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../.github/workflows/ci.yml"),
+    )
+    .unwrap_or_else(|error| panic!("ci.yml: {error}"));
+    let declared = jobs(source.split_once("\njobs:\n").unwrap_or_default().1);
+    let (script, fast, full) = required_script();
+    let mut conditional: Vec<String> = declared
+        .iter()
+        .filter(|(_, body)| body.contains(&format!("    if: {FULL_EVENTS}\n")))
+        .map(|(name, _)| name.clone())
+        .collect();
+    conditional.sort();
+    let mut declared_skips = fast.clone();
+    declared_skips.sort();
+    assert_eq!(declared_skips, conditional);
+    assert_eq!(full, ["fast-test"]);
+    for skipped in [fast, full] {
+        let mut needs = serde_json::Map::new();
+        for (name, _) in &declared {
+            if name != "required" {
+                let result = if skipped.contains(name) {
+                    "skipped"
+                } else {
+                    "success"
+                };
+                needs.insert(name.clone(), serde_json::json!({ "result": result }));
+            }
+        }
+        assert!(needs.len() > 10, "exercise the complete dependency set");
+        assert!(required_passes(&script, &needs, &skipped));
+        for name in needs.keys() {
+            for result in ["failure", "cancelled", "skipped", "success"] {
+                if (skipped.contains(name) && result == "skipped")
+                    || (!skipped.contains(name) && result == "success")
+                {
+                    continue;
+                }
+                let mut broken = needs.clone();
+                broken.insert(name.clone(), serde_json::json!({ "result": result }));
+                assert!(
+                    !required_passes(&script, &broken, &skipped),
+                    "{name} ending {result} must fail with skips {skipped:?}"
+                );
+            }
+        }
+        assert!(!required_passes(&script, &serde_json::Map::new(), &skipped));
+    }
 }

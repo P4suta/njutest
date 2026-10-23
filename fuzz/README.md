@@ -39,7 +39,8 @@ A target whose input is bytes rather than a document needs none.
 A crash a run found is kept under `fuzz/regressions/<target>/`, byte for byte and under the name libFuzzer gave it, in the change that answers it.
 `scripts/seed-fuzz-corpus.sh` copies it into the corpus beside the seeds, and libFuzzer runs its whole starting corpus before it mutates anything, so every later run asks first whether the crash came back.
 Unlike a seed, it need not be a document the reader accepts: a reader that was wrong to take it refuses it once it is fixed, and that refusal is what the file is kept to go on asking for.
-The weekly run gates nothing, so a kept crash is also the input of an ordinary test, which reads it with `include_bytes!` and states what the reader now does with it.
+Release verification and explicit requests run the fuzz workflow with a fixed execution count and seed.
+A kept crash is also the input of an ordinary test, which reads it with `include_bytes!` and states what the reader now does with it, so pull requests replay regressions without starting a fuzz campaign.
 `xtask/tests/fuzz_ledger.rs` refuses a kept crash of a target that no longer exists and one that no test reads.
 
 The runner's targets are here for a particular reason: three of the four

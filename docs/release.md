@@ -27,13 +27,20 @@ The credentials are `RELEASE_PLZ_APP_CLIENT_ID` and `RELEASE_PLZ_APP_PRIVATE_KEY
 `.github/workflows/release.yml` runs on `v*`:
 
 1. **check** — `cargo xtask release-check` agrees the manifests name one version, and the tag names that version.
-   The third point, every binary saying it when asked `--version`, is asked where each binary is built, in the next step.
+   The third point, every binary saying it when asked `--version`, is asked in the artifact builds.
    Three points, one answer, or nothing is published.
-2. **artifacts** — `cargo xtask bundle --target <triple> --out dist` on Linux, macOS, and Windows, which writes the archive and its SHA-256 beside it.
+   A manual tag input resolves under `refs/tags/`, and the checked-out commit is recorded once as `source`.
+2. **verify** — calls `ci.yml` for that source commit, including the platform suites, coverage, packaging, Miri, Kani, WASI conformance, fuzzing, and mutation campaigns.
+   A failed, cancelled, skipped, or interrupted required check blocks publication.
+3. **artifacts** — `cargo xtask bundle --target <triple> --out dist` on Linux, macOS, and Windows, which writes the archive and its SHA-256 beside it.
    What the archive holds is described under [The archive](#the-archive).
-3. **sbom** — `cargo xtask sbom` writes what the release is made of, as CycloneDX, from the locked graph the build resolved.
-4. **publish** — gated on the `release` environment, so a person approves it.
+4. **sbom** — `cargo xtask sbom` writes what the release is made of, as CycloneDX, from the locked graph the build resolved.
+5. **publish** — waits for verification, artifacts, and the dependency inventory, then the `release` environment approval.
    It attests the provenance of every file it is about to publish, creates the release as a draft, and then undrafts it, so a failure between the two leaves a draft rather than a half-published release.
+
+Verification, artifact builds, and publication check out the recorded source commit instead of resolving the tag again.
+The existing release environment and tag protections remain in force.
+These workflows have no scheduled runs.
 
 ## The archive
 
@@ -56,12 +63,12 @@ It is the same command on a developer's machine:
 cargo xtask bundle --target aarch64-apple-darwin --out dist
 ```
 
-`mise run package` does that for this machine and then unpacks the archive and runs what it holds, and CI's `package-install` does the same on every platform the release builds for, on every pull request.
+`mise run package` does that for this machine and then unpacks the archive and runs what it holds, and candidate verification's `package-install` does the same on every release platform before publication.
 A release is never the first time an archive is made.
 
 ## Before merging the release pull request
 
-Merging it is the human gate; there is no other.
+Merging starts candidate verification; publishing also requires the release environment approval.
 
 - `mise run check` is green on `main`.
 - `cargo xtask all` is green, `proofaudit` included.

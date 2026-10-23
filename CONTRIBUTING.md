@@ -62,9 +62,10 @@ the review. Compile-error goldens of the attribute macros are rewritten with
 ## Pull requests
 
 - Open a pull request against `main`; direct pushes are rejected.
-- Every CI job must pass, including the macOS and Windows test matrix. Paths
-  from `tempfile` may pass through symbolic links or short names on those
-  runners, so canonicalize before comparing.
+- Pull requests and merge groups run Linux tests, lint, dependency checks, and the book build.
+  The `required` check refuses failed, cancelled, or incorrectly skipped jobs.
+  The macOS and Windows matrix, coverage, package checks, Miri, Kani, fuzzing, and mutation testing run before release publication and on request.
+  Paths from `tempfile` may pass through symbolic links or short names on those runners, so canonicalize before comparing.
 - Pull requests are squash-merged, so the PR title becomes the commit message
   and must follow Conventional Commits: `feat:`, `fix:`, `perf:`, `refactor:`,
   `test:`, `docs:`, `chore:`, `ci:`, `build:`. The changelog lists `feat`,

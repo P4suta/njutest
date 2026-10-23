@@ -5,21 +5,22 @@ name: ci
 on:
   pull_request:
     branches: [main]
-  # A merge is a squash of a pull request that was up to date with `main`, so the tree `main` receives is the tree that pull request passed with, byte for byte.
-  # `main.yml` proves that on every push instead of asking every question again of the same bytes.
-  # The whole matrix still runs weekly, where a runner image can move under unchanged code, and on request.
-  schedule:
-    - cron: "23 4 * * 1"
+  merge_group:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      source:
+        description: Immutable release candidate commit.
+        required: true
+        type: string
 
 permissions:
+  actions: read # Read earlier dogfood artifacts.
   contents: read
 
-# A pull request is asked again with every push to it, and the answer to the question before is not one anybody wanted.
-# A scheduled or requested run of `main` is not cancelled by the next one: it is the only run that says what an unchanged tree does on today's runners.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.workflow }}-${{ inputs.source || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -33,7 +34,49 @@ defaults:
     shell: bash
 
 jobs:
+  fast-test:
+    name: test (Linux)
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source || github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-rust # zizmor: ignore[self-repository] -- Exercise the checked-out candidate's action.
+        with:
+          components: llvm-tools
+          targets: wasm32-wasip1
+          tools: cargo-nextest@0.9.140
+      - name: Fetch the locked dependency graph
+        env:
+          CARGO_NET_OFFLINE: "false"
+        run: |
+          cargo fetch --locked
+          cargo fetch --locked --manifest-path fuzz/Cargo.toml
+      - name: Test every target without coverage instrumentation
+        timeout-minutes: 55
+        env:
+          NJUTEST_TEST_COST_DIR: ${{ github.workspace }}/target/suite-cost/ci
+          NJUTEST_FIXTURE_BUILD_CACHE: ${{ runner.temp }}/fixture-builds
+        run: mise run test:ci
+      - name: Upload failing test diagnostics
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: test-evidence-Linux
+          path: |
+            target/nextest/ci/junit.xml
+            target/suite-cost/ci
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Doctests
+        run: cargo test --locked --workspace --all-features --doc
+
   test:
+    if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     # The backstop for a runner that stops answering; a test that stalls is nextest's slow-timeout to name, well inside this.
@@ -59,9 +102,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.source || github.sha }}
           persist-credentials: false
           fetch-depth: 0
-      - uses: ./.github/actions/setup-rust
+      - uses: ./.github/actions/setup-rust # zizmor: ignore[self-repository] -- Exercise the checked-out candidate's action.
         with:
           components: llvm-tools, clippy
           targets: wasm32-wasip1
@@ -89,6 +133,7 @@ jobs:
             target/nextest/ci/junit.xml
             target/suite-cost/ci
           if-no-files-found: warn
+          retention-days: 7
       - name: Doctests
         shell: bash
         run: cargo test --locked --workspace --all-features --doc
@@ -105,9 +150,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.source || github.sha }}
           persist-credentials: false
           fetch-depth: 0
-      - uses: ./.github/actions/setup-rust
+      - uses: ./.github/actions/setup-rust # zizmor: ignore[self-repository] -- Exercise the checked-out candidate's action.
         with:
           components: rustfmt, clippy
           tools: committed@1.1.11
@@ -164,8 +210,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.source || github.sha }}
           persist-credentials: false
-      - uses: ./.github/actions/setup-rust
+      - uses: ./.github/actions/setup-rust # zizmor: ignore[self-repository] -- Exercise the checked-out candidate's action.
         with:
           tools: cargo-deny@0.19.7
       # The advisory database is fetched in a step of its own that tries again, and the check reads what it fetched:
@@ -188,8 +235,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.source || github.sha }}
           persist-credentials: false
-      - uses: ./.github/actions/setup-rust
+      - uses: ./.github/actions/setup-rust # zizmor: ignore[self-repository] -- Exercise the checked-out candidate's action.
         with:
           tools: cargo-audit@0.22.2
       # As for `deny`: one fetch that tries again, and an audit that reads it.
@@ -208,15 +256,17 @@ jobs:
           CARGO_NET_OFFLINE: "false"
 
   coverage:
+    if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
     name: coverage
     runs-on: ubuntu-24.04
     timeout-minutes: 100
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.source || github.sha }}
           persist-credentials: false
           fetch-depth: 0
-      - uses: ./.github/actions/setup-rust
+      - uses: ./.github/actions/setup-rust # zizmor: ignore[self-repository] -- Exercise the checked-out candidate's action.
         with:
           components: llvm-tools
           targets: wasm32-wasip1
@@ -268,6 +318,7 @@ jobs:
             target/nextest/ci/junit.xml
             target/suite-cost/ci
           if-no-files-found: warn
+          retention-days: 7
       - name: Report (lcov + HTML + summary)
         run: |
           cargo llvm-cov report --lcov --output-path lcov.info
@@ -283,12 +334,14 @@ jobs:
             lcov.info
             target/llvm-cov/html
           if-no-files-found: error
+          retention-days: 7
       # Linux runs its suite here and nowhere else, so its doctests are asked here too.
       # They come last: an uninstrumented build lands in the `target/` the report above read its objects from.
       - name: Doctests
         run: cargo test --locked --workspace --all-features --doc
 
   package-install:
+    if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
     name: package-install (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     # Each row compiles both products once in release, which no other job does, and a hosted Windows runner is the slowest of the three at it.
@@ -311,8 +364,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.source || github.sha }}
           persist-credentials: false
-      - uses: ./.github/actions/setup-rust
+      - uses: ./.github/actions/setup-rust # zizmor: ignore[self-repository] -- Exercise the checked-out candidate's action.
       - name: Fetch the locked dependency graph
         env:
           CARGO_NET_OFFLINE: "false"
@@ -329,22 +383,25 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.source || github.sha }}
           persist-credentials: false
-      - uses: ./.github/actions/setup-rust
+      - uses: ./.github/actions/setup-rust # zizmor: ignore[self-repository] -- Exercise the checked-out candidate's action.
         with:
           mise-tools: mdbook
       - name: build the book, which refuses a summary naming a page nobody holds
         run: mdbook build docs
 
   soundness:
+    if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
     name: soundness
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.source || github.sha }}
           persist-credentials: false
-      - uses: ./.github/actions/setup-rust
+      - uses: ./.github/actions/setup-rust # zizmor: ignore[self-repository] -- Exercise the checked-out candidate's action.
       - name: Install the interpreter the deep-v1 contract promises
         run: rustup toolchain install "${NJUTEST_NIGHTLY}" --component miri,rust-src --profile minimal
       # The run is offline, and Miri builds its own sysroot the first time it is asked; build it now, while the network is allowed, or the verify below interprets nothing.
@@ -386,14 +443,16 @@ jobs:
           }
 
   kani-verified:
+    if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
     name: kani-verified
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.source || github.sha }}
           persist-credentials: false
-      - uses: ./.github/actions/setup-rust
+      - uses: ./.github/actions/setup-rust # zizmor: ignore[self-repository] -- Exercise the checked-out candidate's action.
       - name: Fetch the locked dependency graph
         env:
           CARGO_NET_OFFLINE: "false"
@@ -414,14 +473,16 @@ jobs:
   # The sealed host held to the official WASI preview1 conformance suite, at the commit `crates/rust-mutants/tests/wasi-testsuite.toml` pins.
   # The suite is fetched with git from GitHub, which the job's `CARGO_NET_OFFLINE` leaves alone: it keeps only cargo off the network.
   wasi-testsuite:
+    if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
     name: wasi-testsuite
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.source || github.sha }}
           persist-credentials: false
-      - uses: ./.github/actions/setup-rust
+      - uses: ./.github/actions/setup-rust # zizmor: ignore[self-repository] -- Exercise the checked-out candidate's action.
       - name: Fetch the locked dependency graph
         env:
           CARGO_NET_OFFLINE: "false"
@@ -432,14 +493,16 @@ jobs:
         run: mise run wasi-testsuite
 
   action-smoke:
+    if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
     name: action-smoke
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.source || github.sha }}
           persist-credentials: false
-      - uses: ./.github/actions/setup-rust
+      - uses: ./.github/actions/setup-rust # zizmor: ignore[self-repository] -- Exercise the checked-out candidate's action.
       - name: Fetch the locked dependency graph
         env:
           CARGO_NET_OFFLINE: "false"
@@ -452,7 +515,7 @@ jobs:
           echo "$PWD/target/release" >> "$GITHUB_PATH"
       - name: Run the action the way another repository would
         id: njutest
-        uses: ./.github/actions/njutest
+        uses: ./.github/actions/njutest # zizmor: ignore[self-repository] -- Exercise the checked-out candidate's action.
         with:
           working-directory: fixtures/fixture-assured
           args: --offline --locked --ui=plain
@@ -471,14 +534,16 @@ jobs:
           done
 
   action-smoke-rust-mutants:
+    if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
     name: action-smoke-rust-mutants
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.source || github.sha }}
           persist-credentials: false
-      - uses: ./.github/actions/setup-rust
+      - uses: ./.github/actions/setup-rust # zizmor: ignore[self-repository] -- Exercise the checked-out candidate's action.
       - name: Fetch the locked dependency graph
         env:
           CARGO_NET_OFFLINE: "false"
@@ -489,7 +554,7 @@ jobs:
           echo "$PWD/target/release" >> "$GITHUB_PATH"
       - name: Run the action over a tree whose tests notice every mutant
         id: detected
-        uses: ./.github/actions/rust-mutants
+        uses: ./.github/actions/rust-mutants # zizmor: ignore[self-repository] -- Exercise the checked-out candidate's action.
         with:
           working-directory: fixtures/fixture-assured
           args: --offline --locked
@@ -498,7 +563,7 @@ jobs:
       - name: Run the action over a tree that leaves a finding
         id: found
         continue-on-error: true
-        uses: ./.github/actions/rust-mutants
+        uses: ./.github/actions/rust-mutants # zizmor: ignore[self-repository] -- Exercise the checked-out candidate's action.
         with:
           working-directory: fixtures/fixture-simple
           args: --offline --locked
@@ -506,7 +571,7 @@ jobs:
           upload-sarif: "false"
       - name: Run the action over a change that touches nothing it measures
         id: untouched
-        uses: ./.github/actions/rust-mutants
+        uses: ./.github/actions/rust-mutants # zizmor: ignore[self-repository] -- Exercise the checked-out candidate's action.
         with:
           working-directory: fixtures/fixture-assured
           args: --offline --locked
@@ -532,11 +597,30 @@ jobs:
             done
           done
 
+  fuzz-campaign:
+    if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
+    uses: ./.github/workflows/fuzz.yml # zizmor: ignore[self-repository] -- actionlint 1.7.12 requires workspace-relative workflows.
+    with:
+      source: ${{ inputs.source || github.sha }}
+
+  mutation-campaign:
+    if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
+    uses: ./.github/workflows/mutation.yml # zizmor: ignore[self-repository] -- actionlint 1.7.12 requires workspace-relative workflows.
+    with:
+      source: ${{ inputs.source || github.sha }}
+
+  dogfood-campaign:
+    if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
+    uses: ./.github/workflows/dogfood.yml # zizmor: ignore[self-repository] -- actionlint 1.7.12 requires workspace-relative workflows.
+    with:
+      source: ${{ inputs.source || github.sha }}
+
   required:
     name: required
     if: always()
     needs:
       [
+        fast-test,
         test,
         lint,
         deny,
@@ -549,6 +633,9 @@ jobs:
         wasi-testsuite,
         action-smoke,
         action-smoke-rust-mutants,
+        fuzz-campaign,
+        mutation-campaign,
+        dogfood-campaign,
       ]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -556,8 +643,14 @@ jobs:
       - name: Require every gating job
         env:
           NEEDS: ${{ toJSON(needs) }}
+          SKIPPED: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && '["test","coverage","package-install","soundness","kani-verified","wasi-testsuite","action-smoke","action-smoke-rust-mutants","fuzz-campaign","mutation-campaign","dogfood-campaign"]' || '["fast-test"]' }}
         run: |
-          if jq --exit-status 'all(.[]; .result == "success")' <<<"$NEEDS" >/dev/null; then
+          if jq --exit-status --argjson skipped "$SKIPPED" '
+            length > 0 and all(to_entries[];
+              .key as $job
+              | .value.result == (if $skipped | index($job) then "skipped" else "success" end)
+            )
+          ' <<<"$NEEDS" >/dev/null; then
             echo "all CI gates passed"
           else
             jq . <<<"$NEEDS"
