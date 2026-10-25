@@ -37,7 +37,7 @@ jobs:
   fast-test:
     name: test (Linux)
     if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -145,7 +145,7 @@ jobs:
 
   lint:
     name: lint
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -202,7 +202,7 @@ jobs:
 
   deny:
     name: deny
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     env:
       # The container has its own Cargo home, so the host's fetch cannot seed the index it resolves against.
@@ -230,7 +230,7 @@ jobs:
 
   audit:
     name: audit
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -258,7 +258,7 @@ jobs:
   coverage:
     if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
     name: coverage
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 100
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -378,7 +378,7 @@ jobs:
 
   book:
     name: book
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -394,7 +394,7 @@ jobs:
   soundness:
     if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
     name: soundness
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -445,7 +445,7 @@ jobs:
   kani-verified:
     if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
     name: kani-verified
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -475,7 +475,7 @@ jobs:
   wasi-testsuite:
     if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
     name: wasi-testsuite
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -495,7 +495,7 @@ jobs:
   action-smoke:
     if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
     name: action-smoke
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -536,7 +536,7 @@ jobs:
   action-smoke-rust-mutants:
     if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
     name: action-smoke-rust-mutants
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -637,7 +637,7 @@ jobs:
         mutation-campaign,
         dogfood-campaign,
       ]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
       - name: Require every gating job
