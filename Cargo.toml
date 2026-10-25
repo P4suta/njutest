@@ -177,7 +177,7 @@ walkdir = "2.5"
 cargo_metadata = "0.23"
 similar = { version = "3.2", default-features = false, features = ["text"] }
 # The sealed host: exact pins, because the compiled code, the fuel each operator costs, and the traps it raises are part of every transcript digest.
-wasmtime = { version = "=48.0.7", default-features = false, features = [
+wasmtime = { version = "=50.0.0", default-features = false, features = [
   "cache",
   "cranelift",
   "runtime",
