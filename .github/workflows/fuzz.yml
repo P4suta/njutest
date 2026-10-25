@@ -75,7 +75,7 @@ jobs:
           python3 scripts/toolchain.py --env >> "$GITHUB_ENV"
       - name: Install the pinned fuzzing toolchain
         run: rustup toolchain install "$NJUTEST_NIGHTLY" --profile minimal
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: fuzz
       - uses: taiki-e/install-action@94c31af3204a9f15ab40b35ad084410b905bbc73 # v2.87.17
