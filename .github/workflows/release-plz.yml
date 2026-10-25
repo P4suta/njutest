@@ -28,7 +28,7 @@ jobs:
   release:
     name: cut the tag
     if: ${{ github.repository_owner == 'P4suta' }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     environment: release-plz
     permissions:
@@ -61,7 +61,7 @@ jobs:
     # After `release`, so a release pull request is never opened for a version being tagged in the same run.
     needs: release
     if: ${{ always() && github.repository_owner == 'P4suta' }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     environment: release-plz
     permissions:
