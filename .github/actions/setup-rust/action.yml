@@ -44,7 +44,7 @@ runs:
         key: mise-${{ runner.os }}-${{ runner.arch }}-${{ inputs.mise-tools }}-${{ hashFiles('mise.toml', '.github/actions/setup-rust/action.yml') }}
     - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
       with:
-        version: 2026.9.12
+        version: 2026.10.21
         install: false
         cache: false
     # Activating mise brings `mise.toml`'s `[env]` with it, and that names `sccache` as the compiler wrapper.
@@ -67,6 +67,6 @@ runs:
       shell: bash
       run: mise install ${{ inputs.mise-tools }}
     - if: ${{ inputs.tools != '' }}
-      uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2.85.3
+      uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
       with:
         tool: ${{ inputs.tools }}
