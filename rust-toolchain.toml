@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
 [toolchain]
-channel = "1.98.0"
+channel = "1.99.1"
 # llvm-tools: `llvm-profdata` and `llvm-cov` are how njutest reads coverage,
 # and how CI measures its own.
 components = ["rustfmt", "clippy", "llvm-tools"]
