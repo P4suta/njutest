@@ -29,15 +29,15 @@ idiomatic_version_file_enable_tools = ["rust"]
 [tools]
 actionlint = "1.7.12"
 taplo = "0.10.0"
-typos = "1.50.1"
-lefthook = "2.1.9"
-"cargo:cargo-nextest" = "0.9.140"
-"cargo:cargo-deny" = "0.19.7"
-"cargo:cargo-llvm-cov" = "0.9.0"
-"cargo:cargo-audit" = "0.22.2"
+typos = "1.52.2"
+lefthook = "2.2.2"
+"cargo:cargo-nextest" = "0.9.151"
+"cargo:cargo-deny" = "0.20.2"
+"cargo:cargo-llvm-cov" = "0.9.1"
+"cargo:cargo-audit" = "0.23.0"
 "cargo:cargo-mutants" = "27.1.0"
 "cargo:cargo-fuzz" = "0.13.2"
-"cargo:committed" = "1.1.11"
+"cargo:committed" = "1.1.12"
 # A compilation cache, keyed on the content of what it is asked to compile.
 #
 # The toolchain suite copies a fixture into a temporary tree and starts a real
@@ -47,7 +47,7 @@ lefthook = "2.1.9"
 # be one measurement contaminating another, which is the defect this whole
 # product is against. Isolation stays. What goes is recompiling the identical
 # unit: 847ms cold, 402ms with this, with every target directory still its own.
-sccache = "0.17.0"
+sccache = "0.19.0"
 mdbook = "0.5.4"
 
 [tasks.bootstrap]
