@@ -147,7 +147,7 @@ runs:
         exit 0
     - name: Upload the survivors to code scanning
       if: inputs.upload-sarif == 'true' && steps.gate.outputs.sarif != ''
-      uses: github/codeql-action/upload-sarif@1190a975f95ce23525efb6a3fc21ea29567c1b52 # v3
+      uses: github/codeql-action/upload-sarif@74c1aea9df7c0f02e9b7bfe4a8935abf2e5e3aa6 # v3
       with:
         sarif_file: ${{ steps.gate.outputs.sarif }}
         category: rust-mutants
